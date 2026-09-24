@@ -4,6 +4,12 @@
 
 ## [Unreleased]
 
+## [1.5.1] — 2026-09-24
+
+### Fixed
+
+- Full sweeps are fast again: 1.5.0 shuffled every pending address, and random inserts into the large results index slowed SQLite commits (the 190,000-candidate test went from ~1.5 to ~12 minutes on Windows). Shuffling now happens only in find-N mode (`--want`); full sweeps check previously working addresses first and then go in key order.
+
 ## [1.5.0] — 2026-09-24
 
 ### Added
