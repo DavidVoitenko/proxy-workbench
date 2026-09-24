@@ -12,6 +12,8 @@ import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from anonymity import allows as anonymity_allows
+
 MAX_ZONES = 12
 MAX_TIMEOUT = 30.0
 _ZONE_RE = re.compile(r"^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$")
@@ -288,7 +290,7 @@ def verdict_blocks(verdict, strict=False):
     return status in {"listed", "local_denied"} or (strict and status == "unknown")
 
 
-def result_allowed(row, min_success, denylist=None, strict=False):
+def result_allowed(row, min_success, denylist=None, strict=False, min_anonymity="any"):
     try:
         reliability = float(row.get("min_target_reliability", 0))
     except (TypeError, ValueError):
@@ -296,5 +298,7 @@ def result_allowed(row, min_success, denylist=None, strict=False):
     if not reliability > 0 or reliability + 1e-12 < min_success:
         return False
     if denylist is not None and denylist.match(row.get("proxy", "")):
+        return False
+    if not anonymity_allows(row, min_anonymity):
         return False
     return not verdict_blocks(row.get("reputation"), strict=strict)
