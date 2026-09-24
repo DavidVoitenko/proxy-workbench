@@ -11,7 +11,7 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN python -m pip install --requirement requirements.txt
 
-COPY proxytool.py anonymity.py branding.py maintenance.py reputation.py sources.json service.example.json ./
+COPY proxytool.py anonymity.py branding.py geoip.py maintenance.py reputation.py sources.json service.example.json ./
 RUN useradd --create-home --uid 10001 workbench \
     && mkdir -p /app/data \
     && chown workbench /app/data

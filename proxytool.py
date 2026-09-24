@@ -13,6 +13,7 @@ import json
 import math
 import os
 from pathlib import Path
+import random
 import re
 import shutil
 import socket
@@ -30,6 +31,7 @@ from branding import DEFAULT_REQUEST_PROFILE, PRODUCT_NAME, PRODUCT_VERSION, REQ
 from reputation import Denylist, make_policy, result_allowed, screen_proxy, verdict_blocks
 from maintenance import clear_runtime, exclusive_lock
 import anonymity
+import geoip
 
 ROOT = Path(__file__).resolve().parent
 TLS = ssl.create_default_context()
@@ -412,6 +414,7 @@ def open_db(path):
     db.execute('PRAGMA journal_mode=WAL')
     db.executescript('''
         CREATE TABLE IF NOT EXISTS candidates(proxy TEXT PRIMARY KEY);
+        CREATE TABLE IF NOT EXISTS candidate_meta(proxy TEXT PRIMARY KEY, country TEXT);
         CREATE TABLE IF NOT EXISTS profiles(id TEXT PRIMARY KEY, config TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS results(
             profile TEXT NOT NULL, proxy TEXT NOT NULL, payload TEXT NOT NULL,
@@ -477,7 +480,7 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                              blocked=sum(r.get('blocked', 0) for r in reports),
                              candidates=db.execute("SELECT count(*) FROM candidates").fetchone()[0]))
 
-    def add(value, protocol='http'):
+    def add(value, protocol='http', country=None):
         value = value.strip()
         proxy = normalize(value if '://' in value else protocol+'://'+value)
         if not proxy:
@@ -485,6 +488,8 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
         if denylist.match(proxy):
             return 'blocked'
         db.execute('INSERT OR IGNORE INTO candidates VALUES (?)', (proxy,))
+        if isinstance(country, str) and geoip.COUNTRY_CODE.fullmatch(country.upper()):
+            db.execute('INSERT OR REPLACE INTO candidate_meta VALUES (?, ?)', (proxy, country.upper()))
         return 'accepted'
 
     publish()
@@ -563,7 +568,8 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                     for protocol in protocols:
                         # GeoNode https denotes CONNECT capability.
                         endpoint_count += 1
-                        outcome = add(f"{host}:{record.get('port')}", 'http' if protocol == 'https' else protocol)
+                        outcome = add(f"{host}:{record.get('port')}", 'http' if protocol == 'https' else protocol,
+                                      record.get('country'))
                         accepted = accepted or outcome == 'accepted'
                         blocked_here = blocked_here or outcome == 'blocked'
                 if not accepted:
@@ -753,11 +759,22 @@ def validate_targets(targets, args, request_profile=None, reputation=None, denyl
                   request_profile=request_profile,
                   request_profile_digest=profile_digest(request_profile),
                   reputation=policy)
-    # Added only when enabled so existing profiles keep their identity.
+    # Optional keys are added only when they change measurements, so older
+    # profiles keep their identity.
+    connect_timeout = getattr(args, 'connect_timeout', None)
+    if connect_timeout is not None and connect_timeout < args.timeout:
+        config['connect_timeout'] = connect_timeout
+    if getattr(args, 'fail_fast', False):
+        config['fail_fast'] = {'min_success': args.min_success}
     judge = anonymity.validate_judge(anonymity_config)
     if judge:
         config['anonymity'] = judge
     return config
+
+
+def request_timeout(config):
+    """Whole-request timeout with an optional shorter limit for connecting."""
+    return httpx.Timeout(config['timeout'], connect=config.get('connect_timeout', config['timeout']))
 
 
 async def request_once(proxy, target, config, rate):
@@ -768,7 +785,7 @@ async def request_once(proxy, target, config, rate):
         async with asyncio.timeout(config['timeout']):
             # Fresh connections make samples comparable (including CONNECT/TLS).
             async with httpx.AsyncClient(proxy=proxy, trust_env=False, verify=TLS,
-                                         timeout=config['timeout'], follow_redirects=False) as client:
+                                         timeout=request_timeout(config), follow_redirects=False) as client:
                 headers = merge_headers(config.get('request_profile', DEFAULT_REQUEST_PROFILE), target['headers'])
                 async with client.stream(target['method'], target['url'],
                                          headers=headers) as response:
@@ -802,7 +819,7 @@ def summarize(proxy, samples, config):
     per_target = []
     for i in range(len(config['targets'])):
         subset = [s for s in samples if s['target'] == i]
-        per_target.append(sum(s['ok'] for s in subset) / len(subset))
+        per_target.append(sum(s['ok'] for s in subset) / len(subset) if subset else 0.0)
     median = statistics.median(successful) if successful else None
     jitter = statistics.pstdev(successful) if successful else None
     score = 100 * min(per_target) / (1 + (median + jitter) / 1000) if successful else 0
@@ -811,12 +828,31 @@ def summarize(proxy, samples, config):
                 successes=len(successful), requests=len(samples), checked_at=time.time(), samples=samples)
 
 
+def allowed_failures(config):
+    """Failures per target a proxy may have and still pass, or None without fail-fast."""
+    fail_fast = config.get('fail_fast')
+    if not fail_fast:
+        return None
+    attempts = config['attempts']
+    needed = max(1, math.ceil(fail_fast['min_success'] * attempts - 1e-9))
+    return attempts - needed
+
+
 async def check_proxy(proxy, config, rate, own_ips=None):
     samples = []
+    limit = allowed_failures(config)
+    failures = [0] * len(config['targets'])
     for attempt in range(config['attempts']):
         for index, target in enumerate(config['targets']):
             sample = await request_once(proxy, target, config, rate)
             samples.append(dict(sample, target=index, attempt=attempt + 1))
+            failures[index] += not sample['ok']
+            # Once one target can no longer reach the threshold the proxy cannot
+            # pass, so the remaining requests would only cost time.
+            if limit is not None and failures[index] > limit:
+                row = summarize(proxy, samples, config)
+                row['aborted'] = True
+                return row
     row = summarize(proxy, samples, config)
     # The judge is asked only through proxies that already work for a target.
     if config.get('anonymity') and own_ips and row['successes']:
@@ -849,7 +885,7 @@ async def judge_proxy(proxy, config, rate, own_ips):
     headers = merge_headers(config.get('request_profile', DEFAULT_REQUEST_PROFILE))
     try:
         async with asyncio.timeout(config['timeout']):
-            async with httpx.AsyncClient(proxy=proxy, trust_env=False, verify=TLS, timeout=config['timeout'],
+            async with httpx.AsyncClient(proxy=proxy, trust_env=False, verify=TLS, timeout=request_timeout(config),
                                          follow_redirects=False) as client:
                 body = await anonymity.fetch_judge(client, config['anonymity']['judge_url'], headers)
     except ValueError as exc:
@@ -883,7 +919,8 @@ def blocked_result(proxy, verdict):
                 checked_at=time.time(), samples=[], reputation=verdict)
 
 
-async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_proxy, progress=True, on_progress=None, min_success=2/3, screen=None, denylist=None, min_anonymity='any'):
+async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_proxy, progress=True, on_progress=None, min_success=2/3, screen=None, denylist=None, min_anonymity='any', protocol='all', max_latency=None,
+               countries=(), country_of=None, want=0):
     denylist = denylist or Denylist.empty()
     policy = config.get('reputation', {})
     strict = bool(policy.get('strict', False))
@@ -896,24 +933,55 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
     if recheck:
         db.execute('DELETE FROM results WHERE profile=?', (profile,))
     db.commit()
-    total = db.execute('SELECT count(*) FROM candidates').fetchone()[0]
-    pending = db.execute('''SELECT c.proxy FROM candidates c LEFT JOIN results r
-        ON r.proxy=c.proxy AND r.profile=? WHERE r.proxy IS NULL ORDER BY c.proxy''', (profile,))
-    completed = db.execute('SELECT count(*) FROM results WHERE profile=?', (profile,)).fetchone()[0]
+    countries = frozenset(countries or ())
+    country_of = country_of or (lambda proxy: None)
+
+    def selected(proxy):
+        # Protocol and country narrow which candidates are checked; they are not
+        # part of the profile, so a later wider run reuses these results.
+        if protocol not in (None, 'all') and proxy_protocol(proxy) != protocol:
+            return False
+        return not countries or country_of(proxy) in countries
+
+    done = {proxy for (proxy,) in db.execute('SELECT proxy FROM results WHERE profile=?', (profile,))}
+    pending, total, completed = [], 0, 0
+    for (proxy,) in db.execute('SELECT proxy FROM candidates'):
+        if selected(proxy):
+            total += 1
+            if proxy in done:
+                completed += 1
+            else:
+                pending.append(proxy)
+    # Addresses that already worked in another profile first, the rest shuffled
+    # so early results are not all from one subnet or source.
+    proven = {proxy for (proxy,) in db.execute(
+        "SELECT DISTINCT proxy FROM results WHERE profile<>? AND json_extract(payload,'$.min_target_reliability')>0",
+        (profile,))}
+    random.shuffle(pending)
+    pending.sort(key=lambda proxy: proxy not in proven)
     passed = 0
     status_counts = {'clean': 0, 'listed': 0, 'unknown': 0, 'local_denied': 0}
     for (payload,) in db.execute('SELECT payload FROM results WHERE profile=?', (profile,)):
         row = json.loads(payload)
+        if not selected(row['proxy']):
+            continue
         status = (row.get('reputation') or {}).get('status', 'clean')
         status_counts[status] = status_counts.get(status, 0) + 1
-        passed += int(result_allowed(row, min_success, denylist=active_denylist, strict=strict, min_anonymity=min_anonymity))
+        passed += int(result_allowed(row, min_success, denylist=active_denylist, strict=strict, min_anonymity=min_anonymity)
+                      and matches_selection(row, protocol, max_latency))
     initial = completed
     limiter = Rate(rate)
     queue = asyncio.Queue(maxsize=workers * 2)
     started = last_commit = time.monotonic()
 
+    enough = asyncio.Event()
+    if want and passed >= want:
+        enough.set()
+
     async def producer():
-        for (proxy,) in pending:
+        for proxy in pending:
+            if enough.is_set():
+                break
             await queue.put(proxy)
         for _ in range(workers):
             await queue.put(None)
@@ -925,6 +993,9 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
             try:
                 if proxy is None:
                     return
+                if enough.is_set():
+                    # Left unchecked; a later run of the same profile picks it up.
+                    continue
                 verdict = None
                 if screen is not None:
                     try:
@@ -938,12 +1009,18 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
                     row = await probe(proxy, config, limiter)
                     if verdict is not None:
                         row['reputation'] = verdict
+                country = country_of(proxy)
+                if country:
+                    row['country'] = country
                 db.execute('INSERT OR REPLACE INTO results VALUES (?, ?, ?)',
                            (profile, proxy, json.dumps(row, ensure_ascii=False)))
                 completed += 1
                 status = (row.get('reputation') or {}).get('status', 'clean')
                 status_counts[status] = status_counts.get(status, 0) + 1
-                passed += int(result_allowed(row, min_success, denylist=active_denylist, strict=strict, min_anonymity=min_anonymity))
+                passed += int(result_allowed(row, min_success, denylist=active_denylist, strict=strict, min_anonymity=min_anonymity)
+                              and matches_selection(row, protocol, max_latency))
+                if want and passed >= want:
+                    enough.set()
                 if completed % 100 == 0 or time.monotonic() - last_commit >= 1:
                     db.commit()
                     last_commit = time.monotonic()
@@ -976,13 +1053,56 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
             if progress or on_progress:
                 reporter_task.cancel()
     finally:
-        pending.close()
         db.commit()
         publish()
     return profile
 
 
-def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, denylist=None, local_override=None, min_anonymity='any'):
+SORTS = ('quality', 'speed', 'stability')
+EXPORT_ORDERS = {
+    'quality': 'e.score DESC, e.latency, e.proxy',
+    'speed': 'e.latency, e.reliability DESC, e.proxy',
+    'stability': 'e.jitter, e.latency, e.proxy',
+}
+PROTOCOLS = ('all', 'http', 'https', 'socks5')
+
+
+def row_country(row, country_of=None):
+    return row.get('country') or (country_of(row.get('proxy', '')) if country_of else None)
+
+
+def country_resolver(db, geo=None):
+    """Country from source metadata first, then the offline GeoIP database."""
+    meta = dict(db.execute('SELECT proxy, country FROM candidate_meta'))
+    cache = {}
+
+    def country_of(proxy):
+        if proxy not in cache:
+            cache[proxy] = meta.get(proxy) or (geo.country_of(proxy) if geo else None)
+        return cache[proxy]
+    return country_of
+
+
+def proxy_protocol(proxy):
+    scheme = str(proxy).partition('://')[0]
+    return PROTOCOL_ALIASES.get(scheme, scheme)
+
+
+def matches_selection(row, protocol='all', max_latency=None, countries=(), country_of=None):
+    """Selection by protocol, maximum median latency (ms) and country codes."""
+    if protocol not in (None, 'all') and proxy_protocol(row.get('proxy', '')) != protocol:
+        return False
+    if countries and row_country(row, country_of) not in countries:
+        return False
+    if max_latency:
+        latency = row.get('latency_ms')
+        if latency is None or latency > max_latency:
+            return False
+    return True
+
+
+def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, denylist=None, local_override=None, min_anonymity='any',
+           protocol='all', max_latency=None, countries=(), country_of=None):
     if not db.execute('SELECT 1 FROM profiles WHERE id=?', (profile,)).fetchone():
         raise ValueError('Профиль проверки не найден')
     denylist = denylist or Denylist.empty()
@@ -1011,7 +1131,7 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
     published = False
     # Keep full samples on disk, including when hundreds of thousands pass.
     db.execute('DROP TABLE IF EXISTS temp.export_rank')
-    db.execute('CREATE TEMP TABLE export_rank(proxy TEXT PRIMARY KEY, score REAL, latency REAL, reliability REAL)')
+    db.execute('CREATE TEMP TABLE export_rank(proxy TEXT PRIMARY KEY, score REAL, latency REAL, reliability REAL, jitter REAL)')
     checked = passed = local_filtered = 0
     status_counts = {'clean': 0, 'listed': 0, 'unknown': 0, 'local_denied': 0}
     anonymity_counts = {}
@@ -1023,19 +1143,20 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
         level = (row.get('anonymity') or {}).get('level')
         if level:
             anonymity_counts[level] = anonymity_counts.get(level, 0) + 1
-        eligible = result_allowed(row, min_success, denylist=None, strict=strict, min_anonymity=min_anonymity)
+        eligible = (result_allowed(row, min_success, denylist=None, strict=strict, min_anonymity=min_anonymity)
+                    and matches_selection(row, protocol, max_latency, countries, country_of))
         if eligible and active_denylist is not None and active_denylist.match(row.get('proxy', '')):
             local_filtered += 1
         elif eligible:
-            db.execute('INSERT INTO export_rank VALUES (?,?,?,?)',
-                       (row['proxy'], row['score'], row['latency_ms'], row['reliability']))
+            db.execute('INSERT INTO export_rank VALUES (?,?,?,?,?)',
+                       (row['proxy'], row['score'], row['latency_ms'], row['reliability'], row.get('jitter_ms')))
             passed += 1
-    order = 'e.latency, e.reliability DESC, e.proxy' if sort == 'speed' else 'e.score DESC, e.latency, e.proxy'
+    order = EXPORT_ORDERS[sort]
     selected = db.execute(f"""SELECT r.payload FROM export_rank e JOIN results r
         ON r.proxy=e.proxy AND r.profile=? ORDER BY {order} LIMIT ?""", (profile, top or -1))
     fields = ['proxy', 'score', 'latency_ms', 'jitter_ms', 'reliability', 'min_target_reliability',
               'successes', 'requests', 'checked_at', 'reputation_status', 'reputation_sources',
-              'anonymity', 'anonymity_signals']
+              'anonymity', 'anonymity_signals', 'country']
     names = ['proxies.txt', 'ranked.json', 'ranked.csv', *PROTOCOL_EXPORTS.values()]
     exported = 0
     try:
@@ -1056,11 +1177,12 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
                 row['reputation_sources'] = ','.join(item.get('zone', '') for item in verdict.get('dnsbl', [])
                                                        if item.get('status') == 'listed')
                 judged = row.get('anonymity') or {}
+                row['country'] = row_country(row, country_of) or ''
                 csv_row = dict(row, anonymity=judged.get('level', ''),
                                anonymity_signals=','.join(judged.get('signals', [])))
                 txt.write(row['proxy'] + '\n')
                 scheme, _, address = row['proxy'].partition('://')
-                by_protocol[PROTOCOL_ALIASES.get(scheme, scheme)].write(address + '\n')
+                by_protocol[proxy_protocol(row['proxy'])].write(address + '\n')
                 js.write((',' if exported else '') + '\n' + json.dumps(row, ensure_ascii=False))
                 writer.writerow(csv_row)
                 exported += 1
@@ -1069,6 +1191,7 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
         report = dict(profile=profile, candidates=total, checked=checked, pending=total-checked,
                       passed=passed, local_filtered=local_filtered, exported=exported, complete=checked == total,
                       generated_at=time.time(), sort=sort, min_success=min_success,
+                      protocol=protocol, max_latency=max_latency, countries=list(countries or ()),
                       targets=[dict(name=t.get('name', ''), url=public_url(t['url'])) for t in cfg.get('targets', [])],
                       request_profile=cfg.get('request_profile', 'workbench'),
                       request_profile_digest=cfg.get('request_profile_digest', ''),
@@ -1097,7 +1220,7 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
 def parser():
     p = argparse.ArgumentParser(description=f'{PRODUCT_NAME}: сбор и полная проверка публичных прокси под HTTP-сервис')
     p.add_argument('--version', action='version', version=f'{PRODUCT_NAME} {PRODUCT_VERSION}')
-    p.add_argument('command', choices=['collect', 'scan', 'run', 'export', 'clear-data'])
+    p.add_argument('command', choices=['collect', 'scan', 'run', 'export', 'clear-data', 'update-geoip'])
     p.add_argument('--yes', action='store_true', help='подтвердить удаление локальных результатов')
     p.add_argument('--progress-file', type=Path, help=argparse.SUPPRESS)
     p.add_argument('--stop-file', type=Path, help=argparse.SUPPRESS)
@@ -1123,6 +1246,12 @@ def parser():
                    help='нейтральный HTTP request-профиль')
     p.add_argument('--attempts', type=int, default=3)
     p.add_argument('--timeout', type=float, default=8, help='полный deadline одного запроса, секунд')
+    p.add_argument('--connect-timeout', type=float, default=4,
+                   help='лимит на подключение к прокси, секунд; мёртвые адреса отсеиваются быстрее')
+    p.add_argument('--fail-fast', dest='fail_fast', action='store_true', default=True,
+                   help='прекращать попытки, когда прокси уже не может пройти порог (по умолчанию)')
+    p.add_argument('--no-fail-fast', dest='fail_fast', action='store_false',
+                   help='всегда выполнять все попытки')
     p.add_argument('--workers', type=int, default=128)
     p.add_argument('--rate', type=float, default=100, help='максимум стартов запросов/с, 0 — без лимита')
     p.add_argument('--max-bytes', type=int, default=1048576)
@@ -1143,7 +1272,16 @@ def parser():
                    help='минимальный уровень анонимности для экспорта; нужен --judge-url')
     p.add_argument('--recheck', action='store_true', help='заново проверить все адреса текущего профиля')
     p.add_argument('--top', type=int, default=0, help='сколько сохранить; 0 — все прошедшие')
-    p.add_argument('--sort', choices=['speed', 'quality'], default='quality')
+    p.add_argument('--sort', choices=list(SORTS), default='quality',
+                   help='quality: стабильность + скорость; speed: задержка; stability: разброс')
+    p.add_argument('--protocol', choices=list(PROTOCOLS), default='all', help='экспортировать только этот протокол')
+    p.add_argument('--max-latency', type=float, default=0, help='максимальная медианная задержка, мс; 0 — без ограничения')
+    p.add_argument('--country', default='', help='только эти страны (ISO-коды через запятую, например DE,NL); '
+                   'другие адреса не проверяются')
+    p.add_argument('--want', type=int, default=0,
+                   help='остановиться, когда найдено столько подходящих прокси; 0 — проверить все')
+    p.add_argument('--geoip-db', type=Path, default=None,
+                   help='CSV-база DB-IP Country Lite; по умолчанию data/geoip/' + geoip.DB_NAME)
     p.add_argument('--min-success', type=float, default=2/3, help='минимальная доля успехов КАЖДОГО target, 0..1')
     return p
 
@@ -1163,19 +1301,50 @@ async def stoppable(coro, stop_file):
         await asyncio.gather(task, return_exceptions=True)
 
 
+async def download_geoip(path, timeout=60):
+    """Fetch the latest DB-IP Country Lite CSV; returns the month downloaded."""
+    error = None
+    async with httpx.AsyncClient(trust_env=False, verify=TLS, timeout=timeout, follow_redirects=True) as client:
+        for month in geoip.candidate_months():
+            async with client.stream('GET', geoip.DOWNLOAD_URL.format(month=month)) as response:
+                if response.status_code == 404:
+                    error = 'HTTP_404'
+                    continue
+                response.raise_for_status()
+                body = bytearray()
+                async for chunk in response.aiter_bytes():
+                    body.extend(chunk)
+                    if len(body) > geoip.MAX_DOWNLOAD_BYTES:
+                        raise ValueError('GEOIP_TOO_LARGE')
+            geoip.validate_download(bytes(body))
+            path = Path(path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temp = path.with_name(path.name + '.tmp')
+            temp.write_bytes(body)
+            temp.replace(path)
+            return month
+    raise ValueError(error or 'GEOIP_UNAVAILABLE')
+
+
 def main(argv=None):
     p = parser()
     args = p.parse_args(argv)
     if (min(args.attempts, args.workers, args.max_bytes) < 1 or args.top < 0
             or not math.isfinite(args.rate) or args.rate < 0
             or not math.isfinite(args.timeout) or args.timeout <= 0
+            or not math.isfinite(args.connect_timeout) or args.connect_timeout <= 0
+            or not math.isfinite(args.max_latency) or args.max_latency < 0
             or not math.isfinite(args.source_timeout) or args.source_timeout <= 0
             or not 1 <= args.source_max_bytes <= MAX_SOURCE_BYTES
             or not 1 <= args.source_max_line_bytes <= MAX_SOURCE_LINE_BYTES
             or not 1 <= args.source_max_candidates <= MAX_SOURCE_CANDIDATES
             or not 0 <= args.source_max_redirects <= MAX_SOURCE_REDIRECTS
-            or not 0 <= args.min_success <= 1):
+            or not 0 <= args.min_success <= 1 or args.want < 0):
         p.error('Неверные числовые параметры')
+    try:
+        countries = geoip.parse_countries(args.country)
+    except ValueError as exc:
+        p.error(str(exc))
     os.umask(0o077)
     args.data.mkdir(parents=True, exist_ok=True)
     denylist_path = args.denylist_file or args.data / 'denylist.txt'
@@ -1208,7 +1377,28 @@ def main(argv=None):
         print('Удалено: ' + (', '.join(removed) if removed else 'ничего'), flush=True)
         lock.close()
         return 0
+    geo_path = args.geoip_db or geoip.default_path(args.data)
+    if args.command == 'update-geoip':
+        try:
+            month = asyncio.run(download_geoip(geo_path, args.source_timeout))
+        except (httpx.HTTPError, TimeoutError, OSError, ValueError) as exc:
+            reason = str(exc) if isinstance(exc, ValueError) else type(exc).__name__
+            print(f'Не удалось скачать базу стран: {reason}', file=sys.stderr)
+            lock.close()
+            return 2
+        print(f'База стран обновлена: DB-IP {month}. {geoip.ATTRIBUTION}', flush=True)
+        lock.close()
+        return 0
+    try:
+        geo = geoip.CountryDB.load_optional(geo_path)
+    except (OSError, EOFError, UnicodeError, csv.Error):
+        print('База стран повреждена; выполните update-geoip.', file=sys.stderr)
+        geo = None
+    if countries and geo is None:
+        print('База стран не найдена: страна известна только для адресов из Geonode. '
+              'Скачайте базу командой update-geoip.', file=sys.stderr)
     db = open_db(args.data / 'proxies.sqlite3')
+    country_of = country_resolver(db, geo)
     config = None
     profile = None
     code = 0
@@ -1268,7 +1458,9 @@ def main(argv=None):
             asyncio.run(stoppable(scan(db, config, workers=workers, rate=args.rate, recheck=args.recheck,
                                        probe=probe, on_progress=update_progress, min_success=args.min_success,
                                        screen=reputation_check, denylist=denylist,
-                                       min_anonymity=args.min_anonymity), args.stop_file))
+                                       min_anonymity=args.min_anonymity, protocol=args.protocol,
+                                       max_latency=args.max_latency or None, countries=countries,
+                                       country_of=country_of, want=args.want), args.stop_file))
         elif args.command == 'export':
             profile = (args.data / 'last-profile.txt').read_text(encoding='utf-8').strip()
     except (KeyboardInterrupt, asyncio.CancelledError):
@@ -1285,7 +1477,9 @@ def main(argv=None):
                 try:
                     report = export(db, profile, args.data / 'exports', top=args.top,
                                     sort=args.sort, min_success=args.min_success, denylist=denylist,
-                                    local_override=args.local_denylist, min_anonymity=args.min_anonymity)
+                                    local_override=args.local_denylist, min_anonymity=args.min_anonymity,
+                                    protocol=args.protocol, max_latency=args.max_latency or None,
+                                    countries=countries, country_of=country_of)
                 except Exception as exc:
                     if not code:
                         print(f'Ошибка экспорта: {type(exc).__name__}: проверьте data/ и denylist.', file=sys.stderr)
