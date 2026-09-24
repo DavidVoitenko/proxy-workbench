@@ -4,6 +4,24 @@
 
 ## [Unreleased]
 
+## [2.2.0] — 2026-09-24
+
+### Added
+
+- **Recommended sort** (now the default) combines four signals:
+  - quality;
+  - survival across re-checks;
+  - how rare a proxy is across lists: an address offered by one niche list is less crowded than one in twenty lists;
+  - the track record of the list it came from.
+
+  Exports gain `listed_in` and `recommended`.
+- **`proxy-workbench get`** prints working proxies from the latest export for shell scripts (`--protocol`, `--country`, `--top`, `--random`, `--format txt|hostport|json`, `--no-hosting`).
+- **`proxy-workbench test PROXY…`** checks your own proxies against the usual targets without storing anything.
+- **sing-box config:** `singbox.json` in every export and `/singbox` in the API.
+- **Use in Telegram** button for the rotating proxy (opens `tg://socks` with its address).
+- The results table follows a running check every few seconds.
+- Settings can be saved to a file and loaded back (Help tab).
+
 ## [2.1.0] — 2026-09-24
 
 ### Added

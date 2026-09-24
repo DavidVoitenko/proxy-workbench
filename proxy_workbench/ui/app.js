@@ -13,6 +13,7 @@ let offset = 0;
 let currentTab = 'scan';
 let lastFinished = null;
 let lastExportAt = null;
+let lastLiveReload = 0;
 let toastTimer;
 let polling = false;
 let resultBusy = false;
@@ -229,6 +230,14 @@ const messages = {
     'presets.label': 'Or add a ready-made check',
     'presets.choose': 'Choose a service…',
     'presets.added': 'Added a check for {name}. A proxy must pass every service in the list.',
+    'gateway.telegram': 'Use in Telegram',
+    'sort.recommended': 'Recommended: quality, survival, rare lists, trusted sources',
+    'results.byRecommended': 'Recommended',
+    'settings.export': 'Save settings to a file',
+    'settings.import': 'Load settings from a file',
+    'settings.importHint': 'Replaces the current settings with a saved file',
+    'toast.settingsImported': 'Settings loaded and saved.',
+    'toast.settingsBad': 'This file does not contain Proxy Workbench settings.',
     'gateway.label': 'Rotating proxy for browsers and apps:',
     'gateway.hint': 'Set it as an HTTP or SOCKS5 proxy anywhere. Every new connection goes through the next working proxy from the latest export; failed ones are skipped automatically.',
     'gateway.stats': '{proxies} in rotation · {connections} connections',
@@ -580,6 +589,14 @@ const messages = {
     'presets.label': 'Или добавьте готовую проверку',
     'presets.choose': 'Выберите сервис…',
     'presets.added': 'Добавлена проверка {name}. Прокси должен пройти все сервисы из списка.',
+    'gateway.telegram': 'Открыть в Telegram',
+    'sort.recommended': 'Рекомендуемые: качество, живучесть, редкие списки, надёжные источники',
+    'results.byRecommended': 'Рекомендуемые',
+    'settings.export': 'Сохранить настройки в файл',
+    'settings.import': 'Загрузить настройки из файла',
+    'settings.importHint': 'Заменяет текущие настройки сохранёнными в файле',
+    'toast.settingsImported': 'Настройки загружены и сохранены.',
+    'toast.settingsBad': 'В этом файле нет настроек Proxy Workbench.',
     'gateway.label': 'Ротирующий прокси для браузера и программ:',
     'gateway.hint': 'Укажите его как HTTP- или SOCKS5-прокси где угодно. Каждое новое соединение идёт через следующий рабочий прокси из последнего экспорта; неработающие пропускаются автоматически.',
     'gateway.stats': 'в ротации {proxies} · соединений {connections}',
@@ -1177,6 +1194,8 @@ function renderState(value) {
   $('gateway-line').classList.toggle('hidden', !value.gateway);
   if (value.gateway) {
     $('gateway-address').textContent = value.gateway.address;
+    const [gatewayHost, gatewayPort] = value.gateway.address.split(':');
+    $('telegram-gateway').href = `tg://socks?server=${encodeURIComponent(gatewayHost)}&port=${encodeURIComponent(gatewayPort)}`;
     $('gateway-stats').textContent = t('gateway.stats', {proxies:fmt(value.gateway.proxies), connections:fmt(value.gateway.connections)});
   }
   $('api-example').textContent = value.api ? `${value.api}/random?protocol=socks5&format=txt` : '';
@@ -1184,6 +1203,11 @@ function renderState(value) {
   const report = progress.sources ? progress : value.sources || {};
   renderSources(report, value.source_urls || [], value.source_keys || [], (value.export || {}).source_quality || {});
   const finished = job.id && !value.running ? job.id : null;
+  // While a check runs, the open results table follows it every few seconds.
+  if (value.running && progress.phase === 'scanning' && currentTab === 'results' && Date.now() - lastLiveReload > 5000) {
+    lastLiveReload = Date.now();
+    loadResults();
+  }
   // In keep-fresh mode the job never finishes; reload the table whenever a new export lands.
   const exportedAt = exportReport.generated_at || null;
   if (exportedAt && lastExportAt && exportedAt !== lastExportAt && !finished) loadResults();
@@ -1339,6 +1363,27 @@ $('copy-page').onclick = async () => {
     toast(t('toast.copied', {count:fmt(proxies.length)}));
   } catch {
     toast(t('toast.copyFailed'), true);
+  }
+};
+$('export-settings').onclick = () => {
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(new Blob([JSON.stringify(getSettings(), null, 2)], {type:'application/json'}));
+  link.download = 'proxy-workbench-settings.json';
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+};
+$('import-settings').onchange = async event => {
+  const file = event.target.files[0];
+  event.target.value = '';
+  if (!file) return;
+  try {
+    let parsed;
+    try { parsed = JSON.parse(await file.text()); } catch { throw new Error(t('toast.settingsBad')); }
+    if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.targets)) throw new Error(t('toast.settingsBad'));
+    fill(await api('/api/settings', {...settings, ...parsed}));
+    toast(t('toast.settingsImported'));
+  } catch (error) {
+    toast(error.message, true);
   }
 };
 $('copy-gateway').onclick = async () => {

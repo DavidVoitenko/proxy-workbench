@@ -53,6 +53,8 @@ def public_source(value):
 
 
 RESULT_ORDERS = {
+    # Re-sorted in Python by the recommended score; SQL only gives a stable start.
+    'recommended': "json_extract(payload,'$.score') DESC, proxy",
     'quality': "json_extract(payload,'$.score') DESC, json_extract(payload,'$.latency_ms'), proxy",
     'speed': "json_extract(payload,'$.latency_ms'), json_extract(payload,'$.reliability') DESC, proxy",
     'stability': "json_extract(payload,'$.jitter_ms'), json_extract(payload,'$.latency_ms'), proxy",
@@ -66,7 +68,7 @@ PRUNE_MIN_CHECKED = 20
 # The UI translates the scanner's log itself, so the scanner always writes Russian here.
 CHILD_ENV = dict(os.environ, PROXY_WORKBENCH_LANG='ru', PYTHONUNBUFFERED='1', PYTHONUTF8='1', PYTHONIOENCODING='utf-8')
 DOWNLOADS = ('proxies.txt', 'ranked.csv', 'ranked.json', *core.PROTOCOL_EXPORTS.values(), 'hostport.txt', 'proxychains.txt',
-             'proxy.pac', 'clash.yaml')
+             'proxy.pac', 'clash.yaml', 'singbox.json')
 
 
 def public_sources(values):
@@ -78,7 +80,7 @@ def defaults():
                              contains='Example Domain', headers={}, method='GET')],
                 sources=json.loads((ROOT/'sources.json').read_text(encoding='utf-8')), use_sources=True,
                 proxies='', attempts=3, timeout=8, workers=128, rate=100,
-                max_bytes=1048576, source_timeout=60, min_success=2/3, top=0, sort='quality',
+                max_bytes=1048576, source_timeout=60, min_success=2/3, top=0, sort='recommended',
                 request_profile='workbench', denylist='',
                 reputation=dict(local_enabled=True, dnsbl_enabled=False, dnsbl_zones=[],
                                 timeout=2.5, strict=False),
@@ -469,7 +471,8 @@ class App:
         if not profile_path.exists() or not (self.data/'proxies.sqlite3').exists():
             return dict(rows=[], total=0, targets=[], profile=None)
         profile = profile_path.read_text(encoding='utf-8').strip()
-        order = RESULT_ORDERS.get(query.get('sort', ['quality'])[0])
+        sort = query.get('sort', ['quality'])[0]
+        order = RESULT_ORDERS.get(sort)
         try:
             threshold = float(query.get('min_success', [2/3])[0])
             offset = max(0, int(query.get('offset', ['0'])[0]))
@@ -507,6 +510,15 @@ class App:
                     active_denylist = denylist if local_enabled else None
                     if active_denylist is not None and active_denylist.error:
                         raise ValueError('Не удалось прочитать локальный denylist; обновите список.')
+                    recommended = None
+                    if sort == 'recommended':
+                        exported = read_json(self.data/'exports/status.json', {})
+                        try:
+                            sources = dict(db.execute('SELECT proxy, source FROM candidate_meta WHERE source IS NOT NULL'))
+                        except sqlite3.Error:
+                            sources = {}
+                        recommended = core.recommender(exported.get('source_quality'), core.listed_counts(db), sources, threshold)
+                        ranked = []
                     condition = "profile=? AND json_extract(payload,'$.min_target_reliability')>0 AND json_extract(payload,'$.min_target_reliability')+1e-12>=?"
                     total = 0
                     rows = []
@@ -520,6 +532,11 @@ class App:
                             continue
                         if search and search not in row.get('proxy', '').lower():
                             continue
+                        if recommended is not None:
+                            row.pop('samples', None)
+                            ranked.append((-recommended(row), row['proxy'], row))
+                            total += 1
+                            continue
                         if total >= offset and len(rows) < 50:
                             summary = dict(row)
                             summary.pop('samples', None)
@@ -528,6 +545,16 @@ class App:
                             summary['provider'] = provider_of(row['proxy']) if provider_of else None
                             rows.append(summary)
                         total += 1
+                    if recommended is not None:
+                        ranked.sort(key=lambda item: item[:2])
+                        for score, _, row in ranked[offset:offset + 50]:
+                            summary = dict(row)
+                            summary.pop('samples', None)
+                            summary['recommended'] = -score
+                            summary['country'] = core.row_country(row, country_of)
+                            summary['exit_country'] = core.exit_country(row, country_of)
+                            summary['provider'] = provider_of(row['proxy']) if provider_of else None
+                            rows.append(summary)
                     targets = [dict(name=t.get('name',''), url=core.public_url(t['url'])) for t in cfg.get('targets', [])]
                     return dict(rows=rows, total=total, profile=profile, targets=targets, offset=offset,
                                 request_profile=cfg.get('request_profile', 'workbench'),

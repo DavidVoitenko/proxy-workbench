@@ -420,6 +420,8 @@ def open_db(path):
         CREATE TABLE IF NOT EXISTS candidates(proxy TEXT PRIMARY KEY);
         CREATE TABLE IF NOT EXISTS candidate_meta(proxy TEXT PRIMARY KEY, country TEXT);
         CREATE TABLE IF NOT EXISTS profiles(id TEXT PRIMARY KEY, config TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS candidate_seen(proxy TEXT NOT NULL, source TEXT NOT NULL,
+            PRIMARY KEY(proxy, source)) WITHOUT ROWID;
         CREATE TABLE IF NOT EXISTS results(
             profile TEXT NOT NULL, proxy TEXT NOT NULL, payload TEXT NOT NULL,
             PRIMARY KEY(profile, proxy));
@@ -516,6 +518,9 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
         db.execute('INSERT OR IGNORE INTO candidates VALUES (?)', (proxy,))
         if not (isinstance(country, str) and geoip.COUNTRY_CODE.fullmatch(country.upper())):
             country = None
+        if source:
+            # How many lists offer an address: rare ones are less crowded and tend to live longer.
+            db.execute('INSERT OR IGNORE INTO candidate_seen VALUES (?, ?)', (proxy, source))
         if country or source:
             # The first source that delivered an address keeps the credit.
             db.execute('''INSERT INTO candidate_meta(proxy, country, source) VALUES (?, ?, ?)
@@ -1279,13 +1284,14 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
     return profile
 
 
-SORTS = ('quality', 'speed', 'stability', 'uptime', 'bandwidth')
+SORTS = ('recommended', 'quality', 'speed', 'stability', 'uptime', 'bandwidth')
 EXPORT_ORDERS = {
     'quality': 'e.score DESC, e.latency, e.proxy',
     'speed': 'e.latency, e.reliability DESC, e.proxy',
     'stability': 'e.jitter, e.latency, e.proxy',
     'uptime': 'e.uptime DESC, e.checks DESC, e.score DESC, e.proxy',
     'bandwidth': 'e.bandwidth IS NULL, e.bandwidth DESC, e.score DESC, e.proxy',
+    'recommended': 'e.recommended DESC, e.score DESC, e.proxy',
 }
 # Ready-made formats for other tools, next to the per-protocol host:port lists.
 PROXYCHAINS_TYPES = {'http': 'http', 'socks4': 'socks4', 'socks5': 'socks5'}
@@ -1314,6 +1320,33 @@ def exit_country(row, country_of=None):
     if not address or not country_of:
         return None
     return country_of(f'http://[{address}]:1' if ':' in address else f'http://{address}:1')
+
+
+def listed_counts(db):
+    """How many distinct lists offered each address (databases before 2.2 have no record: 1)."""
+    try:
+        return dict(db.execute('SELECT proxy, count(*) FROM candidate_seen GROUP BY proxy'))
+    except sqlite3.Error:
+        return {}
+
+
+def recommender(source_quality, listed, sources, min_success=2/3):
+    """Recommended score: quality, survival across re-checks, rarity across lists and the source's record.
+
+    A proxy offered by one list is used by fewer people than one in twenty lists; a list whose
+    proxies keep working earns trust. Both only reorder proxies that already passed.
+    """
+    rates = {key: (stats.get('passed', 0) + 1) / (stats.get('checked', 0) + 10)
+             for key, stats in (source_quality or {}).items()}
+    best = max(rates.values(), default=0) or 1
+
+    def score(row):
+        history = row_history(row, min_success)
+        uptime = history['passes'] / history['checks'] if history['checks'] else 0
+        rarity = 1 / math.sqrt(max(1, listed.get(row['proxy'], 1)))
+        source = rates.get(sources.get(row['proxy']), best / 2) / best
+        return round((row.get('score') or 0) * (0.5 + 0.5 * uptime) * (0.5 + 0.5 * rarity) * (0.5 + 0.5 * source), 5)
+    return score
 
 
 def provider_resolver(asn_db):
@@ -1385,13 +1418,14 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
     # Keep full samples on disk, including when hundreds of thousands pass.
     db.execute('DROP TABLE IF EXISTS temp.export_rank')
     db.execute('CREATE TEMP TABLE export_rank(proxy TEXT PRIMARY KEY, score REAL, latency REAL, reliability REAL, '
-               'jitter REAL, uptime REAL, checks INTEGER, bandwidth REAL)')
+               'jitter REAL, uptime REAL, checks INTEGER, bandwidth REAL, recommended REAL)')
     checked = passed = local_filtered = 0
     sources = dict(db.execute('SELECT proxy, source FROM candidate_meta WHERE source IS NOT NULL'))
     source_quality = {}
     status_counts = {'clean': 0, 'listed': 0, 'unknown': 0, 'local_denied': 0}
     anonymity_counts = {}
     breakdown = {'protocols': {}, 'countries': {}}
+    recommend_later = []
     for (payload,) in db.execute('SELECT payload FROM results WHERE profile=?', (profile,)):
         row = json.loads(payload)
         checked += 1
@@ -1409,21 +1443,28 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
             history = row_history(row, min_success)
             for group, value in (('protocols', proxy_protocol(row['proxy'])), ('countries', row_country(row, country_of) or '??')):
                 breakdown[group][value] = breakdown[group].get(value, 0) + 1
-            db.execute('INSERT INTO export_rank VALUES (?,?,?,?,?,?,?,?)',
+            db.execute('INSERT INTO export_rank VALUES (?,?,?,?,?,?,?,?,NULL)',
                        (row['proxy'], row['score'], row['latency_ms'], row['reliability'], row.get('jitter_ms'),
                         history['passes'] / history['checks'], history['checks'], (row.get('speed') or {}).get('mbps')))
+            recommend_later.append(row)
             passed += 1
         quality = source_quality.setdefault(sources.get(row.get('proxy'), 'unknown'), {'checked': 0, 'passed': 0})
         quality['checked'] += 1
         quality['passed'] += int(eligible)
+    # Source records are complete only after the loop, so recommended scores come second.
+    listed = listed_counts(db)
+    recommended = recommender(source_quality, listed, sources, min_success)
+    db.executemany('UPDATE export_rank SET recommended=? WHERE proxy=?',
+                   ((recommended(row), row['proxy']) for row in recommend_later))
+    recommend_later.clear()
     order = EXPORT_ORDERS[sort]
     selected = db.execute(f"""SELECT r.payload FROM export_rank e JOIN results r
         ON r.proxy=e.proxy AND r.profile=? ORDER BY {order} LIMIT ?""", (profile, top or -1))
     fields = ['proxy', 'score', 'latency_ms', 'jitter_ms', 'reliability', 'min_target_reliability',
               'successes', 'requests', 'checked_at', 'reputation_status', 'reputation_sources',
-              'anonymity', 'anonymity_signals', 'country', 'exit_ip', 'exit_country', 'asn', 'provider', 'hosting', 'mbps', 'checks', 'passes']
+              'anonymity', 'anonymity_signals', 'country', 'exit_ip', 'exit_country', 'asn', 'provider', 'hosting', 'mbps', 'listed_in', 'recommended', 'checks', 'passes']
     names = ['proxies.txt', 'ranked.json', 'ranked.csv', *PROTOCOL_EXPORTS.values(), 'hostport.txt', 'proxychains.txt',
-             'proxy.pac', 'clash.yaml']
+             'proxy.pac', 'clash.yaml', 'singbox.json']
     best = []
     exported = 0
     try:
@@ -1449,6 +1490,8 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
                 judged = row.get('anonymity') or {}
                 row['country'] = row_country(row, country_of) or ''
                 row['exit_ip'] = judged.get('exit_ip', '')
+                row['listed_in'] = listed.get(row['proxy'], 1)
+                row['recommended'] = recommended(row)
                 row['exit_country'] = exit_country(row, country_of) or ''
                 provider = (provider_of(row['proxy']) if provider_of else None) or {}
                 row['asn'], row['provider'], row['hosting'] = provider.get('asn'), provider.get('org'), provider.get('hosting')
@@ -1472,6 +1515,7 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
             js.write('\n]\n')
         (generation/'proxy.pac').write_text(formats.pac(row['proxy'] for row in best), encoding='utf-8')
         (generation/'clash.yaml').write_text(formats.clash(best), encoding='utf-8')
+        (generation/'singbox.json').write_text(formats.singbox(best), encoding='utf-8')
         total = db.execute('SELECT count(*) FROM candidates').fetchone()[0]
         report = dict(profile=profile, candidates=total, checked=checked, pending=total-checked,
                       passed=passed, local_filtered=local_filtered, exported=exported, complete=checked == total,
@@ -1508,6 +1552,8 @@ EPILOG_EN = """examples:
   run --want 20 --country DE,NL --protocol socks5   20 working German/Dutch SOCKS5 proxies, fast
   run --url https://example.org/health              check against your own service
   run --want 50 --watch 30                          find 50 and re-check them every 30 minutes
+  get --protocol socks5 --country DE --top 5        print 5 working German SOCKS5 proxies
+  test socks5://203.0.113.7:1080 --url https://example.org/   check your own proxies
   serve                                             API on http://127.0.0.1:8765
   gateway --protocol socks5 --country DE            rotating proxy on 127.0.0.1:8899 (HTTP and SOCKS5)
 
@@ -1516,6 +1562,8 @@ EPILOG_RU = """примеры:
   run --want 20 --country DE,NL --protocol socks5   быстро найти 20 рабочих SOCKS5 из Германии/Нидерландов
   run --url https://example.org/health              проверить на своём сервисе
   run --want 50 --watch 30                          найти 50 и перепроверять их каждые 30 минут
+  get --protocol socks5 --country DE --top 5        вывести 5 рабочих SOCKS5 из Германии
+  test socks5://203.0.113.7:1080 --url https://example.org/   проверить свои прокси
   serve                                             API на http://127.0.0.1:8765
   gateway --protocol socks5 --country DE            ротирующий прокси на 127.0.0.1:8899 (HTTP и SOCKS5)
 
@@ -1528,15 +1576,22 @@ def parser():
     p = argparse.ArgumentParser(prog=prog, formatter_class=argparse.RawDescriptionHelpFormatter, epilog=tr(EPILOG_RU, EPILOG_EN),
                                 description=tr(f'{PRODUCT_NAME}: сбор и полная проверка публичных прокси под HTTP-сервис', f'{PRODUCT_NAME}: collect public proxies and fully check them against your HTTP services'))
     p.add_argument('--version', action='version', version=f'{PRODUCT_NAME} {PRODUCT_VERSION}')
-    p.add_argument('command', choices=['collect', 'scan', 'run', 'export', 'serve', 'gateway', 'clear-data', 'update-geoip'],
+    p.add_argument('command', choices=['collect', 'scan', 'run', 'export', 'get', 'test', 'serve', 'gateway', 'clear-data', 'update-geoip'],
                    help=tr('run — собрать и проверить; collect — только собрать; scan — только проверить; '
-                           'export — пересобрать файлы; serve — локальное API; gateway — ротирующий прокси; '
+                           'export — пересобрать файлы; get — вывести готовые прокси; test — проверить свои прокси; '
+                           'serve — локальное API; gateway — ротирующий прокси; '
                            'update-geoip — база стран; '
                            'clear-data — удалить результаты',
                            'run: collect and check; collect: only collect; scan: only check; '
-                           'export: rebuild the files; serve: local API; gateway: rotating proxy; '
+                           'export: rebuild the files; get: print working proxies; test: check given proxies; '
+                           'serve: local API; gateway: rotating proxy; '
                            'update-geoip: country database; '
                            'clear-data: delete results'))
+    p.add_argument('items', nargs='*', metavar='PROXY',
+                   help=tr('test: прокси для проверки, например socks5://1.2.3.4:1080', 'test: proxies to check, e.g. socks5://1.2.3.4:1080'))
+    p.add_argument('--format', choices=['txt', 'hostport', 'json'], default='txt',
+                   help=tr('get: формат вывода', 'get: output format'))
+    p.add_argument('--random', action='store_true', help=tr('get: в случайном порядке', 'get: in random order'))
     p.add_argument('--yes', action='store_true', help=tr('подтвердить удаление локальных результатов', 'confirm deleting local results'))
     p.add_argument('--progress-file', type=Path, help=argparse.SUPPRESS)
     p.add_argument('--stop-file', type=Path, help=argparse.SUPPRESS)
@@ -1608,11 +1663,13 @@ def parser():
     p.add_argument('--watch', type=float, default=0,
                    help=tr('после проверки перепроверять рабочие прокси каждые N минут и обновлять экспорт; 0 — выключено', 'after the scan, re-check working proxies every N minutes and refresh the export; 0 = off'))
     p.add_argument('--top', type=int, default=0, help=tr('сколько сохранить; 0 — все прошедшие', 'how many to save; 0 = all that pass'))
-    p.add_argument('--sort', choices=list(SORTS), default='quality',
+    p.add_argument('--sort', choices=list(SORTS), default='recommended',
                    help=tr('quality: стабильность + скорость; speed: задержка; stability: разброс; uptime: живучесть; '
-                           'bandwidth: Мбит/с (нужен --speedtest-url)',
+                           'bandwidth: Мбит/с (нужен --speedtest-url); recommended: качество + живучесть + '
+                           'редкость в списках + надёжность источника',
                            'quality: reliability + speed; speed: latency; stability: jitter; uptime: survived re-checks; '
-                           'bandwidth: Mbit/s (needs --speedtest-url)'))
+                           'bandwidth: Mbit/s (needs --speedtest-url); recommended: quality + survival + '
+                           'rarity across lists + source track record'))
     p.add_argument('--protocol', choices=list(PROTOCOLS), default='all', help=tr('экспортировать только этот протокол', 'check and export only this protocol'))
     p.add_argument('--max-latency', type=float, default=0, help=tr('максимальная медианная задержка, мс; 0 — без ограничения', 'maximum median latency, ms; 0 = no limit'))
     p.add_argument('--country', default='', help=tr('только эти страны (ISO-коды через запятую, например DE,NL); '
@@ -1747,6 +1804,60 @@ def run_gateway(args, countries):
     return 0
 
 
+def print_proxies(args, countries):
+    """Working proxies from the latest export for shell scripts; like serve, no data lock."""
+    from . import api
+    rows, _ = api.Exports(args.data / 'exports').load()
+    query = dict(protocol=args.protocol, countries=countries, anonymity=args.min_anonymity,
+                 max_latency=args.max_latency, min_mbps=0, hosting='0' if args.no_hosting else '')
+    selected = api.select(rows, query)
+    if args.random:
+        random.shuffle(selected)
+    if args.top:
+        selected = selected[:args.top]
+    if not selected:
+        print(tr('Нет подходящих прокси: запустите проверку или ослабьте фильтры.',
+                 'No matching proxies: run a check or relax the filters.'), file=sys.stderr)
+        return 1
+    if args.format == 'json':
+        print(json.dumps(selected, ensure_ascii=False, indent=1))
+    else:
+        for row in selected:
+            print(row['proxy'] if args.format == 'txt' else row['proxy'].partition('://')[2])
+    return 0
+
+
+def test_proxies(args):
+    """Check proxies given on the command line against the usual targets; nothing is stored."""
+    proxies = []
+    for value in args.items:
+        proxy = normalize(value)
+        if not proxy:
+            print(tr(f'Пропущено: {value} (нужен публичный IP и порт)', f'Skipped: {value} (a public IP and port are needed)'),
+                  file=sys.stderr)
+            continue
+        proxies.append(proxy)
+    if not proxies:
+        print(tr('Укажите прокси, например: test socks5://203.0.113.7:1080', 'Give proxies, e.g.: test socks5://203.0.113.7:1080'),
+              file=sys.stderr)
+        return 2
+    config = target_config(args)
+
+    async def run():
+        rate = Rate(args.rate)
+        return await asyncio.gather(*(check_proxy(proxy, config, rate) for proxy in proxies))
+    passed = 0
+    for row in asyncio.run(run()):
+        ok = result_allowed(row, args.min_success)
+        passed += ok
+        latency = f"{row['latency_ms']:.0f} ms" if row.get('latency_ms') is not None else '—'
+        errors = sorted({sample['error'] for sample in row['samples'] if sample.get('error')})
+        speed = f"; {row['speed']['mbps']} Mbit/s" if (row.get('speed') or {}).get('mbps') else ''
+        print(f"{'OK  ' if ok else 'FAIL'} {row['proxy']}  {row['successes']}/{row['requests']}  {latency}{speed}"
+              + (f"  {', '.join(errors)}" if errors else ''))
+    return 0 if passed == len(proxies) else 1
+
+
 def main(argv=None):
     utf8_output()
     p = parser()
@@ -1775,6 +1886,10 @@ def main(argv=None):
         return serve(args)
     if args.command == 'gateway':
         return run_gateway(args, countries)
+    if args.command == 'get':
+        return print_proxies(args, countries)
+    if args.command == 'test':
+        return test_proxies(args)
     denylist_path = args.denylist_file or args.data / 'denylist.txt'
     denylist = Denylist.from_file(denylist_path, normalizer=normalize)
     collect_denylist = Denylist.empty() if args.local_denylist is False else denylist

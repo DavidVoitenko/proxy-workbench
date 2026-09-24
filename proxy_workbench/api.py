@@ -31,6 +31,7 @@ ENDPOINTS = {
     '/random': 'random working proxies (limit, default 1); same filters',
     '/pac': 'proxy auto-config for browsers with the best matching proxies; same filters',
     '/clash': 'Clash / Mihomo config with the best matching proxies; same filters',
+    '/singbox': 'sing-box config with the best matching proxies; same filters',
     '/status': 'summary of the latest export',
 }
 
@@ -212,7 +213,7 @@ def make_api_server(data, host='127.0.0.1', port=DEFAULT_PORT, token=None):
                     'checked': status.get('checked'), 'candidates': status.get('candidates'),
                     'sort': status.get('sort'), 'targets': status.get('targets', []),
                     'endpoints': ENDPOINTS})
-            if url.path not in ('/proxies', '/random', '/pac', '/clash'):
+            if url.path not in ('/proxies', '/random', '/pac', '/clash', '/singbox'):
                 return self.send_json(404, {'error': 'not found', 'endpoints': ENDPOINTS})
             try:
                 query = parse_query(url.query)
@@ -224,6 +225,8 @@ def make_api_server(data, host='127.0.0.1', port=DEFAULT_PORT, token=None):
                                  'application/x-ns-proxy-autoconfig')
             if url.path == '/clash':
                 return self.send(200, formats.clash(selected), 'text/yaml; charset=utf-8')
+            if url.path == '/singbox':
+                return self.send(200, formats.singbox(selected), 'application/json; charset=utf-8')
             if url.path == '/random':
                 selected = random.sample(selected, min(len(selected), query['limit'] or 1))
             elif query['limit']:
