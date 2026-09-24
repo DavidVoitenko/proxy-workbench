@@ -945,19 +945,22 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
 
     done = {proxy for (proxy,) in db.execute('SELECT proxy FROM results WHERE profile=?', (profile,))}
     pending, total, completed = [], 0, 0
-    for (proxy,) in db.execute('SELECT proxy FROM candidates'):
+    for (proxy,) in db.execute('SELECT proxy FROM candidates ORDER BY proxy'):
         if selected(proxy):
             total += 1
             if proxy in done:
                 completed += 1
             else:
                 pending.append(proxy)
-    # Addresses that already worked in another profile first, the rest shuffled
-    # so early results are not all from one subnet or source.
+    # Addresses that already worked in another profile go first. In find-N mode
+    # the rest is shuffled so early results are not all from one subnet or
+    # source; a full sweep keeps key order, because random inserts into a large
+    # results index make SQLite commits much slower (worst on Windows).
     proven = {proxy for (proxy,) in db.execute(
         "SELECT DISTINCT proxy FROM results WHERE profile<>? AND json_extract(payload,'$.min_target_reliability')>0",
         (profile,))}
-    random.shuffle(pending)
+    if want:
+        random.shuffle(pending)
     pending.sort(key=lambda proxy: proxy not in proven)
     passed = 0
     status_counts = {'clean': 0, 'listed': 0, 'unknown': 0, 'local_denied': 0}
