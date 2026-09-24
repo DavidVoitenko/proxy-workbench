@@ -125,7 +125,7 @@ class ConfigTests(unittest.TestCase):
         clean = gui.validate(dict(gui.defaults(), protocol='socks5', max_latency=1500, sort='stability', fail_fast=False))
         self.assertEqual((clean['protocol'], clean['max_latency'], clean['sort'], clean['fail_fast']),
                          ('socks5', 1500, 'stability', False))
-        for bad in (dict(protocol='socks4'), dict(max_latency=-1), dict(sort='random'), dict(fail_fast='yes'),
+        for bad in (dict(protocol='ftp'), dict(max_latency=-1), dict(sort='random'), dict(fail_fast='yes'),
                     dict(connect_timeout=0)):
             with self.assertRaises(ValueError):
                 gui.validate(dict(gui.defaults(), **bad))
@@ -210,7 +210,7 @@ class GuiSelectionTests(unittest.TestCase):
         self.assertEqual(self.proxies('protocol=http'), ['http://11.0.0.1:8080'])
         self.assertEqual(self.proxies('max_latency=500'), ['socks5://11.0.0.2:1080'])
         self.assertEqual(self.proxies('q=8080'), ['http://11.0.0.1:8080'])
-        for bad in ('sort=random', 'protocol=socks4', 'max_latency=-5'):
+        for bad in ('sort=random', 'protocol=ftp', 'max_latency=-5'):
             self.assertEqual(self.client.get('/api/results?' + bad).status_code, 400)
 
 

@@ -352,7 +352,7 @@ class WorkbenchTests(unittest.IsolatedAsyncioTestCase):
 
     def test_normalization(self):
         self.assertEqual(p.normalize('https://11.1.1.1:80'), 'https://11.1.1.1:80')
-        for raw in ['socks4://11.1.1.1:80', '11.1.1.1:99999', 'http://u:p@11.1.1.1:80', '127.0.0.1:80', '11.1.1.1:80/a']:
+        for raw in ['ftp://11.1.1.1:80', '11.1.1.1:99999', 'http://u:p@11.1.1.1:80', '127.0.0.1:80', '11.1.1.1:80/a']:
             self.assertIsNone(p.normalize(raw))
 
 

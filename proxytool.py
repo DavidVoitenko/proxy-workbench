@@ -32,10 +32,12 @@ from reputation import Denylist, make_policy, result_allowed, screen_proxy, verd
 from maintenance import clear_runtime, exclusive_lock
 import anonymity
 import geoip
+import socks4
+from i18n import tr
 
 ROOT = Path(__file__).resolve().parent
 TLS = ssl.create_default_context()
-SCHEMES = {'http', 'https', 'socks5', 'socks5h'}
+SCHEMES = {'http', 'https', 'socks4', 'socks5', 'socks5h'}
 SAFE_TARGET_HEADERS = {'accept', 'accept-encoding', 'accept-language', 'cache-control', 'pragma', 'user-agent', 'x-client-version', 'x-request-id'}
 
 # Source fetching is deliberately bounded before a response is handed to a parser.
@@ -313,7 +315,7 @@ def normalize(value):
         if p.path not in ('', '/') or p.query or p.fragment or not p.port:
             return None
         ip = ipaddress.ip_address(p.hostname)
-        if not ip.is_global:
+        if not ip.is_global or (p.scheme == 'socks4' and ip.version != 4):
             return None
         host = f'[{ip.compressed}]' if ip.version == 6 else ip.compressed
         # Explicit schemes are authoritative; bare HTTPS/CONNECT lists use http.
@@ -357,7 +359,7 @@ def atomic(path, content):
 
 
 EXPORT_GENERATION_RETENTION = 3
-PROTOCOL_EXPORTS = {'http': 'http.txt', 'https': 'https.txt', 'socks5': 'socks5.txt'}
+PROTOCOL_EXPORTS = {'http': 'http.txt', 'https': 'https.txt', 'socks4': 'socks4.txt', 'socks5': 'socks5.txt'}
 PROTOCOL_ALIASES = {'socks5h': 'socks5'}
 
 
@@ -449,12 +451,24 @@ class Rate:
             self.next = time.monotonic() + self.interval
 
 
+SOURCE_KINDS = ('http', 'https', 'socks4', 'socks5', 'socks5h', 'auto', 'text', 'geonode', 'http-fields')
+DETECT_PROTOCOLS = ('http', 'socks4', 'socks5')
+# ip:port inside free text: "1.2.3.4:8080", "1.2.3.4 8080", CSV and HTML table cells.
+LOOSE_ADDRESS = re.compile(r'(?<![\d.])(?:(https?|socks[45]h?)://)?(\d{1,3}(?:\.\d{1,3}){3})'
+                           r'(?::|\s*(?:</t[dh]>\s*<t[dh][^>]*>|[\s,;|])\s*)(\d{2,5})(?!\d)', re.I)
+
+
+def loose_addresses(line):
+    """Every proxy-looking address in a line of arbitrary text."""
+    return [f'{(scheme or "http").lower()}://{host}:{port}' for scheme, host, port in LOOSE_ADDRESS.findall(line)]
+
+
 def source_spec(value):
     if not isinstance(value, str):
-        raise ValueError('Источник должен быть строкой URL или «socks5 URL» / «geonode URL».')
+        raise ValueError('Источник должен быть строкой URL или «socks4 URL» / «socks5 URL» / «geonode URL».')
     parts = value.strip().split(None, 1)
     kind, url = (parts if len(parts) == 2 else ('http', parts[0] if parts else ''))
-    if kind not in {'http', 'https', 'socks5', 'socks5h', 'geonode', 'http-fields'}:
+    if kind not in SOURCE_KINDS:
         raise ValueError('Неизвестный формат источника.')
     try:
         _parse_source_url(url)
@@ -464,7 +478,7 @@ def source_spec(value):
 
 
 async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
-                  allow_private_sources=False,
+                  allow_private_sources=False, detect_protocols=False,
                   max_source_bytes=DEFAULT_SOURCE_MAX_BYTES,
                   max_source_line_bytes=DEFAULT_SOURCE_MAX_LINE_BYTES,
                   max_source_candidates=DEFAULT_SOURCE_MAX_CANDIDATES,
@@ -508,6 +522,14 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                        (proxy, country and country.upper(), source))
         return 'accepted'
 
+    def add_detected(value, source=None):
+        """Unlabeled addresses are tried as every protocol; the checks show which one works."""
+        value = value.strip()
+        if '://' in value:
+            return add(value, source=source)
+        outcomes = [add(value, protocol, source=source) for protocol in DETECT_PROTOCOLS]
+        return next((o for o in ('accepted', 'blocked') if o in outcomes), 'invalid')
+
     publish()
     for input_index, path in enumerate(inputs, 1):
         count = invalid = blocked = 0
@@ -520,7 +542,7 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                 if count >= max_source_candidates:
                     raise SourceFetchError('SOURCE_CANDIDATE_LIMIT')
                 count += 1
-                outcome = add(line, source='local')
+                outcome = add_detected(line, source='local') if detect_protocols else add(line, source='local')
                 invalid += outcome == 'invalid'
                 blocked += outcome == 'blocked'
         reports.append(dict(input=f'local-input-{input_index}', rows=count, invalid=invalid,
@@ -550,6 +572,15 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
 
             def consume_line(raw):
                 nonlocal count, invalid, blocked
+                if kind == 'text':
+                    # Web pages may use any encoding and are mostly markup: keep only addresses.
+                    for address in loose_addresses(raw.decode('utf-8', errors='replace')):
+                        consume_candidate()
+                        count += 1
+                        outcome = add(address, source=key)
+                        invalid += outcome == 'invalid'
+                        blocked += outcome == 'blocked'
+                    return
                 try:
                     line = raw.decode('utf-8')
                 except UnicodeDecodeError as exc:
@@ -561,6 +592,8 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                 if kind == 'http-fields':
                     match = re.fullmatch(r"(\d{1,3}(?:\.\d{1,3}){3}:\d{1,5}):[A-Za-z][A-Za-z .'-]*", line.strip())
                     outcome = add(match[1], source=key) if match else 'invalid'
+                elif kind == 'auto':
+                    outcome = add_detected(line, source=key)
                 else:
                     outcome = add(line, kind, source=key)
                 invalid += outcome == 'invalid'
@@ -571,7 +604,7 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                 protocols = []
                 if isinstance(record, dict) and isinstance(record.get('protocols', []), list):
                     protocols = [protocol for protocol in record['protocols']
-                                 if protocol in ('http', 'https', 'socks5')]
+                                 if protocol in ('http', 'https', 'socks4', 'socks5')]
                 if endpoint_count + len(protocols) > max_source_candidates:
                     raise SourceFetchError('SOURCE_CANDIDATE_LIMIT')
                 consume_candidate()
@@ -631,6 +664,10 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                             if int(data.get('page', expected_page)) != expected_page:
                                 raise ValueError('Wrong page returned')
                             return data
+                        if kind == 'text':
+                            # Whole page at once: HTML tables often split host and port across lines.
+                            consume_line(await _read_bounded_body(response, budget, max_source_bytes))
+                            return None
                         await _read_bounded_lines(response, budget, max_source_bytes, line_limit, consume_line)
                         return None
                 raise SourceFetchError('SOURCE_REDIRECT_TOO_MANY')
@@ -697,7 +734,8 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                                 attempts=attempts, complete=error is None, error=error, format=kind))
             db.commit()
             publish()
-            print(f'Источник {index}: строк {count}, заблокировано {blocked}, страниц {pages}, ошибка {error or "нет"}', flush=True)
+            print(tr(f'Источник {index}: строк {count}, заблокировано {blocked}, страниц {pages}, ошибка {error or "нет"}',
+                     f'Source {index}: rows {count}, blocked {blocked}, pages {pages}, error {error or "none"}'), flush=True)
         async with asyncio.TaskGroup() as group:
             for index, (kind, url) in enumerate(specs, 1):
                 group.create_task(fetch(index, kind, url))
@@ -789,6 +827,14 @@ def validate_targets(targets, args, request_profile=None, reputation=None, denyl
     return config
 
 
+def proxy_client(proxy, config):
+    """A fresh client for one request through `proxy`; SOCKS4 needs its own transport."""
+    options = dict(trust_env=False, timeout=request_timeout(config), follow_redirects=False)
+    if proxy.startswith('socks4://'):
+        return httpx.AsyncClient(transport=socks4.transport(proxy, verify=TLS), **options)
+    return httpx.AsyncClient(proxy=proxy, verify=TLS, **options)
+
+
 def request_timeout(config):
     """Whole-request timeout with an optional shorter limit for connecting."""
     return httpx.Timeout(config['timeout'], connect=config.get('connect_timeout', config['timeout']))
@@ -801,8 +847,7 @@ async def request_once(proxy, target, config, rate):
     try:
         async with asyncio.timeout(config['timeout']):
             # Fresh connections make samples comparable (including CONNECT/TLS).
-            async with httpx.AsyncClient(proxy=proxy, trust_env=False, verify=TLS,
-                                         timeout=request_timeout(config), follow_redirects=False) as client:
+            async with proxy_client(proxy, config) as client:
                 headers = merge_headers(config.get('request_profile', DEFAULT_REQUEST_PROFILE), target['headers'])
                 async with client.stream(target['method'], target['url'],
                                          headers=headers) as response:
@@ -918,8 +963,7 @@ async def judge_proxy(proxy, config, rate, own_ips):
     headers = merge_headers(config.get('request_profile', DEFAULT_REQUEST_PROFILE))
     try:
         async with asyncio.timeout(config['timeout']):
-            async with httpx.AsyncClient(proxy=proxy, trust_env=False, verify=TLS, timeout=request_timeout(config),
-                                         follow_redirects=False) as client:
+            async with proxy_client(proxy, config) as client:
                 body = await anonymity.fetch_judge(client, config['anonymity']['judge_url'], headers)
     except ValueError as exc:
         return anonymity.result('unknown', error=str(exc), started=started)
@@ -1086,7 +1130,7 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
                              speed=round(speed, 2), eta_seconds=round(eta) if speed else None, workers=workers,
                              reputation=status_counts))
         if progress:
-            print(f'Проверено {completed}/{total}; {speed:.1f} прокси/с; осталось ~{eta / 60:.1f} мин', flush=True)
+            print(tr(f'Проверено {completed}/{total}; {speed:.1f} прокси/с; осталось ~{eta / 60:.1f} мин', f'Checked {completed}/{total}; {speed:.1f} proxies/s; ~{eta / 60:.1f} min left'), flush=True)
 
     async def reporter():
         while True:
@@ -1116,8 +1160,8 @@ EXPORT_ORDERS = {
     'uptime': 'e.uptime DESC, e.checks DESC, e.score DESC, e.proxy',
 }
 # Ready-made formats for other tools, next to the per-protocol host:port lists.
-PROXYCHAINS_TYPES = {'http': 'http', 'socks5': 'socks5'}
-PROTOCOLS = ('all', 'http', 'https', 'socks5')
+PROXYCHAINS_TYPES = {'http': 'http', 'socks4': 'socks4', 'socks5': 'socks5'}
+PROTOCOLS = ('all', 'http', 'https', 'socks4', 'socks5')
 
 
 def row_country(row, country_of=None):
@@ -1290,81 +1334,110 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
     return report
 
 
+EPILOG_EN = """examples:
+  run --want 20 --country DE,NL --protocol socks5   20 working German/Dutch SOCKS5 proxies, fast
+  run --url https://example.org/health              check against your own service
+  run --want 50 --watch 30                          find 50 and re-check them every 30 minutes
+  serve                                             API on http://127.0.0.1:8765
+
+set PROXY_WORKBENCH_LANG=ru for Russian messages."""
+EPILOG_RU = """примеры:
+  run --want 20 --country DE,NL --protocol socks5   быстро найти 20 рабочих SOCKS5 из Германии/Нидерландов
+  run --url https://example.org/health              проверить на своём сервисе
+  run --want 50 --watch 30                          найти 50 и перепроверять их каждые 30 минут
+  serve                                             API на http://127.0.0.1:8765
+
+PROXY_WORKBENCH_LANG=en — сообщения на английском."""
+
+
 def parser():
-    p = argparse.ArgumentParser(description=f'{PRODUCT_NAME}: сбор и полная проверка публичных прокси под HTTP-сервис')
+    p = argparse.ArgumentParser(formatter_class=argparse.RawDescriptionHelpFormatter, epilog=tr(EPILOG_RU, EPILOG_EN),
+                                description=tr(f'{PRODUCT_NAME}: сбор и полная проверка публичных прокси под HTTP-сервис', f'{PRODUCT_NAME}: collect public proxies and fully check them against your HTTP services'))
     p.add_argument('--version', action='version', version=f'{PRODUCT_NAME} {PRODUCT_VERSION}')
-    p.add_argument('command', choices=['collect', 'scan', 'run', 'export', 'serve', 'clear-data', 'update-geoip'])
-    p.add_argument('--yes', action='store_true', help='подтвердить удаление локальных результатов')
+    p.add_argument('command', choices=['collect', 'scan', 'run', 'export', 'serve', 'clear-data', 'update-geoip'],
+                   help=tr('run — собрать и проверить; collect — только собрать; scan — только проверить; '
+                           'export — пересобрать файлы; serve — локальное API; update-geoip — база стран; '
+                           'clear-data — удалить результаты',
+                           'run: collect and check; collect: only collect; scan: only check; '
+                           'export: rebuild the files; serve: local API; update-geoip: country database; '
+                           'clear-data: delete results'))
+    p.add_argument('--yes', action='store_true', help=tr('подтвердить удаление локальных результатов', 'confirm deleting local results'))
     p.add_argument('--progress-file', type=Path, help=argparse.SUPPRESS)
     p.add_argument('--stop-file', type=Path, help=argparse.SUPPRESS)
-    p.add_argument('--data', type=Path, default=ROOT / 'data')
-    p.add_argument('--input', action='append', default=[], help='локальный список прокси; можно повторять')
-    p.add_argument('--sources', type=Path, default=ROOT / 'sources.json', help='JSON-массив URL текстовых списков')
-    p.add_argument('--no-sources', action='store_true')
-    p.add_argument('--source-timeout', type=float, default=60)
+    p.add_argument('--data', type=Path, default=ROOT / 'data',
+                   help=tr('папка для базы, настроек и экспорта', 'folder for the database, settings and exports'))
+    p.add_argument('--input', action='append', default=[], help=tr('локальный список прокси; можно повторять', 'local proxy list file; can be repeated'))
+    p.add_argument('--sources', type=Path, default=ROOT / 'sources.json', help=tr('JSON-массив URL текстовых списков', 'JSON array of source list URLs'))
+    p.add_argument('--detect-protocols', action='store_true',
+                   help=tr('адреса без протокола из --input пробовать как HTTP, SOCKS4 и SOCKS5',
+                           'try addresses without a protocol from --input as HTTP, SOCKS4 and SOCKS5'))
+    p.add_argument('--no-sources', action='store_true', help=tr('не загружать публичные списки', 'do not download public lists'))
+    p.add_argument('--source-timeout', type=float, default=60, help=tr('таймаут загрузки списка, секунд', 'list download timeout, seconds'))
     p.add_argument('--allow-private-sources', action='store_true',
-                   help='разрешить loopback/private/link-local/reserved/metadata источники (только для локальных mock-сервисов)')
+                   help=tr('разрешить loopback/private/link-local/reserved/metadata источники (только для локальных mock-сервисов)', 'allow loopback/private/link-local/reserved/metadata sources (local mock services only)'))
     p.add_argument('--source-max-bytes', '--max-source-bytes', dest='source_max_bytes', type=int,
-                   default=DEFAULT_SOURCE_MAX_BYTES, help='максимум байт одного удалённого источника')
+                   default=DEFAULT_SOURCE_MAX_BYTES, help=tr('максимум байт одного удалённого источника', 'maximum bytes per remote source'))
     p.add_argument('--source-max-line-bytes', '--max-source-line-bytes', dest='source_max_line_bytes', type=int,
-                   default=DEFAULT_SOURCE_MAX_LINE_BYTES, help='максимум байт строки списка')
+                   default=DEFAULT_SOURCE_MAX_LINE_BYTES, help=tr('максимум байт строки списка', 'maximum bytes per list line'))
     p.add_argument('--source-max-candidates', '--max-source-candidates', dest='source_max_candidates', type=int,
-                   default=DEFAULT_SOURCE_MAX_CANDIDATES, help='максимум кандидатов одного источника')
+                   default=DEFAULT_SOURCE_MAX_CANDIDATES, help=tr('максимум кандидатов одного источника', 'maximum candidates per source'))
     p.add_argument('--source-max-redirects', '--max-source-redirects', dest='source_max_redirects', type=int,
-                   default=DEFAULT_SOURCE_MAX_REDIRECTS, help='максимум redirect hops одного запроса')
+                   default=DEFAULT_SOURCE_MAX_REDIRECTS, help=tr('максимум redirect hops одного запроса', 'maximum redirect hops per request'))
     target = p.add_mutually_exclusive_group()
-    target.add_argument('--url', help='свой URL проверки; по умолчанию https://example.com/')
-    target.add_argument('--config', type=Path, help='JSON с targets, HTTP-кодами и проверкой содержимого')
+    target.add_argument('--url', help=tr('свой URL проверки; по умолчанию https://example.com/', 'your URL to check against; default https://example.com/'))
+    target.add_argument('--config', type=Path, help=tr('JSON с targets, HTTP-кодами и проверкой содержимого', 'JSON with targets, status codes and content checks'))
     p.add_argument('--request-profile', choices=sorted(REQUEST_PROFILES), default=None,
-                   help='нейтральный HTTP request-профиль')
-    p.add_argument('--attempts', type=int, default=3)
-    p.add_argument('--timeout', type=float, default=8, help='полный deadline одного запроса, секунд')
+                   help=tr('нейтральный HTTP request-профиль', 'neutral HTTP request profile'))
+    p.add_argument('--attempts', type=int, default=3, help=tr('попыток на каждый сервис', 'attempts per service'))
+    p.add_argument('--timeout', type=float, default=8, help=tr('полный deadline одного запроса, секунд', 'full deadline of one request, seconds'))
     p.add_argument('--connect-timeout', type=float, default=4,
-                   help='лимит на подключение к прокси, секунд; мёртвые адреса отсеиваются быстрее')
+                   help=tr('лимит на подключение к прокси, секунд; мёртвые адреса отсеиваются быстрее', 'limit for connecting to a proxy, seconds; dead addresses are dropped sooner'))
     p.add_argument('--fail-fast', dest='fail_fast', action='store_true', default=True,
-                   help='прекращать попытки, когда прокси уже не может пройти порог (по умолчанию)')
+                   help=tr('прекращать попытки, когда прокси уже не может пройти порог (по умолчанию)', 'stop the attempts once a proxy can no longer pass (default)'))
     p.add_argument('--no-fail-fast', dest='fail_fast', action='store_false',
-                   help='всегда выполнять все попытки')
-    p.add_argument('--workers', type=int, default=128)
-    p.add_argument('--rate', type=float, default=100, help='максимум стартов запросов/с, 0 — без лимита')
-    p.add_argument('--max-bytes', type=int, default=1048576)
-    p.add_argument('--denylist-file', type=Path, default=None, help='локальный IP/CIDR/proxy denylist')
+                   help=tr('всегда выполнять все попытки', 'always run every attempt'))
+    p.add_argument('--workers', type=int, default=128, help=tr('одновременных проверок', 'parallel checks'))
+    p.add_argument('--rate', type=float, default=100, help=tr('максимум стартов запросов/с, 0 — без лимита', 'maximum request starts per second, 0 = unlimited'))
+    p.add_argument('--max-bytes', type=int, default=1048576, help=tr('максимум байт ответа', 'maximum response bytes'))
+    p.add_argument('--denylist-file', type=Path, default=None, help=tr('локальный IP/CIDR/proxy denylist', 'local IP/CIDR/proxy denylist file'))
     p.add_argument('--local-denylist', dest='local_denylist', action='store_true', default=None,
-                   help='применять локальный denylist')
+                   help=tr('применять локальный denylist', 'apply the local denylist'))
     p.add_argument('--no-local-denylist', dest='local_denylist', action='store_false', default=None,
-                   help='не применять локальный denylist')
+                   help=tr('не применять локальный denylist', 'do not apply the local denylist'))
     p.add_argument('--dnsbl', dest='dnsbl', action='store_true', default=None,
-                   help='включить публичные DNSBL-проверки')
+                   help=tr('включить публичные DNSBL-проверки', 'enable public DNSBL checks'))
     p.add_argument('--dnsbl-zone', dest='dnsbl_zones', action='append', default=[],
-                   help='DNSBL-зона; можно указать несколько раз')
-    p.add_argument('--reputation-timeout', type=float, default=None, help='таймаут одной DNSBL-зоны, секунд')
+                   help=tr('DNSBL-зона; можно указать несколько раз', 'DNSBL zone; can be repeated'))
+    p.add_argument('--reputation-timeout', type=float, default=None, help=tr('таймаут одной DNSBL-зоны, секунд', 'timeout per DNSBL zone, seconds'))
     p.add_argument('--strict-clean', dest='strict_clean', action='store_true', default=None,
-                   help='не разрешать прокси с неопределённым DNSBL-результатом')
-    p.add_argument('--judge-url', help='echo-endpoint для проверки анонимности (transparent/anonymous/elite)')
+                   help=tr('не разрешать прокси с неопределённым DNSBL-результатом', 'reject proxies with an unknown DNSBL result'))
+    p.add_argument('--judge-url', help=tr('echo-endpoint для проверки анонимности (transparent/anonymous/elite)', 'echo endpoint for the anonymity check (transparent/anonymous/elite)'))
     p.add_argument('--min-anonymity', choices=anonymity.MIN_LEVELS, default='any',
-                   help='минимальный уровень анонимности для экспорта; нужен --judge-url')
-    p.add_argument('--recheck', action='store_true', help='заново проверить все адреса текущего профиля')
+                   help=tr('минимальный уровень анонимности для экспорта; нужен --judge-url', 'minimum anonymity level for the export; needs --judge-url'))
+    p.add_argument('--recheck', action='store_true', help=tr('заново проверить все адреса текущего профиля', 'check every address of the current profile again'))
     p.add_argument('--recheck-passing', action='store_true',
-                   help='заново проверить только прокси, которые сейчас проходят отбор (быстро освежить список)')
+                   help=tr('заново проверить только прокси, которые сейчас проходят отбор (быстро освежить список)', 're-check only the proxies that currently pass (quick refresh)'))
     p.add_argument('--watch', type=float, default=0,
-                   help='после проверки перепроверять рабочие прокси каждые N минут и обновлять экспорт; 0 — выключено')
-    p.add_argument('--top', type=int, default=0, help='сколько сохранить; 0 — все прошедшие')
+                   help=tr('после проверки перепроверять рабочие прокси каждые N минут и обновлять экспорт; 0 — выключено', 'after the scan, re-check working proxies every N minutes and refresh the export; 0 = off'))
+    p.add_argument('--top', type=int, default=0, help=tr('сколько сохранить; 0 — все прошедшие', 'how many to save; 0 = all that pass'))
     p.add_argument('--sort', choices=list(SORTS), default='quality',
-                   help='quality: стабильность + скорость; speed: задержка; stability: разброс')
-    p.add_argument('--protocol', choices=list(PROTOCOLS), default='all', help='экспортировать только этот протокол')
-    p.add_argument('--max-latency', type=float, default=0, help='максимальная медианная задержка, мс; 0 — без ограничения')
-    p.add_argument('--country', default='', help='только эти страны (ISO-коды через запятую, например DE,NL); '
-                   'другие адреса не проверяются')
+                   help=tr('quality: стабильность + скорость; speed: задержка; stability: разброс', 'quality: reliability + speed; speed: latency; stability: jitter; uptime: survived re-checks'))
+    p.add_argument('--protocol', choices=list(PROTOCOLS), default='all', help=tr('экспортировать только этот протокол', 'check and export only this protocol'))
+    p.add_argument('--max-latency', type=float, default=0, help=tr('максимальная медианная задержка, мс; 0 — без ограничения', 'maximum median latency, ms; 0 = no limit'))
+    p.add_argument('--country', default='', help=tr('только эти страны (ISO-коды через запятую, например DE,NL); '
+                   'другие адреса не проверяются', 'only these countries (ISO codes, e.g. DE,NL); '
+                   'other addresses are not checked'))
     p.add_argument('--want', type=int, default=0,
-                   help='остановиться, когда найдено столько подходящих прокси; 0 — проверить все')
+                   help=tr('остановиться, когда найдено столько подходящих прокси; 0 — проверить все', 'stop once this many matching proxies are found; 0 = check everything'))
     p.add_argument('--geoip-db', type=Path, default=None,
-                   help='CSV-база DB-IP Country Lite; по умолчанию data/geoip/' + geoip.DB_NAME)
-    p.add_argument('--min-success', type=float, default=2/3, help='минимальная доля успехов КАЖДОГО target, 0..1')
-    p.add_argument('--host', default='127.0.0.1', help='serve: адрес локального API; по умолчанию только этот компьютер')
-    p.add_argument('--port', type=int, default=8765, help='serve: порт локального API')
+                   help=tr('CSV-база DB-IP Country Lite; по умолчанию data/geoip/' + geoip.DB_NAME, 'DB-IP Country Lite CSV; default data/geoip/' + geoip.DB_NAME))
+    p.add_argument('--min-success', type=float, default=2/3, help=tr('минимальная доля успехов КАЖДОГО target, 0..1', 'minimum success share for EACH target, 0..1'))
+    p.add_argument('--host', default='127.0.0.1', help=tr('serve: адрес локального API; по умолчанию только этот компьютер', 'serve: API address; default is this computer only'))
+    p.add_argument('--port', type=int, default=8765, help=tr('serve: порт локального API', 'serve: API port'))
     p.add_argument('--api-token', default=os.environ.get('PROXY_WORKBENCH_API_TOKEN') or None,
-                   help='serve: токен доступа к API (или переменная PROXY_WORKBENCH_API_TOKEN); '
-                        'обязателен, если API слушает не loopback-адрес')
+                   help=tr('serve: токен доступа к API (или переменная PROXY_WORKBENCH_API_TOKEN); '
+                        'обязателен, если API слушает не loopback-адрес', 'serve: API access token (or PROXY_WORKBENCH_API_TOKEN); '
+                        'required when the API listens on a non-loopback address'))
     return p
 
 
@@ -1412,16 +1485,16 @@ def serve(args):
     """Read-only HTTP API over the latest export; runs next to scans without the data lock."""
     import api
     if not 0 <= args.port <= 65535:
-        print('Неверный порт API', file=sys.stderr)
+        print(tr('Неверный порт API', 'Invalid API port'), file=sys.stderr)
         return 2
     try:
         server = api.make_api_server(args.data, args.host, args.port, args.api_token)
     except (ValueError, OSError) as exc:
-        print(f'API не запущено: {exc}', file=sys.stderr)
+        print(tr(f'API не запущено: {exc}', f'API not started: {exc}'), file=sys.stderr)
         return 2
     shown = f'[{args.host}]' if ':' in args.host else args.host
     base = f'http://{shown}:{server.server_port}'
-    print(f'API: {base}  (Ctrl+C — остановить)', flush=True)
+    print(tr(f'API: {base}  (Ctrl+C — остановить)', f'API: {base}  (Ctrl+C to stop)'), flush=True)
     print(f'  {base}/proxies?protocol=socks5&country=DE&limit=10&format=txt', flush=True)
     print(f'  {base}/random?max_latency=1500', flush=True)
     try:
@@ -1448,11 +1521,11 @@ def main(argv=None):
             or not 0 <= args.source_max_redirects <= MAX_SOURCE_REDIRECTS
             or not 0 <= args.min_success <= 1 or args.want < 0
             or not math.isfinite(args.watch) or args.watch < 0):
-        p.error('Неверные числовые параметры')
+        p.error(tr('Неверные числовые параметры', 'Invalid numeric options'))
     try:
         countries = geoip.parse_countries(args.country)
     except ValueError as exc:
-        p.error(str(exc))
+        p.error(tr(str(exc), 'Countries: use two-letter ISO codes, for example DE,NL.'))
     os.umask(0o077)
     args.data.mkdir(parents=True, exist_ok=True)
     if args.command == 'serve':
@@ -1471,12 +1544,12 @@ def main(argv=None):
             import fcntl
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
-        print('Эта папка data уже используется другим запуском.', file=sys.stderr)
+        print(tr('Эта папка data уже используется другим запуском.', 'This data folder is already used by another run.'), file=sys.stderr)
         lock.close()
         return 2
     if args.command == 'clear-data':
         if not args.yes:
-            p.error('clear-data требует явного --yes')
+            p.error(tr('clear-data требует явного --yes', 'clear-data needs an explicit --yes'))
         try:
             with exclusive_lock(args.data/'gui-instance.lock'):
                 removed = clear_runtime(args.data, keep_lock=True)
@@ -1484,7 +1557,7 @@ def main(argv=None):
             print(str(exc), file=sys.stderr)
             lock.close()
             return 2
-        print('Удалено: ' + (', '.join(removed) if removed else 'ничего'), flush=True)
+        print(tr('Удалено: ', 'Deleted: ') + (', '.join(removed) if removed else tr('ничего', 'nothing')), flush=True)
         lock.close()
         return 0
     geo_path = args.geoip_db or geoip.default_path(args.data)
@@ -1493,20 +1566,21 @@ def main(argv=None):
             month = asyncio.run(download_geoip(geo_path, args.source_timeout))
         except (httpx.HTTPError, TimeoutError, OSError, ValueError) as exc:
             reason = str(exc) if isinstance(exc, ValueError) else type(exc).__name__
-            print(f'Не удалось скачать базу стран: {reason}', file=sys.stderr)
+            print(tr(f'Не удалось скачать базу стран: {reason}', f'Could not download the country database: {reason}'), file=sys.stderr)
             lock.close()
             return 2
-        print(f'База стран обновлена: DB-IP {month}. {geoip.ATTRIBUTION}', flush=True)
+        print(tr(f'База стран обновлена: DB-IP {month}. {geoip.ATTRIBUTION}', f'Country database updated: DB-IP {month}. {geoip.ATTRIBUTION}'), flush=True)
         lock.close()
         return 0
     try:
         geo = geoip.CountryDB.load_optional(geo_path)
     except (OSError, EOFError, UnicodeError, csv.Error):
-        print('База стран повреждена; выполните update-geoip.', file=sys.stderr)
+        print(tr('База стран повреждена; выполните update-geoip.', 'The country database is damaged; run update-geoip.'), file=sys.stderr)
         geo = None
     if countries and geo is None:
-        print('База стран не найдена: страна известна только для адресов из Geonode. '
-              'Скачайте базу командой update-geoip.', file=sys.stderr)
+        print(tr('База стран не найдена: страна известна только для адресов из Geonode. '
+              'Скачайте базу командой update-geoip.', 'No country database: countries are known only for Geonode addresses. '
+              'Download it with the update-geoip command.'), file=sys.stderr)
     db = open_db(args.data / 'proxies.sqlite3')
     country_of = country_resolver(db, geo)
     config = None
@@ -1540,16 +1614,16 @@ def main(argv=None):
                 raise ValueError('sources: ожидается JSON-массив http(s) URL')
             report = asyncio.run(stoppable(collect(
                 db, urls, args.input, args.source_timeout, update_progress, denylist=collect_denylist,
-                allow_private_sources=args.allow_private_sources,
+                allow_private_sources=args.allow_private_sources, detect_protocols=args.detect_protocols,
                 max_source_bytes=args.source_max_bytes,
                 max_source_line_bytes=args.source_max_line_bytes,
                 max_source_candidates=args.source_max_candidates,
                 max_source_redirects=args.source_max_redirects), args.stop_file))
             atomic(args.data / 'sources-report.json', json.dumps(report, indent=2) + '\n')
-            print(f'Уникальных кандидатов в базе: {report["unique"]}', flush=True)
+            print(tr(f'Уникальных кандидатов в базе: {report["unique"]}', f'Unique candidates in the database: {report["unique"]}'), flush=True)
         if args.command in ('scan', 'run'):
             workers = fit_workers(args.workers)
-            print(f'Воркеров: {workers}; полный обход; профиль {profile}', flush=True)
+            print(tr(f'Воркеров: {workers}; полный обход; профиль {profile}', f'Workers: {workers}; full pass; profile {profile}'), flush=True)
             atomic(args.data / 'last-profile.txt', profile)
 
             dnsbl_gate = asyncio.Semaphore(8)
@@ -1566,9 +1640,9 @@ def main(argv=None):
                     own_ips = asyncio.run(detect_own_ips(config))
                 except (httpx.HTTPError, TimeoutError, OSError, ValueError) as exc:
                     reason = str(exc) if isinstance(exc, ValueError) else type(exc).__name__
-                    print(f'Не удалось определить внешний IP через judge URL: {reason}', file=sys.stderr)
+                    print(tr(f'Не удалось определить внешний IP через judge URL: {reason}', f'Could not detect the external IP through the judge URL: {reason}'), file=sys.stderr)
                     raise
-                print(f'Проверка анонимности: judge {public_url(config["anonymity"]["judge_url"])}', flush=True)
+                print(tr(f'Проверка анонимности: judge {public_url(config["anonymity"]["judge_url"])}', f'Anonymity check: judge {public_url(config["anonymity"]["judge_url"])}'), flush=True)
 
                 async def probe(proxy, scan_config, limiter):
                     return await check_proxy(proxy, scan_config, limiter, own_ips=own_ips)
@@ -1586,17 +1660,17 @@ def main(argv=None):
                 # Keep the list fresh: publish, wait, then re-check only the proxies that pass.
                 report = export_now()
                 update_progress(dict(report, phase='waiting', next_check_at=time.time() + args.watch * 60))
-                print(f'Сохранено {report["exported"]}. Следующая перепроверка рабочих прокси через {args.watch:g} мин.',
+                print(tr(f'Сохранено {report["exported"]}. Следующая перепроверка рабочих прокси через {args.watch:g} мин.', f'Saved {report["exported"]}. Next re-check of working proxies in {args.watch:g} min.'),
                       flush=True)
                 asyncio.run(stoppable(asyncio.sleep(args.watch * 60), args.stop_file))
                 run_scan(recheck_passing=True)
         elif args.command == 'export':
             profile = (args.data / 'last-profile.txt').read_text(encoding='utf-8').strip()
     except (KeyboardInterrupt, asyncio.CancelledError):
-        print('Остановлено. Завершённые проверки сохранены; scan продолжит проход.', flush=True)
+        print(tr('Остановлено. Завершённые проверки сохранены; scan продолжит проход.', 'Stopped. Finished checks are saved; the next scan continues where this one stopped.'), flush=True)
         code = 130
     except Exception as exc:
-        print(f'Ошибка: {type(exc).__name__}: проверьте файлы и параметры.', file=sys.stderr)
+        print(tr(f'Ошибка: {type(exc).__name__}: проверьте файлы и параметры.', f'Error: {type(exc).__name__}: check the files and options.'), file=sys.stderr)
         code = 2
     finally:
         try:
@@ -1607,12 +1681,12 @@ def main(argv=None):
                     report = export_now()
                 except Exception as exc:
                     if not code:
-                        print(f'Ошибка экспорта: {type(exc).__name__}: проверьте data/ и denylist.', file=sys.stderr)
+                        print(tr(f'Ошибка экспорта: {type(exc).__name__}: проверьте data/ и denylist.', f'Export error: {type(exc).__name__}: check data/ and the denylist.'), file=sys.stderr)
                         code = 2
                     update_progress(dict(phase='error', error=type(exc).__name__))
                 else:
                     update_progress(report)
-                    print(f'Проверено {report["checked"]}/{report["candidates"]}; подходят {report["passed"]}; сохранено {report["exported"]}', flush=True)
+                    print(tr(f'Проверено {report["checked"]}/{report["candidates"]}; подходят {report["passed"]}; сохранено {report["exported"]}', f'Checked {report["checked"]}/{report["candidates"]}; matching {report["passed"]}; saved {report["exported"]}'), flush=True)
         finally:
             update_progress(dict(phase='stopped' if code == 130 else 'error' if code else 'complete', exit_code=code))
             db.close()
