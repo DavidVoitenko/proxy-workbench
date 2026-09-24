@@ -64,11 +64,13 @@ Everything runs on your machine. The GUI binds to `127.0.0.1` only.
 | **Test against your services** | Several targets per profile (up to 20 in the GUI). A proxy passes only if it works for **all** of them. |
 | **Strict success rules** | Allowed status codes, required body substring, expected SHA-256, `GET`/`HEAD`, safe custom headers. Catches captcha and stub pages that still return `200`. |
 | **Repeated measurements** | N attempts per target (default 3), a per-target success threshold (e.g. 2 of 3), median latency and jitter. |
+| **Just a few proxies? Specific country?** | `--want 20` stops as soon as 20 proxies match; previously working addresses are tried first. `--country DE,NL` skips every other country *before* checking, so a country-specific search takes minutes, not hours. |
+| **Presets** | Quick, Balanced and Thorough set attempts, timeouts and workers in one click. |
 | **Anonymity levels** | Point it at any echo “judge” page and every working proxy is rated **transparent** (leaks your IP), **anonymous** (reveals itself with `Via` / `X-Forwarded-For`) or **elite**. Filter with one click or `--min-anonymity elite`. |
 | **Cleanliness checks** | Local IP / CIDR / exact-proxy denylist plus optional DNSBL zones. Verdicts: `clean`, `listed`, `local_denied`, `unknown`, with an optional strict mode. |
-| **Built for big lists** | Bounded worker queue, rate limiter, automatic file-descriptor fitting. Tested with 190,000 simulated candidates. |
+| **Built for big lists** | Bounded worker queue, rate limiter, automatic file-descriptor fitting. **Fail-fast** skips the remaining attempts once a proxy can no longer pass, and a short **connect timeout** drops dead hosts early, so a full sweep is about 3× faster in the worst case. Tested with 190,000 simulated candidates. |
 | **Stop & resume** | Progress is stored in SQLite. `Ctrl+C` or **Stop** keeps finished work; the same command continues where it left off. |
-| **Ranking & export** | Sort by `quality` or `speed`, export top N (or all) to `proxies.txt`, `ranked.csv`, `ranked.json`, plus `http.txt` / `https.txt` / `socks5.txt` in plain `host:port` format for other tools. Crash-safe export generations. |
+| **Ranking & export** | Sort by `quality`, `speed` or `stability`; filter by protocol, country, maximum latency, anonymity and success rate; search by address or port and copy a page with one click. Export top N (or all) to `proxies.txt`, `ranked.csv`, `ranked.json`, plus `http.txt` / `https.txt` / `socks5.txt` in plain `host:port` format for other tools. Crash-safe export generations. |
 | **Safe by default** | Loopback-only GUI with a per-session token, CSRF/Host checks, SSRF-hardened source fetching (no private/metadata IPs, validated redirects, size limits), credential-like headers rejected. |
 | **English & Russian UI** | Switch with the EN/RU button; defaults to your browser language. Dark and light themes. |
 | **Zero setup** | Double-click launcher creates a virtual environment and installs the single dependency (`httpx[socks]`). |
@@ -106,7 +108,7 @@ flowchart LR
     G --> H["proxies.txt · ranked.csv · ranked.json<br/>http.txt · https.txt · socks5.txt"]
 ```
 
-**Scoring.** `speed` sorts by median time of a full successful request (connect + TLS + response). `quality` uses
+**Scoring.** `speed` sorts by median time of a full successful request (connect + TLS + response), `stability` by the lowest jitter. `quality` uses
 
 ```text
 score = 100 × (lowest success rate among targets) / (1 + (median_ms + stdev_ms) / 1000)
@@ -141,12 +143,18 @@ cp service.example.json data/service.json
 # Export without new requests
 ./run.sh export --top 500 --sort quality
 ./run.sh export --top 0 --sort speed --min-success 1
+./run.sh export --protocol socks5 --max-latency 800 --sort stability
+
+# Need just 20 working German or Dutch SOCKS5 proxies, fast
+./run.sh update-geoip          # once: offline country database (DB-IP Lite, ~7 MB)
+./run.sh run --country DE,NL --protocol socks5 --want 20 --attempts 1
 
 # Rate anonymity with an echo judge and keep only elite proxies
 ./run.sh run --judge-url http://judge.example/azenv.php --min-anonymity elite
 
 # Tune performance and cleanliness
-./run.sh run --workers 256 --rate 100 --timeout 8 --attempts 3
+./run.sh run --workers 256 --rate 100 --timeout 8 --connect-timeout 3 --attempts 3
+./run.sh run --no-fail-fast   # always run every attempt, e.g. for research
 ./run.sh run --dnsbl --dnsbl-zone bl.example.org --strict-clean
 
 # Delete local databases and exports (keeps settings and denylist)
@@ -204,7 +212,7 @@ Remote lists are streamed with limits (8 MiB, 64 KiB per line, 100,000 candidate
 <details>
 <summary><b>All CLI options</b></summary>
 
-Run `./run.sh --help` for the complete list: `--input`, `--sources`, `--no-sources`, `--source-timeout`, `--url`, `--config`, `--request-profile`, `--attempts`, `--timeout`, `--workers`, `--rate`, `--max-bytes`, `--denylist-file`, `--local-denylist/--no-local-denylist`, `--dnsbl`, `--dnsbl-zone`, `--reputation-timeout`, `--strict-clean`, `--judge-url`, `--min-anonymity`, `--recheck`, `--top`, `--sort`, `--min-success`, `--data`.
+Run `./run.sh --help` for the complete list: `--input`, `--sources`, `--no-sources`, `--source-timeout`, `--url`, `--config`, `--request-profile`, `--attempts`, `--timeout`, `--workers`, `--rate`, `--max-bytes`, `--denylist-file`, `--local-denylist/--no-local-denylist`, `--dnsbl`, `--dnsbl-zone`, `--reputation-timeout`, `--strict-clean`, `--judge-url`, `--min-anonymity`, `--connect-timeout`, `--fail-fast/--no-fail-fast`, `--protocol`, `--max-latency`, `--country`, `--want`, `--geoip-db`, `--recheck`, and the `update-geoip` command, `--top`, `--sort`, `--min-success`, `--data`.
 
 </details>
 
@@ -230,6 +238,7 @@ Everything is written to the git-ignored `data/` folder:
 | `data/proxies.sqlite3` | candidates, profiles and every measurement |
 | `data/exports/` | `proxies.txt`, `ranked.csv`, `ranked.json`, `http.txt`, `https.txt`, `socks5.txt`, `status.json` |
 | `data/sources-report.json` | per-source rows, rejects and errors |
+| `data/geoip/dbip-country-lite.csv.gz` | optional offline country database |
 | `data/denylist.txt` | your IP / CIDR / proxy rules (`#` comments allowed) |
 | `data/gui-settings.json` | GUI settings |
 
@@ -249,7 +258,7 @@ Delete it any time with `./run.sh clear-data --yes` or the button on the **How i
 No. Proxy Workbench measures _reachability and latency_. A public proxy sees your IP, your destination and — for plain HTTP — your traffic. Never send passwords, cookies or tokens through untrusted public proxies. See [PRIVACY.md](PRIVACY.md).
 
 **How long does a full scan take?**
-It depends on how many candidates respond. The worst case — ~190,000 dead addresses, 3 attempts, 8 s timeout, 128 workers — is roughly 10 hours; in practice most dead proxies fail fast. Raise `--workers`, lower `--timeout`/`--attempts`, or use fewer sources for quicker runs. You can stop and resume at any time.
+It depends on how many candidates respond. With the defaults (3 attempts, 8 s request timeout, 4 s connect timeout, fail-fast, 128 workers) even ~190,000 completely dead addresses take about 3.5 hours, because each dead proxy is dropped after two short connect failures; in practice most fail much faster. Raise `--workers`, lower `--connect-timeout`, or use fewer sources for quicker runs. You can stop and resume at any time.
 
 **Why did a proxy that works in my browser fail here?**
 Redirects are not followed, TLS certificates are verified, and each target must pass on its own threshold. Check **Details** for the exact error of every attempt.
@@ -266,6 +275,12 @@ A *judge* is any page that echoes back the IP and headers it received — for ex
 
 Use an **`http://`** judge: through an HTTPS tunnel a proxy cannot add headers, so every proxy would look elite.
 
+**I only need a few proxies. Do I have to wait for the whole list?**
+No. Set **Stop after finding** in the GUI or `--want 20` in the CLI. Addresses that worked in earlier scans are tried first, the rest in random order, and the scan stops as soon as 20 match. Run it again later to continue where it stopped. The **Quick** preset (1 attempt, short timeouts) makes it even faster.
+
+**How do I get proxies from a specific country?**
+Download the country database once (**Sources → Country database**, or `./run.sh update-geoip`), then enter the countries (`DE, NL`) in the GUI or pass `--country DE,NL`. Addresses from other countries are skipped before any request is sent. Results from a country-limited run are kept, so a later run for all countries does not check them again. Country data: [DB-IP](https://db-ip.com) (CC BY 4.0) plus the country field of Geonode sources.
+
 **What does “clean” mean?**
 The IP is not in your local denylist and (if enabled) not listed by the DNSBL zones you chose. It is a reputation signal, not a guarantee of safety.
 
@@ -281,7 +296,8 @@ Checking public lists is generally fine, but you are responsible for respecting 
 - [ ] `pipx install` / PyPI package and a single `proxy-workbench` command
 - [x] Anonymity level detection (transparent / anonymous / elite)
 - [x] Per-protocol `host:port` exports
-- [ ] Optional GeoIP country column and country filters from a local database
+- [x] Country column and filters from a local GeoIP database
+- [x] “Find N and stop” mode and presets
 - [ ] Scheduled re-checks of the best proxies
 - [x] Docker image for headless servers
 
