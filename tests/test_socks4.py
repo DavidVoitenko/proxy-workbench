@@ -8,8 +8,8 @@ import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import proxytool as p
-import socks4
+from proxy_workbench import proxytool as p
+from proxy_workbench import socks4
 
 
 def scan_config(url):

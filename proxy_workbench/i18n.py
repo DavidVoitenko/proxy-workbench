@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import locale
 import os
+import sys
 
 
 def detect(environ=None):
@@ -25,6 +26,16 @@ def detect(environ=None):
 
 
 LANG = detect()
+
+
+def utf8_output():
+    """Write UTF-8 even where the system code page is not (Windows pipes, the .exe, redirected logs)."""
+    for stream in (sys.stdout, sys.stderr):
+        if stream is not None and hasattr(stream, 'reconfigure'):
+            try:
+                stream.reconfigure(encoding='utf-8', errors='replace')
+            except (OSError, ValueError):
+                pass
 
 
 def tr(ru, en):

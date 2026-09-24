@@ -9,10 +9,10 @@ from unittest import mock
 from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from branding import merge_headers
-import proxytool as p
-from reputation import Denylist, make_policy, result_allowed, screen_proxy
-from maintenance import clear_runtime
+from proxy_workbench.branding import merge_headers
+from proxy_workbench import proxytool as p
+from proxy_workbench.reputation import Denylist, make_policy, result_allowed, screen_proxy
+from proxy_workbench.maintenance import clear_runtime
 
 
 def config(targets=1):

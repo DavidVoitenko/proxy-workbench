@@ -15,12 +15,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-import anonymity
-import formats
-import geoip
-from branding import PRODUCT_NAME, PRODUCT_VERSION
-from i18n import tr
-from proxytool import PROTOCOLS, proxy_protocol, row_history
+from . import anonymity
+from . import formats
+from . import geoip
+from .branding import PRODUCT_NAME, PRODUCT_VERSION
+from .i18n import tr
+from .proxytool import PROTOCOLS, proxy_protocol, row_history
 
 DEFAULT_PORT = 8765
 TOKEN_ENV = 'PROXY_WORKBENCH_API_TOKEN'

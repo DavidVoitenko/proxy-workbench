@@ -4,8 +4,8 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import gui
-import i18n
+from proxy_workbench import gui
+from proxy_workbench import i18n
 
 
 class LanguageTests(unittest.TestCase):
@@ -25,6 +25,19 @@ class LanguageTests(unittest.TestCase):
             self.assertEqual(i18n.tr('да', 'yes'), 'да')
         # The GUI translates the scanner log itself and relies on Russian lines.
         self.assertEqual(gui.CHILD_ENV['PROXY_WORKBENCH_LANG'], 'ru')
+
+
+class OutputEncodingTests(unittest.TestCase):
+    def test_cyrillic_survives_a_legacy_code_page(self):
+        # Reproduces the Windows worker: stdout redirected to a file with a cp1252 encoding.
+        import io
+        raw = io.BytesIO()
+        stream = io.TextIOWrapper(raw, encoding='cp1252')
+        with mock.patch.object(i18n.sys, 'stdout', stream), mock.patch.object(i18n.sys, 'stderr', None):
+            i18n.utf8_output()
+            print('Проверено 1/1', file=i18n.sys.stdout)
+            i18n.sys.stdout.flush()
+        self.assertEqual(raw.getvalue().decode('utf-8').rstrip('\r\n'), 'Проверено 1/1')
 
 
 if __name__ == '__main__':

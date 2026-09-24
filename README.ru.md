@@ -73,7 +73,7 @@
 | **Пресеты** | «Быстро», «Баланс» и «Тщательно» настраивают попытки, таймауты и воркеры одной кнопкой. |
 | **Уровни анонимности** | Укажите любую echo-страницу (judge), и каждый рабочий прокси получит уровень **transparent** (выдаёт ваш IP), **anonymous** (выдаёт себя заголовками `Via` / `X-Forwarded-For`) или **elite**. Фильтр в один клик или `--min-anonymity elite`. |
 | **Проверка чистоты** | Локальный denylist (IP / CIDR / точный адрес) и опциональные DNSBL-зоны. Вердикты `clean`, `listed`, `local_denied`, `unknown`, строгий режим. |
-| **Большие списки** | Ограниченная очередь, лимит частоты запросов, автоподбор числа воркеров. **Досрочная отбраковка** пропускает оставшиеся попытки, когда прокси уже не пройдёт порог, а короткий **таймаут подключения** быстро отсеивает мёртвые адреса: полный проход в худшем случае примерно в 3 раза быстрее. Проверено на 190 000 синтетических кандидатов. |
+| **Большие списки** | Ограниченная очередь, лимит частоты запросов, автоподбор числа воркеров. **Быстрая предпроверка** отсеивает адреса, которые даже не принимают TCP-подключение, ещё до полной проверки; **досрочная отбраковка** пропускает оставшиеся попытки, когда прокси уже не пройдёт порог, а короткий **таймаут подключения** быстро отсеивает мёртвые адреса. Проверено на 190 000 синтетических кандидатов. |
 | **Остановка и продолжение** | Прогресс хранится в SQLite. `Ctrl+C` или **Остановить** сохраняет готовое; повторный запуск продолжает. |
 | **Рейтинг и экспорт** | Сортировка `quality`, `speed`, `stability` или `uptime`; фильтры по протоколу, стране, максимальной задержке, анонимности и успешности; поиск по адресу или порту и копирование страницы в один клик. Экспорт топ-N или всех в `proxies.txt`, `ranked.csv`, `ranked.json`, а также `http.txt` / `https.txt` / `socks5.txt` / `hostport.txt` в формате `host:port` и готовый `proxychains.txt`. Crash-safe поколения экспорта. |
 | **Локальное API для своих программ** | GUI (или команда `serve` на сервере) отвечает на `GET /random?protocol=socks5&country=DE` или `/proxies?max_latency=800&format=txt` самыми свежими рабочими прокси: скрипт, парсер или бот берёт прокси одним HTTP-запросом. |
@@ -83,11 +83,22 @@
 | **Готовые конфиги** | `proxy.pac` для браузера и `clash.yaml` для Clash / Mihomo с автоматическим выбором самого быстрого прокси; над файлами сводка по протоколам и странам. |
 | **Безопасность по умолчанию** | GUI только на loopback с токеном сессии и проверкой Host/Origin, защищённая загрузка источников (без private/metadata IP, проверка redirects, лимиты размера), credential-like заголовки отклоняются. |
 | **Русский и английский интерфейс** | Кнопка EN/RU; по умолчанию язык браузера. Тёмная и светлая темы. |
-| **Без настройки** | Запуск двойным кликом создаёт виртуальное окружение и ставит единственную зависимость `httpx[socks]`. |
+| **Без настройки** | `.exe` для Windows без установки Python, `pipx install`, Docker Compose или запуск двойным кликом, который сам создаёт виртуальное окружение. |
 
 ## 🚀 Быстрый старт
 
-Нужен **Python 3.11+**. Скачайте код (**Code → Download ZIP** или `git clone`) и запустите:
+Выберите способ установки:
+
+| Способ | Как | Что нужно |
+| --- | --- | --- |
+| **Программа для Windows** | Скачайте `proxy-workbench-…-windows-x64.exe` из [последнего релиза](https://github.com/DavidVoitenko/proxy-workbench/releases/latest) и запустите двойным кликом | больше ничего |
+| **pipx** (Windows, macOS, Linux) | `pipx install git+https://github.com/DavidVoitenko/proxy-workbench`, затем `proxy-workbench` | Python 3.11+ и [pipx](https://pipx.pypa.io/) |
+| **Папка с кодом** | Скачайте код (**Code → Download ZIP** или `git clone`) и запустите, как в таблице ниже | Python 3.11+ |
+| **Docker** | `docker compose up -d` с готовым [`compose.yml`](compose.yml): проверка + API + ротирующий прокси | Docker |
+
+`proxy-workbench` без аргументов открывает интерфейс в браузере; `proxy-workbench run …` и остальные команды работают так же, как `./run.sh …`. `.exe` хранит данные в папке `data` рядом с собой, установка через pipx — в профиле пользователя (`%LOCALAPPDATA%\proxy-workbench`, `~/Library/Application Support/proxy-workbench` или `~/.local/share/proxy-workbench`); переменная `PROXY_WORKBENCH_DATA` задаёт папку явно. `.exe` пока не подписан сертификатом, поэтому при первом запуске SmartScreen может попросить подтверждение (**Подробнее → Выполнить в любом случае**); у каждого релиза опубликована контрольная сумма SHA-256.
+
+Запуск из папки с кодом:
 
 | ОС | Запуск интерфейса |
 | --- | --- |
@@ -282,7 +293,7 @@ URL, содержимое, заголовки, request-профиль, поли�
 ./run.sh run --data data/another-service --url https://example.net/status
 ```
 
-`sources.json` — редактируемый JSON-массив источников. Обычный URL означает HTTP-список. Формат `IP:порт:страна` поддерживается через префикс `http-fields URL` (используется встроенными списками HideIP). Для SOCKS4/SOCKS5 без схемы у адресов используйте строку `socks4 https://example.org/list.txt` или `socks5 https://example.org/list.txt`. Если протокол неизвестен, `auto https://…` проверит каждый адрес как HTTP, SOCKS4 и SOCKS5. `text https://…` принимает любую веб-страницу, CSV или HTML-таблицу и забирает из неё все `ip:port`. Для постраничного JSON API Geonode используйте строку `geonode https://proxylist.geonode.com/api/proxy-list?limit=500&protocols=http%2Csocks5`. Сборщик обходит все страницы до заявленного API количества, отмечает повторённые/недостающие страницы и повторяет неудачную загрузку один раз. Каждая строка списка: `IP:port`, `http://IP:port`, `socks4://IP:port` или `socks5://IP:port` / `socks5h://IP:port`. Поддерживается IPv6 в квадратных скобках. Явный `https://` сохраняется как TLS-соединение к самому прокси. Обычные списки HTTPS/CONNECT с адресами без схемы читаются как `http://`. Метаданные HTTPS в Geonode означают CONNECT и преобразуются в HTTP. Авторизованные прокси, доменные имена вместо IP и непубличные IP отклоняются. Встроены HTTP/CONNECT, HTTPS, SOCKS4 и SOCKS5-источники, а также веб-страницы. Флаг `--detect-protocols` проверяет адреса без протокола из ваших файлов `--input` как HTTP, SOCKS4 и SOCKS5. Все источники остаются редактируемыми.
+`proxy_workbench/sources.json` — редактируемый JSON-массив встроенных источников (в GUI список правится на вкладке «Источники»). Обычный URL означает HTTP-список. Формат `IP:порт:страна` поддерживается через префикс `http-fields URL` (используется встроенными списками HideIP). Для SOCKS4/SOCKS5 без схемы у адресов используйте строку `socks4 https://example.org/list.txt` или `socks5 https://example.org/list.txt`. Если протокол неизвестен, `auto https://…` проверит каждый адрес как HTTP, SOCKS4 и SOCKS5. `text https://…` принимает любую веб-страницу, CSV или HTML-таблицу и забирает из неё все `ip:port`. Для постраничного JSON API Geonode используйте строку `geonode https://proxylist.geonode.com/api/proxy-list?limit=500&protocols=http%2Csocks5`. Сборщик обходит все страницы до заявленного API количества, отмечает повторённые/недостающие страницы и повторяет неудачную загрузку один раз. Каждая строка списка: `IP:port`, `http://IP:port`, `socks4://IP:port` или `socks5://IP:port` / `socks5h://IP:port`. Поддерживается IPv6 в квадратных скобках. Явный `https://` сохраняется как TLS-соединение к самому прокси. Обычные списки HTTPS/CONNECT с адресами без схемы читаются как `http://`. Метаданные HTTPS в Geonode означают CONNECT и преобразуются в HTTP. Авторизованные прокси, доменные имена вместо IP и непубличные IP отклоняются. Встроены HTTP/CONNECT, HTTPS, SOCKS4 и SOCKS5-источники, а также веб-страницы. Флаг `--detect-protocols` проверяет адреса без протокола из ваших файлов `--input` как HTTP, SOCKS4 и SOCKS5. Все источники остаются редактируемыми.
 
 База накапливает уникальные адреса. `--no-sources` отключает загрузку, но не удаляет ранее собранные адреса: для полностью отдельного списка используйте новую `--data`.
 
@@ -384,16 +395,20 @@ docker run -d --name pw-gateway -p 127.0.0.1:8899:8899 -e PROXY_WORKBENCH_API_TO
 
 ## Структура проекта
 
-- `proxytool.py` — CLI, collector, scanner, reputation и export pipeline.
-- `api.py` — локальное API только для чтения (`/random`, `/proxies`, `/status`).
-- `gateway.py` — ротирующий прокси-шлюз (HTTP, CONNECT, SOCKS5).
-- `formats.py` — `proxy.pac` и `clash.yaml`.
-- `socks4.py` — подключение через SOCKS4 (httpx умеет только HTTP и SOCKS5).
-- `i18n.py` — язык сообщений в терминале.
-- `gui.py` / `ui/` — loopback-only browser interface.
-- `reputation.py` — denylist/DNSBL verdicts.
-- `branding.py` — versioned neutral request profiles.
-- `maintenance.py` — блокировка папки `data` и очистка локальных данных.
+- `proxy_workbench/` — сам пакет:
+  - `proxytool.py` — CLI, collector, scanner, reputation и export pipeline;
+  - `api.py` — локальное API только для чтения (`/random`, `/proxies`, `/pac`, `/clash`, `/status`);
+  - `gateway.py` — ротирующий прокси-шлюз (HTTP, CONNECT, SOCKS5);
+  - `formats.py` — `proxy.pac` и `clash.yaml`;
+  - `socks4.py` — подключение через SOCKS4 (httpx умеет только HTTP и SOCKS5);
+  - `i18n.py` — язык сообщений в терминале; `paths.py` — папка данных и запуск фоновой проверки;
+  - `gui.py` / `ui/` — loopback-only browser interface;
+  - `reputation.py` — denylist/DNSBL verdicts; `branding.py` — версия и request-профили;
+  - `maintenance.py` — блокировка папки `data` и очистка локальных данных;
+  - `sources.json` — встроенные источники.
+- `proxytool.py`, `gui.py` — запуск из папки с кодом (их вызывают `Start.bat`, `Start.command`, `run.sh`).
+- `packaging/` — сборка `.exe` (PyInstaller) и сквозная smoke-проверка установленного пакета.
+- `compose.yml` — проверка, API и ротирующий прокси в Docker.
 - `tests/` — isolated unit and local mock tests.
 - `docs/assets/` — скриншоты и изображение для превью.
 - `.github/` — CI, release workflow, шаблоны issues и pull requests.

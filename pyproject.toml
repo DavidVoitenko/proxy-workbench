@@ -1,6 +1,10 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "proxy-workbench"
-version = "1.9.0"
+version = "2.0.0"
 description = "Collect free public proxies and keep only the ones that work for your services: local GUI + CLI checker for HTTP, HTTPS and SOCKS5"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -10,7 +14,7 @@ authors = [
 ]
 keywords = ["proxy", "proxy-checker", "proxy-list", "free-proxy", "proxy-scraper", "http", "https", "socks5", "dnsbl", "benchmark"]
 classifiers = [
-  "Development Status :: 4 - Beta",
+  "Development Status :: 5 - Production/Stable",
   "Environment :: Console",
   "Environment :: Web Environment",
   "Intended Audience :: Developers",
@@ -25,3 +29,18 @@ classifiers = [
 dependencies = [
   "httpx[socks]==0.28.1",
 ]
+
+[project.urls]
+Homepage = "https://davidvoitenko.github.io/proxy-workbench/"
+Source = "https://github.com/DavidVoitenko/proxy-workbench"
+Changelog = "https://github.com/DavidVoitenko/proxy-workbench/blob/main/CHANGELOG.md"
+Issues = "https://github.com/DavidVoitenko/proxy-workbench/issues"
+
+[project.scripts]
+proxy-workbench = "proxy_workbench.__main__:main"
+
+[tool.setuptools]
+packages = ["proxy_workbench"]
+
+[tool.setuptools.package-data]
+proxy_workbench = ["sources.json", "ui/*"]

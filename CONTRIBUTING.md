@@ -13,8 +13,8 @@
 
 ## Good first contributions / С чего начать
 
-- **Sources:** предложите новый публичный список прокси или замените неработающий в `sources.json` (укажите формат и лицензию/условия списка).
-- **Translations:** помогите перевести интерфейс (`ui/`) и документацию на английский или другие языки.
+- **Sources:** предложите новый публичный список прокси или замените неработающий в `proxy_workbench/sources.json` (укажите формат и лицензию/условия списка).
+- **Translations:** помогите перевести интерфейс (`proxy_workbench/ui/`) и документацию на английский или другие языки.
 - **Docs:** улучшите `README.md` / `README.ru.md`, добавьте примеры конфигураций `service.json`.
 - **Tests:** добавьте regression tests на локальных mocks для граничных случаев парсинга и экспорта.
 
@@ -52,9 +52,11 @@ Tests используют временные данные и локальные
 
 ## Releases / Релизы
 
-1. Обновите `PRODUCT_VERSION` в `branding.py`, `version` в `pyproject.toml` и перенесите пункты из `Unreleased` в новый раздел `CHANGELOG.md`.
+1. Обновите `PRODUCT_VERSION` в `proxy_workbench/branding.py`, `version` в `pyproject.toml` и перенесите пункты из `Unreleased` в новый раздел `CHANGELOG.md`.
 2. После merge в `main` откройте **Actions → Source release → Run workflow** и введите тег, например `v1.3.0` (или отправьте такой тег через git).
-3. Workflow проверит совпадение тега и версии, прогонит тесты, соберёт архив с SHA-256 и опубликует релиз с заметками из `CHANGELOG.md`.
+3. Workflow проверит совпадение тега и версии, прогонит тесты, соберёт архив с SHA-256 и опубликует релиз с заметками из `CHANGELOG.md`. Затем он соберёт wheel и Windows `.exe`, проверит каждый сквозным smoke-тестом `packaging/smoke.py` на локальных mocks, приложит их к релизу и опубликует Docker-образ.
+
+Локальная проверка пакета: `python -m pip wheel --no-deps -w dist .`, установка wheel в чистое окружение и `python packaging/smoke.py <путь к proxy-workbench>`.
 
 ## Data and artifacts / Данные и артефакты
 
