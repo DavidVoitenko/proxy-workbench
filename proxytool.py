@@ -334,12 +334,24 @@ def public_url(value):
     return urlunsplit((parsed.scheme, authority, '/', '', ''))
 
 
+ATOMIC_REPLACE_ATTEMPTS = 40
+
+
 def atomic(path, content):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_name(path.name + '.tmp')
     temp.write_text(content, encoding='utf-8')
-    temp.replace(path)
+    # Windows refuses to replace a file another process has open for reading
+    # (the GUI polls progress while the CLI writes it); such locks are brief.
+    for attempt in range(ATOMIC_REPLACE_ATTEMPTS):
+        try:
+            temp.replace(path)
+            return
+        except PermissionError:
+            if attempt == ATOMIC_REPLACE_ATTEMPTS - 1:
+                raise
+            time.sleep(0.05)
 
 
 EXPORT_GENERATION_RETENTION = 3
