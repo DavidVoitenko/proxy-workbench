@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [1.4.0] — 2026-09-24
+
 ### Added
 
 - Docker image for the headless CLI (`Dockerfile`, non-root user, `/app/data` volume), built and smoke-tested in CI and published to the GitHub Container Registry on every release.
