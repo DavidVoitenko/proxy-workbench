@@ -5,13 +5,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONUTF8=1 \
     PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PROXY_WORKBENCH_DATA=/app/data
 
 WORKDIR /app
 COPY requirements.txt ./
 RUN python -m pip install --requirement requirements.txt
 
-COPY proxytool.py api.py gateway.py formats.py i18n.py socks4.py anonymity.py branding.py geoip.py maintenance.py reputation.py sources.json service.example.json ./
+COPY proxy_workbench/*.py proxy_workbench/sources.json ./proxy_workbench/
+COPY proxytool.py service.example.json ./
 RUN useradd --create-home --uid 10001 workbench \
     && mkdir -p /app/data \
     && chown workbench /app/data

@@ -5,8 +5,8 @@ import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import gui
-import proxytool as p
+from proxy_workbench import gui
+from proxy_workbench import proxytool as p
 
 HTML = b'''<table><tr><th>IP Address</th><th>Port</th></tr>
 <tr><td>11.1.1.1</td><td>8080</td><td>DE</td></tr>

@@ -80,19 +80,20 @@ Everything runs on your machine. The GUI binds to `127.0.0.1` only.
 | **Local API for your code** | The GUI (or `serve` on a server) answers `GET /random?protocol=socks5&country=DE` or `/proxies?max_latency=800&format=txt` with the freshest working proxies, so scripts, scrapers and bots can pick a proxy with one HTTP request. |
 | **Safe by default** | Loopback-only GUI with a per-session token, CSRF/Host checks, SSRF-hardened source fetching (no private/metadata IPs, validated redirects, size limits), credential-like headers rejected. |
 | **English & Russian UI** | Switch with the EN/RU button; defaults to your browser language. Dark and light themes. |
-| **Zero setup** | Double-click launcher creates a virtual environment and installs the single dependency (`httpx[socks]`). |
+| **Zero setup** | A Windows `.exe` that needs nothing else, `pipx install`, Docker Compose, or a double-click launcher that creates its own virtual environment. |
 
 ## 🚀 Quick start
 
-You need **Python 3.11+**. Download the code (**Code → Download ZIP**, or `git clone`), then:
+Pick one way to install:
 
-| OS | Start the GUI |
-| --- | --- |
-| **Windows** | double-click `Start.bat` |
-| **macOS** | double-click `Start.command` |
-| **Linux** | `./run.sh` |
+| Way | How | Needs |
+| --- | --- | --- |
+| **Windows app** | Download `proxy-workbench-…-windows-x64.exe` from the [latest release](https://github.com/DavidVoitenko/proxy-workbench/releases/latest) and double-click it | nothing else |
+| **pipx** (Windows, macOS, Linux) | `pipx install git+https://github.com/DavidVoitenko/proxy-workbench` then `proxy-workbench` | Python 3.11+ and [pipx](https://pipx.pypa.io/) |
+| **Source folder** | Download the code (**Code → Download ZIP** or `git clone`), then double-click `Start.bat` (Windows) / `Start.command` (macOS) or run `./run.sh` (Linux) | Python 3.11+ |
+| **Docker** | `docker compose up -d` with the bundled [`compose.yml`](compose.yml) (checker + API + rotating proxy) | Docker |
 
-The first launch creates `.venv/` and installs dependencies; your browser then opens the local interface.
+`proxy-workbench` without arguments opens the GUI in your browser; `proxy-workbench run …` and the other commands below work the same way as `./run.sh …`. The `.exe` keeps its data in a `data` folder next to itself; pipx installs keep it in your user profile (`%LOCALAPPDATA%\proxy-workbench`, `~/Library/Application Support/proxy-workbench` or `~/.local/share/proxy-workbench`); `PROXY_WORKBENCH_DATA` overrides both. The Windows executable is not code-signed yet, so SmartScreen may ask you to confirm the first start (**More info → Run anyway**); every release lists its SHA-256 checksum.
 
 1. **Scan** tab: add one or more service URLs, allowed status codes and (recommended) a text that must appear in the response.
 2. Press **Find and check** (“Найти и проверить”). Watch progress, speed, ETA and the number of matching proxies.
@@ -127,7 +128,7 @@ so a proxy has to be both reliable _for every service_ and fast to rank high.
 
 ## 💻 Command line
 
-`./run.sh <command>` on macOS/Linux, or `.venv\Scripts\python proxytool.py <command>` on Windows. Messages follow your system language (English or Russian); set `PROXY_WORKBENCH_LANG=en` or `ru` to choose. `--help` lists every option with examples.
+`proxy-workbench <command>` (pipx or the `.exe`), `./run.sh <command>` in a source folder on macOS/Linux, or `.venv\Scripts\python proxytool.py <command>` in a source folder on Windows. Messages follow your system language (English or Russian); set `PROXY_WORKBENCH_LANG=en` or `ru` to choose. `--help` lists every option with examples.
 
 ```sh
 # Collect from all sources and check every candidate against example.com
@@ -208,7 +209,7 @@ cp service.example.json data/service.json
 </details>
 
 <details>
-<summary><b>Source list format</b> (<code>sources.json</code>)</summary>
+<summary><b>Source list format</b> (<code>proxy_workbench/sources.json</code>)</summary>
 
 A JSON array of strings, one per source:
 
@@ -302,12 +303,12 @@ Every release also publishes a ready image to the GitHub Container Registry. It 
 
 ## 📁 Where your data lives
 
-Everything is written to the git-ignored `data/` folder:
+Everything is written to the data folder: `data/` in a source checkout (git-ignored) or next to the `.exe`, your user profile for pipx installs, or `PROXY_WORKBENCH_DATA`:
 
 | Path | Content |
 | --- | --- |
 | `data/proxies.sqlite3` | candidates, profiles and every measurement |
-| `data/exports/` | `proxies.txt`, `ranked.csv`, `ranked.json`, `http.txt`, `https.txt`, `socks5.txt`, `hostport.txt`, `proxychains.txt`, `status.json` |
+| `data/exports/` | `proxies.txt`, `ranked.csv`, `ranked.json`, `http.txt`, `https.txt`, `socks4.txt`, `socks5.txt`, `hostport.txt`, `proxychains.txt`, `proxy.pac`, `clash.yaml`, `status.json` |
 | `data/sources-report.json` | per-source rows, rejects and errors |
 | `data/geoip/dbip-country-lite.csv.gz` | optional offline country database |
 | `data/denylist.txt` | your IP / CIDR / proxy rules (`#` comments allowed) |

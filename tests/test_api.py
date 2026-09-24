@@ -7,8 +7,8 @@ import unittest
 
 import httpx
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import api
-import proxytool as p
+from proxy_workbench import api
+from proxy_workbench import proxytool as p
 
 
 def result_row(proxy, latency, score, level=None):

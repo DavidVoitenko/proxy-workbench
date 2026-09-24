@@ -4,6 +4,22 @@
 
 ## [Unreleased]
 
+## [2.0.0] — 2026-09-24
+
+### Added
+
+- **Windows executable:** every release ships `proxy-workbench-…-windows-x64.exe` built with PyInstaller. It opens the GUI on double-click, runs the CLI with arguments, and keeps its data in a `data` folder next to itself; no Python needed.
+- **`pipx install`** (#3): `pipx install git+https://github.com/DavidVoitenko/proxy-workbench` gives a `proxy-workbench` command. Without arguments it opens the GUI; with arguments it runs the CLI (`python -m proxy_workbench` works too). Releases also attach the wheel.
+- **Docker Compose:** `compose.yml` runs a checker that keeps 100 proxies fresh, the API and the rotating proxy from one shared volume.
+- **End-to-end package check:** `packaging/smoke.py` installs nothing and touches no public network. It starts the built app, runs a check through a local mock proxy and reads the result back through the API and the gateway. CI runs it for the wheel on Linux and Windows and for the Windows executable; releases run it before publishing.
+
+### Changed
+
+- The code now lives in the `proxy_workbench` package. `proxytool.py`, `gui.py`, `Start.bat`, `Start.command` and `run.sh` keep working from a source folder, and an existing `data/` folder there is used as before.
+- The data folder is chosen as follows: `PROXY_WORKBENCH_DATA`, then `data/` in a source checkout or next to the `.exe`, then the user profile for pipx installs.
+- The Docker image sets `PROXY_WORKBENCH_DATA=/app/data`.
+- The GUI starts its checks as `python -m proxy_workbench …`, or through the executable itself when frozen.
+
 ## [1.9.0] — 2026-09-24
 
 ### Added
