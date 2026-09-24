@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 from contextlib import asynccontextmanager
 import csv
 import hashlib
@@ -28,6 +29,7 @@ import httpx
 from branding import DEFAULT_REQUEST_PROFILE, PRODUCT_NAME, PRODUCT_VERSION, REQUEST_PROFILES, merge_headers, profile_digest, validate_profile
 from reputation import Denylist, make_policy, result_allowed, screen_proxy, verdict_blocks
 from maintenance import clear_runtime, exclusive_lock
+import anonymity
 
 ROOT = Path(__file__).resolve().parent
 TLS = ssl.create_default_context()
@@ -341,6 +343,8 @@ def atomic(path, content):
 
 
 EXPORT_GENERATION_RETENTION = 3
+PROTOCOL_EXPORTS = {'http': 'http.txt', 'https': 'https.txt', 'socks5': 'socks5.txt'}
+PROTOCOL_ALIASES = {'socks5h': 'socks5'}
 
 
 def current_generation_name(directory):
@@ -679,13 +683,14 @@ def target_config(args, denylist=None):
     targets = config.get('targets')
     if not isinstance(targets, list) or not targets:
         raise ValueError('config: нужен непустой список targets')
+    judge = {'judge_url': args.judge_url} if getattr(args, 'judge_url', None) else config.get('anonymity')
     return validate_targets(targets, args,
                             request_profile=getattr(args, 'request_profile', None) or config.get('request_profile'),
                             reputation=config.get('reputation'),
-                            denylist=denylist)
+                            denylist=denylist, anonymity_config=judge)
 
 
-def validate_targets(targets, args, request_profile=None, reputation=None, denylist=None):
+def validate_targets(targets, args, request_profile=None, reputation=None, denylist=None, anonymity_config=None):
     request_profile = request_profile or getattr(args, 'request_profile', None) or DEFAULT_REQUEST_PROFILE
     validate_profile(request_profile)
     for t in targets:
@@ -731,11 +736,16 @@ def validate_targets(targets, args, request_profile=None, reputation=None, denyl
                          zones_override=args_zones if args_zones else None,
                          timeout_override=args_timeout,
                          strict_override=args_strict)
-    return dict(version=2, targets=targets, attempts=args.attempts,
-                timeout=args.timeout, max_bytes=args.max_bytes,
-                request_profile=request_profile,
-                request_profile_digest=profile_digest(request_profile),
-                reputation=policy)
+    config = dict(version=2, targets=targets, attempts=args.attempts,
+                  timeout=args.timeout, max_bytes=args.max_bytes,
+                  request_profile=request_profile,
+                  request_profile_digest=profile_digest(request_profile),
+                  reputation=policy)
+    # Added only when enabled so existing profiles keep their identity.
+    judge = anonymity.validate_judge(anonymity_config)
+    if judge:
+        config['anonymity'] = judge
+    return config
 
 
 async def request_once(proxy, target, config, rate):
@@ -789,13 +799,53 @@ def summarize(proxy, samples, config):
                 successes=len(successful), requests=len(samples), checked_at=time.time(), samples=samples)
 
 
-async def check_proxy(proxy, config, rate):
+async def check_proxy(proxy, config, rate, own_ips=None):
     samples = []
     for attempt in range(config['attempts']):
         for index, target in enumerate(config['targets']):
             sample = await request_once(proxy, target, config, rate)
             samples.append(dict(sample, target=index, attempt=attempt + 1))
-    return summarize(proxy, samples, config)
+    row = summarize(proxy, samples, config)
+    # The judge is asked only through proxies that already work for a target.
+    if config.get('anonymity') and own_ips and row['successes']:
+        row['anonymity'] = await judge_proxy(proxy, config, rate, own_ips)
+    return row
+
+
+async def detect_own_ips(config):
+    """Public IPs of this machine as seen by the judge; kept in memory only."""
+    url = config['anonymity']['judge_url']
+    headers = merge_headers(config.get('request_profile', DEFAULT_REQUEST_PROFILE))
+    async with httpx.AsyncClient(trust_env=False, verify=TLS, timeout=config['timeout'],
+                                 follow_redirects=False) as client:
+        body = await anonymity.fetch_judge(client, url, headers)
+    own = anonymity.extract_public_ips(body.decode('utf-8', errors='replace'))
+    # Judges such as azenv also print their own server address; never treat it as ours.
+    try:
+        infos = await asyncio.get_running_loop().getaddrinfo(urlsplit(url).hostname, None)
+        own -= {ipaddress.ip_address(info[4][0].split('%')[0]).compressed for info in infos}
+    except (OSError, ValueError):
+        pass
+    if not own:
+        raise ValueError('judge URL не показал внешний IP этого устройства')
+    return own
+
+
+async def judge_proxy(proxy, config, rate, own_ips):
+    await rate.wait()
+    started = time.monotonic()
+    headers = merge_headers(config.get('request_profile', DEFAULT_REQUEST_PROFILE))
+    try:
+        async with asyncio.timeout(config['timeout']):
+            async with httpx.AsyncClient(proxy=proxy, trust_env=False, verify=TLS, timeout=config['timeout'],
+                                         follow_redirects=False) as client:
+                body = await anonymity.fetch_judge(client, config['anonymity']['judge_url'], headers)
+    except ValueError as exc:
+        return anonymity.result('unknown', error=str(exc), started=started)
+    except (httpx.HTTPError, TimeoutError, OSError) as exc:
+        return anonymity.result('unknown', error=type(exc).__name__, started=started)
+    verdict = anonymity.classify(body, own_ips)
+    return anonymity.result(verdict['level'], verdict['signals'], started=started)
 
 
 def fit_workers(requested):
@@ -821,11 +871,13 @@ def blocked_result(proxy, verdict):
                 checked_at=time.time(), samples=[], reputation=verdict)
 
 
-async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_proxy, progress=True, on_progress=None, min_success=2/3, screen=None, denylist=None):
+async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_proxy, progress=True, on_progress=None, min_success=2/3, screen=None, denylist=None, min_anonymity='any'):
     denylist = denylist or Denylist.empty()
     policy = config.get('reputation', {})
     strict = bool(policy.get('strict', False))
     active_denylist = denylist if policy.get('local_enabled', True) else None
+    if not config.get('anonymity'):
+        min_anonymity = 'any'
     encoded = json.dumps(config, sort_keys=True)
     profile = hashlib.sha256(encoded.encode()).hexdigest()[:20]
     db.execute('INSERT OR IGNORE INTO profiles VALUES (?, ?)', (profile, encoded))
@@ -842,7 +894,7 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
         row = json.loads(payload)
         status = (row.get('reputation') or {}).get('status', 'clean')
         status_counts[status] = status_counts.get(status, 0) + 1
-        passed += int(result_allowed(row, min_success, denylist=active_denylist, strict=strict))
+        passed += int(result_allowed(row, min_success, denylist=active_denylist, strict=strict, min_anonymity=min_anonymity))
     initial = completed
     limiter = Rate(rate)
     queue = asyncio.Queue(maxsize=workers * 2)
@@ -879,7 +931,7 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
                 completed += 1
                 status = (row.get('reputation') or {}).get('status', 'clean')
                 status_counts[status] = status_counts.get(status, 0) + 1
-                passed += int(result_allowed(row, min_success, denylist=active_denylist, strict=strict))
+                passed += int(result_allowed(row, min_success, denylist=active_denylist, strict=strict, min_anonymity=min_anonymity))
                 if completed % 100 == 0 or time.monotonic() - last_commit >= 1:
                     db.commit()
                     last_commit = time.monotonic()
@@ -918,13 +970,16 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
     return profile
 
 
-def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, denylist=None, local_override=None):
+def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, denylist=None, local_override=None, min_anonymity='any'):
     if not db.execute('SELECT 1 FROM profiles WHERE id=?', (profile,)).fetchone():
         raise ValueError('Профиль проверки не найден')
     denylist = denylist or Denylist.empty()
     cfg = json.loads(db.execute('SELECT config FROM profiles WHERE id=?', (profile,)).fetchone()[0])
     policy = cfg.get('reputation', {})
     strict = bool(policy.get('strict', False))
+    # A minimum anonymity level only applies to profiles that asked a judge.
+    if not cfg.get('anonymity'):
+        min_anonymity = 'any'
     if local_override is False:
         active_denylist = None
     elif local_override is True or policy.get('local_enabled', True):
@@ -947,12 +1002,16 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
     db.execute('CREATE TEMP TABLE export_rank(proxy TEXT PRIMARY KEY, score REAL, latency REAL, reliability REAL)')
     checked = passed = local_filtered = 0
     status_counts = {'clean': 0, 'listed': 0, 'unknown': 0, 'local_denied': 0}
+    anonymity_counts = {}
     for (payload,) in db.execute('SELECT payload FROM results WHERE profile=?', (profile,)):
         row = json.loads(payload)
         checked += 1
         status = (row.get('reputation') or {}).get('status', 'clean')
         status_counts[status] = status_counts.get(status, 0) + 1
-        eligible = result_allowed(row, min_success, denylist=None, strict=strict)
+        level = (row.get('anonymity') or {}).get('level')
+        if level:
+            anonymity_counts[level] = anonymity_counts.get(level, 0) + 1
+        eligible = result_allowed(row, min_success, denylist=None, strict=strict, min_anonymity=min_anonymity)
         if eligible and active_denylist is not None and active_denylist.match(row.get('proxy', '')):
             local_filtered += 1
         elif eligible:
@@ -963,13 +1022,18 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
     selected = db.execute(f"""SELECT r.payload FROM export_rank e JOIN results r
         ON r.proxy=e.proxy AND r.profile=? ORDER BY {order} LIMIT ?""", (profile, top or -1))
     fields = ['proxy', 'score', 'latency_ms', 'jitter_ms', 'reliability', 'min_target_reliability',
-              'successes', 'requests', 'checked_at', 'reputation_status', 'reputation_sources']
-    names = ['proxies.txt', 'ranked.json', 'ranked.csv']
+              'successes', 'requests', 'checked_at', 'reputation_status', 'reputation_sources',
+              'anonymity', 'anonymity_signals']
+    names = ['proxies.txt', 'ranked.json', 'ranked.csv', *PROTOCOL_EXPORTS.values()]
     exported = 0
     try:
         with (generation/'proxies.txt').open('w', encoding='utf-8') as txt, \
              (generation/'ranked.json').open('w', encoding='utf-8') as js, \
-             (generation/'ranked.csv').open('w', encoding='utf-8', newline='') as csv_file:
+             (generation/'ranked.csv').open('w', encoding='utf-8', newline='') as csv_file, \
+             contextlib.ExitStack() as stack:
+            # host:port lists per protocol, the format most proxy-consuming tools expect.
+            by_protocol = {scheme: stack.enter_context((generation/name).open('w', encoding='utf-8'))
+                           for scheme, name in PROTOCOL_EXPORTS.items()}
             writer = csv.DictWriter(csv_file, fieldnames=fields, extrasaction='ignore')
             writer.writeheader()
             js.write('[')
@@ -979,9 +1043,14 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
                 row['reputation_status'] = verdict.get('status', 'clean')
                 row['reputation_sources'] = ','.join(item.get('zone', '') for item in verdict.get('dnsbl', [])
                                                        if item.get('status') == 'listed')
+                judged = row.get('anonymity') or {}
+                csv_row = dict(row, anonymity=judged.get('level', ''),
+                               anonymity_signals=','.join(judged.get('signals', [])))
                 txt.write(row['proxy'] + '\n')
+                scheme, _, address = row['proxy'].partition('://')
+                by_protocol[PROTOCOL_ALIASES.get(scheme, scheme)].write(address + '\n')
                 js.write((',' if exported else '') + '\n' + json.dumps(row, ensure_ascii=False))
-                writer.writerow(row)
+                writer.writerow(csv_row)
                 exported += 1
             js.write('\n]\n')
         total = db.execute('SELECT count(*) FROM candidates').fetchone()[0]
@@ -991,7 +1060,9 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
                       targets=[dict(name=t.get('name', ''), url=public_url(t['url'])) for t in cfg.get('targets', [])],
                       request_profile=cfg.get('request_profile', 'workbench'),
                       request_profile_digest=cfg.get('request_profile_digest', ''),
-                      reputation=dict(policy, counts=status_counts), generation=generation.name)
+                      reputation=dict(policy, counts=status_counts), generation=generation.name,
+                      anonymity=dict(enabled=bool(cfg.get('anonymity')), min_level=min_anonymity,
+                                     counts=anonymity_counts))
         atomic(generation/'status.json', json.dumps(report, indent=2) + '\n')
         atomic(directory/'current.json', json.dumps({'generation':generation.name, 'files':names}, ensure_ascii=False) + '\n')
         published = True
@@ -1055,6 +1126,9 @@ def parser():
     p.add_argument('--reputation-timeout', type=float, default=None, help='таймаут одной DNSBL-зоны, секунд')
     p.add_argument('--strict-clean', dest='strict_clean', action='store_true', default=None,
                    help='не разрешать прокси с неопределённым DNSBL-результатом')
+    p.add_argument('--judge-url', help='echo-endpoint для проверки анонимности (transparent/anonymous/elite)')
+    p.add_argument('--min-anonymity', choices=anonymity.MIN_LEVELS, default='any',
+                   help='минимальный уровень анонимности для экспорта; нужен --judge-url')
     p.add_argument('--recheck', action='store_true', help='заново проверить все адреса текущего профиля')
     p.add_argument('--top', type=int, default=0, help='сколько сохранить; 0 — все прошедшие')
     p.add_argument('--sort', choices=['speed', 'quality'], default='quality')
@@ -1166,9 +1240,23 @@ def main(argv=None):
                         return await screen_proxy(proxy, policy, denylist)
                 return await screen_proxy(proxy, policy, denylist)
 
+            probe = check_proxy
+            if config.get('anonymity'):
+                try:
+                    own_ips = asyncio.run(detect_own_ips(config))
+                except (httpx.HTTPError, TimeoutError, OSError, ValueError) as exc:
+                    reason = str(exc) if isinstance(exc, ValueError) else type(exc).__name__
+                    print(f'Не удалось определить внешний IP через judge URL: {reason}', file=sys.stderr)
+                    raise
+                print(f'Проверка анонимности: judge {public_url(config["anonymity"]["judge_url"])}', flush=True)
+
+                async def probe(proxy, scan_config, limiter):
+                    return await check_proxy(proxy, scan_config, limiter, own_ips=own_ips)
+
             asyncio.run(stoppable(scan(db, config, workers=workers, rate=args.rate, recheck=args.recheck,
-                                       on_progress=update_progress, min_success=args.min_success,
-                                       screen=reputation_check, denylist=denylist), args.stop_file))
+                                       probe=probe, on_progress=update_progress, min_success=args.min_success,
+                                       screen=reputation_check, denylist=denylist,
+                                       min_anonymity=args.min_anonymity), args.stop_file))
         elif args.command == 'export':
             profile = (args.data / 'last-profile.txt').read_text(encoding='utf-8').strip()
     except (KeyboardInterrupt, asyncio.CancelledError):
@@ -1185,7 +1273,7 @@ def main(argv=None):
                 try:
                     report = export(db, profile, args.data / 'exports', top=args.top,
                                     sort=args.sort, min_success=args.min_success, denylist=denylist,
-                                    local_override=args.local_denylist)
+                                    local_override=args.local_denylist, min_anonymity=args.min_anonymity)
                 except Exception as exc:
                     if not code:
                         print(f'Ошибка экспорта: {type(exc).__name__}: проверьте data/ и denylist.', file=sys.stderr)

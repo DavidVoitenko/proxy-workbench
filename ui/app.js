@@ -160,6 +160,23 @@ const messages = {
     'col.jitter': 'Jitter',
     'col.success': 'Success',
     'col.cleanliness': 'Cleanliness',
+    'col.anonymity': 'Anonymity',
+    'anon.judge': 'Anonymity judge URL (optional)',
+    'anon.judgeHint': 'An echo page that shows the client IP and request headers. Each working proxy is rated transparent, anonymous or elite. Use an http:// judge: over HTTPS a proxy cannot add headers. Your own IP is requested once directly and never saved.',
+    'anon.min': 'Minimum anonymity',
+    'anon.any': 'Any level',
+    'anon.minAnonymous': 'Anonymous or elite',
+    'anon.minElite': 'Elite only',
+    'anon.minHint': 'Applies only when a judge URL is set.',
+    'anon.elite': 'Elite',
+    'anon.anonymous': 'Anonymous',
+    'anon.transparent': 'Transparent',
+    'anon.unknown': 'Unknown',
+    'anon.off': '—',
+    'anon.details': 'Anonymity:',
+    'anon.signals': 'signals: {signals}',
+    'anon.realIp': 'your real IP is visible',
+    'anon.counts': ' · elite: {elite} · anonymous: {anonymous} · transparent: {transparent}',
     'col.source': 'Source',
     'col.lines': 'Lines',
     'col.rejected': 'Rejected',
@@ -406,6 +423,23 @@ const messages = {
     'col.jitter': 'Разброс',
     'col.success': 'Успешность',
     'col.cleanliness': 'Чистота',
+    'col.anonymity': 'Анонимность',
+    'anon.judge': 'Judge-URL для проверки анонимности (необязательно)',
+    'anon.judgeHint': 'Echo-страница, которая показывает IP клиента и заголовки запроса. Каждый рабочий прокси получает уровень: прозрачный, анонимный или элитный. Используйте http:// judge: через HTTPS прокси не может добавить заголовки. Ваш IP запрашивается один раз напрямую и не сохраняется.',
+    'anon.min': 'Минимальная анонимность',
+    'anon.any': 'Любой уровень',
+    'anon.minAnonymous': 'Анонимные и элитные',
+    'anon.minElite': 'Только элитные',
+    'anon.minHint': 'Работает, только если указан judge-URL.',
+    'anon.elite': 'Элитный',
+    'anon.anonymous': 'Анонимный',
+    'anon.transparent': 'Прозрачный',
+    'anon.unknown': 'Неизвестно',
+    'anon.off': '—',
+    'anon.details': 'Анонимность:',
+    'anon.signals': 'признаки: {signals}',
+    'anon.realIp': 'виден ваш реальный IP',
+    'anon.counts': ' · элитных: {elite} · анонимных: {anonymous} · прозрачных: {transparent}',
     'col.source': 'Источник',
     'col.lines': 'Строк',
     'col.rejected': 'Отклонено',
@@ -525,6 +559,97 @@ function t(key, values={}) {
   return text.replace(/\{(\w+)\}/g, (match, name) => name in values ? String(values[name]) : match);
 }
 
+// Server validation messages and CLI log lines are written in Russian by the
+// Python side. In English mode they are translated here; unknown text is shown as is.
+const serverMessagesEn = {
+  'Ожидаются настройки проверки.': 'Scan settings are expected.',
+  'Неизвестная версия настроек.': 'Unknown settings version.',
+  'Неизвестный request-профиль.': 'Unknown request profile.',
+  'Список denylist слишком большой: максимум 2 МБ.': 'The denylist is too large: 2 MB maximum.',
+  'Настройки чистоты должны быть объектом.': 'Cleanliness settings must be an object.',
+  'Настройки чистоты должны быть логическими.': 'Cleanliness settings must be booleans.',
+  'Настройки проверки чистоты должны быть логическими.': 'Cleanliness settings must be booleans.',
+  'DNSBL-зоны должны быть списком.': 'DNSBL zones must be a list.',
+  'DNSBL-зона должна быть строкой.': 'A DNSBL zone must be a string.',
+  'Некорректная DNSBL-зона.': 'Invalid DNSBL zone.',
+  'Таймаут DNSBL должен быть числом.': 'The DNSBL timeout must be a number.',
+  'Таймаут DNSBL должен быть от 0.1 до 30 секунд.': 'The DNSBL timeout must be between 0.1 and 30 seconds.',
+  'Неверный режим сортировки или источников.': 'Invalid sort or sources mode.',
+  'Список прокси слишком большой: максимум 20 МБ.': 'The proxy list is too large: 20 MB maximum.',
+  'Источники должны быть списком URL (до 5000).': 'Sources must be a list of URLs (up to 5000).',
+  'Добавьте от 1 до 20 сервисов.': 'Add between 1 and 20 services.',
+  'Название сервиса: максимум 160 символов.': 'Service name: 160 characters maximum.',
+  'Файл gui-settings.json повреждён или недоступен; исправьте его перед продолжением.': 'gui-settings.json is damaged or unreadable; fix it before continuing.',
+  'Не удалось прочитать data/denylist.txt. Исправьте файл перед сохранением.': 'Could not read data/denylist.txt. Fix the file before saving.',
+  'Файл gui-settings.json должен содержать объект настроек.': 'gui-settings.json must contain a settings object.',
+  'Проверка уже идёт. Сначала остановите её.': 'A scan is already running. Stop it first.',
+  'Неизвестное действие.': 'Unknown action.',
+  'Сначала запустите проверку.': 'Run a scan first.',
+  'Включите источники или добавьте свой список прокси.': 'Enable sources or add your own proxy list.',
+  'Не удалось запустить проверку.': 'Could not start the scan.',
+  'Сначала остановите текущую операцию.': 'Stop the current operation first.',
+  'Неверные параметры рейтинга.': 'Invalid ranking parameters.',
+  'Не удалось прочитать локальный denylist; обновите список.': 'Could not read the local denylist; update the list.',
+  'Некорректный адрес прокси.': 'Invalid proxy address.',
+  'Результаты не найдены.': 'No results found.',
+  'Детали прокси не найдены.': 'Proxy details not found.',
+  'Неверный адрес приложения.': 'Wrong application address.',
+  'Запрос с другого сайта отклонён.': 'Cross-site request rejected.',
+  'Обновите страницу приложения.': 'Reload the application page.',
+  'Файл не найден.': 'File not found.',
+  'Не найдено.': 'Not found.',
+  'Не удалось прочитать данные. Повторите после завершения операции.': 'Could not read data. Try again after the current operation finishes.',
+  'Слишком большой запрос.': 'Request too large.',
+  'Проверьте поля настроек.': 'Check the settings fields.',
+  'Не удалось записать настройки. Проверьте доступ к папке data.': 'Could not write settings. Check access to the data folder.',
+  'Данные уже используются другим процессом.': 'The data folder is used by another process.',
+  'Настройки анонимности должны быть объектом.': 'Anonymity settings must be an object.',
+  'anonymity.judge_url: ожидается http(s) URL': 'anonymity.judge_url: an http(s) URL is expected',
+  'anonymity.judge_url: нужен http(s) URL без userinfo': 'anonymity.judge_url: an http(s) URL without userinfo is required',
+  'anonymity.judge_url: некорректный порт': 'anonymity.judge_url: invalid port',
+  'Уровень анонимности: any, anonymous или elite.': 'Anonymity level: any, anonymous or elite.',
+  'Остановлено. Завершённые проверки сохранены; scan продолжит проход.': 'Stopped. Finished checks are saved; scan will resume the pass.',
+  'Эта папка data уже используется другим запуском.': 'This data folder is already used by another run.',
+  'Удалено: ничего': 'Deleted: nothing',
+  'нужен HTTP/HTTPS URL': 'an HTTP/HTTPS URL is required',
+  'некорректный URL': 'invalid URL',
+  'некорректный URL или порт': 'invalid URL or port',
+  'нужен HTTP/HTTPS URL без логина и пароля': 'an HTTP/HTTPS URL without login and password is required',
+  'fragment в URL источника запрещен': 'fragments are not allowed in source URLs',
+  'некорректный порт': 'invalid port',
+  'некорректный hostname': 'invalid hostname',
+  'слишком длинный hostname': 'hostname is too long'
+};
+const serverPatternsEn = [
+  [/^Недопустимое значение: (.+)\.$/, 'Invalid value: $1.'],
+  [/^Источник: (.+)\.$/, match => `Source: ${serverText(match[1])}.`],
+  [/^Источник (\d+): строк (\d+), заблокировано (\d+), страниц (\d+), ошибка нет$/, 'Source $1: $2 lines, $3 blocked, $4 pages, no errors'],
+  [/^Источник (\d+): строк (\d+), заблокировано (\d+), страниц (\d+), ошибка (.+)$/, 'Source $1: $2 lines, $3 blocked, $4 pages, error $5'],
+  [/^Проверено (\d+)\/(\d+); ([\d.]+) прокси\/с; осталось ~([\d.]+) мин$/, 'Checked $1/$2; $3 proxies/s; ~$4 min left'],
+  [/^Проверено (\d+)\/(\d+); подходят (\d+); сохранено (\d+)$/, 'Checked $1/$2; matching $3; saved $4'],
+  [/^Уникальных кандидатов в базе: (\d+)$/, 'Unique candidates in database: $1'],
+  [/^Воркеров: (\d+); полный обход; профиль (.+)$/, 'Workers: $1; full sweep; profile $2'],
+  [/^Ошибка: (\w+): проверьте файлы и параметры\.$/, 'Error: $1: check files and parameters.'],
+  [/^Ошибка экспорта: (\w+): проверьте data\/ и denylist\.$/, 'Export error: $1: check data/ and the denylist.'],
+  [/^Удалено: (.+)$/, 'Deleted: $1'],
+  [/^Проверка анонимности: judge (.+)$/, 'Anonymity check: judge $1'],
+  [/^Не удалось определить внешний IP через judge URL: judge URL не показал внешний IP этого устройства$/, 'Could not detect the external IP via the judge URL: the judge did not show this device’s public IP'],
+  [/^Не удалось определить внешний IP через judge URL: (.+)$/, 'Could not detect the external IP via the judge URL: $1']
+];
+
+function serverText(text) {
+  if (lang !== 'en' || typeof text !== 'string') return text;
+  const trimmed = text.trim();
+  if (Object.hasOwn(serverMessagesEn, trimmed)) return serverMessagesEn[trimmed];
+  for (const [pattern, replacement] of serverPatternsEn) {
+    const match = trimmed.match(pattern);
+    if (match) return typeof replacement === 'function' ? replacement(match) : trimmed.replace(pattern, replacement);
+  }
+  return text;
+}
+
+const serverLog = text => lang === 'en' ? String(text).split('\n').map(serverText).join('\n') : text;
+
 function applyI18n(root=document) {
   root.querySelectorAll('[data-i18n]').forEach(node => { node.textContent = t(node.dataset.i18n); });
   // Only static dictionary markup is inserted here; user data never reaches this path.
@@ -555,7 +680,7 @@ async function api(path, body) {
     body: body === undefined ? undefined : JSON.stringify(body)
   });
   const value = await response.json();
-  if (!response.ok) throw new Error(value.error || t('error.app'));
+  if (!response.ok) throw new Error(value.error ? serverText(value.error) : t('error.app'));
   return value;
 }
 
@@ -617,6 +742,8 @@ function getSettings() {
   copy.proxies = $('proxies').value;
   copy.denylist = $('denylist').value;
   copy.request_profile = $('request-profile').value;
+  copy.anonymity = {judge_url: $('judge-url').value.trim()};
+  copy.min_anonymity = $('min_anonymity').value;
   const zoneValues = zones();
   copy.reputation = {
     local_enabled: $('local-denylist-enabled').checked,
@@ -667,6 +794,8 @@ function fill(value) {
   $('dnsbl-enabled').checked = !!reputation.dnsbl_enabled && $('dnsbl-zones').value.trim().length > 0;
   $('local-denylist-enabled').checked = reputation.local_enabled !== false;
   $('strict-clean').checked = !!reputation.strict;
+  $('judge-url').value = (value.anonymity && value.anonymity.judge_url) || '';
+  $('min_anonymity').value = value.min_anonymity || 'any';
   $('targets').replaceChildren();
   value.targets.forEach(addTarget);
   updateIdentity();
@@ -679,6 +808,7 @@ function syncResultControls() {
   const value = $('min_success').value;
   if (![...$('result-min').options].some(option => option.value === value)) $('result-min').add(new Option(`${Math.round(Number(value) * 100)}%`, value));
   $('result-min').value = value;
+  $('result-anon').value = $('min_anonymity').value;
   $('result-top').value = $('top').value;
 }
 
@@ -704,6 +834,8 @@ async function start(action) {
       value.sort = $('result-sort').value;
       value.min_success = Number($('result-min').value);
       value.top = Number($('result-top').value);
+      value.min_anonymity = $('result-anon').value;
+      $('min_anonymity').value = value.min_anonymity;
       $('sort').value = value.sort;
       $('min_success').value = value.min_success;
       $('top').value = value.top;
@@ -745,9 +877,31 @@ function reputationLabel(status) {
   return messages.en['reputation.' + status] ? t('reputation.' + status) : status;
 }
 
+function anonymityBadge(row) {
+  const level = row && row.anonymity && row.anonymity.level;
+  if (!level) return `<span class="anonymity anonymity-off">${esc(t('anon.off'))}</span>`;
+  const label = messages.en['anon.' + level] ? t('anon.' + level) : level;
+  return `<span class="anonymity anonymity-${esc(level)}">${esc(label)}</span>`;
+}
+
+function anonymityDetails(row) {
+  const judged = row.anonymity;
+  if (!judged) return '';
+  const label = messages.en['anon.' + judged.level] ? t('anon.' + judged.level) : judged.level;
+  const signals = (judged.signals || []).map(signal => signal === 'real_ip' ? t('anon.realIp') : signal).join(', ');
+  return ` · <strong>${esc(t('anon.details'))}</strong> ${esc(label)}${signals ? ' (' + esc(t('anon.signals', {signals})) + ')' : ''}${judged.error ? ' · ' + esc(judged.error) : ''}`;
+}
+
 function reputationBadge(row) {
   const status = reputationStatus(row);
   return `<span class="cleanliness cleanliness-${esc(status)}">${esc(reputationLabel(status))}</span>`;
+}
+
+function anonymityCounts(report) {
+  const info = report.anonymity;
+  if (!info || !info.enabled) return '';
+  const counts = info.counts || {};
+  return t('anon.counts', {elite:fmt(counts.elite || 0), anonymous:fmt(counts.anonymous || 0), transparent:fmt(counts.transparent || 0)});
 }
 
 function renderState(value) {
@@ -766,13 +920,13 @@ function renderState(value) {
   $('eta').textContent = value.running && progress.phase === 'scanning' ? duration(progress.eta_seconds) : '—';
   $('progress-text').textContent = progress.phase === 'collecting' ? t('progress.sources', {done:progress.sources_done || 0, total:progress.sources_total || 0}) : progress.candidates ? t('progress.remaining', {count:fmt(Math.max(0, progress.candidates - (progress.checked || 0)))}) : t('progress.allQueued');
   $('job-detail').textContent = job.id ? `${t('job.summary', {action:t(actions.includes(job.action) ? 'action.' + job.action : 'action.fallback'), count:job.targets?.length || 0})}${job.request_profile ? t('job.profile', {profile:profileLabel(job.request_profile)}) : ''}${progress.phase === 'error' ? t('job.seeLog') : ''}` : t('job.idle');
-  $('log').textContent = value.log || t('log.empty');
+  $('log').textContent = value.log ? serverLog(value.log) : t('log.empty');
   const exportReport = value.export || {};
   $('nav-count').textContent = fmt(progress.passed ?? exportReport.passed ?? 0);
   $('live-passed').textContent = fmt(progress.passed ?? exportReport.passed ?? 0);
   if (exportReport.profile) {
     const counts = exportReport.reputation?.counts || {};
-    $('export-note').textContent = t('results.exportReady', {exported:fmt(exportReport.exported), passed:fmt(exportReport.passed), checked:fmt(exportReport.checked), candidates:fmt(exportReport.candidates), clean:fmt(counts.clean || 0), listed:fmt((counts.listed || 0) + (counts.local_denied || 0)), unknown:fmt(counts.unknown || 0), local:exportReport.local_filtered ? t('results.localFiltered', {count:fmt(exportReport.local_filtered)}) : ''});
+    $('export-note').textContent = t('results.exportReady', {exported:fmt(exportReport.exported), passed:fmt(exportReport.passed), checked:fmt(exportReport.checked), candidates:fmt(exportReport.candidates), clean:fmt(counts.clean || 0), listed:fmt((counts.listed || 0) + (counts.local_denied || 0)), unknown:fmt(counts.unknown || 0), local:(exportReport.local_filtered ? t('results.localFiltered', {count:fmt(exportReport.local_filtered)}) : '') + anonymityCounts(exportReport)});
   }
   document.querySelectorAll('[data-download]').forEach(node => { node.disabled = !(value.downloads || []).includes(node.dataset.download) || (value.running && progress.phase === 'exporting'); });
   const report = progress.sources ? progress : value.sources || {};
@@ -808,7 +962,7 @@ function renderResults(data) {
   $('result-context').textContent = data && data.profile ? t('results.context', {targets:data.targets.map(target => target.name ? `${target.name} (${target.url})` : target.url).join(' + '), profile:profileLabel(data.request_profile || 'workbench')}) : t('results.empty');
   $('result-total').textContent = t('results.total', {count:fmt(total)});
   $('page-number').textContent = `${fmt(Math.floor(start / 50) + 1)} / ${fmt(Math.max(1, Math.ceil(total / 50)))}`;
-  $('result-rows').innerHTML = page.length ? page.map((row, index) => `<tr><td>${fmt(start + index + 1)}</td><td>${esc(row.proxy)}</td><td><span class="score">${Number(row.score).toFixed(1)}</span></td><td>${esc(ms(Number(row.latency_ms).toFixed(0)))}</td><td>${esc(ms(Number(row.jitter_ms).toFixed(0)))}</td><td>${(Number(row.min_target_reliability) * 100).toFixed(0)}%</td><td>${reputationBadge(row)}</td><td><button class="text-link" data-details="${index}">${esc(t('results.details'))}</button></td></tr>`).join('') : `<tr><td colspan="8" class="empty">${esc(t(data ? 'results.noneMatching' : 'results.noneYet'))}</td></tr>`;
+  $('result-rows').innerHTML = page.length ? page.map((row, index) => `<tr><td>${fmt(start + index + 1)}</td><td>${esc(row.proxy)}</td><td><span class="score">${Number(row.score).toFixed(1)}</span></td><td>${esc(ms(Number(row.latency_ms).toFixed(0)))}</td><td>${esc(ms(Number(row.jitter_ms).toFixed(0)))}</td><td>${(Number(row.min_target_reliability) * 100).toFixed(0)}%</td><td>${reputationBadge(row)}</td><td>${anonymityBadge(row)}</td><td><button class="text-link" data-details="${index}">${esc(t('results.details'))}</button></td></tr>`).join('') : `<tr><td colspan="9" class="empty">${esc(t(data ? 'results.noneMatching' : 'results.noneYet'))}</td></tr>`;
   $('result-rows').querySelectorAll('[data-details]').forEach(node => node.onclick = () => details(page[Number(node.dataset.details)]));
 }
 
@@ -817,7 +971,7 @@ async function loadResults() {
   resultBusy = true;
   $('refresh-results').disabled = true;
   try {
-    const query = new URLSearchParams({sort:$('result-sort').value, min_success:$('result-min').value, offset});
+    const query = new URLSearchParams({sort:$('result-sort').value, min_success:$('result-min').value, min_anonymity:$('result-anon').value, offset});
     const data = await api('/api/results?' + query);
     resultTargets = data.targets;
     resultData = {...data, offset};
@@ -837,7 +991,7 @@ function renderDetails(row) {
   const verdict = row.reputation || {status:'clean', dnsbl:[]};
   const dnsbl = (verdict.dnsbl || []).map(item => `${esc(item.zone)}: ${esc(t(item.status === 'listed' ? 'dnsbl.listed' : item.status === 'clear' ? 'dnsbl.clear' : 'dnsbl.noAnswer'))}`).join(' · ') || esc(t('dnsbl.notChecked'));
   const head = ['col.attempt', 'col.response', 'col.time', 'col.bytes', 'col.result'].map(key => `<th>${esc(t(key))}</th>`).join('');
-  $('details-body').innerHTML = `<div class="detail-reputation"><strong>${esc(t('details.cleanliness'))}</strong> ${esc(reputationLabel(verdict.status))} · <strong>DNSBL:</strong> ${dnsbl}${verdict.local_rule ? esc(t('details.localRule')) + esc(verdict.local_rule) : ''}</div>` + resultTargets.map((target, index) => `<h3>${esc(target.name || t('details.service', {number:index + 1}))} · ${esc(target.url)}</h3><div class="table-wrap"><table><thead><tr>${head}</tr></thead><tbody>${(row.samples || []).filter(sample => sample.target === index).map(sample => `<tr><td>${esc(sample.attempt)}</td><td>${esc(sample.status ?? '—')}</td><td>${esc(ms(sample.ms))}</td><td>${fmt(sample.bytes)}</td><td class="${sample.ok ? '' : 'status-error'}">${esc(sample.ok ? t('details.success') : sample.error)}</td></tr>`).join('')}</tbody></table></div>`).join('');
+  $('details-body').innerHTML = `<div class="detail-reputation"><strong>${esc(t('details.cleanliness'))}</strong> ${esc(reputationLabel(verdict.status))} · <strong>DNSBL:</strong> ${dnsbl}${verdict.local_rule ? esc(t('details.localRule')) + esc(verdict.local_rule) : ''}${anonymityDetails(row)}</div>` + resultTargets.map((target, index) => `<h3>${esc(target.name || t('details.service', {number:index + 1}))} · ${esc(target.url)}</h3><div class="table-wrap"><table><thead><tr>${head}</tr></thead><tbody>${(row.samples || []).filter(sample => sample.target === index).map(sample => `<tr><td>${esc(sample.attempt)}</td><td>${esc(sample.status ?? '—')}</td><td>${esc(ms(sample.ms))}</td><td>${fmt(sample.bytes)}</td><td class="${sample.ok ? '' : 'status-error'}">${esc(sample.ok ? t('details.success') : sample.error)}</td></tr>`).join('')}</tbody></table></div>`).join('');
 }
 
 async function details(summary) {
@@ -863,7 +1017,7 @@ $('export').onclick = () => start('export');
 $('stop').onclick = async () => { try { $('stop').disabled = true; await api('/api/stop', {}); toast(t('toast.stopping')); await poll(); } catch (error) { toast(error.message, true); } };
 $('clear-data').onclick = async () => { if (!confirm(t('confirm.clear'))) return; try { const result = await api('/api/clear-data', {}); toast(t('toast.cleared', {count:result.removed.length})); await poll(); } catch (error) { toast(error.message, true); } };
 $('refresh-results').onclick = () => { offset = 0; loadResults(); };
-['result-sort', 'result-min'].forEach(id => $(id).onchange = () => { offset = 0; loadResults(); });
+['result-sort', 'result-min', 'result-anon'].forEach(id => $(id).onchange = () => { offset = 0; loadResults(); });
 $('prev').onclick = () => { offset = Math.max(0, offset - 50); loadResults(); };
 $('next').onclick = () => { offset += 50; loadResults(); };
 $('sources').oninput = updateSourceCount;
