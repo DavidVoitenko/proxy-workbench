@@ -58,6 +58,8 @@ RESULT_ORDERS = {
     'stability': "json_extract(payload,'$.jitter_ms'), json_extract(payload,'$.latency_ms'), proxy",
     'uptime': "COALESCE(1.0*json_extract(payload,'$.history.passes')/json_extract(payload,'$.history.checks'), 1) DESC, "
               "COALESCE(json_extract(payload,'$.history.checks'), 1) DESC, json_extract(payload,'$.score') DESC, proxy",
+    'bandwidth': "json_extract(payload,'$.speed.mbps') IS NULL, json_extract(payload,'$.speed.mbps') DESC, "
+                 "json_extract(payload,'$.score') DESC, proxy",
 }
 # A source needs this many checked proxies before "no working ones" is trusted.
 PRUNE_MIN_CHECKED = 20
@@ -82,7 +84,7 @@ def defaults():
                                 timeout=2.5, strict=False),
                 anonymity=dict(judge_url=''), min_anonymity='any',
                 connect_timeout=4, fail_fast=True, protocol='all', max_latency=0, countries='', want=0,
-                detect_protocols=False, watch=0, prefilter=512)
+                detect_protocols=False, watch=0, prefilter=512, speedtest=dict(url='', max_bytes=core.SPEEDTEST_BYTES))
 
 
 def validate(settings):
@@ -160,6 +162,14 @@ def validate(settings):
     anonymity.validate_judge({'judge_url': judge_url})
     clean['anonymity'] = dict(judge_url=judge_url)
     anonymity.validate_min_level(clean['min_anonymity'])
+    speedtest = clean['speedtest']
+    if not isinstance(speedtest, dict) or not isinstance(speedtest.get('url', ''), str):
+        raise ValueError('speedtest.url: ожидается http(s) URL')
+    speedtest = dict(url=speedtest.get('url', '').strip(), max_bytes=speedtest.get('max_bytes', core.SPEEDTEST_BYTES))
+    core.validate_speedtest(speedtest if speedtest['url'] else None)
+    if type(speedtest['max_bytes']) is not int:
+        raise ValueError('speedtest.max_bytes: от 10000 до 200000000')
+    clean['speedtest'] = speedtest
     if not isinstance(clean['countries'], str) or len(clean['countries']) > 1000:
         raise ValueError('Страны: используйте двухбуквенные ISO-коды, например DE,NL.')
     clean['countries'] = ','.join(geoip.parse_countries(clean['countries']))
@@ -232,8 +242,8 @@ class App:
         runner = getattr(self, 'gateway', None)
         if runner is None:
             return None
-        pool = runner.server.gateway.pool
-        return dict(address=f'127.0.0.1:{runner.port}', proxies=len(pool.available()), **pool.stats)
+        snapshot = runner.server.gateway.pool.snapshot(top=5)
+        return dict(snapshot, address=f'127.0.0.1:{runner.port}', proxies=snapshot['available'])
 
     def prune_sources(self, payload):
         """Drop sources that delivered only non-working proxies in the last export."""
@@ -293,7 +303,8 @@ class App:
                 raise ValueError('Включите источники или добавьте свой список прокси.')
             core.atomic(self.data/'gui-targets.json', json.dumps({
                 'targets': settings['targets'], 'request_profile': settings['request_profile'],
-                'reputation': settings['reputation'], 'anonymity': settings['anonymity']}, ensure_ascii=False))
+                'reputation': settings['reputation'], 'anonymity': settings['anonymity'],
+                'speedtest': settings['speedtest']}, ensure_ascii=False))
             core.atomic(self.data/'gui-sources.json', json.dumps(settings['sources']))
             core.atomic(self.data/'gui-input.txt', settings['proxies'])
             self.stop_path.unlink(missing_ok=True)

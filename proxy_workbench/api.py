@@ -27,7 +27,7 @@ TOKEN_ENV = 'PROXY_WORKBENCH_API_TOKEN'
 FORMATS = ('json', 'txt', 'hostport')
 MAX_LIMIT = 1_000_000
 ENDPOINTS = {
-    '/proxies': 'working proxies, best first; filters: protocol, country, max_latency, anonymity, limit, format',
+    '/proxies': 'working proxies, best first; filters: protocol, country, max_latency, min_mbps, anonymity, limit, format',
     '/random': 'random working proxies (limit, default 1); same filters',
     '/pac': 'proxy auto-config for browsers with the best matching proxies; same filters',
     '/clash': 'Clash / Mihomo config with the best matching proxies; same filters',
@@ -60,6 +60,7 @@ def public_row(row):
         'exit_ip': row.get('exit_ip') or None,
         'exit_country': row.get('exit_country') or None,
         'latency_ms': row.get('latency_ms'),
+        'mbps': (row.get('speed') or {}).get('mbps'),
         'jitter_ms': row.get('jitter_ms'),
         'reliability': row.get('reliability'),
         'uptime': round(history['passes'] / history['checks'], 4) if history['checks'] else None,
@@ -117,13 +118,14 @@ def parse_query(query):
         raise ValueError('format: json, txt or hostport')
     try:
         max_latency = float(values.get('max_latency') or 0)
+        min_mbps = float(values.get('min_mbps') or 0)
         limit = int(values.get('limit') or 0)
     except ValueError:
-        raise ValueError('max_latency and limit must be numbers') from None
-    if not 0 <= max_latency < float('inf') or not 0 <= limit <= MAX_LIMIT:
-        raise ValueError('max_latency and limit must not be negative')
+        raise ValueError('max_latency, min_mbps and limit must be numbers') from None
+    if not 0 <= max_latency < float('inf') or not 0 <= min_mbps < float('inf') or not 0 <= limit <= MAX_LIMIT:
+        raise ValueError('max_latency, min_mbps and limit must not be negative')
     return dict(protocol=protocol, countries=countries, anonymity=minimum, max_latency=max_latency,
-                limit=limit, format=fmt)
+                min_mbps=min_mbps, limit=limit, format=fmt)
 
 
 def select(rows, query):
@@ -137,6 +139,8 @@ def select(rows, query):
         if query['max_latency'] and (row['latency_ms'] is None or row['latency_ms'] > query['max_latency']):
             continue
         if query['anonymity'] != 'any' and rank.get(row['anonymity'] or 'unknown', -1) < rank[query['anonymity']]:
+            continue
+        if query.get('min_mbps') and (row.get('mbps') or 0) < query['min_mbps']:
             continue
         selected.append(row)
     return selected

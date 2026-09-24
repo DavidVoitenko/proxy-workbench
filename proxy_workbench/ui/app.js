@@ -211,6 +211,12 @@ const messages = {
     'breakdown.countries': 'Countries',
     'breakdown.unknown': 'unknown',
     'results.exitIp': 'Exit IP seen by the judge: {ip}',
+    'sort.bandwidth': 'Bandwidth: most Mbit/s first',
+    'results.byBandwidth': 'By bandwidth',
+    'col.mbps': 'Mbit/s',
+    'col.mbpsHint': 'Download speed from the speed test',
+    'speed.url': 'Speed test file (optional)',
+    'speed.hint': 'Every proxy that works for your services downloads this file once, and the table shows its real download speed in Mbit/s. Leave empty to skip; it adds a few seconds per working proxy.',
     'check.prefilter': 'Quick pre-check, connections',
     'check.prefilterHint': 'Drops addresses that do not even accept a connection before the full check. 0 — off.',
     'presets.label': 'Or add a ready-made check',
@@ -549,6 +555,12 @@ const messages = {
     'breakdown.countries': 'Страны',
     'breakdown.unknown': 'неизвестно',
     'results.exitIp': 'Выходной IP, который увидел judge: {ip}',
+    'sort.bandwidth': 'Пропускная способность: больше Мбит/с первыми',
+    'results.byBandwidth': 'По скорости загрузки',
+    'col.mbps': 'Мбит/с',
+    'col.mbpsHint': 'Скорость загрузки по замеру',
+    'speed.url': 'Файл для замера скорости (необязательно)',
+    'speed.hint': 'Каждый прокси, прошедший ваши сервисы, один раз скачивает этот файл, и в таблице видна реальная скорость загрузки в Мбит/с. Оставьте пустым, чтобы не замерять; замер добавляет несколько секунд на каждый рабочий прокси.',
     'check.prefilter': 'Быстрая предпроверка, соединений',
     'check.prefilterHint': 'Отсеивает адреса, которые даже не принимают подключение, до полной проверки. 0 — выключено.',
     'presets.label': 'Или добавьте готовую проверку',
@@ -763,6 +775,9 @@ const serverMessagesEn = {
   'anonymity.judge_url: ожидается http(s) URL': 'anonymity.judge_url: an http(s) URL is expected',
   'anonymity.judge_url: нужен http(s) URL без userinfo': 'anonymity.judge_url: an http(s) URL without userinfo is required',
   'anonymity.judge_url: некорректный порт': 'anonymity.judge_url: invalid port',
+  'speedtest.url: ожидается http(s) URL': 'speedtest.url: an http(s) URL is expected',
+  'speedtest.url: нужен http(s) URL без userinfo': 'speedtest.url: an http(s) URL without userinfo is required',
+  'speedtest.max_bytes: от 10000 до 200000000': 'speedtest.max_bytes: from 10000 to 200000000',
   'Уровень анонимности: any, anonymous или elite.': 'Anonymity level: any, anonymous or elite.',
   'Остановлено. Завершённые проверки сохранены; scan продолжит проход.': 'Stopped. Finished checks are saved; scan will resume the pass.',
   'Эта папка data уже используется другим запуском.': 'This data folder is already used by another run.',
@@ -937,6 +952,7 @@ function getSettings() {
   copy.denylist = $('denylist').value;
   copy.request_profile = $('request-profile').value;
   copy.anonymity = {judge_url: $('judge-url').value.trim()};
+  copy.speedtest = {url: $('speedtest-url').value.trim(), max_bytes: (settings.speedtest && settings.speedtest.max_bytes) || 5000000};
   copy.min_anonymity = $('min_anonymity').value;
   copy.protocol = $('protocol').value;
   copy.countries = $('countries').value;
@@ -993,6 +1009,7 @@ function fill(value) {
   $('local-denylist-enabled').checked = reputation.local_enabled !== false;
   $('strict-clean').checked = !!reputation.strict;
   $('judge-url').value = (value.anonymity && value.anonymity.judge_url) || '';
+  $('speedtest-url').value = (value.speedtest && value.speedtest.url) || '';
   $('min_anonymity').value = value.min_anonymity || 'any';
   $('protocol').value = value.protocol || 'all';
   $('countries').value = value.countries || '';
@@ -1203,7 +1220,7 @@ function renderResults(data) {
   $('result-context').textContent = data && data.profile ? t('results.context', {targets:data.targets.map(target => target.name ? `${target.name} (${target.url})` : target.url).join(' + '), profile:profileLabel(data.request_profile || 'workbench')}) : t('results.empty');
   $('result-total').textContent = t('results.total', {count:fmt(total)});
   $('page-number').textContent = `${fmt(Math.floor(start / 50) + 1)} / ${fmt(Math.max(1, Math.ceil(total / 50)))}`;
-  $('result-rows').innerHTML = page.length ? page.map((row, index) => `<tr><td>${fmt(start + index + 1)}</td><td>${esc(row.proxy)}</td><td><span class="score">${Number(row.score).toFixed(1)}</span></td><td>${esc(ms(Number(row.latency_ms).toFixed(0)))}</td><td>${esc(ms(Number(row.jitter_ms).toFixed(0)))}</td><td>${(Number(row.min_target_reliability) * 100).toFixed(0)}%</td><td>${row.history ? esc(`${fmt(row.history.passes)}/${fmt(row.history.checks)}`) : '1/1'}</td><td>${reputationBadge(row)}</td><td>${anonymityBadge(row)}</td><td class="country" title="${esc(row.anonymity && row.anonymity.exit_ip ? t('results.exitIp', {ip:row.anonymity.exit_ip}) : '')}">${esc(countryLabel(row))}</td><td><button class="text-link" data-details="${index}">${esc(t('results.details'))}</button></td></tr>`).join('') : `<tr><td colspan="11" class="empty">${esc(t(data ? 'results.noneMatching' : 'results.noneYet'))}</td></tr>`;
+  $('result-rows').innerHTML = page.length ? page.map((row, index) => `<tr><td>${fmt(start + index + 1)}</td><td>${esc(row.proxy)}</td><td><span class="score">${Number(row.score).toFixed(1)}</span></td><td>${esc(ms(Number(row.latency_ms).toFixed(0)))}</td><td>${esc(ms(Number(row.jitter_ms).toFixed(0)))}</td><td>${row.speed && row.speed.mbps != null ? esc(Number(row.speed.mbps).toFixed(1)) : '—'}</td><td>${(Number(row.min_target_reliability) * 100).toFixed(0)}%</td><td>${row.history ? esc(`${fmt(row.history.passes)}/${fmt(row.history.checks)}`) : '1/1'}</td><td>${reputationBadge(row)}</td><td>${anonymityBadge(row)}</td><td class="country" title="${esc(row.anonymity && row.anonymity.exit_ip ? t('results.exitIp', {ip:row.anonymity.exit_ip}) : '')}">${esc(countryLabel(row))}</td><td><button class="text-link" data-details="${index}">${esc(t('results.details'))}</button></td></tr>`).join('') : `<tr><td colspan="12" class="empty">${esc(t(data ? 'results.noneMatching' : 'results.noneYet'))}</td></tr>`;
   $('result-rows').querySelectorAll('[data-details]').forEach(node => node.onclick = () => details(page[Number(node.dataset.details)]));
 }
 
