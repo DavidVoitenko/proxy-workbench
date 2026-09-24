@@ -81,6 +81,9 @@ footer{padding:56px 0 40px;color:var(--muted);font-size:14px;display:flex;flex-w
       <div class="card"><h3>Ranked by real speed</h3><p>Several attempts per service, median latency, jitter and success rate combined into one quality score.</p></div>
       <div class="card"><h3>Big lists, stop &amp; resume</h3><p>Bounded worker queue and rate limiter, tested with 190,000 candidates. Progress lives in SQLite, so stopping never loses work.</p></div>
       <div class="card"><h3>Ready-to-use exports</h3><p>TXT, CSV, JSON plus <code>http.txt</code>, <code>https.txt</code>, <code>socks5.txt</code> in plain <code>host:port</code> format for your scraper or browser.</p></div>
+      <div class="card"><h3>Recommended first</h3><p>Fast proxies that survive re-checks, come from lists with a good record and appear in few lists go to the top: less crowded, so they live longer.</p></div>
+      <div class="card"><h3>Real speed and provider</h3><p>Optional speed test in Mbit/s; every proxy shows its provider, and hosting or data-centre ranges can be skipped.</p></div>
+      <div class="card"><h3>Built for scrapers</h3><p>Pick country, protocol and a sticky session in the proxy user name: <code>country-de-session-1</code>. Or script it: <code>proxy-workbench get --top 5</code>.</p></div>
       <div class="card"><h3>Rotating proxy gateway</h3><p>Point a browser, Telegram or any app at <code>127.0.0.1:8899</code>: every connection goes out through the next working proxy, dead ones are skipped.</p></div>
       <div class="card"><h3>Local API for your code</h3><p><code>GET /random?protocol=socks5&amp;country=DE</code> returns a fresh working proxy, so scripts and bots pick one with a single request.</p></div>
     </div>

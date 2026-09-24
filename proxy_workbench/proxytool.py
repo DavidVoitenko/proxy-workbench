@@ -979,7 +979,8 @@ async def measure_speed(proxy, config, rate):
     await rate.wait()
     test = config['speedtest']
     result = dict(mbps=None, bytes=0, ms=None, error=None)
-    started = time.monotonic()
+    # perf_counter: the Windows monotonic clock ticks every ~16 ms, too coarse for fast transfers.
+    started = time.perf_counter()
     try:
         async with asyncio.timeout(max(config['timeout'], 30)):
             async with proxy_client(proxy, config) as client:
@@ -990,18 +991,18 @@ async def measure_speed(proxy, config, rate):
                         return result
                     first = None
                     async for chunk in response.aiter_raw():
-                        first = first or time.monotonic()
+                        first = first or time.perf_counter()
                         result['bytes'] += len(chunk)
                         if result['bytes'] >= test['max_bytes']:
                             break
-                    elapsed = time.monotonic() - (first or started)
-                    if result['bytes'] and elapsed > 0:
+                    elapsed = max(time.perf_counter() - (first or started), 1e-6)
+                    if result['bytes']:
                         result['mbps'] = round(result['bytes'] * 8 / elapsed / 1e6, 2)
     except (httpx.HTTPError, TimeoutError, OSError) as exc:
         result['error'] = type(exc).__name__
         # A partial download still says something about the speed.
     finally:
-        result['ms'] = round((time.monotonic() - started) * 1000, 2)
+        result['ms'] = round((time.perf_counter() - started) * 1000, 2)
     return result
 
 
