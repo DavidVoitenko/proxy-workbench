@@ -47,7 +47,7 @@ Everything runs on your machine. The GUI binds to `127.0.0.1` only.
 </tr>
 </table>
 
-<sub>Screenshots use synthetic data from documentation IP ranges (RFC 5737). The interface is currently in Russian; an English UI is on the <a href="#-roadmap">roadmap</a>.</sub>
+<sub>Screenshots use synthetic data from documentation IP ranges (RFC 5737). The interface is available in English and Russian (EN/RU toggle in the header).</sub>
 
 ## ✨ Features
 
@@ -238,7 +238,7 @@ Checking public lists is generally fine, but you are responsible for respecting 
 
 ## 🗺 Roadmap
 
-- [ ] English interface and language switch (GUI is Russian today)
+- [x] English interface with an EN/RU switch
 - [ ] `pipx install` / PyPI package and a single `proxy-workbench` command
 - [ ] Anonymity level detection (transparent / anonymous / elite) via a user-hosted echo endpoint
 - [ ] Optional GeoIP country column and country filters from a local database
