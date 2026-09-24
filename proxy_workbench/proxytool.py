@@ -759,13 +759,36 @@ def target_config(args, denylist=None):
     if not isinstance(targets, list) or not targets:
         raise ValueError('config: нужен непустой список targets')
     judge = {'judge_url': args.judge_url} if getattr(args, 'judge_url', None) else config.get('anonymity')
+    speedtest = ({'url': args.speedtest_url, 'max_bytes': args.speedtest_bytes} if getattr(args, 'speedtest_url', None)
+                 else config.get('speedtest'))
     return validate_targets(targets, args,
                             request_profile=getattr(args, 'request_profile', None) or config.get('request_profile'),
                             reputation=config.get('reputation'),
-                            denylist=denylist, anonymity_config=judge)
+                            denylist=denylist, anonymity_config=judge, speedtest_config=speedtest)
 
 
-def validate_targets(targets, args, request_profile=None, reputation=None, denylist=None, anonymity_config=None):
+SPEEDTEST_BYTES = 5_000_000
+MAX_SPEEDTEST_BYTES = 200_000_000
+
+
+def validate_speedtest(config):
+    """A normalized download test ({url, max_bytes}) or None when it is off."""
+    if not config or not config.get('url'):
+        return None
+    url = config['url']
+    if not isinstance(url, str) or len(url) > 2048:
+        raise ValueError('speedtest.url: ожидается http(s) URL')
+    parsed = urlsplit(url)
+    if parsed.scheme not in ('http', 'https') or not parsed.hostname or parsed.username or parsed.password:
+        raise ValueError('speedtest.url: нужен http(s) URL без userinfo')
+    size = config.get('max_bytes', SPEEDTEST_BYTES)
+    if type(size) is not int or not 10_000 <= size <= MAX_SPEEDTEST_BYTES:
+        raise ValueError('speedtest.max_bytes: от 10000 до 200000000')
+    return {'url': url, 'max_bytes': size}
+
+
+def validate_targets(targets, args, request_profile=None, reputation=None, denylist=None, anonymity_config=None,
+                     speedtest_config=None):
     request_profile = request_profile or getattr(args, 'request_profile', None) or DEFAULT_REQUEST_PROFILE
     validate_profile(request_profile)
     for t in targets:
@@ -823,6 +846,9 @@ def validate_targets(targets, args, request_profile=None, reputation=None, denyl
         config['connect_timeout'] = connect_timeout
     if getattr(args, 'fail_fast', False):
         config['fail_fast'] = {'min_success': args.min_success}
+    speedtest = validate_speedtest(speedtest_config)
+    if speedtest:
+        config['speedtest'] = speedtest
     judge = anonymity.validate_judge(anonymity_config)
     if judge:
         config['anonymity'] = judge
@@ -937,7 +963,41 @@ async def check_proxy(proxy, config, rate, own_ips=None):
     # The judge is asked only through proxies that already work for a target.
     if config.get('anonymity') and own_ips and row['successes']:
         row['anonymity'] = await judge_proxy(proxy, config, rate, own_ips)
+    # Bandwidth is measured only for proxies that work for every target.
+    if config.get('speedtest') and row['min_target_reliability'] > 0:
+        row['speed'] = await measure_speed(proxy, config, rate)
     return row
+
+
+async def measure_speed(proxy, config, rate):
+    """Download throughput through the proxy in Mbit/s, counted from the first response byte."""
+    await rate.wait()
+    test = config['speedtest']
+    result = dict(mbps=None, bytes=0, ms=None, error=None)
+    started = time.monotonic()
+    try:
+        async with asyncio.timeout(max(config['timeout'], 30)):
+            async with proxy_client(proxy, config) as client:
+                headers = merge_headers(config.get('request_profile', DEFAULT_REQUEST_PROFILE))
+                async with client.stream('GET', test['url'], headers=headers) as response:
+                    if not 200 <= response.status_code < 300:
+                        result['error'] = f'HTTP_{response.status_code}'
+                        return result
+                    first = None
+                    async for chunk in response.aiter_raw():
+                        first = first or time.monotonic()
+                        result['bytes'] += len(chunk)
+                        if result['bytes'] >= test['max_bytes']:
+                            break
+                    elapsed = time.monotonic() - (first or started)
+                    if result['bytes'] and elapsed > 0:
+                        result['mbps'] = round(result['bytes'] * 8 / elapsed / 1e6, 2)
+    except (httpx.HTTPError, TimeoutError, OSError) as exc:
+        result['error'] = type(exc).__name__
+        # A partial download still says something about the speed.
+    finally:
+        result['ms'] = round((time.monotonic() - started) * 1000, 2)
+    return result
 
 
 async def detect_own_ips(config):
@@ -1028,7 +1088,8 @@ def blocked_result(proxy, verdict):
 
 
 async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_proxy, progress=True, on_progress=None, min_success=2/3, screen=None, denylist=None, min_anonymity='any', protocol='all', max_latency=None,
-               countries=(), country_of=None, want=0, recheck_passing=False, prefilter=0, prefilter_timeout=3):
+               countries=(), country_of=None, want=0, recheck_passing=False, prefilter=0, prefilter_timeout=3,
+               exclude_hosting=False, provider_of=None):
     """Check every pending candidate of the profile.
 
     With ``prefilter`` connections a cheap TCP connect runs first: most public
@@ -1051,6 +1112,8 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
         # Protocol and country narrow which candidates are checked; they are not
         # part of the profile, so a later wider run reuses these results.
         if protocol not in (None, 'all') and proxy_protocol(proxy) != protocol:
+            return False
+        if exclude_hosting and is_hosting(proxy, provider_of):
             return False
         return not countries or country_of(proxy) in countries
 
@@ -1216,12 +1279,13 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
     return profile
 
 
-SORTS = ('quality', 'speed', 'stability', 'uptime')
+SORTS = ('quality', 'speed', 'stability', 'uptime', 'bandwidth')
 EXPORT_ORDERS = {
     'quality': 'e.score DESC, e.latency, e.proxy',
     'speed': 'e.latency, e.reliability DESC, e.proxy',
     'stability': 'e.jitter, e.latency, e.proxy',
     'uptime': 'e.uptime DESC, e.checks DESC, e.score DESC, e.proxy',
+    'bandwidth': 'e.bandwidth IS NULL, e.bandwidth DESC, e.score DESC, e.proxy',
 }
 # Ready-made formats for other tools, next to the per-protocol host:port lists.
 PROXYCHAINS_TYPES = {'http': 'http', 'socks4': 'socks4', 'socks5': 'socks5'}
@@ -1252,14 +1316,34 @@ def exit_country(row, country_of=None):
     return country_of(f'http://[{address}]:1' if ':' in address else f'http://{address}:1')
 
 
+def provider_resolver(asn_db):
+    """Provider (AS number, organisation, hosting flag) of a proxy address, or None without a database."""
+    if asn_db is None:
+        return None
+    cache = {}
+
+    def provider_of(proxy):
+        if proxy not in cache:
+            cache[proxy] = asn_db.provider_of(proxy)
+        return cache[proxy]
+    return provider_of
+
+
+def is_hosting(proxy, provider_of):
+    return bool(provider_of and (provider_of(proxy) or {}).get('hosting'))
+
+
 def proxy_protocol(proxy):
     scheme = str(proxy).partition('://')[0]
     return PROTOCOL_ALIASES.get(scheme, scheme)
 
 
-def matches_selection(row, protocol='all', max_latency=None, countries=(), country_of=None):
-    """Selection by protocol, maximum median latency (ms) and country codes."""
+def matches_selection(row, protocol='all', max_latency=None, countries=(), country_of=None,
+                      exclude_hosting=False, provider_of=None):
+    """Selection by protocol, maximum median latency (ms), country codes and hosting providers."""
     if protocol not in (None, 'all') and proxy_protocol(row.get('proxy', '')) != protocol:
+        return False
+    if exclude_hosting and is_hosting(row.get('proxy', ''), provider_of):
         return False
     if countries and row_country(row, country_of) not in countries:
         return False
@@ -1271,7 +1355,7 @@ def matches_selection(row, protocol='all', max_latency=None, countries=(), count
 
 
 def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, denylist=None, local_override=None, min_anonymity='any',
-           protocol='all', max_latency=None, countries=(), country_of=None):
+           protocol='all', max_latency=None, countries=(), country_of=None, exclude_hosting=False, provider_of=None):
     if not db.execute('SELECT 1 FROM profiles WHERE id=?', (profile,)).fetchone():
         raise ValueError('Профиль проверки не найден')
     denylist = denylist or Denylist.empty()
@@ -1301,7 +1385,7 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
     # Keep full samples on disk, including when hundreds of thousands pass.
     db.execute('DROP TABLE IF EXISTS temp.export_rank')
     db.execute('CREATE TEMP TABLE export_rank(proxy TEXT PRIMARY KEY, score REAL, latency REAL, reliability REAL, '
-               'jitter REAL, uptime REAL, checks INTEGER)')
+               'jitter REAL, uptime REAL, checks INTEGER, bandwidth REAL)')
     checked = passed = local_filtered = 0
     sources = dict(db.execute('SELECT proxy, source FROM candidate_meta WHERE source IS NOT NULL'))
     source_quality = {}
@@ -1317,7 +1401,7 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
         if level:
             anonymity_counts[level] = anonymity_counts.get(level, 0) + 1
         eligible = (result_allowed(row, min_success, denylist=None, strict=strict, min_anonymity=min_anonymity)
-                    and matches_selection(row, protocol, max_latency, countries, country_of))
+                    and matches_selection(row, protocol, max_latency, countries, country_of, exclude_hosting, provider_of))
         if eligible and active_denylist is not None and active_denylist.match(row.get('proxy', '')):
             local_filtered += 1
             eligible = False
@@ -1325,9 +1409,9 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
             history = row_history(row, min_success)
             for group, value in (('protocols', proxy_protocol(row['proxy'])), ('countries', row_country(row, country_of) or '??')):
                 breakdown[group][value] = breakdown[group].get(value, 0) + 1
-            db.execute('INSERT INTO export_rank VALUES (?,?,?,?,?,?,?)',
+            db.execute('INSERT INTO export_rank VALUES (?,?,?,?,?,?,?,?)',
                        (row['proxy'], row['score'], row['latency_ms'], row['reliability'], row.get('jitter_ms'),
-                        history['passes'] / history['checks'], history['checks']))
+                        history['passes'] / history['checks'], history['checks'], (row.get('speed') or {}).get('mbps')))
             passed += 1
         quality = source_quality.setdefault(sources.get(row.get('proxy'), 'unknown'), {'checked': 0, 'passed': 0})
         quality['checked'] += 1
@@ -1337,7 +1421,7 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
         ON r.proxy=e.proxy AND r.profile=? ORDER BY {order} LIMIT ?""", (profile, top or -1))
     fields = ['proxy', 'score', 'latency_ms', 'jitter_ms', 'reliability', 'min_target_reliability',
               'successes', 'requests', 'checked_at', 'reputation_status', 'reputation_sources',
-              'anonymity', 'anonymity_signals', 'country', 'exit_ip', 'exit_country', 'checks', 'passes']
+              'anonymity', 'anonymity_signals', 'country', 'exit_ip', 'exit_country', 'asn', 'provider', 'hosting', 'mbps', 'checks', 'passes']
     names = ['proxies.txt', 'ranked.json', 'ranked.csv', *PROTOCOL_EXPORTS.values(), 'hostport.txt', 'proxychains.txt',
              'proxy.pac', 'clash.yaml']
     best = []
@@ -1366,8 +1450,10 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
                 row['country'] = row_country(row, country_of) or ''
                 row['exit_ip'] = judged.get('exit_ip', '')
                 row['exit_country'] = exit_country(row, country_of) or ''
+                provider = (provider_of(row['proxy']) if provider_of else None) or {}
+                row['asn'], row['provider'], row['hosting'] = provider.get('asn'), provider.get('org'), provider.get('hosting')
                 history = row_history(row, min_success)
-                csv_row = dict(row, anonymity=judged.get('level', ''),
+                csv_row = dict(row, mbps=(row.get('speed') or {}).get('mbps') or '', anonymity=judged.get('level', ''),
                                anonymity_signals=','.join(judged.get('signals', [])),
                                checks=history['checks'], passes=history['passes'])
                 txt.write(row['proxy'] + '\n')
@@ -1391,6 +1477,7 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
                       passed=passed, local_filtered=local_filtered, exported=exported, complete=checked == total,
                       generated_at=time.time(), sort=sort, min_success=min_success,
                       protocol=protocol, max_latency=max_latency, countries=list(countries or ()),
+                      exclude_hosting=bool(exclude_hosting and provider_of),
                       targets=[dict(name=t.get('name', ''), url=public_url(t['url'])) for t in cfg.get('targets', [])],
                       request_profile=cfg.get('request_profile', 'workbench'),
                       request_profile_digest=cfg.get('request_profile_digest', ''),
@@ -1505,6 +1592,13 @@ def parser():
     p.add_argument('--reputation-timeout', type=float, default=None, help=tr('таймаут одной DNSBL-зоны, секунд', 'timeout per DNSBL zone, seconds'))
     p.add_argument('--strict-clean', dest='strict_clean', action='store_true', default=None,
                    help=tr('не разрешать прокси с неопределённым DNSBL-результатом', 'reject proxies with an unknown DNSBL result'))
+    p.add_argument('--speedtest-url',
+                   help=tr('файл для замера скорости через каждый рабочий прокси (Мбит/с), например '
+                           'https://speed.cloudflare.com/__down?bytes=5000000',
+                           'file downloaded through every working proxy to measure Mbit/s, e.g. '
+                           'https://speed.cloudflare.com/__down?bytes=5000000'))
+    p.add_argument('--speedtest-bytes', type=int, default=SPEEDTEST_BYTES,
+                   help=tr('сколько байт скачивать при замере скорости', 'bytes to download for the speed test'))
     p.add_argument('--judge-url', help=tr('echo-endpoint для проверки анонимности (transparent/anonymous/elite)', 'echo endpoint for the anonymity check (transparent/anonymous/elite)'))
     p.add_argument('--min-anonymity', choices=anonymity.MIN_LEVELS, default='any',
                    help=tr('минимальный уровень анонимности для экспорта; нужен --judge-url', 'minimum anonymity level for the export; needs --judge-url'))
@@ -1515,12 +1609,18 @@ def parser():
                    help=tr('после проверки перепроверять рабочие прокси каждые N минут и обновлять экспорт; 0 — выключено', 'after the scan, re-check working proxies every N minutes and refresh the export; 0 = off'))
     p.add_argument('--top', type=int, default=0, help=tr('сколько сохранить; 0 — все прошедшие', 'how many to save; 0 = all that pass'))
     p.add_argument('--sort', choices=list(SORTS), default='quality',
-                   help=tr('quality: стабильность + скорость; speed: задержка; stability: разброс', 'quality: reliability + speed; speed: latency; stability: jitter; uptime: survived re-checks'))
+                   help=tr('quality: стабильность + скорость; speed: задержка; stability: разброс; uptime: живучесть; '
+                           'bandwidth: Мбит/с (нужен --speedtest-url)',
+                           'quality: reliability + speed; speed: latency; stability: jitter; uptime: survived re-checks; '
+                           'bandwidth: Mbit/s (needs --speedtest-url)'))
     p.add_argument('--protocol', choices=list(PROTOCOLS), default='all', help=tr('экспортировать только этот протокол', 'check and export only this protocol'))
     p.add_argument('--max-latency', type=float, default=0, help=tr('максимальная медианная задержка, мс; 0 — без ограничения', 'maximum median latency, ms; 0 = no limit'))
     p.add_argument('--country', default='', help=tr('только эти страны (ISO-коды через запятую, например DE,NL); '
                    'другие адреса не проверяются', 'only these countries (ISO codes, e.g. DE,NL); '
                    'other addresses are not checked'))
+    p.add_argument('--no-hosting', action='store_true',
+                   help=tr('пропускать адреса хостинг-провайдеров и дата-центров (нужна база провайдеров: update-geoip)',
+                           'skip addresses of hosting providers and data centres (needs the provider database: update-geoip)'))
     p.add_argument('--want', type=int, default=0,
                    help=tr('остановиться, когда найдено столько подходящих прокси; 0 — проверить все', 'stop once this many matching proxies are found; 0 = check everything'))
     p.add_argument('--geoip-db', type=Path, default=None,
@@ -1532,6 +1632,12 @@ def parser():
                            'serve/gateway: port; default 8765 for the API and 8899 for the gateway'))
     p.add_argument('--rotate', choices=['round-robin', 'random'], default='round-robin',
                    help=tr('gateway: порядок выбора прокси', 'gateway: how the next proxy is chosen'))
+    p.add_argument('--max-per-proxy', type=int, default=0,
+                   help=tr('gateway: максимум одновременных соединений через один прокси; 0 — без лимита',
+                           'gateway: most simultaneous connections through one proxy; 0 = no limit'))
+    p.add_argument('--session-ttl', type=float, default=10,
+                   help=tr('gateway: сколько минут сессия (session-… в имени пользователя) держит один прокси',
+                           'gateway: minutes a session (session-… in the user name) keeps one proxy'))
     p.add_argument('--api-token', default=os.environ.get('PROXY_WORKBENCH_API_TOKEN') or None,
                    help=tr('serve: токен доступа к API (или переменная PROXY_WORKBENCH_API_TOKEN); '
                         'обязателен, если API слушает не loopback-адрес', 'serve: API access token (or PROXY_WORKBENCH_API_TOKEN); '
@@ -1554,12 +1660,14 @@ async def stoppable(coro, stop_file):
         await asyncio.gather(task, return_exceptions=True)
 
 
-async def download_geoip(path, timeout=60):
-    """Fetch the latest DB-IP Country Lite CSV; returns the month downloaded."""
+async def download_geoip(path, timeout=60, url=None, validate=None):
+    """Fetch the latest DB-IP Lite CSV (country by default); returns the month downloaded."""
     error = None
+    url = url or geoip.DOWNLOAD_URL
+    validate = validate or geoip.validate_download
     async with httpx.AsyncClient(trust_env=False, verify=TLS, timeout=timeout, follow_redirects=True) as client:
         for month in geoip.candidate_months():
-            async with client.stream('GET', geoip.DOWNLOAD_URL.format(month=month)) as response:
+            async with client.stream('GET', url.format(month=month)) as response:
                 if response.status_code == 404:
                     error = 'HTTP_404'
                     continue
@@ -1569,7 +1677,7 @@ async def download_geoip(path, timeout=60):
                     body.extend(chunk)
                     if len(body) > geoip.MAX_DOWNLOAD_BYTES:
                         raise ValueError('GEOIP_TOO_LARGE')
-            geoip.validate_download(bytes(body))
+            validate(bytes(body))
             path = Path(path)
             path.parent.mkdir(parents=True, exist_ok=True)
             temp = path.with_name(path.name + '.tmp')
@@ -1616,7 +1724,8 @@ def run_gateway(args, countries):
                    max_latency=args.max_latency)
 
     async def run():
-        server = await gateway.start(args.data, args.host, port, args.api_token, filters, args.rotate)
+        server = await gateway.start(args.data, args.host, port, args.api_token, filters, args.rotate,
+                                     max(0, args.max_per_proxy), max(0.0, args.session_ttl) * 60)
         pool = server.gateway.pool
         shown = f'[{args.host}]' if ':' in args.host else args.host
         address = f'{shown}:{server.sockets[0].getsockname()[1]}'
@@ -1624,6 +1733,8 @@ def run_gateway(args, countries):
                  f'Rotating proxy: {address} (HTTP and SOCKS5), {len(pool.refresh())} proxies in the pool. Ctrl+C to stop.'),
               flush=True)
         print(f'  curl -x http://{address} https://example.org/', flush=True)
+        print(f'  curl -x http://country-de-session-1:x@{address} https://example.org/', flush=True)
+        print(f'  curl http://{address}/status', flush=True)
         async with server:
             await server.serve_forever()
     try:
@@ -1704,6 +1815,16 @@ def main(argv=None):
             lock.close()
             return 2
         print(tr(f'База стран обновлена: DB-IP {month}. {geoip.ATTRIBUTION}', f'Country database updated: DB-IP {month}. {geoip.ATTRIBUTION}'), flush=True)
+        try:
+            month = asyncio.run(download_geoip(geoip.asn_path(args.data), args.source_timeout, geoip.ASN_URL,
+                                               geoip.validate_asn_download))
+        except (httpx.HTTPError, TimeoutError, OSError, ValueError) as exc:
+            reason = str(exc) if isinstance(exc, ValueError) else type(exc).__name__
+            # Countries already work; providers are an extra and must not fail the update.
+            print(tr(f'Не удалось скачать базу провайдеров: {reason}', f'Could not download the provider database: {reason}'),
+                  file=sys.stderr)
+        else:
+            print(tr(f'База провайдеров обновлена: DB-IP {month}.', f'Provider database updated: DB-IP {month}.'), flush=True)
         lock.close()
         return 0
     try:
@@ -1715,6 +1836,14 @@ def main(argv=None):
         print(tr('База стран не найдена: страна известна только для адресов из Geonode. '
               'Скачайте базу командой update-geoip.', 'No country database: countries are known only for Geonode addresses. '
               'Download it with the update-geoip command.'), file=sys.stderr)
+    try:
+        provider_of = provider_resolver(geoip.AsnDB.load_optional(geoip.asn_path(args.data)))
+    except (OSError, EOFError, UnicodeError, csv.Error):
+        provider_of = None
+    if args.no_hosting and provider_of is None:
+        print(tr('База провайдеров не найдена: --no-hosting не действует. Скачайте её командой update-geoip.',
+                 'No provider database: --no-hosting has no effect. Download it with the update-geoip command.'),
+              file=sys.stderr)
     db = open_db(args.data / 'proxies.sqlite3')
     country_of = country_resolver(db, geo)
     config = None
@@ -1734,7 +1863,8 @@ def main(argv=None):
                       sort=args.sort, min_success=args.min_success, denylist=denylist,
                       local_override=args.local_denylist, min_anonymity=args.min_anonymity,
                       protocol=args.protocol, max_latency=args.max_latency or None,
-                      countries=countries, country_of=country_of)
+                      countries=countries, country_of=country_of, exclude_hosting=args.no_hosting,
+                      provider_of=provider_of)
 
     try:
         if args.command in ('scan', 'run'):
@@ -1790,6 +1920,7 @@ def main(argv=None):
                                            min_anonymity=args.min_anonymity, protocol=args.protocol,
                                            max_latency=args.max_latency or None, countries=countries,
                                            country_of=country_of, prefilter=prefilter,
+                                           exclude_hosting=args.no_hosting, provider_of=provider_of,
                                            prefilter_timeout=min(args.prefilter_timeout, args.connect_timeout),
                                            **options), args.stop_file))
 

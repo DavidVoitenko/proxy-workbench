@@ -11,7 +11,7 @@ import json
 
 PRODUCT_NAME = "Proxy Workbench"
 PRODUCT_ID = "ProxyWorkbench"
-PRODUCT_VERSION = "2.0.0"
+PRODUCT_VERSION = "2.1.0"
 DEFAULT_REQUEST_PROFILE = "workbench"
 PROJECT_URL = "https://github.com/DavidVoitenko/proxy-workbench"
 # Newest built-in source list, fetched only when the user asks for it.
