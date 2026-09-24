@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+## [1.7.0] — 2026-09-24
+
+### Added
+
+- **Local API for your own programs:** `GET /random`, `/proxies` and `/status` return the latest working proxies with filters for protocol, country, maximum latency, anonymity, limit and format (`json`, `txt`, `hostport`). It starts together with the GUI on `127.0.0.1:8765` (`--api-port`, `--no-api`) and as the `serve` command for servers and Docker. It re-reads each new export automatically, so it can run next to `run --watch` without locking the data folder.
+- The Results tab shows the API address with a **Copy** button.
+- Network-facing API requires a token (`--api-token` or `PROXY_WORKBENCH_API_TOKEN`); the loopback API checks the `Host` header against DNS rebinding.
+
 ## [1.6.0] — 2026-09-24
 
 ### Added
