@@ -168,6 +168,16 @@ class ScanSelectionTests(unittest.IsolatedAsyncioTestCase):
         seen = await self.run_scan(want=2)
         self.assertEqual(sorted(seen[:2]), ['http://11.0.0.9:80', 'socks5://11.0.1.9:1080'])
 
+    async def test_full_sweep_keeps_key_order_for_fast_inserts(self):
+        seen = []
+
+        async def probe(proxy, cfg, rate):
+            seen.append(proxy)
+            return good(proxy, cfg)
+        await p.scan(self.db, config(), workers=1, rate=0, probe=probe, progress=False, min_success=1)
+        self.assertEqual(seen, sorted(seen))
+        self.assertEqual(len(seen), 20)
+
     def test_export_by_country(self):
         cfg = config()
         self.db.execute('INSERT INTO profiles VALUES (?,?)', ('fx', json.dumps(cfg)))
