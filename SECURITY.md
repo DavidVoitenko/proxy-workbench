@@ -4,8 +4,8 @@
 
 | Version | Supported |
 | --- | --- |
-| 1.5.x | Yes |
-| 1.4.x | Security fixes only on request |
+| 1.6.x | Yes |
+| 1.5.x | Security fixes only on request |
 | Older versions | No |
 
 Исправления безопасности публикуются для актуальной ветки `main`. Обновляйте локальную копию и зависимости после выхода новой версии.
