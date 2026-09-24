@@ -78,6 +78,22 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(client.get('/nope').status_code, 404)
             self.assertEqual(client.get('/status', headers={'Host': 'evil.example'}).status_code, 403)
 
+    def test_pac_and_clash(self):
+        with self.start() as client:
+            pac = client.get('/pac?anonymity=anonymous')
+            self.assertEqual(pac.headers['content-type'], 'application/x-ns-proxy-autoconfig')
+            self.assertIn('return "SOCKS5 11.0.0.2:1080; HTTPS 11.0.0.3:443";', pac.text)
+            clash = client.get('/clash').text
+            self.assertIn('{"name": "DE socks5 11.0.0.2:1080", "type": "socks5", "server": "11.0.0.2", "port": 1080}', clash)
+            self.assertIn('"type": "url-test"', clash)
+            self.assertNotIn('11.0.0.3', clash)  # Clash has no plain HTTPS proxy type here
+            self.assertIn('return "PROXY 127.0.0.1:9";', client.get('/pac?country=US').text)
+        exported = (self.home / 'exports' / 'proxy.pac').read_text()
+        self.assertIn('SOCKS5 11.0.0.2:1080; HTTPS 11.0.0.3:443; PROXY 11.0.0.1:8080', exported)
+        status = json.loads((self.home / 'exports' / 'status.json').read_text())
+        self.assertEqual(status['breakdown'], {'protocols': {'http': 1, 'socks5': 1, 'https': 1},
+                                               'countries': {'??': 2, 'DE': 1}})
+
     def test_picks_up_a_new_export_without_restart(self):
         with self.start() as client:
             self.assertEqual(client.get('/status').json()['available'], 3)

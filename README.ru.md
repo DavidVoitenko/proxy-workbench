@@ -77,6 +77,10 @@
 | **Остановка и продолжение** | Прогресс хранится в SQLite. `Ctrl+C` или **Остановить** сохраняет готовое; повторный запуск продолжает. |
 | **Рейтинг и экспорт** | Сортировка `quality`, `speed`, `stability` или `uptime`; фильтры по протоколу, стране, максимальной задержке, анонимности и успешности; поиск по адресу или порту и копирование страницы в один клик. Экспорт топ-N или всех в `proxies.txt`, `ranked.csv`, `ranked.json`, а также `http.txt` / `https.txt` / `socks5.txt` / `hostport.txt` в формате `host:port` и готовый `proxychains.txt`. Crash-safe поколения экспорта. |
 | **Локальное API для своих программ** | GUI (или команда `serve` на сервере) отвечает на `GET /random?protocol=socks5&country=DE` или `/proxies?max_latency=800&format=txt` самыми свежими рабочими прокси: скрипт, парсер или бот берёт прокси одним HTTP-запросом. |
+| **Ротирующий прокси-шлюз** | Укажите `127.0.0.1:8899` как HTTP- или SOCKS5-прокси в браузере, Telegram, парсере или любой программе. Каждое новое соединение уходит через следующий рабочий прокси; неработающие автоматически пропускаются. |
+| **Готовые проверки** | Один клик добавляет проверку Google, YouTube, Telegram, Discord, Instagram, OpenAI API, GitHub, Wikipedia или Cloudflare. |
+| **Страна выхода** | Judge показывает, с какого адреса трафик на самом деле выходит в интернет; если страна отличается от страны прокси, в таблице видно `DE → NL`. |
+| **Готовые конфиги** | `proxy.pac` для браузера и `clash.yaml` для Clash / Mihomo с автоматическим выбором самого быстрого прокси; над файлами сводка по протоколам и странам. |
 | **Безопасность по умолчанию** | GUI только на loopback с токеном сессии и проверкой Host/Origin, защищённая загрузка источников (без private/metadata IP, проверка redirects, лимиты размера), credential-like заголовки отклоняются. |
 | **Русский и английский интерфейс** | Кнопка EN/RU; по умолчанию язык браузера. Тёмная и светлая темы. |
 | **Без настройки** | Запуск двойным кликом создаёт виртуальное окружение и ставит единственную зависимость `httpx[socks]`. |
@@ -298,6 +302,23 @@ URL, содержимое, заголовки, request-профиль, поли�
 
 Профиль не меняет TLS/JA3/JA4, HTTP-транспорт или гарантии анонимности. Пользовательские заголовки сервиса остаются локальной настройкой, не выводятся в экспорт и не включаются в код. Credential-like заголовки отклоняются. В отчётах URL показываются только без query, fragment и path, чтобы токены в ссылках не попадали в status/result metadata. Для CLI можно выбрать пресет флагом `--request-profile standard`.
 
+## Ротирующий прокси-шлюз
+
+Пока открыт GUI, адрес `127.0.0.1:8899` работает как один прокси, который по очереди использует все рабочие прокси из последнего экспорта. Укажите его как **HTTP**- или **SOCKS5**-прокси где угодно:
+
+```sh
+curl -x http://127.0.0.1:8899 https://example.org/
+curl -x socks5h://127.0.0.1:8899 https://example.org/
+```
+
+- Каждое новое соединение берёт следующий прокси (`--rotate random` выбирает случайно).
+- Если прокси не ответил, то же соединение повторяется через другой (до 3 раз). Прокси, который ошибся дважды, отдыхает 5 минут.
+- Обычные `http://`-запросы идут в HTTP-прокси напрямую, потому что многие из них разрешают CONNECT только на порт 443.
+
+На сервере шлюз запускает `./run.sh gateway`; пул сужается обычными фильтрами, например `gateway --protocol socks5 --country DE --max-latency 1500`. Для сетевого адреса (`--host 0.0.0.0`) нужен пароль `--api-token <секрет>`. Клиенты входят с любым именем и этим паролем через HTTP Basic или логин/пароль SOCKS5.
+
+Браузер без расширений: укажите `http://127.0.0.1:8765/pac` как адрес автоматической настройки прокси. Он отдаёт 10 лучших подходящих прокси и принимает те же фильтры, что API, например `/pac?country=DE`. `/clash` возвращает готовый конфиг Clash / Mihomo.
+
 ## Локальное API: прокси в своих программах
 
 Пока открыт GUI, на `http://127.0.0.1:8765` работает API только для чтения (доступно только с этого компьютера). На сервере его запускает `./run.sh serve` (Windows: `.venv\Scripts\python proxytool.py serve`). API отдаёт последний экспорт и само подхватывает каждый новый, поэтому его можно держать рядом с `run --watch`.
@@ -306,6 +327,8 @@ URL, содержимое, заголовки, request-профиль, поли�
 | --- | --- |
 | `GET /random` | один случайный рабочий прокси; `limit=5` — несколько |
 | `GET /proxies` | все рабочие прокси, лучшие первыми (порядок экспорта) |
+| `GET /pac` | автонастройка прокси для браузера с 10 лучшими подходящими прокси |
+| `GET /clash` | конфиг Clash / Mihomo с группой автоматического выбора |
 | `GET /status` | сколько доступно, когда собран экспорт, на каких сервисах проверено |
 
 Фильтры для `/random` и `/proxies`: `protocol=http\|https\|socks5`, `country=DE,NL`, `max_latency=800` (мс), `anonymity=anonymous\|elite`, `limit=N`, `format=json\|txt\|hostport`.
@@ -322,7 +345,7 @@ proxy = httpx.get("http://127.0.0.1:8765/random?protocol=http&max_latency=1500&f
 print(httpx.get("https://example.org/", proxy=proxy, timeout=15).status_code)
 ```
 
-В JSON у каждого прокси есть `proxy`, `protocol`, `host`, `port`, `country`, `anonymity`, `latency_ms`, `jitter_ms`, `reliability`, `uptime`, `checks`, `score`, `checked_at`. В GUI адрес API с кнопкой **Скопировать** находится под кнопками скачивания; порт меняется флагом `gui.py --api-port 9000`, выключить API можно флагом `--no-api`.
+В JSON у каждого прокси есть `proxy`, `protocol`, `host`, `port`, `country`, `exit_ip`, `exit_country`, `anonymity`, `latency_ms`, `jitter_ms`, `reliability`, `uptime`, `checks`, `score`, `checked_at`. В GUI адрес API с кнопкой **Скопировать** находится под кнопками скачивания; порт меняется флагом `gui.py --api-port 9000`, выключить API можно флагом `--no-api`.
 
 Чтобы API было доступно с других машин (например, из Docker), укажите сетевой адрес и токен: `serve --host 0.0.0.0 --api-token <секрет>` или переменная `PROXY_WORKBENCH_API_TOKEN`. Клиенты передают заголовок `Authorization: Bearer <секрет>`.
 
@@ -343,6 +366,8 @@ docker run --rm --user "$(id -u):$(id -g)" -v "$PWD/data:/app/data" \
 docker run -d --name pw-check -v "$PWD/data:/app/data" proxy-workbench run --want 50 --watch 30
 docker run -d --name pw-api -p 127.0.0.1:8765:8765 -e PROXY_WORKBENCH_API_TOKEN=change-me \
   -v "$PWD/data:/app/data" proxy-workbench serve --host 0.0.0.0
+docker run -d --name pw-gateway -p 127.0.0.1:8899:8899 -e PROXY_WORKBENCH_API_TOKEN=change-me \
+  -v "$PWD/data:/app/data" proxy-workbench gateway --host 0.0.0.0
 ```
 
 Каждый релиз также публикует готовый образ в GitHub Container Registry. Он появляется в разделе **Packages** на странице репозитория как `ghcr.io/<owner>/proxy-workbench:<версия>` и `:latest`. Результаты сохраняются в подключённую папку `data/`, как при обычной установке.
@@ -361,6 +386,8 @@ docker run -d --name pw-api -p 127.0.0.1:8765:8765 -e PROXY_WORKBENCH_API_TOKEN=
 
 - `proxytool.py` — CLI, collector, scanner, reputation и export pipeline.
 - `api.py` — локальное API только для чтения (`/random`, `/proxies`, `/status`).
+- `gateway.py` — ротирующий прокси-шлюз (HTTP, CONNECT, SOCKS5).
+- `formats.py` — `proxy.pac` и `clash.yaml`.
 - `socks4.py` — подключение через SOCKS4 (httpx умеет только HTTP и SOCKS5).
 - `i18n.py` — язык сообщений в терминале.
 - `gui.py` / `ui/` — loopback-only browser interface.

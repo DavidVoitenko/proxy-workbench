@@ -27,6 +27,7 @@ from maintenance import clear_runtime, exclusive_lock
 from reputation import Denylist, normalize_zones, result_allowed
 import anonymity
 import api
+import gateway
 from i18n import tr
 import geoip
 
@@ -61,7 +62,8 @@ RESULT_ORDERS = {
 PRUNE_MIN_CHECKED = 20
 # The UI translates the scanner's log itself, so the scanner always writes Russian here.
 CHILD_ENV = dict(os.environ, PROXY_WORKBENCH_LANG='ru')
-DOWNLOADS = ('proxies.txt', 'ranked.csv', 'ranked.json', *core.PROTOCOL_EXPORTS.values(), 'hostport.txt', 'proxychains.txt')
+DOWNLOADS = ('proxies.txt', 'ranked.csv', 'ranked.json', *core.PROTOCOL_EXPORTS.values(), 'hostport.txt', 'proxychains.txt',
+             'proxy.pac', 'clash.yaml')
 
 
 def public_sources(values):
@@ -79,7 +81,7 @@ def defaults():
                                 timeout=2.5, strict=False),
                 anonymity=dict(judge_url=''), min_anonymity='any',
                 connect_timeout=4, fail_fast=True, protocol='all', max_latency=0, countries='', want=0,
-                detect_protocols=False)
+                detect_protocols=False, watch=0)
 
 
 def validate(settings):
@@ -117,7 +119,8 @@ def validate(settings):
     for key, low, high, integer in [('attempts', 1, 100, True), ('timeout', .1, 300, False),
             ('workers', 1, 2048, True), ('rate', 0, 10000, False), ('max_bytes', 1, 100_000_000, True),
             ('source_timeout', 1, 3600, False), ('top', 0, 1_000_000_000, True), ('min_success', 0, 1, False),
-            ('connect_timeout', .1, 300, False), ('max_latency', 0, 600_000, False), ('want', 0, 1_000_000_000, True)]:
+            ('connect_timeout', .1, 300, False), ('max_latency', 0, 600_000, False), ('want', 0, 1_000_000_000, True),
+            ('watch', 0, 1440, False)]:
         value = clean[key]
         if type(value) not in (int, float) or not math.isfinite(value) or not low <= value <= high or (integer and int(value) != value):
             raise ValueError(f'Недопустимое значение: {key}.')
@@ -224,6 +227,13 @@ class App:
             core.atomic(self.data/'denylist.txt', settings['denylist'])
         return settings
 
+    def gateway_state(self):
+        runner = getattr(self, 'gateway', None)
+        if runner is None:
+            return None
+        pool = runner.server.gateway.pool
+        return dict(address=f'127.0.0.1:{runner.port}', proxies=len(pool.available()), **pool.stats)
+
     def prune_sources(self, payload):
         """Drop sources that delivered only non-working proxies in the last export."""
         settings = validate(payload)
@@ -293,7 +303,7 @@ class App:
                        '--denylist-file', str(self.data/'denylist.txt'),
                        '--progress-file', str(self.progress_path), '--stop-file', str(self.stop_path)]
             for key in ('attempts', 'timeout', 'connect_timeout', 'workers', 'rate', 'max_bytes', 'source_timeout',
-                        'min_success', 'top', 'sort', 'min_anonymity', 'protocol', 'max_latency', 'want'):
+                        'min_success', 'top', 'sort', 'min_anonymity', 'protocol', 'max_latency', 'want', 'watch'):
                 command.extend(['--'+key.replace('_', '-'), str(settings[key])])
             command.append('--fail-fast' if settings['fail_fast'] else '--no-fail-fast')
             if settings['detect_protocols']:
@@ -408,11 +418,12 @@ class App:
                                       if isinstance(url, str)],
                          export=read_json(self.data/'exports/status.json', {}),
                          api=getattr(self, 'api_url', None),
+                         gateway=self.gateway_state(),
                          downloads=[n for n in DOWNLOADS
                                      if core.export_file(self.data/'exports', n).is_file()])
             if not active and self.job.get('exit_code', 0) not in (0, 130):
                 state['progress']['phase'] = 'error'
-            elif not active and state['progress'].get('phase') in ('starting', 'scanning', 'collecting', 'exporting'):
+            elif not active and state['progress'].get('phase') in ('starting', 'scanning', 'collecting', 'exporting', 'waiting'):
                 state['progress']['phase'] = 'interrupted'
             try:
                 with (self.data/'gui-run.log').open('rb') as handle:
@@ -480,6 +491,7 @@ class App:
                             summary = dict(row)
                             summary.pop('samples', None)
                             summary['country'] = core.row_country(row, country_of)
+                            summary['exit_country'] = core.exit_country(row, country_of)
                             rows.append(summary)
                         total += 1
                     targets = [dict(name=t.get('name',''), url=core.public_url(t['url'])) for t in cfg.get('targets', [])]
@@ -663,6 +675,9 @@ def main():
     parser.add_argument('--api-port', type=int, default=api.DEFAULT_PORT,
                         help=tr('порт локального API для своих программ (только этот компьютер)', 'port of the local API for your programs (this computer only)'))
     parser.add_argument('--no-api', action='store_true', help=tr('не запускать локальное API', 'do not start the local API'))
+    parser.add_argument('--gateway-port', type=int, default=gateway.DEFAULT_PORT,
+                        help=tr('порт ротирующего прокси (только этот компьютер)', 'port of the rotating proxy (this computer only)'))
+    parser.add_argument('--no-gateway', action='store_true', help=tr('не запускать ротирующий прокси', 'do not start the rotating proxy'))
     args = parser.parse_args()
     os.umask(0o077)
     try:
@@ -695,6 +710,15 @@ def main():
             server.app.api_url = f'http://127.0.0.1:{api_server.server_port}'
             threading.Thread(target=api_server.serve_forever, daemon=True).start()
             print(tr(f'API для своих программ: {server.app.api_url}/proxies', f'API for your programs: {server.app.api_url}/proxies'), flush=True)
+    if not args.no_gateway:
+        try:
+            server.app.gateway = gateway.Background(args.data, '127.0.0.1', args.gateway_port)
+        except (OSError, ValueError):
+            print(tr(f'Ротирующий прокси не запущен: порт {args.gateway_port} занят.',
+                     f'Rotating proxy not started: port {args.gateway_port} is busy.'), flush=True)
+        else:
+            print(tr(f'Ротирующий прокси: 127.0.0.1:{server.app.gateway.port} (HTTP и SOCKS5)',
+                     f'Rotating proxy: 127.0.0.1:{server.app.gateway.port} (HTTP and SOCKS5)'), flush=True)
     if not args.no_browser:
         webbrowser.open(url)
     try:
@@ -705,6 +729,8 @@ def main():
         if api_server:
             api_server.shutdown()
             api_server.server_close()
+        if getattr(server.app, 'gateway', None):
+            server.app.gateway.close()
         server.app.close()
         server.server_close()
 

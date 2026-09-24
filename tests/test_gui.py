@@ -228,6 +228,41 @@ class GuiTests(unittest.TestCase):
             for server in servers:
                 server.shutdown();server.server_close()
 
+    def test_keep_fresh_schedule_waits_and_stops(self):
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        class Proxy(BaseHTTPRequestHandler):
+            def log_message(self,*args): pass
+            def do_GET(self):
+                body=b'healthy'
+                self.send_response(200);self.send_header('Content-Length',str(len(body)));self.end_headers()
+                self.wfile.write(body)
+        server=ThreadingHTTPServer(('127.0.0.1',0),Proxy)
+        threading.Thread(target=server.serve_forever,daemon=True).start()
+        try:
+            db=p.open_db(self.home/'proxies.sqlite3')
+            db.execute('INSERT INTO candidates VALUES (?)',(f'http://127.0.0.1:{server.server_port}',))
+            db.commit();db.close()
+            settings=gui.defaults()
+            settings.update(targets=[dict(url='http://service.invalid/one',contains='healthy',statuses=[200])],
+                            workers=1,rate=0,timeout=5,min_success=1,watch=1)
+            self.client.post('/api/start',json=dict(action='scan',settings=settings)).raise_for_status()
+            deadline=time.monotonic()+30
+            while time.monotonic()<deadline:
+                state=self.client.get('/api/state').json()
+                if state['progress'].get('phase')=='waiting': break
+                time.sleep(.1)
+            self.assertEqual(state['progress']['phase'],'waiting',state.get('log'))
+            self.assertTrue(state['running'])
+            self.assertGreater(state['progress']['next_check_at'],time.time()+30)
+            self.assertEqual(state['export']['passed'],1)
+            self.client.post('/api/stop',json={}).raise_for_status()
+            result=self.await_job()
+            self.assertEqual(result['job']['exit_code'],130,result['log'])
+        finally:
+            server.shutdown();server.server_close()
+        with self.assertRaises(ValueError):
+            gui.validate(dict(gui.defaults(),watch=-1))
+
     def test_only_one_gui_per_data_folder(self):
         with self.assertRaises(OSError):
             gui.App(self.home)

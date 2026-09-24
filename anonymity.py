@@ -109,6 +109,22 @@ def classify(body, own_ips):
     return {"level": "elite", "signals": []}
 
 
+_EXIT_IP = re.compile(r'(?:remote[-_ ]addr|client[-_ ]ip|"origin"|"ip")["\']?\s*(?:=>|[:=])\s*["\']?([0-9a-f:.]{3,45})', re.I)
+
+
+def exit_ip(body):
+    """The address the judge saw the request coming from, when it labels it."""
+    text = body.decode("utf-8", errors="replace") if isinstance(body, (bytes, bytearray)) else str(body)
+    for match in _EXIT_IP.findall(text):
+        try:
+            ip = ipaddress.ip_address(match.strip(".:"))
+        except ValueError:
+            continue
+        if ip.is_global:
+            return ip.compressed
+    return None
+
+
 def allows(row, minimum):
     """True when a result meets the minimum anonymity level."""
     if minimum in (None, "any"):
@@ -129,8 +145,10 @@ async def fetch_judge(client, url, headers, max_bytes=MAX_JUDGE_BYTES):
         return bytes(body)
 
 
-def result(level, signals=(), error=None, started=None):
+def result(level, signals=(), error=None, started=None, exit_address=None):
     value = {"level": level, "signals": list(signals), "checked_at": time.time()}
+    if exit_address:
+        value["exit_ip"] = exit_address
     if error:
         value["error"] = error
     if started is not None:
