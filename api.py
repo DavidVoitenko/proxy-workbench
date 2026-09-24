@@ -16,6 +16,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import anonymity
+import formats
 import geoip
 from branding import PRODUCT_NAME, PRODUCT_VERSION
 from i18n import tr
@@ -28,6 +29,8 @@ MAX_LIMIT = 1_000_000
 ENDPOINTS = {
     '/proxies': 'working proxies, best first; filters: protocol, country, max_latency, anonymity, limit, format',
     '/random': 'random working proxies (limit, default 1); same filters',
+    '/pac': 'proxy auto-config for browsers with the best matching proxies; same filters',
+    '/clash': 'Clash / Mihomo config with the best matching proxies; same filters',
     '/status': 'summary of the latest export',
 }
 
@@ -54,6 +57,8 @@ def public_row(row):
         'port': int(port),
         'country': row.get('country') or None,
         'anonymity': (row.get('anonymity') or {}).get('level'),
+        'exit_ip': row.get('exit_ip') or None,
+        'exit_country': row.get('exit_country') or None,
         'latency_ms': row.get('latency_ms'),
         'jitter_ms': row.get('jitter_ms'),
         'reliability': row.get('reliability'),
@@ -195,13 +200,18 @@ def make_api_server(data, host='127.0.0.1', port=DEFAULT_PORT, token=None):
                     'checked': status.get('checked'), 'candidates': status.get('candidates'),
                     'sort': status.get('sort'), 'targets': status.get('targets', []),
                     'endpoints': ENDPOINTS})
-            if url.path not in ('/proxies', '/random'):
+            if url.path not in ('/proxies', '/random', '/pac', '/clash'):
                 return self.send_json(404, {'error': 'not found', 'endpoints': ENDPOINTS})
             try:
                 query = parse_query(url.query)
             except ValueError as exc:
                 return self.send_json(400, {'error': str(exc)})
             selected = select(rows, query)
+            if url.path == '/pac':
+                return self.send(200, formats.pac(row['proxy'] for row in selected),
+                                 'application/x-ns-proxy-autoconfig')
+            if url.path == '/clash':
+                return self.send(200, formats.clash(selected), 'text/yaml; charset=utf-8')
             if url.path == '/random':
                 selected = random.sample(selected, min(len(selected), query['limit'] or 1))
             elif query['limit']:

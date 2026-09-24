@@ -11,14 +11,14 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN python -m pip install --requirement requirements.txt
 
-COPY proxytool.py api.py i18n.py socks4.py anonymity.py branding.py geoip.py maintenance.py reputation.py sources.json service.example.json ./
+COPY proxytool.py api.py gateway.py formats.py i18n.py socks4.py anonymity.py branding.py geoip.py maintenance.py reputation.py sources.json service.example.json ./
 RUN useradd --create-home --uid 10001 workbench \
     && mkdir -p /app/data \
     && chown workbench /app/data
 
 USER workbench
 VOLUME ["/app/data"]
-# Only used by the `serve` command.
-EXPOSE 8765
+# API (`serve`) and rotating proxy (`gateway`).
+EXPOSE 8765 8899
 ENTRYPOINT ["python", "proxytool.py"]
 CMD ["--help"]

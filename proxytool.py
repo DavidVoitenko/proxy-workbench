@@ -33,6 +33,7 @@ from maintenance import clear_runtime, exclusive_lock
 import anonymity
 import geoip
 import socks4
+import formats
 from i18n import tr
 
 ROOT = Path(__file__).resolve().parent
@@ -970,7 +971,7 @@ async def judge_proxy(proxy, config, rate, own_ips):
     except (httpx.HTTPError, TimeoutError, OSError) as exc:
         return anonymity.result('unknown', error=type(exc).__name__, started=started)
     verdict = anonymity.classify(body, own_ips)
-    return anonymity.result(verdict['level'], verdict['signals'], started=started)
+    return anonymity.result(verdict['level'], verdict['signals'], started=started, exit_address=anonymity.exit_ip(body))
 
 
 def fit_workers(requested):
@@ -1180,6 +1181,14 @@ def country_resolver(db, geo=None):
     return country_of
 
 
+def exit_country(row, country_of=None):
+    """Country of the address the judge saw, which can differ from the proxy's own address."""
+    address = (row.get('anonymity') or {}).get('exit_ip')
+    if not address or not country_of:
+        return None
+    return country_of(f'http://[{address}]:1' if ':' in address else f'http://{address}:1')
+
+
 def proxy_protocol(proxy):
     scheme = str(proxy).partition('://')[0]
     return PROTOCOL_ALIASES.get(scheme, scheme)
@@ -1235,6 +1244,7 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
     source_quality = {}
     status_counts = {'clean': 0, 'listed': 0, 'unknown': 0, 'local_denied': 0}
     anonymity_counts = {}
+    breakdown = {'protocols': {}, 'countries': {}}
     for (payload,) in db.execute('SELECT payload FROM results WHERE profile=?', (profile,)):
         row = json.loads(payload)
         checked += 1
@@ -1250,6 +1260,8 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
             eligible = False
         elif eligible:
             history = row_history(row, min_success)
+            for group, value in (('protocols', proxy_protocol(row['proxy'])), ('countries', row_country(row, country_of) or '??')):
+                breakdown[group][value] = breakdown[group].get(value, 0) + 1
             db.execute('INSERT INTO export_rank VALUES (?,?,?,?,?,?,?)',
                        (row['proxy'], row['score'], row['latency_ms'], row['reliability'], row.get('jitter_ms'),
                         history['passes'] / history['checks'], history['checks']))
@@ -1262,8 +1274,10 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
         ON r.proxy=e.proxy AND r.profile=? ORDER BY {order} LIMIT ?""", (profile, top or -1))
     fields = ['proxy', 'score', 'latency_ms', 'jitter_ms', 'reliability', 'min_target_reliability',
               'successes', 'requests', 'checked_at', 'reputation_status', 'reputation_sources',
-              'anonymity', 'anonymity_signals', 'country', 'checks', 'passes']
-    names = ['proxies.txt', 'ranked.json', 'ranked.csv', *PROTOCOL_EXPORTS.values(), 'hostport.txt', 'proxychains.txt']
+              'anonymity', 'anonymity_signals', 'country', 'exit_ip', 'exit_country', 'checks', 'passes']
+    names = ['proxies.txt', 'ranked.json', 'ranked.csv', *PROTOCOL_EXPORTS.values(), 'hostport.txt', 'proxychains.txt',
+             'proxy.pac', 'clash.yaml']
+    best = []
     exported = 0
     try:
         with (generation/'proxies.txt').open('w', encoding='utf-8') as txt, \
@@ -1287,6 +1301,8 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
                                                        if item.get('status') == 'listed')
                 judged = row.get('anonymity') or {}
                 row['country'] = row_country(row, country_of) or ''
+                row['exit_ip'] = judged.get('exit_ip', '')
+                row['exit_country'] = exit_country(row, country_of) or ''
                 history = row_history(row, min_success)
                 csv_row = dict(row, anonymity=judged.get('level', ''),
                                anonymity_signals=','.join(judged.get('signals', [])),
@@ -1302,7 +1318,11 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
                 js.write((',' if exported else '') + '\n' + json.dumps(row, ensure_ascii=False))
                 writer.writerow(csv_row)
                 exported += 1
+                if len(best) < formats.CLASH_LIMIT:
+                    best.append(row)
             js.write('\n]\n')
+        (generation/'proxy.pac').write_text(formats.pac(row['proxy'] for row in best), encoding='utf-8')
+        (generation/'clash.yaml').write_text(formats.clash(best), encoding='utf-8')
         total = db.execute('SELECT count(*) FROM candidates').fetchone()[0]
         report = dict(profile=profile, candidates=total, checked=checked, pending=total-checked,
                       passed=passed, local_filtered=local_filtered, exported=exported, complete=checked == total,
@@ -1314,7 +1334,7 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
                       reputation=dict(policy, counts=status_counts), generation=generation.name,
                       anonymity=dict(enabled=bool(cfg.get('anonymity')), min_level=min_anonymity,
                                      counts=anonymity_counts),
-                      source_quality=source_quality)
+                      source_quality=source_quality, breakdown=breakdown)
         atomic(generation/'status.json', json.dumps(report, indent=2) + '\n')
         atomic(directory/'current.json', json.dumps({'generation':generation.name, 'files':names}, ensure_ascii=False) + '\n')
         published = True
@@ -1339,6 +1359,7 @@ EPILOG_EN = """examples:
   run --url https://example.org/health              check against your own service
   run --want 50 --watch 30                          find 50 and re-check them every 30 minutes
   serve                                             API on http://127.0.0.1:8765
+  gateway --protocol socks5 --country DE            rotating proxy on 127.0.0.1:8899 (HTTP and SOCKS5)
 
 set PROXY_WORKBENCH_LANG=ru for Russian messages."""
 EPILOG_RU = """примеры:
@@ -1346,6 +1367,7 @@ EPILOG_RU = """примеры:
   run --url https://example.org/health              проверить на своём сервисе
   run --want 50 --watch 30                          найти 50 и перепроверять их каждые 30 минут
   serve                                             API на http://127.0.0.1:8765
+  gateway --protocol socks5 --country DE            ротирующий прокси на 127.0.0.1:8899 (HTTP и SOCKS5)
 
 PROXY_WORKBENCH_LANG=en — сообщения на английском."""
 
@@ -1354,12 +1376,14 @@ def parser():
     p = argparse.ArgumentParser(formatter_class=argparse.RawDescriptionHelpFormatter, epilog=tr(EPILOG_RU, EPILOG_EN),
                                 description=tr(f'{PRODUCT_NAME}: сбор и полная проверка публичных прокси под HTTP-сервис', f'{PRODUCT_NAME}: collect public proxies and fully check them against your HTTP services'))
     p.add_argument('--version', action='version', version=f'{PRODUCT_NAME} {PRODUCT_VERSION}')
-    p.add_argument('command', choices=['collect', 'scan', 'run', 'export', 'serve', 'clear-data', 'update-geoip'],
+    p.add_argument('command', choices=['collect', 'scan', 'run', 'export', 'serve', 'gateway', 'clear-data', 'update-geoip'],
                    help=tr('run — собрать и проверить; collect — только собрать; scan — только проверить; '
-                           'export — пересобрать файлы; serve — локальное API; update-geoip — база стран; '
+                           'export — пересобрать файлы; serve — локальное API; gateway — ротирующий прокси; '
+                           'update-geoip — база стран; '
                            'clear-data — удалить результаты',
                            'run: collect and check; collect: only collect; scan: only check; '
-                           'export: rebuild the files; serve: local API; update-geoip: country database; '
+                           'export: rebuild the files; serve: local API; gateway: rotating proxy; '
+                           'update-geoip: country database; '
                            'clear-data: delete results'))
     p.add_argument('--yes', action='store_true', help=tr('подтвердить удаление локальных результатов', 'confirm deleting local results'))
     p.add_argument('--progress-file', type=Path, help=argparse.SUPPRESS)
@@ -1433,7 +1457,11 @@ def parser():
                    help=tr('CSV-база DB-IP Country Lite; по умолчанию data/geoip/' + geoip.DB_NAME, 'DB-IP Country Lite CSV; default data/geoip/' + geoip.DB_NAME))
     p.add_argument('--min-success', type=float, default=2/3, help=tr('минимальная доля успехов КАЖДОГО target, 0..1', 'minimum success share for EACH target, 0..1'))
     p.add_argument('--host', default='127.0.0.1', help=tr('serve: адрес локального API; по умолчанию только этот компьютер', 'serve: API address; default is this computer only'))
-    p.add_argument('--port', type=int, default=8765, help=tr('serve: порт локального API', 'serve: API port'))
+    p.add_argument('--port', type=int, default=None,
+                   help=tr('serve/gateway: порт; по умолчанию 8765 для API и 8899 для шлюза',
+                           'serve/gateway: port; default 8765 for the API and 8899 for the gateway'))
+    p.add_argument('--rotate', choices=['round-robin', 'random'], default='round-robin',
+                   help=tr('gateway: порядок выбора прокси', 'gateway: how the next proxy is chosen'))
     p.add_argument('--api-token', default=os.environ.get('PROXY_WORKBENCH_API_TOKEN') or None,
                    help=tr('serve: токен доступа к API (или переменная PROXY_WORKBENCH_API_TOKEN); '
                         'обязателен, если API слушает не loopback-адрес', 'serve: API access token (or PROXY_WORKBENCH_API_TOKEN); '
@@ -1484,11 +1512,12 @@ async def download_geoip(path, timeout=60):
 def serve(args):
     """Read-only HTTP API over the latest export; runs next to scans without the data lock."""
     import api
-    if not 0 <= args.port <= 65535:
+    port = api.DEFAULT_PORT if args.port is None else args.port
+    if not 0 <= port <= 65535:
         print(tr('Неверный порт API', 'Invalid API port'), file=sys.stderr)
         return 2
     try:
-        server = api.make_api_server(args.data, args.host, args.port, args.api_token)
+        server = api.make_api_server(args.data, args.host, port, args.api_token)
     except (ValueError, OSError) as exc:
         print(tr(f'API не запущено: {exc}', f'API not started: {exc}'), file=sys.stderr)
         return 2
@@ -1503,6 +1532,37 @@ def serve(args):
         pass
     finally:
         server.server_close()
+    return 0
+
+
+def run_gateway(args, countries):
+    """Rotating local proxy over the latest export; like serve, it never takes the data lock."""
+    import gateway
+    port = gateway.DEFAULT_PORT if args.port is None else args.port
+    if not 0 <= port <= 65535:
+        print(tr('Неверный порт шлюза', 'Invalid gateway port'), file=sys.stderr)
+        return 2
+    filters = dict(protocol=args.protocol, countries=countries, anonymity=args.min_anonymity,
+                   max_latency=args.max_latency)
+
+    async def run():
+        server = await gateway.start(args.data, args.host, port, args.api_token, filters, args.rotate)
+        pool = server.gateway.pool
+        shown = f'[{args.host}]' if ':' in args.host else args.host
+        address = f'{shown}:{server.sockets[0].getsockname()[1]}'
+        print(tr(f'Ротирующий прокси: {address} (HTTP и SOCKS5), в пуле {len(pool.refresh())} прокси. Ctrl+C — остановить.',
+                 f'Rotating proxy: {address} (HTTP and SOCKS5), {len(pool.refresh())} proxies in the pool. Ctrl+C to stop.'),
+              flush=True)
+        print(f'  curl -x http://{address} https://example.org/', flush=True)
+        async with server:
+            await server.serve_forever()
+    try:
+        asyncio.run(run())
+    except (ValueError, OSError) as exc:
+        print(tr(f'Шлюз не запущен: {exc}', f'Gateway not started: {exc}'), file=sys.stderr)
+        return 2
+    except KeyboardInterrupt:
+        pass
     return 0
 
 
@@ -1530,6 +1590,8 @@ def main(argv=None):
     args.data.mkdir(parents=True, exist_ok=True)
     if args.command == 'serve':
         return serve(args)
+    if args.command == 'gateway':
+        return run_gateway(args, countries)
     denylist_path = args.denylist_file or args.data / 'denylist.txt'
     denylist = Denylist.from_file(denylist_path, normalizer=normalize)
     collect_denylist = Denylist.empty() if args.local_denylist is False else denylist
