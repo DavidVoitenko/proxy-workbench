@@ -18,6 +18,12 @@ Local browser GUI (English / Russian) + CLI · HTTP / HTTPS (CONNECT) / SOCKS5 �
 
 [Quick start](#-quick-start) · [Features](#-features) · [How it works](#-how-it-works) · [CLI](#-command-line) · [FAQ](#-faq) · [Roadmap](#-roadmap) · [Contributing](CONTRIBUTING.md)
 
+<br>
+
+<img src="docs/assets/demo.gif" alt="Proxy Workbench demo: scan, rank, filter elite proxies" width="100%">
+
+<sub>15-second tour: start a scan → ranking → “Elite only” filter → per-attempt details → EN/RU switch (synthetic data).</sub>
+
 </div>
 
 ---
@@ -202,6 +208,19 @@ Run `./run.sh --help` for the complete list: `--input`, `--sources`, `--no-sourc
 
 </details>
 
+## 🐳 Docker (headless CLI)
+
+Run scans on a server or NAS without installing Python. The image contains the CLI only; the browser GUI stays on your own machine.
+
+```sh
+docker build -t proxy-workbench .
+mkdir -p data
+docker run --rm --user "$(id -u):$(id -g)" -v "$PWD/data:/app/data" \
+  proxy-workbench run --url https://example.org/health --judge-url http://judge.example/azenv.php
+```
+
+Every release also publishes a ready image to the GitHub Container Registry. It appears under **Packages** in the repository sidebar as `ghcr.io/<owner>/proxy-workbench:<version>` and `:latest`. Results land in the mounted `data/` folder exactly as with a local install.
+
 ## 📁 Where your data lives
 
 Everything is written to the git-ignored `data/` folder:
@@ -264,7 +283,7 @@ Checking public lists is generally fine, but you are responsible for respecting 
 - [x] Per-protocol `host:port` exports
 - [ ] Optional GeoIP country column and country filters from a local database
 - [ ] Scheduled re-checks of the best proxies
-- [ ] Docker image for headless servers
+- [x] Docker image for headless servers
 
 Have an idea? Open a [feature request](../../issues/new/choose) or start a [discussion](../../discussions).
 
