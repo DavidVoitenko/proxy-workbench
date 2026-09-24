@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -325,6 +326,29 @@ class WorkbenchTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue((self.home/'gui-settings.json').exists())
         self.assertTrue((self.home/'denylist.txt').exists())
         self.assertFalse((self.home/'exports').exists())
+
+    def test_atomic_retries_transient_replace_denial(self):
+        target = self.home / 'progress.json'
+        real_replace = Path.replace
+        calls = []
+
+        def flaky_replace(source, destination):
+            calls.append(destination)
+            if len(calls) < 3:
+                raise PermissionError('file is open in another process')
+            return real_replace(source, destination)
+
+        with mock.patch.object(Path, 'replace', flaky_replace):
+            p.atomic(target, '{"checked": 1}')
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(target.read_text(encoding='utf-8'), '{"checked": 1}')
+
+        def always_denied(source, destination):
+            raise PermissionError('still locked')
+
+        with mock.patch.object(Path, 'replace', always_denied), mock.patch.object(p.time, 'sleep'):
+            with self.assertRaises(PermissionError):
+                p.atomic(target, '{}')
 
     def test_normalization(self):
         self.assertEqual(p.normalize('https://11.1.1.1:80'), 'https://11.1.1.1:80')

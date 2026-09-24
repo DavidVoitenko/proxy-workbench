@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Proxy Workbench — free proxy checker for your own sites</title>
+<meta name="description" content="Open-source proxy checker: collects free HTTP, HTTPS and SOCKS5 proxies from 47 public lists, tests each one against your own sites, rates anonymity (elite, anonymous, transparent), filters blacklisted IPs. Local GUI + CLI + Docker.">
+<meta name="keywords" content="proxy checker, free proxy list, socks5 proxy checker, elite proxy, anonymous proxy, proxy scraper, proxy tester, dnsbl, open source">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Proxy Workbench — find free proxies that actually work for your site">
+<meta property="og:description" content="Collect 47 public proxy lists, test every proxy against your services, keep only fast, clean and elite ones. Local GUI + CLI, MIT.">
+<meta property="og:image" content="assets/social-preview.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23209c8b'/%3E%3Cpath d='M22 42 42 22M26 22h16v16' stroke='white' stroke-width='6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<style>
+:root{--bg:#0d1519;--panel:#152329;--line:#2a3941;--ink:#e2ecef;--muted:#9fb5c0;--accent:#5fd3bf;--accent-strong:#209c8b;--code:#101b21}
+@media (prefers-color-scheme: light){:root{--bg:#f5f7f8;--panel:#ffffff;--line:#e0e7ea;--ink:#172d37;--muted:#5f7680;--accent:#087d76;--accent-strong:#087d76;--code:#eef3f4}}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+a{color:var(--accent)}
+.wrap{max-width:1080px;margin:0 auto;padding:0 20px}
+nav{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:22px 0}
+.brand{display:flex;align-items:center;gap:12px;font-weight:700;letter-spacing:2px;font-size:13px;color:var(--ink);text-decoration:none}
+.logo{width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,#2cb3a0,#137a6d);display:grid;place-items:center;color:#fff;font-size:22px}
+.nav-links{display:flex;gap:18px;font-size:14px}
+.nav-links a{color:var(--muted);text-decoration:none}
+.hero{padding:48px 0 24px;text-align:center}
+.hero h1{font-size:clamp(34px,6vw,58px);line-height:1.05;letter-spacing:-1.5px;margin:0 0 18px}
+.hero h1 em{font-style:normal;color:var(--accent)}
+.hero p{max-width:720px;margin:0 auto;color:var(--muted);font-size:clamp(16px,2.2vw,19px)}
+.cta{display:flex;flex-wrap:wrap;gap:12px;justify-content:center;margin:30px 0 14px}
+.btn{display:inline-flex;align-items:center;gap:8px;padding:13px 22px;border-radius:10px;font-weight:650;text-decoration:none;border:1px solid var(--line);color:var(--ink);background:var(--panel)}
+.btn.primary{background:var(--accent-strong);border-color:var(--accent-strong);color:#fff}
+.meta{font-size:13px;color:var(--muted)}
+.demo{margin:34px auto 0;border-radius:14px;overflow:hidden;border:1px solid var(--line);box-shadow:0 30px 80px #0008}
+.demo img{display:block;width:100%;height:auto}
+section{padding:56px 0 8px}
+h2{font-size:clamp(24px,3.5vw,32px);letter-spacing:-.5px;margin:0 0 20px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:16px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px}
+.card h3{margin:0 0 8px;font-size:17px}
+.card p{margin:0;color:var(--muted);font-size:15px}
+.levels{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+.level{border-radius:12px;padding:16px 18px;border:1px solid var(--line);background:var(--panel)}
+.level b{display:inline-block;font-size:12px;letter-spacing:1px;text-transform:uppercase;padding:4px 9px;border-radius:6px;margin-bottom:8px}
+.elite b{background:#1a3148;color:#8cc2f2}.anon b{background:#173c31;color:#75d4aa}.transp b{background:#41272d;color:#f0a2a2}
+.level p{margin:0;color:var(--muted);font-size:14px}
+pre{background:var(--code);border:1px solid var(--line);border-radius:12px;padding:18px;overflow-x:auto;font:14px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace;margin:0}
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:16px}
+.steps .card span{display:inline-grid;place-items:center;width:28px;height:28px;border-radius:8px;background:var(--code);color:var(--accent);font-weight:700;font-size:13px;margin-bottom:10px}
+.note{border-left:3px solid var(--accent);padding:6px 0 6px 16px;color:var(--muted);font-size:15px}
+footer{padding:56px 0 40px;color:var(--muted);font-size:14px;display:flex;flex-wrap:wrap;gap:12px;justify-content:space-between;border-top:1px solid var(--line);margin-top:56px}
+@media (max-width:640px){.nav-links a:not(.gh){display:none}section{padding-top:40px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <nav>
+    <a class="brand" href="#"><span class="logo">↗</span>PROXY WORKBENCH</a>
+    <div class="nav-links"><a href="#features">Features</a><a href="#anonymity">Anonymity</a><a href="#start">Get started</a><a class="gh" data-repo href="#">GitHub ↗</a></div>
+  </nav>
+
+  <header class="hero">
+    <h1>Find every free proxy.<br><em>Keep the ones that work.</em></h1>
+    <p>Proxy Workbench collects public HTTP, HTTPS and SOCKS5 proxies from 47 open lists, tests every one against <strong>your own sites</strong>, rates anonymity and drops blacklisted IPs, all on your own machine.</p>
+    <div class="cta">
+      <a class="btn primary" data-repo data-path="/releases/latest" href="#">⬇ Download latest release</a>
+      <a class="btn" data-repo href="#">★ Star on GitHub</a>
+    </div>
+    <div class="meta">Free &amp; open source (MIT) · Windows · macOS · Linux · Docker · English / Russian</div>
+    <div class="demo"><img src="assets/demo.gif" alt="Proxy Workbench demo: start a scan, see ranked proxies, filter elite ones" width="960" height="570" loading="lazy"></div>
+  </header>
+
+  <section id="features">
+    <h2>Why people use it</h2>
+    <div class="grid">
+      <div class="card"><h3>Tests against your sites</h3><p>A proxy passes only if it works for every service you list: status codes, required text in the body, even a SHA-256 of the response. Captcha pages with status 200 don't pass.</p></div>
+      <div class="card"><h3>Anonymity levels</h3><p>Every working proxy is rated elite, anonymous or transparent through an echo “judge” page. Keep only elite ones with one click.</p></div>
+      <div class="card"><h3>Clean IPs only</h3><p>A local IP/CIDR denylist and optional DNSBL zones flag blacklisted addresses before they reach your export.</p></div>
+      <div class="card"><h3>Ranked by real speed</h3><p>Several attempts per service, median latency, jitter and success rate combined into one quality score.</p></div>
+      <div class="card"><h3>Big lists, stop &amp; resume</h3><p>Bounded worker queue and rate limiter, tested with 190,000 candidates. Progress lives in SQLite, so stopping never loses work.</p></div>
+      <div class="card"><h3>Ready-to-use exports</h3><p>TXT, CSV, JSON plus <code>http.txt</code>, <code>https.txt</code>, <code>socks5.txt</code> in plain <code>host:port</code> format for your scraper or browser.</p></div>
+    </div>
+  </section>
+
+  <section id="anonymity">
+    <h2>What the anonymity levels mean</h2>
+    <div class="levels">
+      <div class="level elite"><b>Elite</b><p>The site sees neither your IP nor any sign of a proxy.</p></div>
+      <div class="level anon"><b>Anonymous</b><p>Your IP is hidden, but the proxy announces itself with <code>Via</code> or <code>X-Forwarded-For</code>.</p></div>
+      <div class="level transp"><b>Transparent</b><p>Your real IP is passed to the site. Avoid these for anything private.</p></div>
+    </div>
+    <p class="note">Your own public IP is learned with one direct request to the judge and kept in memory only. It is never written to the database, exports or logs.</p>
+  </section>
+
+  <section id="start">
+    <h2>Get started in a minute</h2>
+    <div class="steps">
+      <div class="card"><span>1</span><h3>Download</h3><p>Grab the latest release or clone the repository. You need Python 3.11+.</p></div>
+      <div class="card"><span>2</span><h3>Double-click</h3><p><code>Start.bat</code> on Windows, <code>Start.command</code> on macOS, <code>./run.sh</code> on Linux. The first run installs its single dependency.</p></div>
+      <div class="card"><span>3</span><h3>Check &amp; export</h3><p>Add your site, press <em>Find and check</em>, then download the best proxies from the <em>Results</em> tab.</p></div>
+    </div>
+    <p style="margin:26px 0 10px">Prefer the terminal or a server?</p>
+<pre><code># command line
+./run.sh run --url https://example.org/health --judge-url http://judge.example/azenv.php --min-anonymity elite
+
+# Docker (CLI only)
+docker build -t proxy-workbench .
+docker run --rm --user "$(id -u):$(id -g)" -v "$PWD/data:/app/data" proxy-workbench run --url https://example.org/health</code></pre>
+  </section>
+
+  <section>
+    <h2>Private by design</h2>
+    <div class="grid">
+      <div class="card"><h3>Runs locally</h3><p>The interface listens on 127.0.0.1 only. No accounts, no telemetry, no cloud backend.</p></div>
+      <div class="card"><h3>Hardened fetching</h3><p>Source downloads are size-limited, redirects are validated and private or metadata IPs are blocked.</p></div>
+      <div class="card"><h3>Honest about limits</h3><p>It measures availability and latency. A public proxy still sees your traffic, so never send passwords through one.</p></div>
+    </div>
+  </section>
+
+  <footer>
+    <span>Proxy Workbench · MIT License · <a data-repo data-path="/blob/main/README.ru.md" href="#">Документация на русском</a></span>
+    <span><a data-repo data-path="/issues" href="#">Issues</a> · <a data-repo data-path="/blob/main/CONTRIBUTING.md" href="#">Contribute</a> · <a data-repo data-path="/blob/main/SECURITY.md" href="#">Security</a></span>
+  </footer>
+</div>
+<script>
+// Derive the repository URL from the GitHub Pages address (owner.github.io/repo/).
+(function () {
+  var host = location.hostname, parts = location.pathname.split('/').filter(Boolean);
+  var repo = /\.github\.io$/.test(host) && parts.length
+    ? 'https://github.com/' + host.replace(/\.github\.io$/, '') + '/' + parts[0]
+    : 'https://github.com/search?q=proxy-workbench&type=repositories';
+  document.querySelectorAll('[data-repo]').forEach(function (link) {
+    link.href = repo + (link.dataset.path && repo.indexOf('/search') === -1 ? link.dataset.path : '');
+  });
+})();
+</script>
+</body>
+</html>

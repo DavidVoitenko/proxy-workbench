@@ -4,6 +4,18 @@
 
 ## [Unreleased]
 
+## [1.4.0] — 2026-09-24
+
+### Added
+
+- Docker image for the headless CLI (`Dockerfile`, non-root user, `/app/data` volume), built and smoke-tested in CI and published to the GitHub Container Registry on every release.
+- Animated 15-second demo at the top of both READMEs.
+- Project website in `docs/index.html` for GitHub Pages (Settings → Pages → Deploy from branch `main`, folder `/docs`).
+
+### Fixed
+
+- Windows: writing progress/status files no longer fails with `PermissionError` when the GUI reads the same file at that moment; the atomic replace is retried briefly.
+
 ### Changed
 
 - The release workflow can also be started from the Actions tab with a version tag; it checks the tag against `branding.PRODUCT_VERSION`, creates the tag and uses the matching CHANGELOG section as release notes.
