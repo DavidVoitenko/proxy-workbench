@@ -4,8 +4,8 @@
 
 | Version | Supported |
 | --- | --- |
-| 2.1.x | Yes |
-| 2.0.x | Security fixes only on request |
+| 2.2.x | Yes |
+| 2.1.x | Security fixes only on request |
 | Older versions | No |
 
 Исправления безопасности публикуются для актуальной ветки `main`. Обновляйте локальную копию и зависимости после выхода новой версии.

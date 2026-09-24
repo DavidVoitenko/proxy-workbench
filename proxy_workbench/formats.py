@@ -55,3 +55,31 @@ def clash(rows, limit=CLASH_LIMIT):
               f'  - {json.dumps({"name": "auto", "type": "url-test", "url": "http://www.gstatic.com/generate_204", "interval": 300, "tolerance": 100, "proxies": names}, ensure_ascii=False)}',
               'rules:', '  - MATCH,auto']
     return '\n'.join(lines) + '\n'
+
+
+SINGBOX_TYPES = {'http': ('http', None), 'socks4': ('socks', '4'), 'socks5': ('socks', '5'), 'socks5h': ('socks', '5')}
+
+
+def singbox(rows, limit=CLASH_LIMIT):
+    """A sing-box config: a local mixed inbound on 127.0.0.1:2080 and an automatic fastest-proxy group."""
+    outbounds = []
+    for row in rows:
+        scheme, host, port = split(row['proxy'])
+        if scheme not in SINGBOX_TYPES:
+            continue
+        kind, version = SINGBOX_TYPES[scheme]
+        outbound = {'type': kind, 'tag': f"{row.get('country') or '??'} {scheme} {host}:{port}",
+                    'server': host, 'server_port': port}
+        if version:
+            outbound['version'] = version
+        outbounds.append(outbound)
+        if len(outbounds) >= limit:
+            break
+    tags = [outbound['tag'] for outbound in outbounds]
+    auto = ({'type': 'urltest', 'tag': 'auto', 'outbounds': tags, 'url': 'http://www.gstatic.com/generate_204',
+             'interval': '5m'} if tags else {'type': 'direct', 'tag': 'auto'})
+    config = {'log': {'level': 'warn'},
+              'inbounds': [{'type': 'mixed', 'tag': 'in', 'listen': '127.0.0.1', 'listen_port': 2080}],
+              'outbounds': [auto, *outbounds],
+              'route': {'final': 'auto'}}
+    return json.dumps(config, ensure_ascii=False, indent=2) + '\n'
