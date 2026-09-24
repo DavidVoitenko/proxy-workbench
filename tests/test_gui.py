@@ -52,12 +52,28 @@ class GuiTests(unittest.TestCase):
         self.assertEqual(self.client.get('/api/state', headers={'Host':'untrusted.invalid'}).status_code, 403)
         self.assertEqual(self.client.get('/api/download/gui-settings.json').status_code, 404)
         settings = gui.defaults()
+        settings['request_profile'] = 'minimal'
+        settings['denylist'] = '11.9.0.0/24\n# local\n'
+        settings['reputation'].update(dnsbl_enabled=True, dnsbl_zones=['bl.example.org'], strict=True)
         settings['targets'].append(dict(url='https://service.invalid/health', statuses=[204], name='API'))
         response = self.client.post('/api/settings', json=settings)
         self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(len(self.client.get('/api/settings').json()['targets']), 2)
+        saved = self.client.get('/api/settings').json()
+        self.assertEqual(len(saved['targets']), 2)
+        self.assertEqual(saved['request_profile'], 'minimal')
+        self.assertTrue(saved['reputation']['dnsbl_enabled'])
+        self.assertIn('11.9.0.0/24', (self.home/'denylist.txt').read_text())
         settings['targets'][0]['headers'] = ['wrong']
         self.assertEqual(self.client.post('/api/settings', json=settings).status_code, 400)
+
+    def test_existing_denylist_is_preserved_when_settings_omits_it(self):
+        (self.home/'denylist.txt').write_text('11.8.0.0/24\n')
+        payload = gui.defaults()
+        payload.pop('denylist')
+        saved = self.server.app.save(payload)
+        self.assertIn('11.8.0.0/24', saved['denylist'])
+        self.assertIn('11.8.0.0/24', (self.home/'denylist.txt').read_text())
+        self.assertEqual(gui.public_source('https://example.org/list?token=secret'), 'https://example.org/')
 
     def test_collect_job_dedup_and_empty_profile_scan(self):
         settings = gui.defaults()
@@ -91,6 +107,10 @@ class GuiTests(unittest.TestCase):
             row = p.summarize(proxy, samples, cfg)
             db.execute('INSERT INTO candidates VALUES (?)',(proxy,))
             db.execute('INSERT INTO results VALUES (?,?,?)',('fixture',proxy,json.dumps(row)))
+        listed = p.summarize('http://11.0.0.200:80', [dict(target=0, attempt=1, ok=True, ms=5, bytes=1, status=200, error=None), dict(target=1, attempt=1, ok=True, ms=5, bytes=1, status=200, error=None)], cfg)
+        listed['reputation'] = {'status':'listed', 'dnsbl':[{'zone':'bl.example.org','status':'listed'}], 'checked_at':0}
+        db.execute('INSERT INTO candidates VALUES (?)',(listed['proxy'],))
+        db.execute('INSERT INTO results VALUES (?,?,?)',('fixture',listed['proxy'],json.dumps(listed)))
         db.commit(); db.close()
         (self.home/'last-profile.txt').write_text('fixture')
         first=self.client.get('/api/results?sort=speed&min_success=0').json()

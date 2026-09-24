@@ -18,7 +18,9 @@ import time
 from urllib.parse import parse_qs, urlsplit
 import webbrowser
 
+from branding import PRODUCT_ID, PRODUCT_NAME, PRODUCT_VERSION, REQUEST_PROFILES
 import proxytool as core
+from reputation import Denylist, normalize_zones, result_allowed
 
 ROOT = Path(__file__).resolve().parent
 MAX_BODY = 32 * 1024 * 1024
@@ -31,12 +33,28 @@ def read_json(path, fallback):
         return fallback
 
 
+def public_source(value):
+    if not isinstance(value, str):
+        return ''
+    parts = value.strip().split(None, 1)
+    if len(parts) == 2 and parts[0] in ('http', 'https', 'socks5', 'socks5h', 'geonode', 'http-fields'):
+        return parts[0] + ' ' + core.public_url(parts[1])
+    return core.public_url(value)
+
+
+def public_sources(values):
+    return [public_source(value) for value in values] if isinstance(values, list) else []
+
+
 def defaults():
     return dict(targets=[dict(name='Проверка HTTPS', url='https://example.com/', statuses=[200],
                              contains='Example Domain', headers={}, method='GET')],
                 sources=json.loads((ROOT/'sources.json').read_text()), use_sources=True,
                 proxies='', attempts=3, timeout=8, workers=128, rate=100,
-                max_bytes=1048576, source_timeout=60, min_success=2/3, top=0, sort='quality')
+                max_bytes=1048576, source_timeout=60, min_success=2/3, top=0, sort='quality',
+                request_profile='workbench', denylist='',
+                reputation=dict(local_enabled=True, dnsbl_enabled=False, dnsbl_zones=[],
+                                timeout=2.5, strict=False))
 
 
 def validate(settings):
@@ -44,6 +62,30 @@ def validate(settings):
         raise ValueError('Ожидаются настройки проверки.')
     clean = defaults()
     clean.update({k: settings[k] for k in clean if k in settings})
+    if not isinstance(clean['request_profile'], str) or clean['request_profile'] not in REQUEST_PROFILES:
+        raise ValueError('Неизвестный request-профиль.')
+    if not isinstance(clean['denylist'], str) or len(clean['denylist']) > 2_000_000:
+        raise ValueError('Список denylist слишком большой: максимум 2 МБ.')
+    incoming_rep = settings.get('reputation', {})
+    if not isinstance(incoming_rep, dict):
+        raise ValueError('Настройки чистоты должны быть объектом.')
+    reputation = defaults()['reputation']
+    reputation.update({k: incoming_rep[k] for k in reputation if k in incoming_rep})
+    for key in ('local_enabled', 'dnsbl_enabled', 'strict'):
+        if type(reputation[key]) is not bool:
+            raise ValueError('Настройки чистоты должны быть логическими.')
+    if not isinstance(reputation['dnsbl_zones'], list):
+        raise ValueError('DNSBL-зоны должны быть списком.')
+    reputation['dnsbl_zones'] = normalize_zones(reputation['dnsbl_zones'])
+    if reputation['dnsbl_enabled'] and not reputation['dnsbl_zones']:
+        reputation['dnsbl_enabled'] = False
+    try:
+        reputation['timeout'] = float(reputation['timeout'])
+    except (TypeError, ValueError):
+        raise ValueError('Таймаут DNSBL должен быть числом.') from None
+    if not math.isfinite(reputation['timeout']) or not .1 <= reputation['timeout'] <= 30:
+        raise ValueError('Таймаут DNSBL должен быть от 0.1 до 30 секунд.')
+    clean['reputation'] = reputation
     for key, low, high, integer in [('attempts', 1, 100, True), ('timeout', .1, 300, False),
             ('workers', 1, 2048, True), ('rate', 0, 10000, False), ('max_bytes', 1, 100_000_000, True),
             ('source_timeout', 1, 3600, False), ('top', 0, 1_000_000_000, True), ('min_success', 0, 1, False)]:
@@ -65,8 +107,9 @@ def validate(settings):
         raise ValueError('Добавьте от 1 до 20 сервисов.')
     # Use the exact same normalization/validation as the scanner without writing a file.
     args = argparse.Namespace(config=None, url=None, attempts=clean['attempts'],
-                              timeout=clean['timeout'], max_bytes=clean['max_bytes'])
-    normalized = core.validate_targets(copy.deepcopy(targets), args)
+                              timeout=clean['timeout'], max_bytes=clean['max_bytes'],
+                              request_profile=clean['request_profile'])
+    normalized = core.validate_targets(copy.deepcopy(targets), args, request_profile=clean['request_profile'])
     for t in normalized['targets']:
         name = t.get('name', '')
         if not isinstance(name, str) or len(name) > 160:
@@ -100,12 +143,32 @@ class App:
         self.progress_path = self.data/'gui-progress.json'
 
     def settings(self):
-        return read_json(self.data/'gui-settings.json', defaults())
+        stored = read_json(self.data/'gui-settings.json', None)
+        if stored is None:
+            stored = defaults()
+            try:
+                stored['denylist'] = (self.data/'denylist.txt').read_text(encoding='utf-8')
+            except FileNotFoundError:
+                pass
+            except (OSError, UnicodeError):
+                raise ValueError('Не удалось прочитать data/denylist.txt. Исправьте файл перед сохранением.') from None
+        elif isinstance(stored, dict) and 'denylist' not in stored:
+            try:
+                stored['denylist'] = (self.data/'denylist.txt').read_text(encoding='utf-8')
+            except FileNotFoundError:
+                stored['denylist'] = ''
+            except (OSError, UnicodeError):
+                raise ValueError('Не удалось прочитать data/denylist.txt. Исправьте файл перед сохранением.') from None
+        return stored
 
     def save(self, payload):
+        if isinstance(payload, dict) and 'denylist' not in payload:
+            payload = dict(payload)
+            payload['denylist'] = self.settings().get('denylist', '')
         settings = validate(payload)
         with self.mutex:
             core.atomic(self.data/'gui-settings.json', json.dumps(settings, ensure_ascii=False, indent=2))
+            core.atomic(self.data/'denylist.txt', settings['denylist'])
         return settings
 
     def running(self):
@@ -123,7 +186,9 @@ class App:
                 raise ValueError('Сначала запустите проверку.')
             if action in ('run', 'collect') and not settings['proxies'].strip() and (not settings['use_sources'] or not settings['sources']):
                 raise ValueError('Включите источники или добавьте свой список прокси.')
-            core.atomic(self.data/'gui-targets.json', json.dumps({'targets': settings['targets']}))
+            core.atomic(self.data/'gui-targets.json', json.dumps({
+                'targets': settings['targets'], 'request_profile': settings['request_profile'],
+                'reputation': settings['reputation']}, ensure_ascii=False))
             core.atomic(self.data/'gui-sources.json', json.dumps(settings['sources']))
             core.atomic(self.data/'gui-input.txt', settings['proxies'])
             self.stop_path.unlink(missing_ok=True)
@@ -131,16 +196,27 @@ class App:
             command = [sys.executable, '-u', str(ROOT/'proxytool.py'), 'scan' if action == 'recheck' else action,
                        '--data', str(self.data), '--config', str(self.data/'gui-targets.json'),
                        '--sources', str(self.data/'gui-sources.json'), '--input', str(self.data/'gui-input.txt'),
+                       '--denylist-file', str(self.data/'denylist.txt'),
                        '--progress-file', str(self.progress_path), '--stop-file', str(self.stop_path)]
             for key in ('attempts', 'timeout', 'workers', 'rate', 'max_bytes', 'source_timeout', 'min_success', 'top', 'sort'):
                 command.extend(['--'+key.replace('_', '-'), str(settings[key])])
+            reputation = settings['reputation']
+            command.append('--local-denylist' if reputation['local_enabled'] else '--no-local-denylist')
+            if reputation['dnsbl_enabled']:
+                command.append('--dnsbl')
+            for zone in reputation['dnsbl_zones']:
+                command.extend(['--dnsbl-zone', zone])
+            command.extend(['--reputation-timeout', str(reputation['timeout'])])
+            if reputation['strict']:
+                command.append('--strict-clean')
             if not settings['use_sources']:
                 command.append('--no-sources')
             if action == 'recheck':
                 command.append('--recheck')
             self.job = dict(id=secrets.token_hex(8), action=action, started_at=time.time(),
-                            targets=[dict(name=t.get('name', ''), url=t['url']) for t in settings['targets']],
-                            min_success=settings['min_success'], sort=settings['sort'], top=settings['top'])
+                            targets=[dict(name=t.get('name', ''), url=core.public_url(t['url'])) for t in settings['targets']],
+                            min_success=settings['min_success'], sort=settings['sort'], top=settings['top'],
+                            request_profile=settings['request_profile'], reputation=reputation)
             if self.log_handle:
                 self.log_handle.close()
             self.log_handle = (self.data/'gui-run.log').open('wb')
@@ -178,7 +254,7 @@ class App:
             state = dict(running=active, job=dict(self.job),
                          progress=read_json(self.progress_path, {}),
                          sources=read_json(self.data/'sources-report.json', {}),
-                         source_urls=read_json(self.data/'gui-sources.json', []),
+                         source_urls=public_sources(read_json(self.data/'gui-sources.json', [])),
                          export=read_json(self.data/'exports/status.json', {}),
                          downloads=[n for n in ('proxies.txt', 'ranked.csv', 'ranked.json') if (self.data/'exports'/n).exists()])
             if not active and self.job.get('exit_code', 0) not in (0, 130):
@@ -202,7 +278,7 @@ class App:
         sort = query.get('sort', ['quality'])[0]
         try:
             threshold = float(query.get('min_success', [2/3])[0])
-            offset = max(0, int(query.get('offset', [0])[0]))
+            offset = max(0, int(query.get('offset', ['0'])[0]))
             if not 0 <= threshold <= 1:
                 raise ValueError()
         except ValueError:
@@ -211,14 +287,33 @@ class App:
         # Separate read-only connection: no writing or long-lived transaction against the worker.
         db = sqlite3.connect((self.data/'proxies.sqlite3').as_uri()+'?mode=ro', uri=True, timeout=2)
         try:
-            condition = "profile=? AND json_extract(payload,'$.min_target_reliability')>0 AND json_extract(payload,'$.min_target_reliability')+1e-12>=?"
-            total = db.execute('SELECT count(*) FROM results WHERE '+condition, (profile, threshold)).fetchone()[0]
-            rows = [json.loads(r[0]) for r in db.execute('SELECT payload FROM results WHERE '+condition+' ORDER BY '+order+' LIMIT 50 OFFSET ?', (profile, threshold, offset))]
             record = db.execute('SELECT config FROM profiles WHERE id=?', (profile,)).fetchone()
-            targets = [] if not record else [dict(name=t.get('name',''), url=t['url']) for t in json.loads(record[0])['targets']]
-            return dict(rows=rows, total=total, profile=profile, targets=targets, offset=offset)
+            cfg = json.loads(record[0]) if record else {}
+            policy = cfg.get('reputation', {})
+            strict = bool(policy.get('strict', False))
+            denylist = Denylist.from_file(self.data/'denylist.txt', normalizer=core.normalize)
+            current_settings = self.settings()
+            local_enabled = current_settings.get('reputation', {}).get('local_enabled', True)
+            active_denylist = denylist if local_enabled else None
+            if active_denylist is not None and active_denylist.error:
+                raise ValueError('Не удалось прочитать локальный denylist; обновите список.')
+            condition = "profile=? AND json_extract(payload,'$.min_target_reliability')>0 AND json_extract(payload,'$.min_target_reliability')+1e-12>=?"
+            total = 0
+            rows = []
+            for (payload,) in db.execute('SELECT payload FROM results WHERE '+condition+' ORDER BY '+order, (profile, threshold)):
+                row = json.loads(payload)
+                if not result_allowed(row, threshold, denylist=active_denylist, strict=strict):
+                    continue
+                if total >= offset and len(rows) < 50:
+                    rows.append(row)
+                total += 1
+            targets = [dict(name=t.get('name',''), url=core.public_url(t['url'])) for t in cfg.get('targets', [])]
+            return dict(rows=rows, total=total, profile=profile, targets=targets, offset=offset,
+                        request_profile=cfg.get('request_profile', 'workbench'),
+                        reputation_policy=policy)
         finally:
             db.close()
+
 
     def close(self):
         self.stop()
@@ -232,7 +327,7 @@ class App:
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = 'ProxyWorkbench'
+    server_version = f'{PRODUCT_ID}/{PRODUCT_VERSION}'
 
     def log_message(self, *args):
         pass
@@ -275,10 +370,14 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if path.path == '/':
                 content = (ROOT/'ui/index.html').read_text().replace('__TOKEN__', self.app.token)
+                content = content.replace('__PRODUCT_VERSION__', PRODUCT_VERSION)
                 return self.respond(200, content.encode(), 'text/html; charset=utf-8')
             if path.path in ('/app.js', '/style.css'):
                 mime = 'text/javascript; charset=utf-8' if path.path.endswith('.js') else 'text/css; charset=utf-8'
-                return self.respond(200, (ROOT/'ui'/path.path[1:]).read_bytes(), mime)
+                if path.path == '/app.js':
+                    content = (ROOT/'ui'/'app.js').read_text(encoding='utf-8').replace('__PRODUCT_VERSION__', PRODUCT_VERSION)
+                    return self.respond(200, content.encode(), mime)
+                return self.respond(200, (ROOT/'ui'/'style.css').read_bytes(), mime)
             if path.path == '/favicon.ico':
                 return self.respond(204, b'')
             if path.path == '/api/settings':
@@ -343,7 +442,7 @@ def make_server(data, port=0):
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Локальный интерфейс Proxy Workbench')
+    parser = argparse.ArgumentParser(description=f'Локальный интерфейс {PRODUCT_NAME}')
     parser.add_argument('--data', type=Path, default=ROOT/'data')
     parser.add_argument('--port', type=int, default=0)
     parser.add_argument('--no-browser', action='store_true')
@@ -358,7 +457,7 @@ def main():
             try:
                 import httpx
                 response = httpx.get(url, timeout=2, trust_env=False)
-                if response.status_code == 200 and 'Proxy Workbench' in response.text:
+                if response.status_code == 200 and PRODUCT_NAME in response.text:
                     print(f'Приложение уже запущено: {url}', flush=True)
                     if not args.no_browser:
                         webbrowser.open(url)
@@ -368,7 +467,7 @@ def main():
         raise SystemExit('Не удалось открыть интерфейс: папка data или порт уже используются.')
     core.atomic(args.data/'gui-address.json', json.dumps(dict(port=server.server_port)))
     url = f'http://127.0.0.1:{server.server_port}/'
-    print(f'Proxy Workbench: {url}\nНе закрывайте это окно, пока работает приложение. Ctrl+C — закрыть.', flush=True)
+    print(f'{PRODUCT_NAME} {PRODUCT_VERSION}: {url}\nНе закрывайте это окно, пока работает приложение. Ctrl+C — закрыть.', flush=True)
     if not args.no_browser:
         webbrowser.open(url)
     try:

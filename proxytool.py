@@ -21,9 +21,13 @@ from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
 
 import httpx
 
+from branding import DEFAULT_REQUEST_PROFILE, PRODUCT_NAME, REQUEST_PROFILES, merge_headers, profile_digest, validate_profile
+from reputation import Denylist, make_policy, result_allowed, screen_proxy, verdict_blocks
+
 ROOT = Path(__file__).resolve().parent
 TLS = ssl.create_default_context()
 SCHEMES = {'http', 'https', 'socks5', 'socks5h'}
+SENSITIVE_HEADERS = {'authorization', 'proxy-authorization', 'cookie', 'set-cookie', 'x-api-key', 'api-key', 'x-auth-token'}
 
 
 def normalize(value):
@@ -45,6 +49,19 @@ def normalize(value):
         return f'{scheme}://{host}:{p.port}'
     except (ValueError, TypeError):
         return None
+
+
+def public_url(value):
+    try:
+        parsed = urlsplit(value)
+        port = parsed.port
+    except (TypeError, ValueError):
+        return ''
+    host = parsed.hostname or ''
+    if ':' in host and not host.startswith('['):
+        host = '[' + host + ']'
+    authority = host + (f':{port}' if port else '')
+    return urlunsplit((parsed.scheme, authority, '/', '', ''))
 
 
 def atomic(path, content):
@@ -98,9 +115,10 @@ def source_spec(value):
     return kind, url
 
 
-async def collect(db, urls, inputs, timeout=60, on_progress=None):
+async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None):
     reports = []
     total_rows = 0
+    denylist = denylist or Denylist.empty()
     urls = list(dict.fromkeys(urls))
     specs = [source_spec(url) for url in urls]
 
@@ -108,25 +126,32 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None):
         if on_progress:
             on_progress(dict(phase="collecting", sources_done=sum("source" in r for r in reports),
                              sources_total=len(urls), sources=reports, raw_rows=total_rows,
+                             blocked=sum(r.get('blocked', 0) for r in reports),
                              candidates=db.execute("SELECT count(*) FROM candidates").fetchone()[0]))
 
     def add(value, protocol='http'):
         value = value.strip()
         proxy = normalize(value if '://' in value else protocol+'://'+value)
-        if proxy:
-            db.execute('INSERT OR IGNORE INTO candidates VALUES (?)', (proxy,))
-        return bool(proxy)
+        if not proxy:
+            return 'invalid'
+        if denylist.match(proxy):
+            return 'blocked'
+        db.execute('INSERT OR IGNORE INTO candidates VALUES (?)', (proxy,))
+        return 'accepted'
 
     publish()
-    for path in inputs:
-        count = invalid = 0
+    for input_index, path in enumerate(inputs, 1):
+        count = invalid = blocked = 0
         with Path(path).open(encoding='utf-8') as handle:
             for line in handle:
                 if not line.strip() or line.lstrip().startswith('#'):
                     continue
                 count += 1
-                invalid += not add(line)
-        reports.append(dict(input=str(path), rows=count, invalid=invalid, complete=True))
+                outcome = add(line)
+                invalid += outcome == 'invalid'
+                blocked += outcome == 'blocked'
+        reports.append(dict(input=f'local-input-{input_index}', rows=count, invalid=invalid,
+                            blocked=blocked, complete=True))
         total_rows += count
         db.commit()
     gate = asyncio.Semaphore(8)
@@ -134,7 +159,7 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None):
                                  timeout=15) as client:
         async def fetch(index, kind, url):
             nonlocal total_rows
-            count = invalid = pages = attempts = 0
+            count = invalid = blocked = pages = attempts = 0
             error = None
             page = 1
             expected_total = None
@@ -169,9 +194,11 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None):
                                             count += 1
                                             if kind == 'http-fields':
                                                 match = re.fullmatch(r"(\d{1,3}(?:\.\d{1,3}){3}:\d{1,5}):[A-Za-z][A-Za-z .'-]*", line.strip())
-                                                invalid += not (match and add(match[1]))
+                                                outcome = add(match[1]) if match else 'invalid'
                                             else:
-                                                invalid += not add(line, kind)
+                                                outcome = add(line, kind)
+                                            invalid += outcome == 'invalid'
+                                            blocked += outcome == 'blocked'
                             succeeded = True
                             error = None
                             break
@@ -196,6 +223,7 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None):
                         for record in batch:
                             count += 1
                             accepted = False
+                            blocked_here = False
                             if isinstance(record, dict):
                                 host = str(record.get('ip', ''))
                                 if ':' in host and not host.startswith('['):
@@ -205,8 +233,12 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None):
                                     for protocol in protocols:
                                         if protocol in ('http', 'https', 'socks5'):
                                             # GeoNode https denotes CONNECT capability.
-                                            accepted = add(f"{host}:{record.get('port')}", 'http' if protocol == 'https' else protocol) or accepted
-                            invalid += not accepted
+                                            outcome = add(f"{host}:{record.get('port')}", 'http' if protocol == 'https' else protocol)
+                                            accepted = accepted or outcome == 'accepted'
+                                            blocked_here = blocked_here or outcome == 'blocked'
+                            if not accepted:
+                                blocked += blocked_here
+                                invalid += not blocked_here
                         if count >= expected_total:
                             break
                         if not batch:
@@ -219,21 +251,22 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None):
                     db.commit()
                     await asyncio.sleep(.1)
             total_rows += count
-            reports.append(dict(source=index, rows=count, invalid=invalid, pages=pages, attempts=attempts,
-                                complete=error is None, error=error, format=kind))
+            reports.append(dict(source=index, rows=count, invalid=invalid, blocked=blocked, pages=pages,
+                                attempts=attempts, complete=error is None, error=error, format=kind))
             db.commit()
             publish()
-            print(f'Источник {index}: строк {count}, страниц {pages}, ошибка {error or "нет"}', flush=True)
+            print(f'Источник {index}: строк {count}, заблокировано {blocked}, страниц {pages}, ошибка {error or "нет"}', flush=True)
         async with asyncio.TaskGroup() as group:
             for index, (kind, url) in enumerate(specs, 1):
                 group.create_task(fetch(index, kind, url))
     db.commit()
     publish()
     return dict(raw_rows=total_rows, unique=db.execute('SELECT count(*) FROM candidates').fetchone()[0],
+                blocked=sum(r.get('blocked', 0) for r in reports), denylist_error=denylist.error,
                 sources_total=len(specs), sources=reports)
 
 
-def target_config(args):
+def target_config(args, denylist=None):
     if args.config:
         config = json.loads(Path(args.config).read_text())
     else:
@@ -243,10 +276,15 @@ def target_config(args):
     targets = config.get('targets')
     if not isinstance(targets, list) or not targets:
         raise ValueError('config: нужен непустой список targets')
-    return validate_targets(targets, args)
+    return validate_targets(targets, args,
+                            request_profile=getattr(args, 'request_profile', None) or config.get('request_profile'),
+                            reputation=config.get('reputation'),
+                            denylist=denylist)
 
 
-def validate_targets(targets, args):
+def validate_targets(targets, args, request_profile=None, reputation=None, denylist=None):
+    request_profile = request_profile or getattr(args, 'request_profile', None) or DEFAULT_REQUEST_PROFILE
+    validate_profile(request_profile)
     for t in targets:
         if not isinstance(t, dict) or not isinstance(t.get('url'), str):
             raise ValueError('target: нужен объект с URL')
@@ -265,14 +303,30 @@ def validate_targets(targets, args):
         t.setdefault('headers', {})
         if not isinstance(t['headers'], dict) or any(not isinstance(k, str) or not isinstance(v, str) or '\n' in k+v or '\r' in k+v for k, v in t['headers'].items()):
             raise ValueError('headers: ожидается объект со строковыми значениями')
+        if any(name.lower() in SENSITIVE_HEADERS or any(part in name.lower() for part in ('token', 'secret', 'password', 'api-key')) for name in t['headers']):
+            raise ValueError('headers: credential-like заголовки запрещены для публичных прокси')
         t.setdefault('contains', None)
         t.setdefault('sha256', None)
         if t['contains'] is not None and not isinstance(t['contains'], str):
             raise ValueError('contains: ожидается строка')
         if t['sha256'] is not None and (not isinstance(t['sha256'], str) or not re.fullmatch('[a-fA-F0-9]{64}', t['sha256'])):
             raise ValueError('sha256: ожидается хеш из 64 hex символов')
-    return dict(version=1, targets=targets, attempts=args.attempts,
-                timeout=args.timeout, max_bytes=args.max_bytes)
+    args_dnsbl = getattr(args, 'dnsbl', None)
+    args_zones = getattr(args, 'dnsbl_zones', None)
+    args_timeout = getattr(args, 'reputation_timeout', None)
+    args_strict = getattr(args, 'strict_clean', None)
+    args_local = getattr(args, 'local_denylist', None)
+    policy = make_policy(reputation, denylist or Denylist.empty(),
+                         local_override=args_local,
+                         dnsbl_override=args_dnsbl,
+                         zones_override=args_zones if args_zones else None,
+                         timeout_override=args_timeout,
+                         strict_override=args_strict)
+    return dict(version=2, targets=targets, attempts=args.attempts,
+                timeout=args.timeout, max_bytes=args.max_bytes,
+                request_profile=request_profile,
+                request_profile_digest=profile_digest(request_profile),
+                reputation=policy)
 
 
 async def request_once(proxy, target, config, rate):
@@ -284,8 +338,9 @@ async def request_once(proxy, target, config, rate):
             # Fresh connections make samples comparable (including CONNECT/TLS).
             async with httpx.AsyncClient(proxy=proxy, trust_env=False, verify=TLS,
                                          timeout=config['timeout'], follow_redirects=False) as client:
+                headers = merge_headers(config.get('request_profile', DEFAULT_REQUEST_PROFILE), target['headers'])
                 async with client.stream(target['method'], target['url'],
-                                         headers=target['headers']) as response:
+                                         headers=headers) as response:
                     result['status'] = response.status_code
                     if response.status_code not in target['statuses']:
                         result['error'] = f'HTTP_{response.status_code}'
@@ -351,7 +406,17 @@ def fit_workers(requested):
         return min(requested, 128)
 
 
-async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_proxy, progress=True, on_progress=None, min_success=2/3):
+def blocked_result(proxy, verdict):
+    return dict(proxy=proxy, reliability=0, min_target_reliability=0,
+                latency_ms=None, jitter_ms=None, score=0, successes=0, requests=0,
+                checked_at=time.time(), samples=[], reputation=verdict)
+
+
+async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_proxy, progress=True, on_progress=None, min_success=2/3, screen=None, denylist=None):
+    denylist = denylist or Denylist.empty()
+    policy = config.get('reputation', {})
+    strict = bool(policy.get('strict', False))
+    active_denylist = denylist if policy.get('local_enabled', True) else None
     encoded = json.dumps(config, sort_keys=True)
     profile = hashlib.sha256(encoded.encode()).hexdigest()[:20]
     db.execute('INSERT OR IGNORE INTO profiles VALUES (?, ?)', (profile, encoded))
@@ -362,7 +427,13 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
     pending = db.execute('''SELECT c.proxy FROM candidates c LEFT JOIN results r
         ON r.proxy=c.proxy AND r.profile=? WHERE r.proxy IS NULL ORDER BY c.proxy''', (profile,))
     completed = db.execute('SELECT count(*) FROM results WHERE profile=?', (profile,)).fetchone()[0]
-    passed = db.execute("SELECT count(*) FROM results WHERE profile=? AND json_extract(payload, '$.min_target_reliability')>0 AND json_extract(payload, '$.min_target_reliability')+1e-12>=?", (profile, min_success)).fetchone()[0]
+    passed = 0
+    status_counts = {'clean': 0, 'listed': 0, 'unknown': 0, 'local_denied': 0}
+    for (payload,) in db.execute('SELECT payload FROM results WHERE profile=?', (profile,)):
+        row = json.loads(payload)
+        status = (row.get('reputation') or {}).get('status', 'clean')
+        status_counts[status] = status_counts.get(status, 0) + 1
+        passed += int(result_allowed(row, min_success, denylist=active_denylist, strict=strict))
     initial = completed
     limiter = Rate(rate)
     queue = asyncio.Queue(maxsize=workers * 2)
@@ -381,11 +452,25 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
             try:
                 if proxy is None:
                     return
-                row = await probe(proxy, config, limiter)
+                verdict = None
+                if screen is not None:
+                    try:
+                        verdict = await screen(proxy, config)
+                    except Exception:
+                        verdict = {'status': 'unknown', 'checked_at': time.time(), 'error': 'SCREEN_ERROR',
+                                   'local_rule': None, 'dnsbl': []}
+                if verdict is not None and verdict_blocks(verdict, strict):
+                    row = blocked_result(proxy, verdict)
+                else:
+                    row = await probe(proxy, config, limiter)
+                    if verdict is not None:
+                        row['reputation'] = verdict
                 db.execute('INSERT OR REPLACE INTO results VALUES (?, ?, ?)',
-                           (profile, proxy, json.dumps(row)))
+                           (profile, proxy, json.dumps(row, ensure_ascii=False)))
                 completed += 1
-                passed += int(row["min_target_reliability"] > 0 and row["min_target_reliability"] + 1e-12 >= min_success)
+                status = (row.get('reputation') or {}).get('status', 'clean')
+                status_counts[status] = status_counts.get(status, 0) + 1
+                passed += int(result_allowed(row, min_success, denylist=active_denylist, strict=strict))
                 if completed % 100 == 0 or time.monotonic() - last_commit >= 1:
                     db.commit()
                     last_commit = time.monotonic()
@@ -398,7 +483,8 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
         eta = (total - completed) / speed if speed else 0
         if on_progress:
             on_progress(dict(phase='scanning', profile=profile, checked=completed, candidates=total, passed=passed,
-                             speed=round(speed, 2), eta_seconds=round(eta) if speed else None, workers=workers))
+                             speed=round(speed, 2), eta_seconds=round(eta) if speed else None, workers=workers,
+                             reputation=status_counts))
         if progress:
             print(f'Проверено {completed}/{total}; {speed:.1f} прокси/с; осталось ~{eta / 60:.1f} мин', flush=True)
 
@@ -423,17 +509,35 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
     return profile
 
 
-def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3):
+def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, denylist=None, local_override=None):
     if not db.execute('SELECT 1 FROM profiles WHERE id=?', (profile,)).fetchone():
         raise ValueError('Профиль проверки не найден')
+    denylist = denylist or Denylist.empty()
+    cfg = json.loads(db.execute('SELECT config FROM profiles WHERE id=?', (profile,)).fetchone()[0])
+    policy = cfg.get('reputation', {})
+    strict = bool(policy.get('strict', False))
+    if local_override is False:
+        active_denylist = None
+    elif local_override is True or policy.get('local_enabled', True):
+        active_denylist = denylist
+    else:
+        active_denylist = None
+    if active_denylist is not None and active_denylist.error:
+        raise ValueError('Не удалось прочитать локальный denylist; экспорт остановлен.')
     # Keep full samples on disk, including when hundreds of thousands pass.
     db.execute('DROP TABLE IF EXISTS temp.export_rank')
     db.execute('CREATE TEMP TABLE export_rank(proxy TEXT PRIMARY KEY, score REAL, latency REAL, reliability REAL)')
-    checked = passed = 0
+    checked = passed = local_filtered = 0
+    status_counts = {'clean': 0, 'listed': 0, 'unknown': 0, 'local_denied': 0}
     for (payload,) in db.execute('SELECT payload FROM results WHERE profile=?', (profile,)):
         row = json.loads(payload)
         checked += 1
-        if row['min_target_reliability'] > 0 and row['min_target_reliability'] + 1e-12 >= min_success:
+        status = (row.get('reputation') or {}).get('status', 'clean')
+        status_counts[status] = status_counts.get(status, 0) + 1
+        eligible = result_allowed(row, min_success, denylist=None, strict=strict)
+        if eligible and active_denylist is not None and active_denylist.match(row.get('proxy', '')):
+            local_filtered += 1
+        elif eligible:
             db.execute('INSERT INTO export_rank VALUES (?,?,?,?)',
                        (row['proxy'], row['score'], row['latency_ms'], row['reliability']))
             passed += 1
@@ -441,7 +545,8 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3):
     selected = db.execute(f"""SELECT r.payload FROM export_rank e JOIN results r
         ON r.proxy=e.proxy AND r.profile=? ORDER BY {order} LIMIT ?""", (profile, top or -1))
     directory.mkdir(parents=True, exist_ok=True)
-    fields = ['proxy', 'score', 'latency_ms', 'jitter_ms', 'reliability', 'min_target_reliability', 'successes', 'requests', 'checked_at']
+    fields = ['proxy', 'score', 'latency_ms', 'jitter_ms', 'reliability', 'min_target_reliability',
+              'successes', 'requests', 'checked_at', 'reputation_status', 'reputation_sources']
     names = ['proxies.txt', 'ranked.json', 'ranked.csv']
     exported = 0
     try:
@@ -453,6 +558,10 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3):
             js.write('[')
             for (payload,) in selected:
                 row = json.loads(payload)
+                verdict = row.get('reputation') or {}
+                row['reputation_status'] = verdict.get('status', 'clean')
+                row['reputation_sources'] = ','.join(item.get('zone', '') for item in verdict.get('dnsbl', [])
+                                                       if item.get('status') == 'listed')
                 txt.write(row['proxy'] + '\n')
                 js.write((',' if exported else '') + '\n' + json.dumps(row, ensure_ascii=False))
                 writer.writerow(row)
@@ -467,17 +576,19 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3):
         db.execute('DROP TABLE temp.export_rank')
         db.commit()
     total = db.execute('SELECT count(*) FROM candidates').fetchone()[0]
-    cfg = json.loads(db.execute('SELECT config FROM profiles WHERE id=?', (profile,)).fetchone()[0])
     report = dict(profile=profile, candidates=total, checked=checked, pending=total-checked,
-                  passed=passed, exported=exported, complete=checked == total, generated_at=time.time(),
+                  passed=passed, local_filtered=local_filtered, exported=exported, complete=checked == total, generated_at=time.time(),
                   sort=sort, min_success=min_success,
-                  targets=[dict(name=t.get('name', ''), url=t['url']) for t in cfg.get('targets', [])])
+                  targets=[dict(name=t.get('name', ''), url=public_url(t['url'])) for t in cfg.get('targets', [])],
+                  request_profile=cfg.get('request_profile', 'workbench'),
+                  request_profile_digest=cfg.get('request_profile_digest', ''),
+                  reputation=dict(policy, counts=status_counts))
     atomic(directory / 'status.json', json.dumps(report, indent=2) + '\n')
     return report
 
 
 def parser():
-    p = argparse.ArgumentParser(description='Сбор и полная проверка публичных прокси под любой HTTP-сервис')
+    p = argparse.ArgumentParser(description=f'{PRODUCT_NAME}: сбор и полная проверка публичных прокси под HTTP-сервис')
     p.add_argument('command', choices=['collect', 'scan', 'run', 'export'])
     p.add_argument('--progress-file', type=Path, help=argparse.SUPPRESS)
     p.add_argument('--stop-file', type=Path, help=argparse.SUPPRESS)
@@ -489,11 +600,25 @@ def parser():
     target = p.add_mutually_exclusive_group()
     target.add_argument('--url', help='свой URL проверки; по умолчанию https://example.com/')
     target.add_argument('--config', type=Path, help='JSON с targets, HTTP-кодами и проверкой содержимого')
+    p.add_argument('--request-profile', choices=sorted(REQUEST_PROFILES), default=None,
+                   help='нейтральный HTTP request-профиль')
     p.add_argument('--attempts', type=int, default=3)
     p.add_argument('--timeout', type=float, default=8, help='полный deadline одного запроса, секунд')
     p.add_argument('--workers', type=int, default=128)
     p.add_argument('--rate', type=float, default=100, help='максимум стартов запросов/с, 0 — без лимита')
     p.add_argument('--max-bytes', type=int, default=1048576)
+    p.add_argument('--denylist-file', type=Path, default=None, help='локальный IP/CIDR/proxy denylist')
+    p.add_argument('--local-denylist', dest='local_denylist', action='store_true', default=None,
+                   help='применять локальный denylist')
+    p.add_argument('--no-local-denylist', dest='local_denylist', action='store_false', default=None,
+                   help='не применять локальный denylist')
+    p.add_argument('--dnsbl', dest='dnsbl', action='store_true', default=None,
+                   help='включить публичные DNSBL-проверки')
+    p.add_argument('--dnsbl-zone', dest='dnsbl_zones', action='append', default=[],
+                   help='DNSBL-зона; можно указать несколько раз')
+    p.add_argument('--reputation-timeout', type=float, default=None, help='таймаут одной DNSBL-зоны, секунд')
+    p.add_argument('--strict-clean', dest='strict_clean', action='store_true', default=None,
+                   help='не разрешать прокси с неопределённым DNSBL-результатом')
     p.add_argument('--recheck', action='store_true', help='заново проверить все адреса текущего профиля')
     p.add_argument('--top', type=int, default=0, help='сколько сохранить; 0 — все прошедшие')
     p.add_argument('--sort', choices=['speed', 'quality'], default='quality')
@@ -527,6 +652,9 @@ def main(argv=None):
         p.error('Неверные числовые параметры')
     os.umask(0o077)
     args.data.mkdir(parents=True, exist_ok=True)
+    denylist_path = args.denylist_file or args.data / 'denylist.txt'
+    denylist = Denylist.from_file(denylist_path, normalizer=normalize)
+    collect_denylist = Denylist.empty() if args.local_denylist is False else denylist
     # Exclusive OS lock is released even after a crash; read-only exports also lock.
     lock = (args.data / 'workbench.lock').open('a+b')
     try:
@@ -555,20 +683,33 @@ def main(argv=None):
     update_progress(dict(phase='starting', checked=0, candidates=0))
     try:
         if args.command in ('scan', 'run'):
-            config = target_config(args)
+            config = target_config(args, denylist=denylist)
+            if not config['reputation'].get('local_enabled', True):
+                collect_denylist = Denylist.empty()
             profile = hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()[:20]
         if args.command in ('collect', 'run'):
             urls = [] if args.no_sources else json.loads(args.sources.read_text())
             if not isinstance(urls, list):
                 raise ValueError('sources: ожидается JSON-массив http(s) URL')
-            report = asyncio.run(stoppable(collect(db, urls, args.input, args.source_timeout, update_progress), args.stop_file))
+            report = asyncio.run(stoppable(collect(db, urls, args.input, args.source_timeout, update_progress, denylist=collect_denylist), args.stop_file))
             atomic(args.data / 'sources-report.json', json.dumps(report, indent=2) + '\n')
             print(f'Уникальных кандидатов в базе: {report["unique"]}', flush=True)
         if args.command in ('scan', 'run'):
             workers = fit_workers(args.workers)
             print(f'Воркеров: {workers}; полный обход; профиль {profile}', flush=True)
             atomic(args.data / 'last-profile.txt', profile)
-            asyncio.run(stoppable(scan(db, config, workers=workers, rate=args.rate, recheck=args.recheck, on_progress=update_progress, min_success=args.min_success), args.stop_file))
+
+            dnsbl_gate = asyncio.Semaphore(8)
+            async def reputation_check(proxy, scan_config):
+                policy = scan_config.get('reputation', {})
+                if policy.get('dnsbl_enabled'):
+                    async with dnsbl_gate:
+                        return await screen_proxy(proxy, policy, denylist)
+                return await screen_proxy(proxy, policy, denylist)
+
+            asyncio.run(stoppable(scan(db, config, workers=workers, rate=args.rate, recheck=args.recheck,
+                                       on_progress=update_progress, min_success=args.min_success,
+                                       screen=reputation_check, denylist=denylist), args.stop_file))
         elif args.command == 'export':
             profile = (args.data / 'last-profile.txt').read_text().strip()
     except (KeyboardInterrupt, asyncio.CancelledError):
@@ -583,7 +724,8 @@ def main(argv=None):
             if profile and db.execute('SELECT 1 FROM profiles WHERE id=?', (profile,)).fetchone():
                 update_progress(dict(phase='exporting'))
                 report = export(db, profile, args.data / 'exports', top=args.top,
-                                sort=args.sort, min_success=args.min_success)
+                                sort=args.sort, min_success=args.min_success, denylist=denylist,
+                                local_override=args.local_denylist)
                 update_progress(report)
                 print(f'Проверено {report["checked"]}/{report["candidates"]}; подходят {report["passed"]}; сохранено {report["exported"]}', flush=True)
         finally:
