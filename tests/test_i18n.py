@@ -27,5 +27,18 @@ class LanguageTests(unittest.TestCase):
         self.assertEqual(gui.CHILD_ENV['PROXY_WORKBENCH_LANG'], 'ru')
 
 
+class OutputEncodingTests(unittest.TestCase):
+    def test_cyrillic_survives_a_legacy_code_page(self):
+        # Reproduces the Windows worker: stdout redirected to a file with a cp1252 encoding.
+        import io
+        raw = io.BytesIO()
+        stream = io.TextIOWrapper(raw, encoding='cp1252')
+        with mock.patch.object(i18n.sys, 'stdout', stream), mock.patch.object(i18n.sys, 'stderr', None):
+            i18n.utf8_output()
+            print('Проверено 1/1', file=i18n.sys.stdout)
+            i18n.sys.stdout.flush()
+        self.assertEqual(raw.getvalue().decode('utf-8'), 'Проверено 1/1\n')
+
+
 if __name__ == '__main__':
     unittest.main()

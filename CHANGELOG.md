@@ -11,7 +11,12 @@
 - **Windows executable:** every release ships `proxy-workbench-…-windows-x64.exe` built with PyInstaller. It opens the GUI on double-click, runs the CLI with arguments, and keeps its data in a `data` folder next to itself; no Python needed.
 - **`pipx install`** (#3): `pipx install git+https://github.com/DavidVoitenko/proxy-workbench` gives a `proxy-workbench` command. Without arguments it opens the GUI; with arguments it runs the CLI (`python -m proxy_workbench` works too). Releases also attach the wheel.
 - **Docker Compose:** `compose.yml` runs a checker that keeps 100 proxies fresh, the API and the rotating proxy from one shared volume.
+- **Quick pre-check** (`--prefilter`, on by default with 512 connections; GUI: Performance → Quick pre-check). A plain TCP connect runs before the full check, so addresses that do not even accept a connection (most of any public list) are dropped at a fraction of the cost. They are stored as `UNREACHABLE`, so a stopped scan resumes where it left off.
 - **End-to-end package check:** `packaging/smoke.py` installs nothing and touches no public network. It starts the built app, runs a check through a local mock proxy and reads the result back through the API and the gateway. CI runs it for the wheel on Linux and Windows and for the Windows executable; releases run it before publishing.
+
+### Fixed
+
+- On Windows, background checks started from an environment without `PYTHONUTF8` (the new `.exe` and pipx installs) failed on the first Cyrillic log line. Terminal output is now always UTF-8.
 
 ### Changed
 

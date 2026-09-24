@@ -211,6 +211,8 @@ const messages = {
     'breakdown.countries': 'Countries',
     'breakdown.unknown': 'unknown',
     'results.exitIp': 'Exit IP seen by the judge: {ip}',
+    'check.prefilter': 'Quick pre-check, connections',
+    'check.prefilterHint': 'Drops addresses that do not even accept a connection before the full check. 0 — off.',
     'presets.label': 'Or add a ready-made check',
     'presets.choose': 'Choose a service…',
     'presets.added': 'Added a check for {name}. A proxy must pass every service in the list.',
@@ -547,6 +549,8 @@ const messages = {
     'breakdown.countries': 'Страны',
     'breakdown.unknown': 'неизвестно',
     'results.exitIp': 'Выходной IP, который увидел judge: {ip}',
+    'check.prefilter': 'Быстрая предпроверка, соединений',
+    'check.prefilterHint': 'Отсеивает адреса, которые даже не принимают подключение, до полной проверки. 0 — выключено.',
     'presets.label': 'Или добавьте готовую проверку',
     'presets.choose': 'Выберите сервис…',
     'presets.added': 'Добавлена проверка {name}. Прокси должен пройти все сервисы из списка.',
@@ -815,7 +819,7 @@ function applyI18n(root=document) {
   }
 }
 
-const numeric = ['attempts', 'timeout', 'connect_timeout', 'workers', 'rate', 'max_bytes', 'source_timeout', 'top', 'min_success', 'max_latency', 'want', 'watch', 'reputation-timeout'];
+const numeric = ['attempts', 'timeout', 'connect_timeout', 'workers', 'prefilter', 'rate', 'max_bytes', 'source_timeout', 'top', 'min_success', 'max_latency', 'want', 'watch', 'reputation-timeout'];
 const profileLabel = profile => messages.en['profile.' + profile] ? t('profile.' + profile) : profile;
 const fmt = n => Number(n || 0).toLocaleString(lang === 'ru' ? 'ru-RU' : 'en-US');
 const ms = value => t('unit.ms', {value});
@@ -866,11 +870,11 @@ const TARGET_PRESETS = [
 
 function fillPresets() {
   const select = $('target-preset');
-  select.querySelectorAll('option[data-preset]').forEach(node => node.remove());
+  select.querySelectorAll('option[data-service]').forEach(node => node.remove());
   TARGET_PRESETS.forEach((preset, index) => {
     const option = document.createElement('option');
     option.value = String(index);
-    option.dataset.preset = '';
+    option.dataset.service = '';
     option.textContent = preset.name;
     select.appendChild(option);
   });
@@ -1261,9 +1265,9 @@ $('result-search').oninput = () => { clearTimeout(searchTimer); searchTimer = se
 $('result-country').oninput = $('result-search').oninput;
 
 const presets = {
-  quick: {attempts:1, timeout:5, connect_timeout:2, workers:256, fail_fast:true},
-  balanced: {attempts:3, timeout:8, connect_timeout:4, workers:128, fail_fast:true},
-  thorough: {attempts:5, timeout:12, connect_timeout:6, workers:128, fail_fast:true}
+  quick: {attempts:1, timeout:5, connect_timeout:2, workers:256, prefilter:1024, fail_fast:true},
+  balanced: {attempts:3, timeout:8, connect_timeout:4, workers:128, prefilter:512, fail_fast:true},
+  thorough: {attempts:5, timeout:12, connect_timeout:6, prefilter:256, workers:128, fail_fast:true}
 };
 document.querySelectorAll('[data-preset]').forEach(node => node.onclick = () => {
   const preset = presets[node.dataset.preset];

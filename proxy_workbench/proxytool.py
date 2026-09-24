@@ -34,7 +34,7 @@ from . import anonymity
 from . import geoip
 from . import socks4
 from . import formats
-from .i18n import tr
+from .i18n import tr, utf8_output
 from . import paths
 
 ROOT = paths.PACKAGE
@@ -992,6 +992,35 @@ def fit_workers(requested):
         return min(requested, 128)
 
 
+def fit_prefilter(workers, requested):
+    """Connections left for the reachability pre-check once the full-check workers are counted."""
+    if requested <= 0:
+        return 0
+    if os.name == 'nt':
+        # The Windows proactor loop has no per-process select() limit.
+        return requested
+    return max(1, min(requested, fit_workers(workers + requested) - workers))
+
+
+async def reachable(proxy, timeout):
+    """Whether anything accepts a TCP connection at the proxy's address."""
+    _, host, port = formats.split(proxy)
+    try:
+        _, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout)
+    except (OSError, asyncio.TimeoutError, ValueError):
+        return False
+    writer.close()
+    with contextlib.suppress(OSError):
+        await writer.wait_closed()
+    return True
+
+
+def unreachable_result(proxy):
+    return dict(proxy=proxy, reliability=0, min_target_reliability=0,
+                latency_ms=None, jitter_ms=None, score=0, successes=0, requests=0,
+                checked_at=time.time(), samples=[], error='UNREACHABLE')
+
+
 def blocked_result(proxy, verdict):
     return dict(proxy=proxy, reliability=0, min_target_reliability=0,
                 latency_ms=None, jitter_ms=None, score=0, successes=0, requests=0,
@@ -999,7 +1028,13 @@ def blocked_result(proxy, verdict):
 
 
 async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_proxy, progress=True, on_progress=None, min_success=2/3, screen=None, denylist=None, min_anonymity='any', protocol='all', max_latency=None,
-               countries=(), country_of=None, want=0, recheck_passing=False):
+               countries=(), country_of=None, want=0, recheck_passing=False, prefilter=0, prefilter_timeout=3):
+    """Check every pending candidate of the profile.
+
+    With ``prefilter`` connections a cheap TCP connect runs first: most public
+    addresses are dead, and dropping them there is far faster than a full
+    request with its connect timeout. Only reachable addresses reach the workers.
+    """
     denylist = denylist or Denylist.empty()
     policy = config.get('reputation', {})
     strict = bool(policy.get('strict', False))
@@ -1068,22 +1103,61 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
     initial = completed
     limiter = Rate(rate)
     queue = asyncio.Queue(maxsize=workers * 2)
+    incoming = asyncio.Queue(maxsize=max(prefilter, 1) * 2) if prefilter else None
+    unreachable = 0
     started = last_commit = time.monotonic()
 
     enough = asyncio.Event()
     if want and passed >= want:
         enough.set()
 
+    def store(proxy, row):
+        nonlocal completed, last_commit, passed
+        country = country_of(proxy)
+        if country:
+            row['country'] = country
+        row['history'] = next_history(previous.get(proxy), result_allowed(row, min_success), row.get('checked_at', time.time()))
+        db.execute('INSERT OR REPLACE INTO results VALUES (?, ?, ?)',
+                   (profile, proxy, json.dumps(row, ensure_ascii=False)))
+        completed += 1
+        status = (row.get('reputation') or {}).get('status', 'clean')
+        status_counts[status] = status_counts.get(status, 0) + 1
+        passed += int(counts_as_passed(row))
+        if want and passed >= want:
+            enough.set()
+        if completed % 100 == 0 or time.monotonic() - last_commit >= 1:
+            db.commit()
+            last_commit = time.monotonic()
+
     async def producer():
+        target = incoming if prefilter else queue
         for proxy in pending:
             if enough.is_set():
                 break
-            await queue.put(proxy)
+            await target.put(proxy)
+        for _ in range(prefilter if prefilter else workers):
+            await target.put(None)
+
+    async def gatekeeper():
+        nonlocal unreachable
+        while True:
+            proxy = await incoming.get()
+            if proxy is None:
+                return
+            if enough.is_set():
+                continue
+            if await reachable(proxy, prefilter_timeout):
+                await queue.put(proxy)
+            else:
+                unreachable += 1
+                store(proxy, unreachable_result(proxy))
+
+    async def prefilter_stage():
+        await asyncio.gather(*(gatekeeper() for _ in range(prefilter)))
         for _ in range(workers):
             await queue.put(None)
 
     async def worker():
-        nonlocal completed, last_commit, passed
         while True:
             proxy = await queue.get()
             try:
@@ -1105,21 +1179,7 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
                     row = await probe(proxy, config, limiter)
                     if verdict is not None:
                         row['reputation'] = verdict
-                country = country_of(proxy)
-                if country:
-                    row['country'] = country
-                row['history'] = next_history(previous.get(proxy), result_allowed(row, min_success), row.get('checked_at', time.time()))
-                db.execute('INSERT OR REPLACE INTO results VALUES (?, ?, ?)',
-                           (profile, proxy, json.dumps(row, ensure_ascii=False)))
-                completed += 1
-                status = (row.get('reputation') or {}).get('status', 'clean')
-                status_counts[status] = status_counts.get(status, 0) + 1
-                passed += int(counts_as_passed(row))
-                if want and passed >= want:
-                    enough.set()
-                if completed % 100 == 0 or time.monotonic() - last_commit >= 1:
-                    db.commit()
-                    last_commit = time.monotonic()
+                store(proxy, row)
             finally:
                 queue.task_done()
 
@@ -1130,7 +1190,7 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
         if on_progress:
             on_progress(dict(phase='scanning', profile=profile, checked=completed, candidates=total, passed=passed,
                              speed=round(speed, 2), eta_seconds=round(eta) if speed else None, workers=workers,
-                             reputation=status_counts))
+                             reputation=status_counts, unreachable=unreachable))
         if progress:
             print(tr(f'Проверено {completed}/{total}; {speed:.1f} прокси/с; осталось ~{eta / 60:.1f} мин', f'Checked {completed}/{total}; {speed:.1f} proxies/s; ~{eta / 60:.1f} min left'), flush=True)
 
@@ -1144,6 +1204,8 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
             if progress or on_progress:
                 reporter_task = group.create_task(reporter())
             group.create_task(producer())
+            if prefilter:
+                group.create_task(prefilter_stage())
             tasks = [group.create_task(worker()) for _ in range(workers)]
             await asyncio.gather(*tasks)
             if progress or on_progress:
@@ -1424,6 +1486,11 @@ def parser():
     p.add_argument('--no-fail-fast', dest='fail_fast', action='store_false',
                    help=tr('всегда выполнять все попытки', 'always run every attempt'))
     p.add_argument('--workers', type=int, default=128, help=tr('одновременных проверок', 'parallel checks'))
+    p.add_argument('--prefilter', type=int, default=512,
+                   help=tr('сколько адресов одновременно проверять быстрым TCP-подключением до полной проверки; 0 — выключено',
+                           'parallel quick TCP connects that drop dead addresses before the full check; 0 = off'))
+    p.add_argument('--prefilter-timeout', type=float, default=3,
+                   help=tr('таймаут быстрого TCP-подключения, секунд', 'timeout of the quick TCP connect, seconds'))
     p.add_argument('--rate', type=float, default=100, help=tr('максимум стартов запросов/с, 0 — без лимита', 'maximum request starts per second, 0 = unlimited'))
     p.add_argument('--max-bytes', type=int, default=1048576, help=tr('максимум байт ответа', 'maximum response bytes'))
     p.add_argument('--denylist-file', type=Path, default=None, help=tr('локальный IP/CIDR/proxy denylist', 'local IP/CIDR/proxy denylist file'))
@@ -1570,6 +1637,7 @@ def run_gateway(args, countries):
 
 
 def main(argv=None):
+    utf8_output()
     p = parser()
     args = p.parse_args(argv)
     if (min(args.attempts, args.workers, args.max_bytes) < 1 or args.top < 0
@@ -1582,7 +1650,8 @@ def main(argv=None):
             or not 1 <= args.source_max_line_bytes <= MAX_SOURCE_LINE_BYTES
             or not 1 <= args.source_max_candidates <= MAX_SOURCE_CANDIDATES
             or not 0 <= args.source_max_redirects <= MAX_SOURCE_REDIRECTS
-            or not 0 <= args.min_success <= 1 or args.want < 0
+            or not 0 <= args.min_success <= 1 or args.want < 0 or args.prefilter < 0
+            or not math.isfinite(args.prefilter_timeout) or args.prefilter_timeout <= 0
             or not math.isfinite(args.watch) or args.watch < 0):
         p.error(tr('Неверные числовые параметры', 'Invalid numeric options'))
     try:
@@ -1712,13 +1781,17 @@ def main(argv=None):
                 async def probe(proxy, scan_config, limiter):
                     return await check_proxy(proxy, scan_config, limiter, own_ips=own_ips)
 
+            prefilter = fit_prefilter(workers, args.prefilter)
+
             def run_scan(**options):
                 asyncio.run(stoppable(scan(db, config, workers=workers, rate=args.rate,
                                            probe=probe, on_progress=update_progress, min_success=args.min_success,
                                            screen=reputation_check, denylist=denylist,
                                            min_anonymity=args.min_anonymity, protocol=args.protocol,
                                            max_latency=args.max_latency or None, countries=countries,
-                                           country_of=country_of, **options), args.stop_file))
+                                           country_of=country_of, prefilter=prefilter,
+                                           prefilter_timeout=min(args.prefilter_timeout, args.connect_timeout),
+                                           **options), args.stop_file))
 
             run_scan(recheck=args.recheck, recheck_passing=args.recheck_passing, want=args.want)
             while args.watch:

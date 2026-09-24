@@ -28,7 +28,7 @@ from .reputation import Denylist, normalize_zones, result_allowed
 from . import anonymity
 from . import api
 from . import gateway
-from .i18n import tr
+from .i18n import tr, utf8_output
 from . import paths
 from . import geoip
 
@@ -62,7 +62,7 @@ RESULT_ORDERS = {
 # A source needs this many checked proxies before "no working ones" is trusted.
 PRUNE_MIN_CHECKED = 20
 # The UI translates the scanner's log itself, so the scanner always writes Russian here.
-CHILD_ENV = dict(os.environ, PROXY_WORKBENCH_LANG='ru', PYTHONUNBUFFERED='1')
+CHILD_ENV = dict(os.environ, PROXY_WORKBENCH_LANG='ru', PYTHONUNBUFFERED='1', PYTHONUTF8='1', PYTHONIOENCODING='utf-8')
 DOWNLOADS = ('proxies.txt', 'ranked.csv', 'ranked.json', *core.PROTOCOL_EXPORTS.values(), 'hostport.txt', 'proxychains.txt',
              'proxy.pac', 'clash.yaml')
 
@@ -82,7 +82,7 @@ def defaults():
                                 timeout=2.5, strict=False),
                 anonymity=dict(judge_url=''), min_anonymity='any',
                 connect_timeout=4, fail_fast=True, protocol='all', max_latency=0, countries='', want=0,
-                detect_protocols=False, watch=0)
+                detect_protocols=False, watch=0, prefilter=512)
 
 
 def validate(settings):
@@ -121,7 +121,7 @@ def validate(settings):
             ('workers', 1, 2048, True), ('rate', 0, 10000, False), ('max_bytes', 1, 100_000_000, True),
             ('source_timeout', 1, 3600, False), ('top', 0, 1_000_000_000, True), ('min_success', 0, 1, False),
             ('connect_timeout', .1, 300, False), ('max_latency', 0, 600_000, False), ('want', 0, 1_000_000_000, True),
-            ('watch', 0, 1440, False)]:
+            ('watch', 0, 1440, False), ('prefilter', 0, 5000, True)]:
         value = clean[key]
         if type(value) not in (int, float) or not math.isfinite(value) or not low <= value <= high or (integer and int(value) != value):
             raise ValueError(f'Недопустимое значение: {key}.')
@@ -304,7 +304,7 @@ class App:
                        '--denylist-file', str(self.data/'denylist.txt'),
                        '--progress-file', str(self.progress_path), '--stop-file', str(self.stop_path))
             for key in ('attempts', 'timeout', 'connect_timeout', 'workers', 'rate', 'max_bytes', 'source_timeout',
-                        'min_success', 'top', 'sort', 'min_anonymity', 'protocol', 'max_latency', 'want', 'watch'):
+                        'min_success', 'top', 'sort', 'min_anonymity', 'protocol', 'max_latency', 'want', 'watch', 'prefilter'):
                 command.extend(['--'+key.replace('_', '-'), str(settings[key])])
             command.append('--fail-fast' if settings['fail_fast'] else '--no-fail-fast')
             if settings['detect_protocols']:
@@ -668,6 +668,7 @@ def make_server(data, port=0):
 
 
 def main(argv=None):
+    utf8_output()
     parser = argparse.ArgumentParser(description=tr(f'Локальный интерфейс {PRODUCT_NAME}', f'{PRODUCT_NAME} local interface'))
     parser.add_argument('--version', action='version', version=f'{PRODUCT_NAME} {PRODUCT_VERSION}')
     parser.add_argument('--data', type=Path, default=paths.default_data())

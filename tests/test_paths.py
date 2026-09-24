@@ -16,9 +16,15 @@ class PathTests(unittest.TestCase):
         with mock.patch.object(paths, 'FROZEN', True), mock.patch.object(paths.sys, 'executable', '/opt/pw/proxy-workbench'):
             self.assertEqual(paths.default_data({}), Path('/opt/pw/proxy-workbench').resolve().parent / 'data')
             self.assertEqual(paths.worker_command('scan', '--data', 'x'), ['/opt/pw/proxy-workbench', 'scan', '--data', 'x'])
-        with mock.patch.object(paths, 'PACKAGE', Path('/site-packages/proxy_workbench')), \
-                mock.patch.object(paths.os, 'name', 'posix'), mock.patch.object(paths.sys, 'platform', 'linux'):
-            self.assertEqual(paths.default_data({'XDG_DATA_HOME': '/home/u/.data'}), Path('/home/u/.data/proxy-workbench'))
+        # An installed package has no checkout around it and uses the per-user folder.
+        with mock.patch.object(paths, 'PACKAGE', Path(self.id()) / 'site-packages' / 'proxy_workbench'):
+            if paths.os.name == 'nt':
+                self.assertEqual(paths.default_data({'LOCALAPPDATA': 'C:/Users/u/AppData/Local'}),
+                                 Path('C:/Users/u/AppData/Local/proxy-workbench'))
+            elif paths.sys.platform == 'darwin':
+                self.assertEqual(paths.default_data({}), Path.home() / 'Library/Application Support/proxy-workbench')
+            else:
+                self.assertEqual(paths.default_data({'XDG_DATA_HOME': '/home/u/.data'}), Path('/home/u/.data/proxy-workbench'))
         self.assertEqual(paths.worker_command('scan')[1:], ['-u', '-m', 'proxy_workbench', 'scan'])
 
     def test_entry_point_dispatch(self):
