@@ -1,11 +1,19 @@
 {
+  "request_profile": "workbench",
+  "reputation": {
+    "local_enabled": true,
+    "dnsbl_enabled": false,
+    "dnsbl_zones": [],
+    "timeout": 2.5,
+    "strict": false
+  },
   "targets": [
     {
       "url": "https://example.com/",
       "method": "GET",
       "statuses": [200],
       "contains": "Example Domain",
-      "headers": {"User-Agent": "ProxyWorkbench/1.0"}
+      "headers": {}
     }
   ]
 }

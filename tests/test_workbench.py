@@ -7,7 +7,9 @@ import tempfile
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from branding import merge_headers
 import proxytool as p
+from reputation import Denylist, make_policy, result_allowed, screen_proxy
 
 
 def config(targets=1):
@@ -206,6 +208,72 @@ class WorkbenchTests(unittest.IsolatedAsyncioTestCase):
         actual={r[0] for r in self.db.execute('SELECT proxy FROM candidates')}
         self.assertIn('socks5://11.4.4.4:1080',actual)
         self.assertNotIn('http://11.4.4.4:1080',actual)
+
+    def test_denylist_parser_and_request_profiles(self):
+        denylist = Denylist.from_text('# local\n11.0.0.0/24\n2001:db8::/32\nhttp://11.0.0.1:8080\nbad-rule\n', normalizer=p.normalize)
+        self.assertEqual(denylist.match('http://11.0.0.9:3128'), 'cidr')
+        self.assertEqual(denylist.match('socks5://[2001:db8::1]:1080'), 'cidr')
+        self.assertEqual(denylist.match('http://11.0.0.1:8080'), 'proxy')
+        self.assertIsNone(denylist.match('http://11.0.1.1:8080'))
+        self.assertEqual(denylist.invalid, ['bad-rule'])
+        headers = merge_headers('workbench', {'user-agent':'Custom/1.0', 'X-Test':'yes'})
+        self.assertEqual(headers['user-agent'], 'Custom/1.0')
+        self.assertEqual(headers['X-Test'], 'yes')
+        self.assertNotIn('User-Agent', headers)
+        self.assertEqual(p.public_url('https://example.org/private/path?token=secret'), 'https://example.org/')
+
+    async def test_dnsbl_mock_and_strict_policy(self):
+        denylist = Denylist.empty()
+        self.assertFalse(make_policy({'dnsbl_enabled':True, 'dnsbl_zones':[]}, denylist)['dnsbl_enabled'])
+        policy = make_policy({'dnsbl_enabled':True, 'dnsbl_zones':['bl.example.org'], 'strict':True}, denylist)
+        calls = 0
+        async def resolver(query):
+            nonlocal calls
+            calls += 1
+            return [(2, 1, 6, '', ('127.0.0.2', 0))] if calls == 1 else []
+        listed = await screen_proxy('http://11.1.1.1:80', policy, denylist, resolver=resolver)
+        self.assertEqual(listed['status'], 'listed')
+        clear = await screen_proxy('http://11.1.1.2:80', policy, denylist, resolver=resolver)
+        self.assertEqual(clear['status'], 'clean')
+        row = dict(min_target_reliability=1, proxy='http://11.1.1.1:80', reputation=listed)
+        self.assertFalse(result_allowed(row, 1, denylist, strict=True))
+        self.assertTrue(result_allowed(dict(row, reputation=clear), 1, denylist, strict=True))
+
+    async def test_scan_stores_blocked_verdict_and_resumes(self):
+        self.db.execute('INSERT INTO candidates VALUES (?)', ('http://11.4.4.4:80',))
+        self.db.commit()
+        denylist = Denylist.from_text('11.4.4.0/24', normalizer=p.normalize)
+        cfg = config()
+        cfg['reputation'] = make_policy({}, denylist)
+        calls = []
+        async def probe(*args):
+            calls.append(args[0])
+            return row(args[0], cfg)
+        async def screen(proxy, scan_config):
+            return await screen_proxy(proxy, scan_config['reputation'], denylist)
+        profile = await p.scan(self.db, cfg, workers=1, rate=0, probe=probe, screen=screen,
+                                denylist=denylist, progress=False)
+        self.assertEqual(calls, [])
+        stored = json.loads(self.db.execute('SELECT payload FROM results WHERE profile=?', (profile,)).fetchone()[0])
+        self.assertEqual(stored['reputation']['status'], 'local_denied')
+        await p.scan(self.db, cfg, workers=1, rate=0, probe=probe, screen=screen,
+                     denylist=denylist, progress=False)
+        self.assertEqual(calls, [])
+
+    def test_export_filters_blacklist_and_cleanliness(self):
+        cfg = config()
+        cfg['reputation'] = make_policy({'strict':True}, Denylist.empty())
+        self.db.execute('INSERT INTO profiles VALUES (?,?)', ('fixture', json.dumps(cfg)))
+        for index, status in enumerate(('clean', 'listed', 'unknown')):
+            value = row(f'http://11.6.6.{index+1}:80', cfg)
+            value['reputation'] = {'status':status, 'dnsbl':[], 'checked_at':0}
+            self.db.execute('INSERT INTO candidates VALUES (?)', (value['proxy'],))
+            self.db.execute('INSERT INTO results VALUES (?,?,?)', ('fixture', value['proxy'], json.dumps(value)))
+        self.db.commit()
+        report = p.export(self.db, 'fixture', self.home/'clean-out', min_success=1, denylist=Denylist.empty())
+        self.assertEqual(report['exported'], 1)
+        self.assertEqual(report['reputation']['counts']['listed'], 1)
+        self.assertEqual(json.loads((self.home/'clean-out'/'ranked.json').read_text())[0]['reputation_status'], 'clean')
 
     def test_normalization(self):
         self.assertEqual(p.normalize('https://11.1.1.1:80'), 'https://11.1.1.1:80')
