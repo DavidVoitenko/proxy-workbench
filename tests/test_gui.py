@@ -62,7 +62,7 @@ class GuiTests(unittest.TestCase):
         self.assertEqual(len(saved['targets']), 2)
         self.assertEqual(saved['request_profile'], 'minimal')
         self.assertTrue(saved['reputation']['dnsbl_enabled'])
-        self.assertIn('11.9.0.0/24', (self.home/'denylist.txt').read_text())
+        self.assertIn('11.9.0.0/24', (self.home/'denylist.txt').read_text(encoding='utf-8'))
         settings['targets'][0]['headers'] = ['wrong']
         self.assertEqual(self.client.post('/api/settings', json=settings).status_code, 400)
 
@@ -72,7 +72,7 @@ class GuiTests(unittest.TestCase):
         payload.pop('denylist')
         saved = self.server.app.save(payload)
         self.assertIn('11.8.0.0/24', saved['denylist'])
-        self.assertIn('11.8.0.0/24', (self.home/'denylist.txt').read_text())
+        self.assertIn('11.8.0.0/24', (self.home/'denylist.txt').read_text(encoding='utf-8'))
         self.assertEqual(gui.public_source('https://example.org/list?token=secret'), 'https://example.org/')
 
     def test_collect_job_dedup_and_empty_profile_scan(self):
@@ -125,6 +125,31 @@ class GuiTests(unittest.TestCase):
         self.assertEqual(state['job']['exit_code'],0,state['log'])
         content=self.client.get('/api/download/proxies.txt').text.splitlines()
         self.assertEqual(content,[r['proxy'] for r in first['rows'][:7]])
+
+    def test_result_detail_is_loaded_on_demand(self):
+        db = p.open_db(self.home/'detail.sqlite3')
+        cfg = dict(version=2, targets=[dict(url='https://service.invalid/')], request_profile='workbench', reputation={})
+        db.execute('INSERT INTO profiles VALUES (?,?)', ('detail', json.dumps(cfg)))
+        row = p.summarize('http://11.0.0.1:80', [dict(target=0, attempt=1, ok=True, ms=4, bytes=1, status=200, error=None)], cfg)
+        db.execute('INSERT INTO candidates VALUES (?)', (row['proxy'],))
+        db.execute('INSERT INTO results VALUES (?,?,?)', ('detail', row['proxy'], json.dumps(row)))
+        db.commit(); db.close()
+        (self.home/'proxies.sqlite3').write_bytes((self.home/'detail.sqlite3').read_bytes())
+        (self.home/'last-profile.txt').write_text('detail')
+        response = self.client.get('/api/result-detail', params={'proxy':row['proxy']})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(len(response.json()['samples']), 1)
+
+    def test_clear_data_preserves_settings(self):
+        (self.home/'gui-settings.json').write_text('{}', encoding='utf-8')
+        (self.home/'denylist.txt').write_text('11.0.0.0/24\n', encoding='utf-8')
+        (self.home/'proxies.sqlite3').write_bytes(b'db')
+        (self.home/'exports').mkdir()
+        response = self.client.post('/api/clear-data', json={})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertTrue((self.home/'gui-settings.json').exists())
+        self.assertTrue((self.home/'denylist.txt').exists())
+        self.assertFalse((self.home/'proxies.sqlite3').exists())
 
     def test_cooperative_stop_and_progress(self):
         async def run():
