@@ -24,6 +24,7 @@ import proxytool as core
 from maintenance import clear_runtime, exclusive_lock
 from reputation import Denylist, normalize_zones, result_allowed
 import anonymity
+import api
 import geoip
 
 ROOT = Path(__file__).resolve().parent
@@ -359,6 +360,7 @@ class App:
                          source_keys=[core.source_key(url) for url in read_json(self.data/'gui-sources.json', [])
                                       if isinstance(url, str)],
                          export=read_json(self.data/'exports/status.json', {}),
+                         api=getattr(self, 'api_url', None),
                          downloads=[n for n in DOWNLOADS
                                      if core.export_file(self.data/'exports', n).is_file()])
             if not active and self.job.get('exit_code', 0) not in (0, 130):
@@ -607,6 +609,9 @@ def main():
     parser.add_argument('--data', type=Path, default=ROOT/'data')
     parser.add_argument('--port', type=int, default=0)
     parser.add_argument('--no-browser', action='store_true')
+    parser.add_argument('--api-port', type=int, default=api.DEFAULT_PORT,
+                        help='порт локального API для своих программ (только этот компьютер)')
+    parser.add_argument('--no-api', action='store_true', help='не запускать локальное API')
     args = parser.parse_args()
     os.umask(0o077)
     try:
@@ -629,6 +634,16 @@ def main():
     core.atomic(args.data/'gui-address.json', json.dumps(dict(port=server.server_port)))
     url = f'http://127.0.0.1:{server.server_port}/'
     print(f'{PRODUCT_NAME} {PRODUCT_VERSION}: {url}\nНе закрывайте это окно, пока работает приложение. Ctrl+C — закрыть.', flush=True)
+    api_server = None
+    if not args.no_api:
+        try:
+            api_server = api.make_api_server(args.data, '127.0.0.1', args.api_port)
+        except (OSError, ValueError):
+            print(f'Локальное API не запущено: порт {args.api_port} занят.', flush=True)
+        else:
+            server.app.api_url = f'http://127.0.0.1:{api_server.server_port}'
+            threading.Thread(target=api_server.serve_forever, daemon=True).start()
+            print(f'API для своих программ: {server.app.api_url}/proxies', flush=True)
     if not args.no_browser:
         webbrowser.open(url)
     try:
@@ -636,6 +651,9 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
+        if api_server:
+            api_server.shutdown()
+            api_server.server_close()
         server.app.close()
         server.server_close()
 

@@ -200,6 +200,10 @@ const messages = {
     'filter.maxLatencyHint': '0 — no limit',
     'filter.searchPlaceholder': 'Search by address or port',
     'filter.copyPage': 'Copy this page',
+    'api.label': 'API for your programs:',
+    'api.copy': 'Copy',
+    'api.hint': 'Returns the latest export, filtered by protocol, country, latency and anonymity. See README → Local API.',
+    'toast.apiCopied': 'API address copied.',
     'toast.copied': 'Copied {count} proxies.',
     'toast.copyEmpty': 'Nothing to copy on this page.',
     'toast.copyFailed': 'The browser blocked clipboard access.',
@@ -506,6 +510,10 @@ const messages = {
     'filter.maxLatencyHint': '0 — без ограничения',
     'filter.searchPlaceholder': 'Поиск по адресу или порту',
     'filter.copyPage': 'Скопировать страницу',
+    'api.label': 'API для своих программ:',
+    'api.copy': 'Скопировать',
+    'api.hint': 'Отдаёт последний экспорт с фильтрами по протоколу, стране, задержке и анонимности. Подробнее: README → Local API.',
+    'toast.apiCopied': 'Адрес API скопирован.',
     'toast.copied': 'Скопировано прокси: {count}.',
     'toast.copyEmpty': 'На этой странице нечего копировать.',
     'toast.copyFailed': 'Браузер запретил доступ к буферу обмена.',
@@ -1038,6 +1046,8 @@ function renderState(value) {
     const counts = exportReport.reputation?.counts || {};
     $('export-note').textContent = t('results.exportReady', {exported:fmt(exportReport.exported), passed:fmt(exportReport.passed), checked:fmt(exportReport.checked), candidates:fmt(exportReport.candidates), clean:fmt(counts.clean || 0), listed:fmt((counts.listed || 0) + (counts.local_denied || 0)), unknown:fmt(counts.unknown || 0), local:(exportReport.local_filtered ? t('results.localFiltered', {count:fmt(exportReport.local_filtered)}) : '') + anonymityCounts(exportReport)});
   }
+  $('api-line').classList.toggle('hidden', !value.api);
+  $('api-example').textContent = value.api ? `${value.api}/random?protocol=socks5&format=txt` : '';
   document.querySelectorAll('[data-download]').forEach(node => { node.disabled = !(value.downloads || []).includes(node.dataset.download) || (value.running && progress.phase === 'exporting'); });
   const report = progress.sources ? progress : value.sources || {};
   renderSources(report, value.source_urls || [], value.source_keys || [], (value.export || {}).source_quality || {});
@@ -1174,6 +1184,14 @@ $('copy-page').onclick = async () => {
   try {
     await navigator.clipboard.writeText(proxies.join('\n') + '\n');
     toast(t('toast.copied', {count:fmt(proxies.length)}));
+  } catch {
+    toast(t('toast.copyFailed'), true);
+  }
+};
+$('copy-api').onclick = async () => {
+  try {
+    await navigator.clipboard.writeText($('api-example').textContent);
+    toast(t('toast.apiCopied'));
   } catch {
     toast(t('toast.copyFailed'), true);
   }

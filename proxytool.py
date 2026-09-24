@@ -1293,7 +1293,7 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
 def parser():
     p = argparse.ArgumentParser(description=f'{PRODUCT_NAME}: сбор и полная проверка публичных прокси под HTTP-сервис')
     p.add_argument('--version', action='version', version=f'{PRODUCT_NAME} {PRODUCT_VERSION}')
-    p.add_argument('command', choices=['collect', 'scan', 'run', 'export', 'clear-data', 'update-geoip'])
+    p.add_argument('command', choices=['collect', 'scan', 'run', 'export', 'serve', 'clear-data', 'update-geoip'])
     p.add_argument('--yes', action='store_true', help='подтвердить удаление локальных результатов')
     p.add_argument('--progress-file', type=Path, help=argparse.SUPPRESS)
     p.add_argument('--stop-file', type=Path, help=argparse.SUPPRESS)
@@ -1360,6 +1360,11 @@ def parser():
     p.add_argument('--geoip-db', type=Path, default=None,
                    help='CSV-база DB-IP Country Lite; по умолчанию data/geoip/' + geoip.DB_NAME)
     p.add_argument('--min-success', type=float, default=2/3, help='минимальная доля успехов КАЖДОГО target, 0..1')
+    p.add_argument('--host', default='127.0.0.1', help='serve: адрес локального API; по умолчанию только этот компьютер')
+    p.add_argument('--port', type=int, default=8765, help='serve: порт локального API')
+    p.add_argument('--api-token', default=os.environ.get('PROXY_WORKBENCH_API_TOKEN') or None,
+                   help='serve: токен доступа к API (или переменная PROXY_WORKBENCH_API_TOKEN); '
+                        'обязателен, если API слушает не loopback-адрес')
     return p
 
 
@@ -1403,6 +1408,31 @@ async def download_geoip(path, timeout=60):
     raise ValueError(error or 'GEOIP_UNAVAILABLE')
 
 
+def serve(args):
+    """Read-only HTTP API over the latest export; runs next to scans without the data lock."""
+    import api
+    if not 0 <= args.port <= 65535:
+        print('Неверный порт API', file=sys.stderr)
+        return 2
+    try:
+        server = api.make_api_server(args.data, args.host, args.port, args.api_token)
+    except (ValueError, OSError) as exc:
+        print(f'API не запущено: {exc}', file=sys.stderr)
+        return 2
+    shown = f'[{args.host}]' if ':' in args.host else args.host
+    base = f'http://{shown}:{server.server_port}'
+    print(f'API: {base}  (Ctrl+C — остановить)', flush=True)
+    print(f'  {base}/proxies?protocol=socks5&country=DE&limit=10&format=txt', flush=True)
+    print(f'  {base}/random?max_latency=1500', flush=True)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+    return 0
+
+
 def main(argv=None):
     p = parser()
     args = p.parse_args(argv)
@@ -1425,6 +1455,8 @@ def main(argv=None):
         p.error(str(exc))
     os.umask(0o077)
     args.data.mkdir(parents=True, exist_ok=True)
+    if args.command == 'serve':
+        return serve(args)
     denylist_path = args.denylist_file or args.data / 'denylist.txt'
     denylist = Denylist.from_file(denylist_path, normalizer=normalize)
     collect_denylist = Denylist.empty() if args.local_denylist is False else denylist

@@ -73,6 +73,7 @@ Everything runs on your machine. The GUI binds to `127.0.0.1` only.
 | **Built for big lists** | Bounded worker queue, rate limiter, automatic file-descriptor fitting. **Fail-fast** skips the remaining attempts once a proxy can no longer pass, and a short **connect timeout** drops dead hosts early, so a full sweep is about 3× faster in the worst case. Tested with 190,000 simulated candidates. |
 | **Stop & resume** | Progress is stored in SQLite. `Ctrl+C` or **Stop** keeps finished work; the same command continues where it left off. |
 | **Ranking & export** | Sort by `quality`, `speed`, `stability` or `uptime`; filter by protocol, country, maximum latency, anonymity and success rate; search by address or port and copy a page with one click. Export top N (or all) to `proxies.txt`, `ranked.csv`, `ranked.json`, plus `http.txt` / `https.txt` / `socks5.txt` / `hostport.txt` in plain `host:port` format and a ready `proxychains.txt`. Crash-safe export generations. |
+| **Local API for your code** | The GUI (or `serve` on a server) answers `GET /random?protocol=socks5&country=DE` or `/proxies?max_latency=800&format=txt` with the freshest working proxies, so scripts, scrapers and bots can pick a proxy with one HTTP request. |
 | **Safe by default** | Loopback-only GUI with a per-session token, CSRF/Host checks, SSRF-hardened source fetching (no private/metadata IPs, validated redirects, size limits), credential-like headers rejected. |
 | **English & Russian UI** | Switch with the EN/RU button; defaults to your browser language. Dark and light themes. |
 | **Zero setup** | Double-click launcher creates a virtual environment and installs the single dependency (`httpx[socks]`). |
@@ -219,9 +220,37 @@ Remote lists are streamed with limits (8 MiB, 64 KiB per line, 100,000 candidate
 <details>
 <summary><b>All CLI options</b></summary>
 
-Run `./run.sh --help` for the complete list: `--input`, `--sources`, `--no-sources`, `--source-timeout`, `--url`, `--config`, `--request-profile`, `--attempts`, `--timeout`, `--workers`, `--rate`, `--max-bytes`, `--denylist-file`, `--local-denylist/--no-local-denylist`, `--dnsbl`, `--dnsbl-zone`, `--reputation-timeout`, `--strict-clean`, `--judge-url`, `--min-anonymity`, `--connect-timeout`, `--fail-fast/--no-fail-fast`, `--protocol`, `--max-latency`, `--country`, `--want`, `--geoip-db`, `--recheck`, `--recheck-passing`, `--watch`, and the `update-geoip` command, `--top`, `--sort`, `--min-success`, `--data`.
+Run `./run.sh --help` for the complete list: `--input`, `--sources`, `--no-sources`, `--source-timeout`, `--url`, `--config`, `--request-profile`, `--attempts`, `--timeout`, `--workers`, `--rate`, `--max-bytes`, `--denylist-file`, `--local-denylist/--no-local-denylist`, `--dnsbl`, `--dnsbl-zone`, `--reputation-timeout`, `--strict-clean`, `--judge-url`, `--min-anonymity`, `--connect-timeout`, `--fail-fast/--no-fail-fast`, `--protocol`, `--max-latency`, `--country`, `--want`, `--geoip-db`, `--recheck`, `--recheck-passing`, `--watch`, the `update-geoip` and `serve` commands with `--host`, `--port`, `--api-token`, `--top`, `--sort`, `--min-success`, `--data`.
 
 </details>
+
+## 🔌 Local API: use the proxies from your own code
+
+While the GUI is open, a read-only API runs on `http://127.0.0.1:8765` (this computer only). On a server, start it with `./run.sh serve` (Windows: `.venv\Scripts\python proxytool.py serve`). It serves the latest export and picks up every new one automatically, so it can run next to `run --watch`.
+
+| Request | Returns |
+| --- | --- |
+| `GET /random` | one random working proxy; `limit=5` for several |
+| `GET /proxies` | all working proxies, best first (the export order) |
+| `GET /status` | how many are available, when the export was built, which services were checked |
+
+Filters for `/random` and `/proxies`: `protocol=http\|https\|socks5`, `country=DE,NL`, `max_latency=800` (ms), `anonymity=anonymous\|elite`, `limit=N`, `format=json\|txt\|hostport`.
+
+```sh
+curl "http://127.0.0.1:8765/random?protocol=socks5&country=DE&format=txt"
+# socks5://203.0.113.7:1080
+```
+
+```python
+import httpx
+
+proxy = httpx.get("http://127.0.0.1:8765/random?protocol=http&max_latency=1500&format=txt").text.strip()
+print(httpx.get("https://example.org/", proxy=proxy, timeout=15).status_code)
+```
+
+JSON rows contain `proxy`, `protocol`, `host`, `port`, `country`, `anonymity`, `latency_ms`, `jitter_ms`, `reliability`, `uptime`, `checks`, `score`, `checked_at`. The GUI shows the address with a **Copy** button under the download buttons; change the port with `gui.py --api-port 9000` or turn it off with `--no-api`.
+
+To reach the API from other machines (for example from Docker), bind it to a network address and set a token: `serve --host 0.0.0.0 --api-token <secret>` or the `PROXY_WORKBENCH_API_TOKEN` variable. Clients then send `Authorization: Bearer <secret>`.
 
 ## 🐳 Docker (headless CLI)
 
@@ -232,6 +261,14 @@ docker build -t proxy-workbench .
 mkdir -p data
 docker run --rm --user "$(id -u):$(id -g)" -v "$PWD/data:/app/data" \
   proxy-workbench run --url https://example.org/health --judge-url http://judge.example/azenv.php
+```
+
+Serve fresh proxies to other containers: one container re-checks, the other answers API requests from the same data folder.
+
+```sh
+docker run -d --name pw-check -v "$PWD/data:/app/data" proxy-workbench run --want 50 --watch 30
+docker run -d --name pw-api -p 127.0.0.1:8765:8765 -e PROXY_WORKBENCH_API_TOKEN=change-me \
+  -v "$PWD/data:/app/data" proxy-workbench serve --host 0.0.0.0
 ```
 
 Every release also publishes a ready image to the GitHub Container Registry. It appears under **Packages** in the repository sidebar as `ghcr.io/<owner>/proxy-workbench:<version>` and `:latest`. Results land in the mounted `data/` folder exactly as with a local install.
