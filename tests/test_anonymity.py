@@ -8,10 +8,10 @@ import unittest
 from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import anonymity
-import gui
-import proxytool as p
-from reputation import result_allowed
+from proxy_workbench import anonymity
+from proxy_workbench import gui
+from proxy_workbench import proxytool as p
+from proxy_workbench.reputation import result_allowed
 
 # Synthetic public address standing in for "this machine"; no traffic leaves loopback.
 OWN_IP = '93.184.216.34'

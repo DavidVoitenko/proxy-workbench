@@ -1,0 +1,38 @@
+# Proxy Workbench as a small self-hosted service:
+#   check    finds working proxies and re-checks them every 30 minutes
+#   api      serves them over HTTP (http://127.0.0.1:8765/random, /proxies, /pac, /clash)
+#   gateway  rotating proxy on 127.0.0.1:8899 (HTTP and SOCKS5)
+#
+#   PROXY_WORKBENCH_API_TOKEN=change-me docker compose up -d
+#
+# Clients use the token as a Bearer token (API) or as the proxy password (gateway).
+# Edit the check command to test your own service: --url https://example.org/health
+x-workbench: &workbench
+  image: ghcr.io/davidvoitenko/proxy-workbench:latest
+  restart: unless-stopped
+  volumes:
+    - workbench-data:/app/data
+
+services:
+  check:
+    <<: *workbench
+    command: ["run", "--want", "100", "--watch", "30"]
+
+  api:
+    <<: *workbench
+    command: ["serve", "--host", "0.0.0.0"]
+    environment:
+      PROXY_WORKBENCH_API_TOKEN: ${PROXY_WORKBENCH_API_TOKEN:?set PROXY_WORKBENCH_API_TOKEN}
+    ports:
+      - "127.0.0.1:8765:8765"
+
+  gateway:
+    <<: *workbench
+    command: ["gateway", "--host", "0.0.0.0"]
+    environment:
+      PROXY_WORKBENCH_API_TOKEN: ${PROXY_WORKBENCH_API_TOKEN:?set PROXY_WORKBENCH_API_TOKEN}
+    ports:
+      - "127.0.0.1:8899:8899"
+
+volumes:
+  workbench-data:

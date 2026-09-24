@@ -59,6 +59,54 @@ jobs:
           NO_PROXY: "127.0.0.1,localhost"
         run: python -m unittest discover -s tests -v
 
+  # Builds what users install and runs a GUI -> check -> API -> gateway flow against local mocks.
+  package:
+    name: Package / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+    env:
+      ALL_PROXY: ""
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      NO_PROXY: "127.0.0.1,localhost"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Build wheel and install it like pipx does
+        shell: bash
+        run: |
+          python -m pip install --requirement requirements.txt
+          python -m pip wheel --no-deps --wheel-dir dist .
+          python -m venv install-test
+          if [ -x install-test/bin/python ]; then bin=install-test/bin; else bin=install-test/Scripts; fi
+          "$bin/python" -m pip install dist/*.whl
+          echo "INSTALLED=$bin/proxy-workbench" >> "$GITHUB_ENV"
+
+      - name: Smoke test the installed command
+        run: python packaging/smoke.py ${{ env.INSTALLED }}
+
+      - name: Build the Windows executable
+        if: runner.os == 'Windows'
+        run: |
+          python -m pip install pyinstaller==6.22.3
+          pyinstaller --noconfirm packaging/proxy-workbench.spec
+
+      - name: Smoke test the Windows executable
+        if: runner.os == 'Windows'
+        run: python packaging/smoke.py dist/proxy-workbench.exe
+
   docker-image:
     name: Docker image
     runs-on: ubuntu-latest

@@ -18,9 +18,9 @@ import struct
 import time
 from pathlib import Path
 
-import socks4
-from api import Exports, is_loopback, select
-from i18n import tr
+from . import socks4
+from .api import Exports, is_loopback, select
+from .i18n import tr
 
 DEFAULT_PORT = 8899
 SUPPORTED = ('http', 'socks4', 'socks5')

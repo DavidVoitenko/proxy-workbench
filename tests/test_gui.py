@@ -12,8 +12,8 @@ import unittest
 
 import httpx
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import gui
-import proxytool as p
+from proxy_workbench import gui
+from proxy_workbench import proxytool as p
 
 
 class GuiTests(unittest.TestCase):
@@ -279,7 +279,7 @@ class GuiTests(unittest.TestCase):
 
 class TranslationTests(unittest.TestCase):
     def test_every_ui_key_is_translated(self):
-        ui = Path(__file__).resolve().parents[1]/'ui'
+        ui = Path(__file__).resolve().parents[1]/'proxy_workbench'/'ui'
         script = (ui/'app.js').read_text(encoding='utf-8')
         page = (ui/'index.html').read_text(encoding='utf-8')
         block = script[script.index('const messages = {'):script.index('\n};\n')]

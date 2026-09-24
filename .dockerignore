@@ -4,7 +4,8 @@
 data
 docs
 tests
-ui
+packaging
+proxy_workbench/ui
 __pycache__
 *.pyc
 *.log

@@ -12,9 +12,9 @@ from unittest import mock
 
 import httpx
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import geoip
-import gui
-import proxytool as p
+from proxy_workbench import geoip
+from proxy_workbench import gui
+from proxy_workbench import proxytool as p
 
 # Synthetic ranges: 11.0.0.0/24 → DE, 11.0.1.0/24 → NL, 2001:db8::/32 → US.
 CSV = ('11.0.0.0,11.0.0.255,DE\n'

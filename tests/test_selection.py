@@ -10,8 +10,8 @@ from types import SimpleNamespace
 
 import httpx
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import gui
-import proxytool as p
+from proxy_workbench import gui
+from proxy_workbench import proxytool as p
 
 
 def scan_config(targets=1, attempts=3, fail_fast=None):

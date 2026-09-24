@@ -30,7 +30,7 @@ jobs:
           python-version: '3.12'
       - name: Check tag matches product version
         run: |
-          version=$(python -c 'import branding; print(branding.PRODUCT_VERSION)')
+          version=$(python -c 'from proxy_workbench import branding; print(branding.PRODUCT_VERSION)')
           if [ "$TAG" != "v$version" ]; then
             echo "Tag $TAG does not match PRODUCT_VERSION $version" >&2
             exit 1
@@ -68,6 +68,65 @@ jobs:
           files: |
             dist/proxy-workbench-*.tar.gz
             dist/proxy-workbench-*.tar.gz.sha256
+
+  python-package:
+    needs: source-archive
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+      NO_PROXY: 127.0.0.1,localhost
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Build and smoke test the wheel
+        run: |
+          python -m pip install --requirement requirements.txt
+          python -m pip wheel --no-deps --wheel-dir dist .
+          python -m venv install-test
+          install-test/bin/python -m pip install dist/*.whl
+          python packaging/smoke.py install-test/bin/proxy-workbench
+      - name: Attach the wheel to the release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ env.TAG }}
+          files: dist/*.whl
+
+  windows-executable:
+    needs: source-archive
+    runs-on: windows-latest
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+      NO_PROXY: 127.0.0.1,localhost
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Build the executable
+        run: |
+          python -m pip install --requirement requirements.txt pyinstaller==6.22.3
+          pyinstaller --noconfirm packaging/proxy-workbench.spec
+      - name: Smoke test the executable
+        run: python packaging/smoke.py dist/proxy-workbench.exe
+      - name: Name and checksum the executable
+        shell: bash
+        run: |
+          name="proxy-workbench-${TAG}-windows-x64.exe"
+          mv dist/proxy-workbench.exe "dist/$name"
+          (cd dist && sha256sum "$name" > "$name.sha256")
+      - name: Attach the executable to the release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ env.TAG }}
+          files: |
+            dist/proxy-workbench-*-windows-x64.exe
+            dist/proxy-workbench-*-windows-x64.exe.sha256
 
   container-image:
     needs: source-archive

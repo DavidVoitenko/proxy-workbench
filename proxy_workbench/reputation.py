@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from anonymity import allows as anonymity_allows
+from .anonymity import allows as anonymity_allows
 
 MAX_ZONES = 12
 MAX_TIMEOUT = 30.0
