@@ -19,7 +19,9 @@ import time
 from urllib.parse import parse_qs, urlsplit
 import webbrowser
 
-from branding import PRODUCT_ID, PRODUCT_NAME, PRODUCT_VERSION, REQUEST_PROFILES
+import httpx
+
+from branding import PRODUCT_ID, PRODUCT_NAME, PRODUCT_VERSION, REQUEST_PROFILES, SOURCES_URL
 import proxytool as core
 from maintenance import clear_runtime, exclusive_lock
 from reputation import Denylist, normalize_zones, result_allowed
@@ -43,7 +45,7 @@ def public_source(value):
     if not isinstance(value, str):
         return ''
     parts = value.strip().split(None, 1)
-    if len(parts) == 2 and parts[0] in ('http', 'https', 'socks4', 'socks5', 'socks5h', 'geonode', 'http-fields'):
+    if len(parts) == 2 and parts[0] in core.SOURCE_KINDS:
         return parts[0] + ' ' + core.public_url(parts[1])
     return core.public_url(value)
 
@@ -55,6 +57,8 @@ RESULT_ORDERS = {
     'uptime': "COALESCE(1.0*json_extract(payload,'$.history.passes')/json_extract(payload,'$.history.checks'), 1) DESC, "
               "COALESCE(json_extract(payload,'$.history.checks'), 1) DESC, json_extract(payload,'$.score') DESC, proxy",
 }
+# A source needs this many checked proxies before "no working ones" is trusted.
+PRUNE_MIN_CHECKED = 20
 # The UI translates the scanner's log itself, so the scanner always writes Russian here.
 CHILD_ENV = dict(os.environ, PROXY_WORKBENCH_LANG='ru')
 DOWNLOADS = ('proxies.txt', 'ranked.csv', 'ranked.json', *core.PROTOCOL_EXPORTS.values(), 'hostport.txt', 'proxychains.txt')
@@ -74,7 +78,8 @@ def defaults():
                 reputation=dict(local_enabled=True, dnsbl_enabled=False, dnsbl_zones=[],
                                 timeout=2.5, strict=False),
                 anonymity=dict(judge_url=''), min_anonymity='any',
-                connect_timeout=4, fail_fast=True, protocol='all', max_latency=0, countries='', want=0)
+                connect_timeout=4, fail_fast=True, protocol='all', max_latency=0, countries='', want=0,
+                detect_protocols=False)
 
 
 def validate(settings):
@@ -118,7 +123,8 @@ def validate(settings):
             raise ValueError(f'Недопустимое значение: {key}.')
         clean[key] = int(value) if integer else value
     if (clean['sort'] not in core.SORTS or clean['protocol'] not in core.PROTOCOLS
-            or type(clean['use_sources']) is not bool or type(clean['fail_fast']) is not bool):
+            or type(clean['use_sources']) is not bool or type(clean['fail_fast']) is not bool
+            or type(clean['detect_protocols']) is not bool):
         raise ValueError('Неверный режим сортировки или источников.')
     if not isinstance(clean['proxies'], str) or len(clean['proxies']) > 20_000_000:
         raise ValueError('Список прокси слишком большой: максимум 20 МБ.')
@@ -218,6 +224,41 @@ class App:
             core.atomic(self.data/'denylist.txt', settings['denylist'])
         return settings
 
+    def prune_sources(self, payload):
+        """Drop sources that delivered only non-working proxies in the last export."""
+        settings = validate(payload)
+        quality = read_json(self.data/'exports/status.json', {}).get('source_quality') or {}
+        dead = [source for source in settings['sources']
+                if (stats := quality.get(core.source_key(source))) and stats.get('checked', 0) >= PRUNE_MIN_CHECKED
+                and not stats.get('passed')]
+        settings['sources'] = [source for source in settings['sources'] if source not in dead]
+        saved = self.save(settings)
+        return dict(settings=saved, removed=[public_source(source) for source in dead])
+
+    def update_sources(self, payload):
+        """Add sources that were published after this version; never re-adds removed built-ins."""
+        settings = validate(payload)
+        try:
+            response = httpx.get(os.environ.get('PROXY_WORKBENCH_SOURCES_URL', SOURCES_URL), timeout=20,
+                                 follow_redirects=False, trust_env=False)
+            response.raise_for_status()
+            if len(response.content) > 1_000_000:
+                raise ValueError
+            latest = response.json()
+            if not isinstance(latest, list):
+                raise ValueError
+            latest = [source for source in latest if isinstance(source, str)]
+            for source in latest:
+                core.source_spec(source)
+        except (httpx.HTTPError, ValueError):
+            raise ValueError('Не удалось получить список источников с GitHub.') from None
+        bundled = set(defaults()['sources'])
+        known = set(settings['sources'])
+        added = [source for source in latest if source not in bundled and source not in known]
+        settings['sources'] = settings['sources'] + added
+        saved = self.save(settings)
+        return dict(settings=saved, added=[public_source(source) for source in added])
+
     def running(self):
         return self.process is not None and (self.process.poll() is None or self.log_handle is not None)
 
@@ -255,6 +296,8 @@ class App:
                         'min_success', 'top', 'sort', 'min_anonymity', 'protocol', 'max_latency', 'want'):
                 command.extend(['--'+key.replace('_', '-'), str(settings[key])])
             command.append('--fail-fast' if settings['fail_fast'] else '--no-fail-fast')
+            if settings['detect_protocols']:
+                command.append('--detect-protocols')
             command.extend(['--country', settings['countries']])
             reputation = settings['reputation']
             command.append('--local-denylist' if reputation['local_enabled'] else '--no-local-denylist')
@@ -582,6 +625,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond(200, self.app.save(payload))
             if path == '/api/start':
                 return self.respond(200, self.app.start(payload))
+            if path == '/api/sources/prune':
+                return self.respond(200, self.app.prune_sources(payload))
+            if path == '/api/sources/update':
+                return self.respond(200, self.app.update_sources(payload))
             if path == '/api/geoip/update':
                 return self.respond(200, self.app.update_geo())
             if path == '/api/clear-data':

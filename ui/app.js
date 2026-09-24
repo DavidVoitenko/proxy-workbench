@@ -255,12 +255,21 @@ const messages = {
     'sources.list': 'Sources: URL or protocol + URL, one per line',
     'sources.timeout': 'Source timeout, seconds',
     'sources.reset': 'Built-in sources',
-    'sources.hint': 'A plain URL is an HTTP list. For SOCKS4 / SOCKS5: socks4 URL / socks5 URL. For a paginated JSON API: geonode URL. Errors and incomplete downloads are shown below. Size limits and safe address checks are on by default; local mock sources are available only through a CLI flag.',
+    'sources.prune': 'Remove dead sources',
+    'sources.pruneHint': 'Removes lists that gave at least 20 addresses in the last export and none of them worked.',
+    'sources.update': 'Get new sources',
+    'sources.updateHint': 'Adds lists published on GitHub after this version.',
+    'toast.pruned': 'Removed {count} dead sources.',
+    'toast.prunedNone': 'No dead sources: every checked list gave working proxies, or there is no export yet.',
+    'toast.sourcesAdded': 'Added {count} new sources.',
+    'toast.sourcesCurrent': 'Your source list is up to date.',
+    'sources.hint': 'A plain URL is an HTTP list. For SOCKS4 / SOCKS5: socks4 URL / socks5 URL. Unknown protocol: auto URL. Any web page or CSV: text URL. For a paginated JSON API: geonode URL. Errors and incomplete downloads are shown below. Size limits and safe address checks are on by default; local mock sources are available only through a CLI flag.',
     'sources.off': 'Disabled',
     'own.title': 'Add your own list',
     'own.hint': 'Paste addresses or choose a TXT file. Duplicates are merged automatically.',
     'own.file': '↑ Choose TXT file',
     'own.list': 'One proxy per line',
+    'own.detect': 'Try HTTP, SOCKS4 and SOCKS5 for addresses without a protocol',
     'own.note': 'HTTP / CONNECT, SOCKS4 and SOCKS5. Public IPs only, without login or password. The database accumulates: disabling sources does not remove previously collected addresses.',
     'own.collect': 'Collect addresses only',
     'report.title': 'Source report',
@@ -565,12 +574,21 @@ const messages = {
     'sources.list': 'Источники: URL или протокол + URL, по одному на строке',
     'sources.timeout': 'Таймаут источника, секунд',
     'sources.reset': 'Встроенные источники',
-    'sources.hint': 'Обычный URL — HTTP-список. Для SOCKS4 / SOCKS5: socks4 URL / socks5 URL. Для JSON API с обходом страниц: geonode URL. Ошибки и неполные загрузки показаны ниже. По умолчанию включены лимиты размера и безопасная проверка адресов; локальные mock-источники доступны только через CLI-флаг.',
+    'sources.prune': 'Убрать мёртвые источники',
+    'sources.pruneHint': 'Удаляет списки, которые в последнем экспорте дали хотя бы 20 адресов и ни одного рабочего.',
+    'sources.update': 'Новые источники',
+    'sources.updateHint': 'Добавляет списки, опубликованные на GitHub после выхода этой версии.',
+    'toast.pruned': 'Удалено мёртвых источников: {count}.',
+    'toast.prunedNone': 'Мёртвых источников нет: каждый проверенный список дал рабочие прокси, или экспорта ещё нет.',
+    'toast.sourcesAdded': 'Добавлено новых источников: {count}.',
+    'toast.sourcesCurrent': 'Список источников актуален.',
+    'sources.hint': 'Обычный URL — HTTP-список. Для SOCKS4 / SOCKS5: socks4 URL / socks5 URL. Протокол неизвестен: auto URL. Любая веб-страница или CSV: text URL. Для JSON API с обходом страниц: geonode URL. Ошибки и неполные загрузки показаны ниже. По умолчанию включены лимиты размера и безопасная проверка адресов; локальные mock-источники доступны только через CLI-флаг.',
     'sources.off': 'Выключены',
     'own.title': 'Добавить свой список',
     'own.hint': 'Вставьте адреса или выберите TXT-файл. Дубликаты объединяются автоматически.',
     'own.file': '↑ Выбрать TXT-файл',
     'own.list': 'Один прокси на строку',
+    'own.detect': 'Пробовать HTTP, SOCKS4 и SOCKS5 для адресов без протокола',
     'own.note': 'HTTP / CONNECT, SOCKS4 и SOCKS5. Только публичные IP без логина и пароля. База накапливается: отключение источников не удаляет ранее собранные адреса.',
     'own.collect': 'Только собрать адреса',
     'report.title': 'Отчёт по источникам',
@@ -717,7 +735,8 @@ const serverMessagesEn = {
   'fragment в URL источника запрещен': 'fragments are not allowed in source URLs',
   'некорректный порт': 'invalid port',
   'некорректный hostname': 'invalid hostname',
-  'слишком длинный hostname': 'hostname is too long'
+  'слишком длинный hostname': 'hostname is too long',
+  'Не удалось получить список источников с GitHub.': 'Could not get the source list from GitHub.'
 };
 const serverPatternsEn = [
   [/^Недопустимое значение: (.+)\.$/, 'Invalid value: $1.'],
@@ -840,6 +859,7 @@ function getSettings() {
   for (const key of numeric) copy[key.replace('-', '_')] = Number($(key).value);
   copy.sort = $('sort').value;
   copy.use_sources = $('use_sources').checked;
+  copy.detect_protocols = $('detect_protocols').checked;
   copy.sources = $('sources').value.split('\n').map(value => value.trim()).filter(Boolean);
   copy.proxies = $('proxies').value;
   copy.denylist = $('denylist').value;
@@ -891,6 +911,7 @@ function fill(value) {
   }
   $('sort').value = value.sort;
   $('use_sources').checked = value.use_sources;
+  $('detect_protocols').checked = Boolean(value.detect_protocols);
   $('sources').value = value.sources.join('\n');
   $('proxies').value = value.proxies || '';
   $('denylist').value = value.denylist || '';
@@ -1202,6 +1223,22 @@ $('sources').oninput = updateSourceCount;
 $('use_sources').onchange = updateSourceCount;
 $('request-profile').onchange = updateIdentity;
 $('dnsbl-enabled').onchange = updateIdentity;
+async function sourceAction(path, button, message) {
+  button.disabled = true;
+  try {
+    const value = await api(path, getSettings());
+    settings = value.settings;
+    $('sources').value = settings.sources.join('\n');
+    updateSourceCount();
+    toast(message(value));
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+}
+$('prune-sources').onclick = () => sourceAction('/api/sources/prune', $('prune-sources'), value => value.removed.length ? t('toast.pruned', {count:fmt(value.removed.length)}) : t('toast.prunedNone'));
+$('update-sources').onclick = () => sourceAction('/api/sources/update', $('update-sources'), value => value.added.length ? t('toast.sourcesAdded', {count:fmt(value.added.length)}) : t('toast.sourcesCurrent'));
 $('reset-sources').onclick = async () => { try { const value = await api('/api/defaults'); $('sources').value = value.sources.join('\n'); updateSourceCount(); toast(t('toast.sourcesReset')); } catch (error) { toast(error.message, true); } };
 $('import-file').onchange = async event => { const file = event.target.files[0]; if (!file) return; if (file.size > 20_000_000) { toast(t('error.fileTooLarge'), true); return; } $('proxies').value = await file.text(); toast(t('toast.listLoaded')); };
 async function downloadFile(name, node) {

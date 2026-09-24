@@ -451,12 +451,24 @@ class Rate:
             self.next = time.monotonic() + self.interval
 
 
+SOURCE_KINDS = ('http', 'https', 'socks4', 'socks5', 'socks5h', 'auto', 'text', 'geonode', 'http-fields')
+DETECT_PROTOCOLS = ('http', 'socks4', 'socks5')
+# ip:port inside free text: "1.2.3.4:8080", "1.2.3.4 8080", CSV and HTML table cells.
+LOOSE_ADDRESS = re.compile(r'(?<![\d.])(?:(https?|socks[45]h?)://)?(\d{1,3}(?:\.\d{1,3}){3})'
+                           r'(?::|\s*(?:</t[dh]>\s*<t[dh][^>]*>|[\s,;|])\s*)(\d{2,5})(?!\d)', re.I)
+
+
+def loose_addresses(line):
+    """Every proxy-looking address in a line of arbitrary text."""
+    return [f'{(scheme or "http").lower()}://{host}:{port}' for scheme, host, port in LOOSE_ADDRESS.findall(line)]
+
+
 def source_spec(value):
     if not isinstance(value, str):
         raise ValueError('Источник должен быть строкой URL или «socks4 URL» / «socks5 URL» / «geonode URL».')
     parts = value.strip().split(None, 1)
     kind, url = (parts if len(parts) == 2 else ('http', parts[0] if parts else ''))
-    if kind not in {'http', 'https', 'socks4', 'socks5', 'socks5h', 'geonode', 'http-fields'}:
+    if kind not in SOURCE_KINDS:
         raise ValueError('Неизвестный формат источника.')
     try:
         _parse_source_url(url)
@@ -466,7 +478,7 @@ def source_spec(value):
 
 
 async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
-                  allow_private_sources=False,
+                  allow_private_sources=False, detect_protocols=False,
                   max_source_bytes=DEFAULT_SOURCE_MAX_BYTES,
                   max_source_line_bytes=DEFAULT_SOURCE_MAX_LINE_BYTES,
                   max_source_candidates=DEFAULT_SOURCE_MAX_CANDIDATES,
@@ -510,6 +522,14 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                        (proxy, country and country.upper(), source))
         return 'accepted'
 
+    def add_detected(value, source=None):
+        """Unlabeled addresses are tried as every protocol; the checks show which one works."""
+        value = value.strip()
+        if '://' in value:
+            return add(value, source=source)
+        outcomes = [add(value, protocol, source=source) for protocol in DETECT_PROTOCOLS]
+        return next((o for o in ('accepted', 'blocked') if o in outcomes), 'invalid')
+
     publish()
     for input_index, path in enumerate(inputs, 1):
         count = invalid = blocked = 0
@@ -522,7 +542,7 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                 if count >= max_source_candidates:
                     raise SourceFetchError('SOURCE_CANDIDATE_LIMIT')
                 count += 1
-                outcome = add(line, source='local')
+                outcome = add_detected(line, source='local') if detect_protocols else add(line, source='local')
                 invalid += outcome == 'invalid'
                 blocked += outcome == 'blocked'
         reports.append(dict(input=f'local-input-{input_index}', rows=count, invalid=invalid,
@@ -552,6 +572,15 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
 
             def consume_line(raw):
                 nonlocal count, invalid, blocked
+                if kind == 'text':
+                    # Web pages may use any encoding and are mostly markup: keep only addresses.
+                    for address in loose_addresses(raw.decode('utf-8', errors='replace')):
+                        consume_candidate()
+                        count += 1
+                        outcome = add(address, source=key)
+                        invalid += outcome == 'invalid'
+                        blocked += outcome == 'blocked'
+                    return
                 try:
                     line = raw.decode('utf-8')
                 except UnicodeDecodeError as exc:
@@ -563,6 +592,8 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                 if kind == 'http-fields':
                     match = re.fullmatch(r"(\d{1,3}(?:\.\d{1,3}){3}:\d{1,5}):[A-Za-z][A-Za-z .'-]*", line.strip())
                     outcome = add(match[1], source=key) if match else 'invalid'
+                elif kind == 'auto':
+                    outcome = add_detected(line, source=key)
                 else:
                     outcome = add(line, kind, source=key)
                 invalid += outcome == 'invalid'
@@ -633,6 +664,10 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                             if int(data.get('page', expected_page)) != expected_page:
                                 raise ValueError('Wrong page returned')
                             return data
+                        if kind == 'text':
+                            # Whole page at once: HTML tables often split host and port across lines.
+                            consume_line(await _read_bounded_body(response, budget, max_source_bytes))
+                            return None
                         await _read_bounded_lines(response, budget, max_source_bytes, line_limit, consume_line)
                         return None
                 raise SourceFetchError('SOURCE_REDIRECT_TOO_MANY')
@@ -699,7 +734,8 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                                 attempts=attempts, complete=error is None, error=error, format=kind))
             db.commit()
             publish()
-            print(f'Источник {index}: строк {count}, заблокировано {blocked}, страниц {pages}, ошибка {error or "нет"}', flush=True)
+            print(tr(f'Источник {index}: строк {count}, заблокировано {blocked}, страниц {pages}, ошибка {error or "нет"}',
+                     f'Source {index}: rows {count}, blocked {blocked}, pages {pages}, error {error or "none"}'), flush=True)
         async with asyncio.TaskGroup() as group:
             for index, (kind, url) in enumerate(specs, 1):
                 group.create_task(fetch(index, kind, url))
@@ -1332,6 +1368,9 @@ def parser():
                    help=tr('папка для базы, настроек и экспорта', 'folder for the database, settings and exports'))
     p.add_argument('--input', action='append', default=[], help=tr('локальный список прокси; можно повторять', 'local proxy list file; can be repeated'))
     p.add_argument('--sources', type=Path, default=ROOT / 'sources.json', help=tr('JSON-массив URL текстовых списков', 'JSON array of source list URLs'))
+    p.add_argument('--detect-protocols', action='store_true',
+                   help=tr('адреса без протокола из --input пробовать как HTTP, SOCKS4 и SOCKS5',
+                           'try addresses without a protocol from --input as HTTP, SOCKS4 and SOCKS5'))
     p.add_argument('--no-sources', action='store_true', help=tr('не загружать публичные списки', 'do not download public lists'))
     p.add_argument('--source-timeout', type=float, default=60, help=tr('таймаут загрузки списка, секунд', 'list download timeout, seconds'))
     p.add_argument('--allow-private-sources', action='store_true',
@@ -1575,7 +1614,7 @@ def main(argv=None):
                 raise ValueError('sources: ожидается JSON-массив http(s) URL')
             report = asyncio.run(stoppable(collect(
                 db, urls, args.input, args.source_timeout, update_progress, denylist=collect_denylist,
-                allow_private_sources=args.allow_private_sources,
+                allow_private_sources=args.allow_private_sources, detect_protocols=args.detect_protocols,
                 max_source_bytes=args.source_max_bytes,
                 max_source_line_bytes=args.source_max_line_bytes,
                 max_source_candidates=args.source_max_candidates,

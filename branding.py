@@ -13,6 +13,9 @@ PRODUCT_NAME = "Proxy Workbench"
 PRODUCT_ID = "ProxyWorkbench"
 PRODUCT_VERSION = "1.7.0"
 DEFAULT_REQUEST_PROFILE = "workbench"
+PROJECT_URL = "https://github.com/DavidVoitenko/proxy-workbench"
+# Newest built-in source list, fetched only when the user asks for it.
+SOURCES_URL = "https://raw.githubusercontent.com/DavidVoitenko/proxy-workbench/main/sources.json"
 
 REQUEST_PROFILES = {
     "workbench": {
