@@ -183,7 +183,7 @@ class ScanSelectionTests(unittest.IsolatedAsyncioTestCase):
         self.db.execute('INSERT INTO profiles VALUES (?,?)', ('fx', json.dumps(cfg)))
         for proxy in ('http://11.0.0.1:80', 'socks5://11.0.1.1:1080'):
             self.db.execute('INSERT INTO results VALUES (?,?,?)', ('fx', proxy, json.dumps(good(proxy, cfg))))
-        self.db.execute("INSERT INTO candidate_meta VALUES ('http://11.0.0.1:80', 'FR')")
+        self.db.execute("INSERT INTO candidate_meta(proxy, country) VALUES ('http://11.0.0.1:80', 'FR')")
         self.db.commit()
         country_of = p.country_resolver(self.db, None)
         out = self.home / 'out'
