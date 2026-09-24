@@ -7,6 +7,8 @@
 ### Added
 
 - Docker image for the headless CLI (`Dockerfile`, non-root user, `/app/data` volume), built and smoke-tested in CI and published to the GitHub Container Registry on every release.
+- Animated 15-second demo at the top of both READMEs.
+- Project website in `docs/index.html` for GitHub Pages (Settings → Pages → Deploy from branch `main`, folder `/docs`).
 
 ### Changed
 

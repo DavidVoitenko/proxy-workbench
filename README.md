@@ -18,6 +18,12 @@ Local browser GUI (English / Russian) + CLI · HTTP / HTTPS (CONNECT) / SOCKS5 �
 
 [Quick start](#-quick-start) · [Features](#-features) · [How it works](#-how-it-works) · [CLI](#-command-line) · [FAQ](#-faq) · [Roadmap](#-roadmap) · [Contributing](CONTRIBUTING.md)
 
+<br>
+
+<img src="docs/assets/demo.gif" alt="Proxy Workbench demo: scan, rank, filter elite proxies" width="100%">
+
+<sub>15-second tour: start a scan → ranking → “Elite only” filter → per-attempt details → EN/RU switch (synthetic data).</sub>
+
 </div>
 
 ---
