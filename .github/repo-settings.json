@@ -1,10 +1,10 @@
 {
-  "description": "Find free proxies that actually work for YOUR sites: collects 55 public lists, checks HTTP/HTTPS/SOCKS4/SOCKS5 against your services, rates anonymity (elite/anonymous/transparent), filters by country and blacklists. Local GUI + CLI + Docker.",
+  "description": "Free proxies that actually work for YOUR sites: collects 55 public lists, checks HTTP/HTTPS/SOCKS4/SOCKS5 against your services, rates anonymity, filters by country and blacklists, then serves them as a rotating proxy, API, PAC and Clash config. Local GUI + CLI + Docker.",
   "homepage_from_pages": true,
   "has_discussions": true,
   "has_issues": true,
   "has_wiki": false,
   "has_projects": false,
-  "topics": ["proxy", "proxy-checker", "proxy-list", "free-proxy", "free-proxy-list", "proxy-scraper", "socks5", "socks5-proxy", "http-proxy", "proxy-tester", "elite-proxy", "anonymity", "web-scraping", "dnsbl", "geoip", "python", "asyncio", "httpx", "self-hosted", "docker"],
+  "topics": ["proxy", "proxy-checker", "proxy-list", "free-proxy", "free-proxy-list", "proxy-scraper", "socks5", "socks5-proxy", "http-proxy", "proxy-tester", "elite-proxy", "anonymity", "web-scraping", "dnsbl", "geoip", "python", "asyncio", "rotating-proxy", "self-hosted", "docker"],
   "pages": {"branch": "main", "path": "/docs"}
 }

@@ -62,7 +62,8 @@ RESULT_ORDERS = {
 PRUNE_MIN_CHECKED = 20
 # The UI translates the scanner's log itself, so the scanner always writes Russian here.
 CHILD_ENV = dict(os.environ, PROXY_WORKBENCH_LANG='ru')
-DOWNLOADS = ('proxies.txt', 'ranked.csv', 'ranked.json', *core.PROTOCOL_EXPORTS.values(), 'hostport.txt', 'proxychains.txt')
+DOWNLOADS = ('proxies.txt', 'ranked.csv', 'ranked.json', *core.PROTOCOL_EXPORTS.values(), 'hostport.txt', 'proxychains.txt',
+             'proxy.pac', 'clash.yaml')
 
 
 def public_sources(values):
@@ -80,7 +81,7 @@ def defaults():
                                 timeout=2.5, strict=False),
                 anonymity=dict(judge_url=''), min_anonymity='any',
                 connect_timeout=4, fail_fast=True, protocol='all', max_latency=0, countries='', want=0,
-                detect_protocols=False)
+                detect_protocols=False, watch=0)
 
 
 def validate(settings):
@@ -118,7 +119,8 @@ def validate(settings):
     for key, low, high, integer in [('attempts', 1, 100, True), ('timeout', .1, 300, False),
             ('workers', 1, 2048, True), ('rate', 0, 10000, False), ('max_bytes', 1, 100_000_000, True),
             ('source_timeout', 1, 3600, False), ('top', 0, 1_000_000_000, True), ('min_success', 0, 1, False),
-            ('connect_timeout', .1, 300, False), ('max_latency', 0, 600_000, False), ('want', 0, 1_000_000_000, True)]:
+            ('connect_timeout', .1, 300, False), ('max_latency', 0, 600_000, False), ('want', 0, 1_000_000_000, True),
+            ('watch', 0, 1440, False)]:
         value = clean[key]
         if type(value) not in (int, float) or not math.isfinite(value) or not low <= value <= high or (integer and int(value) != value):
             raise ValueError(f'Недопустимое значение: {key}.')
@@ -301,7 +303,7 @@ class App:
                        '--denylist-file', str(self.data/'denylist.txt'),
                        '--progress-file', str(self.progress_path), '--stop-file', str(self.stop_path)]
             for key in ('attempts', 'timeout', 'connect_timeout', 'workers', 'rate', 'max_bytes', 'source_timeout',
-                        'min_success', 'top', 'sort', 'min_anonymity', 'protocol', 'max_latency', 'want'):
+                        'min_success', 'top', 'sort', 'min_anonymity', 'protocol', 'max_latency', 'want', 'watch'):
                 command.extend(['--'+key.replace('_', '-'), str(settings[key])])
             command.append('--fail-fast' if settings['fail_fast'] else '--no-fail-fast')
             if settings['detect_protocols']:
@@ -421,7 +423,7 @@ class App:
                                      if core.export_file(self.data/'exports', n).is_file()])
             if not active and self.job.get('exit_code', 0) not in (0, 130):
                 state['progress']['phase'] = 'error'
-            elif not active and state['progress'].get('phase') in ('starting', 'scanning', 'collecting', 'exporting'):
+            elif not active and state['progress'].get('phase') in ('starting', 'scanning', 'collecting', 'exporting', 'waiting'):
                 state['progress']['phase'] = 'interrupted'
             try:
                 with (self.data/'gui-run.log').open('rb') as handle:
@@ -489,6 +491,7 @@ class App:
                             summary = dict(row)
                             summary.pop('samples', None)
                             summary['country'] = core.row_country(row, country_of)
+                            summary['exit_country'] = core.exit_country(row, country_of)
                             rows.append(summary)
                         total += 1
                     targets = [dict(name=t.get('name',''), url=core.public_url(t['url'])) for t in cfg.get('targets', [])]

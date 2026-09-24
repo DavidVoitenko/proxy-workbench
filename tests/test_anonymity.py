@@ -56,6 +56,15 @@ class ClassifyTests(unittest.TestCase):
         self.assertEqual(anonymity.classify(body, own), {'level': 'anonymous', 'signals': ['proxy-connection']})
         self.assertEqual(anonymity.classify(b'REMOTE_ADDR = 11.0.0.1\n', own)['level'], 'elite')
 
+    def test_exit_ip_from_labeled_fields(self):
+        self.assertEqual(anonymity.exit_ip(b'REMOTE_ADDR = 11.0.0.1\nSERVER_ADDR = 11.0.0.9\n'), '11.0.0.1')
+        self.assertEqual(anonymity.exit_ip(echo('11.0.0.2')), '11.0.0.2')
+        self.assertEqual(anonymity.exit_ip(b'{"ip": "2001:4860:4860::8888"}'), '2001:4860:4860::8888')
+        self.assertIsNone(anonymity.exit_ip(b'SERVER_ADDR = 11.0.0.9\nREMOTE_ADDR = 10.0.0.1'))
+        row = {'anonymity': {'exit_ip': '11.0.0.2'}}
+        self.assertEqual(p.exit_country(row, lambda proxy: 'NL' if proxy == 'http://11.0.0.2:1' else None), 'NL')
+        self.assertIsNone(p.exit_country({'anonymity': {}}, lambda proxy: 'NL'))
+
     def test_plain_words_are_not_header_signals(self):
         text = '<p>Sent via our gateway. Forwarded to support.</p><p>origin 11.0.0.1</p>'
         self.assertEqual(anonymity.classify(text, {OWN_IP})['level'], 'elite')

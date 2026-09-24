@@ -33,6 +33,7 @@ from maintenance import clear_runtime, exclusive_lock
 import anonymity
 import geoip
 import socks4
+import formats
 from i18n import tr
 
 ROOT = Path(__file__).resolve().parent
@@ -970,7 +971,7 @@ async def judge_proxy(proxy, config, rate, own_ips):
     except (httpx.HTTPError, TimeoutError, OSError) as exc:
         return anonymity.result('unknown', error=type(exc).__name__, started=started)
     verdict = anonymity.classify(body, own_ips)
-    return anonymity.result(verdict['level'], verdict['signals'], started=started)
+    return anonymity.result(verdict['level'], verdict['signals'], started=started, exit_address=anonymity.exit_ip(body))
 
 
 def fit_workers(requested):
@@ -1180,6 +1181,14 @@ def country_resolver(db, geo=None):
     return country_of
 
 
+def exit_country(row, country_of=None):
+    """Country of the address the judge saw, which can differ from the proxy's own address."""
+    address = (row.get('anonymity') or {}).get('exit_ip')
+    if not address or not country_of:
+        return None
+    return country_of(f'http://[{address}]:1' if ':' in address else f'http://{address}:1')
+
+
 def proxy_protocol(proxy):
     scheme = str(proxy).partition('://')[0]
     return PROTOCOL_ALIASES.get(scheme, scheme)
@@ -1235,6 +1244,7 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
     source_quality = {}
     status_counts = {'clean': 0, 'listed': 0, 'unknown': 0, 'local_denied': 0}
     anonymity_counts = {}
+    breakdown = {'protocols': {}, 'countries': {}}
     for (payload,) in db.execute('SELECT payload FROM results WHERE profile=?', (profile,)):
         row = json.loads(payload)
         checked += 1
@@ -1250,6 +1260,8 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
             eligible = False
         elif eligible:
             history = row_history(row, min_success)
+            for group, value in (('protocols', proxy_protocol(row['proxy'])), ('countries', row_country(row, country_of) or '??')):
+                breakdown[group][value] = breakdown[group].get(value, 0) + 1
             db.execute('INSERT INTO export_rank VALUES (?,?,?,?,?,?,?)',
                        (row['proxy'], row['score'], row['latency_ms'], row['reliability'], row.get('jitter_ms'),
                         history['passes'] / history['checks'], history['checks']))
@@ -1262,8 +1274,10 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
         ON r.proxy=e.proxy AND r.profile=? ORDER BY {order} LIMIT ?""", (profile, top or -1))
     fields = ['proxy', 'score', 'latency_ms', 'jitter_ms', 'reliability', 'min_target_reliability',
               'successes', 'requests', 'checked_at', 'reputation_status', 'reputation_sources',
-              'anonymity', 'anonymity_signals', 'country', 'checks', 'passes']
-    names = ['proxies.txt', 'ranked.json', 'ranked.csv', *PROTOCOL_EXPORTS.values(), 'hostport.txt', 'proxychains.txt']
+              'anonymity', 'anonymity_signals', 'country', 'exit_ip', 'exit_country', 'checks', 'passes']
+    names = ['proxies.txt', 'ranked.json', 'ranked.csv', *PROTOCOL_EXPORTS.values(), 'hostport.txt', 'proxychains.txt',
+             'proxy.pac', 'clash.yaml']
+    best = []
     exported = 0
     try:
         with (generation/'proxies.txt').open('w', encoding='utf-8') as txt, \
@@ -1287,6 +1301,8 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
                                                        if item.get('status') == 'listed')
                 judged = row.get('anonymity') or {}
                 row['country'] = row_country(row, country_of) or ''
+                row['exit_ip'] = judged.get('exit_ip', '')
+                row['exit_country'] = exit_country(row, country_of) or ''
                 history = row_history(row, min_success)
                 csv_row = dict(row, anonymity=judged.get('level', ''),
                                anonymity_signals=','.join(judged.get('signals', [])),
@@ -1302,7 +1318,11 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
                 js.write((',' if exported else '') + '\n' + json.dumps(row, ensure_ascii=False))
                 writer.writerow(csv_row)
                 exported += 1
+                if len(best) < formats.CLASH_LIMIT:
+                    best.append(row)
             js.write('\n]\n')
+        (generation/'proxy.pac').write_text(formats.pac(row['proxy'] for row in best), encoding='utf-8')
+        (generation/'clash.yaml').write_text(formats.clash(best), encoding='utf-8')
         total = db.execute('SELECT count(*) FROM candidates').fetchone()[0]
         report = dict(profile=profile, candidates=total, checked=checked, pending=total-checked,
                       passed=passed, local_filtered=local_filtered, exported=exported, complete=checked == total,
@@ -1314,7 +1334,7 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
                       reputation=dict(policy, counts=status_counts), generation=generation.name,
                       anonymity=dict(enabled=bool(cfg.get('anonymity')), min_level=min_anonymity,
                                      counts=anonymity_counts),
-                      source_quality=source_quality)
+                      source_quality=source_quality, breakdown=breakdown)
         atomic(generation/'status.json', json.dumps(report, indent=2) + '\n')
         atomic(directory/'current.json', json.dumps({'generation':generation.name, 'files':names}, ensure_ascii=False) + '\n')
         published = True

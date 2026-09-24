@@ -12,6 +12,7 @@ let detailRow = null;
 let offset = 0;
 let currentTab = 'scan';
 let lastFinished = null;
+let lastExportAt = null;
 let toastTimer;
 let polling = false;
 let resultBusy = false;
@@ -110,6 +111,10 @@ const messages = {
     'phase.collecting': 'Collecting sources',
     'phase.scanning': 'Checking',
     'phase.exporting': 'Saving',
+    'phase.waiting': 'Waiting for the next re-check',
+    'progress.nextCheck': 'Next re-check of working proxies at {time}',
+    'watch.label': 'Keep fresh: re-check every, min',
+    'watch.hint': '0 — off. Otherwise, after the check the app keeps running and re-checks the working proxies on this schedule, so exports, the API and the rotating proxy stay fresh.',
     'phase.complete': 'Complete',
     'phase.stopped': 'Stopped',
     'phase.interrupted': 'Interrupted',
@@ -200,6 +205,15 @@ const messages = {
     'filter.maxLatencyHint': '0 — no limit',
     'filter.searchPlaceholder': 'Search by address or port',
     'filter.copyPage': 'Copy this page',
+    'download.pacHint': 'Browser auto-config: the 10 best proxies in order',
+    'download.clashHint': 'Clash / Mihomo config with automatic fastest-proxy selection',
+    'breakdown.protocols': 'Protocols',
+    'breakdown.countries': 'Countries',
+    'breakdown.unknown': 'unknown',
+    'results.exitIp': 'Exit IP seen by the judge: {ip}',
+    'presets.label': 'Or add a ready-made check',
+    'presets.choose': 'Choose a service…',
+    'presets.added': 'Added a check for {name}. A proxy must pass every service in the list.',
     'gateway.label': 'Rotating proxy for browsers and apps:',
     'gateway.hint': 'Set it as an HTTP or SOCKS5 proxy anywhere. Every new connection goes through the next working proxy from the latest export; failed ones are skipped automatically.',
     'gateway.stats': '{proxies} in rotation · {connections} connections',
@@ -433,6 +447,10 @@ const messages = {
     'phase.collecting': 'Сбор источников',
     'phase.scanning': 'Проверка',
     'phase.exporting': 'Сохранение',
+    'phase.waiting': 'Ждём следующую перепроверку',
+    'progress.nextCheck': 'Следующая перепроверка рабочих прокси в {time}',
+    'watch.label': 'Держать свежим: перепроверять каждые, мин',
+    'watch.hint': '0 — выключено. Иначе после проверки приложение продолжает работать и перепроверяет рабочие прокси по этому расписанию, чтобы экспорт, API и ротирующий прокси оставались свежими.',
     'phase.complete': 'Завершено',
     'phase.stopped': 'Остановлено',
     'phase.interrupted': 'Прервано',
@@ -523,6 +541,15 @@ const messages = {
     'filter.maxLatencyHint': '0 — без ограничения',
     'filter.searchPlaceholder': 'Поиск по адресу или порту',
     'filter.copyPage': 'Скопировать страницу',
+    'download.pacHint': 'Автонастройка браузера: 10 лучших прокси по порядку',
+    'download.clashHint': 'Конфиг Clash / Mihomo с автоматическим выбором самого быстрого прокси',
+    'breakdown.protocols': 'Протоколы',
+    'breakdown.countries': 'Страны',
+    'breakdown.unknown': 'неизвестно',
+    'results.exitIp': 'Выходной IP, который увидел judge: {ip}',
+    'presets.label': 'Или добавьте готовую проверку',
+    'presets.choose': 'Выберите сервис…',
+    'presets.added': 'Добавлена проверка {name}. Прокси должен пройти все сервисы из списка.',
     'gateway.label': 'Ротирующий прокси для браузера и программ:',
     'gateway.hint': 'Укажите его как HTTP- или SOCKS5-прокси где угодно. Каждое новое соединение идёт через следующий рабочий прокси из последнего экспорта; неработающие пропускаются автоматически.',
     'gateway.stats': 'в ротации {proxies} · соединений {connections}',
@@ -788,7 +815,7 @@ function applyI18n(root=document) {
   }
 }
 
-const numeric = ['attempts', 'timeout', 'connect_timeout', 'workers', 'rate', 'max_bytes', 'source_timeout', 'top', 'min_success', 'max_latency', 'want', 'reputation-timeout'];
+const numeric = ['attempts', 'timeout', 'connect_timeout', 'workers', 'rate', 'max_bytes', 'source_timeout', 'top', 'min_success', 'max_latency', 'want', 'watch', 'reputation-timeout'];
 const profileLabel = profile => messages.en['profile.' + profile] ? t('profile.' + profile) : profile;
 const fmt = n => Number(n || 0).toLocaleString(lang === 'ru' ? 'ru-RU' : 'en-US');
 const ms = value => t('unit.ms', {value});
@@ -823,6 +850,39 @@ function showTab(name) {
 
 document.querySelectorAll('[data-tab]').forEach(node => node.onclick = () => showTab(node.dataset.tab));
 document.querySelectorAll('[data-go]').forEach(node => node.onclick = () => showTab(node.dataset.go));
+
+// Final URLs only: redirects are not followed. Each check proves the service answers through the proxy.
+const TARGET_PRESETS = [
+  {name:'Google', url:'https://www.google.com/generate_204', statuses:[204]},
+  {name:'YouTube', url:'https://www.youtube.com/generate_204', statuses:[204]},
+  {name:'Telegram', url:'https://telegram.org/', statuses:[200], contains:'Telegram'},
+  {name:'Discord', url:'https://discord.com/api/v10/gateway', statuses:[200], contains:'gateway.discord.gg'},
+  {name:'Instagram', url:'https://www.instagram.com/', statuses:[200], contains:'Instagram'},
+  {name:'OpenAI API', url:'https://api.openai.com/v1/models', statuses:[401], contains:'invalid_request_error'},
+  {name:'GitHub', url:'https://github.com/', statuses:[200], contains:'GitHub'},
+  {name:'Wikipedia', url:'https://www.wikipedia.org/', statuses:[200], contains:'Wikipedia'},
+  {name:'Cloudflare', url:'https://www.cloudflare.com/cdn-cgi/trace', statuses:[200], contains:'ip='}
+];
+
+function fillPresets() {
+  const select = $('target-preset');
+  select.querySelectorAll('option[data-preset]').forEach(node => node.remove());
+  TARGET_PRESETS.forEach((preset, index) => {
+    const option = document.createElement('option');
+    option.value = String(index);
+    option.dataset.preset = '';
+    option.textContent = preset.name;
+    select.appendChild(option);
+  });
+  select.onchange = () => {
+    const preset = TARGET_PRESETS[Number(select.value)];
+    select.value = '';
+    if (!preset) return;
+    addTarget({...preset, headers:{}, method:'GET'});
+    toast(t('presets.added', {name:preset.name}));
+  };
+}
+fillPresets();
 
 function addTarget(target={}) {
   if ($('targets').children.length >= 20) {
@@ -1006,7 +1066,7 @@ function setBusy(active) {
   $('stop').disabled = !active;
 }
 
-const phases = ['starting', 'collecting', 'scanning', 'exporting', 'complete', 'stopped', 'interrupted', 'error'];
+const phases = ['starting', 'collecting', 'scanning', 'exporting', 'waiting', 'complete', 'stopped', 'interrupted', 'error'];
 const actions = ['run', 'scan', 'recheck', 'recheck_passing', 'collect', 'export'];
 
 function duration(seconds) {
@@ -1065,7 +1125,7 @@ function renderState(value) {
   $('progress-bar').style.width = percent + '%';
   $('speed').textContent = value.running && progress.phase === 'scanning' ? String(progress.speed ?? '—') : '—';
   $('eta').textContent = value.running && progress.phase === 'scanning' ? duration(progress.eta_seconds) : '—';
-  $('progress-text').textContent = progress.phase === 'collecting' ? t('progress.sources', {done:progress.sources_done || 0, total:progress.sources_total || 0}) : progress.candidates ? t('progress.remaining', {count:fmt(Math.max(0, progress.candidates - (progress.checked || 0)))}) : t('progress.allQueued');
+  $('progress-text').textContent = progress.phase === 'waiting' && progress.next_check_at ? t('progress.nextCheck', {time:new Date(progress.next_check_at * 1000).toLocaleTimeString()}) : progress.phase === 'collecting' ? t('progress.sources', {done:progress.sources_done || 0, total:progress.sources_total || 0}) : progress.candidates ? t('progress.remaining', {count:fmt(Math.max(0, progress.candidates - (progress.checked || 0)))}) : t('progress.allQueued');
   $('job-detail').textContent = job.id ? `${t('job.summary', {action:t(actions.includes(job.action) ? 'action.' + job.action : 'action.fallback'), count:job.targets?.length || 0})}${job.request_profile ? t('job.profile', {profile:profileLabel(job.request_profile)}) : ''}${progress.phase === 'error' ? t('job.seeLog') : ''}` : t('job.idle');
   $('log').textContent = value.log ? serverLog(value.log) : t('log.empty');
   const exportReport = value.export || {};
@@ -1075,6 +1135,7 @@ function renderState(value) {
     const counts = exportReport.reputation?.counts || {};
     $('export-note').textContent = t('results.exportReady', {exported:fmt(exportReport.exported), passed:fmt(exportReport.passed), checked:fmt(exportReport.checked), candidates:fmt(exportReport.candidates), clean:fmt(counts.clean || 0), listed:fmt((counts.listed || 0) + (counts.local_denied || 0)), unknown:fmt(counts.unknown || 0), local:(exportReport.local_filtered ? t('results.localFiltered', {count:fmt(exportReport.local_filtered)}) : '') + anonymityCounts(exportReport)});
   }
+  renderBreakdown((value.export || {}).breakdown);
   $('api-line').classList.toggle('hidden', !value.api);
   $('gateway-line').classList.toggle('hidden', !value.gateway);
   if (value.gateway) {
@@ -1086,10 +1147,30 @@ function renderState(value) {
   const report = progress.sources ? progress : value.sources || {};
   renderSources(report, value.source_urls || [], value.source_keys || [], (value.export || {}).source_quality || {});
   const finished = job.id && !value.running ? job.id : null;
+  // In keep-fresh mode the job never finishes; reload the table whenever a new export lands.
+  const exportedAt = exportReport.generated_at || null;
+  if (exportedAt && lastExportAt && exportedAt !== lastExportAt && !finished) loadResults();
+  lastExportAt = exportedAt;
   if (finished && finished !== lastFinished) {
     lastFinished = finished;
     if (job.action !== 'collect') loadResults();
   }
+}
+
+// "DE → NL" when the proxy sends traffic out from another country than its own address.
+const countryLabel = row => row.exit_country && row.exit_country !== row.country ? `${row.country || '?'} → ${row.exit_country}` : (row.country || '—');
+
+function renderBreakdown(breakdown) {
+  const node = $('breakdown');
+  const groups = breakdown ? [['protocols', breakdown.protocols || {}], ['countries', breakdown.countries || {}]] : [];
+  const html = groups.map(([name, counts]) => {
+    const items = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 12);
+    if (!items.length) return '';
+    const label = key => key === '??' ? t('breakdown.unknown') : name === 'protocols' ? key.toUpperCase() : key;
+    return `<div><b>${esc(t('breakdown.' + name))}</b>${items.map(([key, count]) => `<span class="pill">${esc(label(key))} <em>${esc(fmt(count))}</em></span>`).join('')}</div>`;
+  }).join('');
+  node.innerHTML = html;
+  node.classList.toggle('hidden', !html);
 }
 
 function renderSources(report, urls, keys=[], quality={}) {
@@ -1118,7 +1199,7 @@ function renderResults(data) {
   $('result-context').textContent = data && data.profile ? t('results.context', {targets:data.targets.map(target => target.name ? `${target.name} (${target.url})` : target.url).join(' + '), profile:profileLabel(data.request_profile || 'workbench')}) : t('results.empty');
   $('result-total').textContent = t('results.total', {count:fmt(total)});
   $('page-number').textContent = `${fmt(Math.floor(start / 50) + 1)} / ${fmt(Math.max(1, Math.ceil(total / 50)))}`;
-  $('result-rows').innerHTML = page.length ? page.map((row, index) => `<tr><td>${fmt(start + index + 1)}</td><td>${esc(row.proxy)}</td><td><span class="score">${Number(row.score).toFixed(1)}</span></td><td>${esc(ms(Number(row.latency_ms).toFixed(0)))}</td><td>${esc(ms(Number(row.jitter_ms).toFixed(0)))}</td><td>${(Number(row.min_target_reliability) * 100).toFixed(0)}%</td><td>${row.history ? esc(`${fmt(row.history.passes)}/${fmt(row.history.checks)}`) : '1/1'}</td><td>${reputationBadge(row)}</td><td>${anonymityBadge(row)}</td><td class="country">${esc(row.country || '—')}</td><td><button class="text-link" data-details="${index}">${esc(t('results.details'))}</button></td></tr>`).join('') : `<tr><td colspan="11" class="empty">${esc(t(data ? 'results.noneMatching' : 'results.noneYet'))}</td></tr>`;
+  $('result-rows').innerHTML = page.length ? page.map((row, index) => `<tr><td>${fmt(start + index + 1)}</td><td>${esc(row.proxy)}</td><td><span class="score">${Number(row.score).toFixed(1)}</span></td><td>${esc(ms(Number(row.latency_ms).toFixed(0)))}</td><td>${esc(ms(Number(row.jitter_ms).toFixed(0)))}</td><td>${(Number(row.min_target_reliability) * 100).toFixed(0)}%</td><td>${row.history ? esc(`${fmt(row.history.passes)}/${fmt(row.history.checks)}`) : '1/1'}</td><td>${reputationBadge(row)}</td><td>${anonymityBadge(row)}</td><td class="country" title="${esc(row.anonymity && row.anonymity.exit_ip ? t('results.exitIp', {ip:row.anonymity.exit_ip}) : '')}">${esc(countryLabel(row))}</td><td><button class="text-link" data-details="${index}">${esc(t('results.details'))}</button></td></tr>`).join('') : `<tr><td colspan="11" class="empty">${esc(t(data ? 'results.noneMatching' : 'results.noneYet'))}</td></tr>`;
   $('result-rows').querySelectorAll('[data-details]').forEach(node => node.onclick = () => details(page[Number(node.dataset.details)]));
 }
 

@@ -66,14 +66,17 @@ Everything runs on your machine. The GUI binds to `127.0.0.1` only.
 | **Strict success rules** | Allowed status codes, required body substring, expected SHA-256, `GET`/`HEAD`, safe custom headers. Catches captcha and stub pages that still return `200`. |
 | **Repeated measurements** | N attempts per target (default 3), a per-target success threshold (e.g. 2 of 3), median latency and jitter. |
 | **Just a few proxies? Specific country?** | `--want 20` stops as soon as 20 proxies match; previously working addresses are tried first. `--country DE,NL` skips every other country *before* checking, so a country-specific search takes minutes, not hours. |
-| **Always fresh** | **Re-check only matching proxies** refreshes the current list in minutes; `--watch 30` does it automatically every 30 minutes. Every proxy keeps an uptime history, so you can sort by the ones that survive re-checks. |
+| **Always fresh** | **Re-check only matching proxies** refreshes the current list in minutes; **Keep fresh** in the GUI (or `--watch 30`) does it automatically every 30 minutes, and the API and rotating proxy pick up each new list. Every proxy keeps an uptime history, so you can sort by the ones that survive re-checks. |
 | **Source ratings** | The Sources tab shows how many working proxies each public list produced, so you can drop dead lists and scan faster. |
 | **Presets** | Quick, Balanced and Thorough set attempts, timeouts and workers in one click. |
 | **Anonymity levels** | Point it at any echo “judge” page and every working proxy is rated **transparent** (leaks your IP), **anonymous** (reveals itself with `Via` / `X-Forwarded-For`) or **elite**. Filter with one click or `--min-anonymity elite`. |
 | **Cleanliness checks** | Local IP / CIDR / exact-proxy denylist plus optional DNSBL zones. Verdicts: `clean`, `listed`, `local_denied`, `unknown`, with an optional strict mode. |
 | **Built for big lists** | Bounded worker queue, rate limiter, automatic file-descriptor fitting. **Fail-fast** skips the remaining attempts once a proxy can no longer pass, and a short **connect timeout** drops dead hosts early, so a full sweep is about 3× faster in the worst case. Tested with 190,000 simulated candidates. |
 | **Stop & resume** | Progress is stored in SQLite. `Ctrl+C` or **Stop** keeps finished work; the same command continues where it left off. |
-| **Ranking & export** | Sort by `quality`, `speed`, `stability` or `uptime`; filter by protocol, country, maximum latency, anonymity and success rate; search by address or port and copy a page with one click. Export top N (or all) to `proxies.txt`, `ranked.csv`, `ranked.json`, plus `http.txt` / `https.txt` / `socks5.txt` / `hostport.txt` in plain `host:port` format and a ready `proxychains.txt`. Crash-safe export generations. |
+| **Ranking & export** | Sort by `quality`, `speed`, `stability` or `uptime`; filter by protocol, country, maximum latency, anonymity and success rate; search by address or port and copy a page with one click. Export top N (or all) to `proxies.txt`, `ranked.csv`, `ranked.json`, plus `http.txt` / `https.txt` / `socks4.txt` / `socks5.txt` / `hostport.txt` in plain `host:port` format, a ready `proxychains.txt`, a browser `proxy.pac` and a Clash / Mihomo `clash.yaml` with automatic fastest-proxy selection. A protocol and country summary sits above the files. Crash-safe export generations. |
+| **Rotating proxy gateway** | Set `127.0.0.1:8899` as the HTTP or SOCKS5 proxy in a browser, Telegram, a scraper or any app. Every new connection goes out through the next working proxy; failing ones are skipped and rested automatically. |
+| **Ready-made checks** | One click adds a check for Google, YouTube, Telegram, Discord, Instagram, the OpenAI API, GitHub, Wikipedia or Cloudflare. |
+| **Exit country** | The anonymity judge also reports the address the traffic really leaves from; the table shows `DE → NL` when it differs from the proxy's own country. |
 | **Local API for your code** | The GUI (or `serve` on a server) answers `GET /random?protocol=socks5&country=DE` or `/proxies?max_latency=800&format=txt` with the freshest working proxies, so scripts, scrapers and bots can pick a proxy with one HTTP request. |
 | **Safe by default** | Loopback-only GUI with a per-session token, CSRF/Host checks, SSRF-hardened source fetching (no private/metadata IPs, validated redirects, size limits), credential-like headers rejected. |
 | **English & Russian UI** | Switch with the EN/RU button; defaults to your browser language. Dark and light themes. |
@@ -227,6 +230,23 @@ Run `./run.sh --help` for the complete list: `--input`, `--sources`, `--no-sourc
 
 </details>
 
+## 🔁 Rotating proxy gateway
+
+While the GUI is open, `127.0.0.1:8899` works as one proxy that rotates through all working proxies of the latest export. Use it as an **HTTP** or **SOCKS5** proxy anywhere:
+
+```sh
+curl -x http://127.0.0.1:8899 https://example.org/
+curl -x socks5h://127.0.0.1:8899 https://example.org/
+```
+
+- Every new connection takes the next proxy (`--rotate random` picks at random).
+- If a proxy fails, the same connection is retried through another one (up to 3). A proxy that fails twice rests for 5 minutes.
+- Plain `http://` requests reach HTTP proxies directly, because many of them allow CONNECT only to port 443.
+
+On a server, start it with `./run.sh gateway` and narrow the pool with the usual filters, for example `gateway --protocol socks5 --country DE --max-latency 1500`. Binding to a network address (`--host 0.0.0.0`) requires a password: `--api-token <secret>`. Clients then log in with any user name and that password, over HTTP Basic or SOCKS5 user/password.
+
+Browser without extensions: use `http://127.0.0.1:8765/pac` as the automatic proxy configuration URL. It serves the 10 best matching proxies and accepts the same filters as the API, for example `/pac?country=DE`. `/clash` returns a complete Clash / Mihomo config.
+
 ## 🔌 Local API: use the proxies from your own code
 
 While the GUI is open, a read-only API runs on `http://127.0.0.1:8765` (this computer only). On a server, start it with `./run.sh serve` (Windows: `.venv\Scripts\python proxytool.py serve`). It serves the latest export and picks up every new one automatically, so it can run next to `run --watch`.
@@ -235,6 +255,8 @@ While the GUI is open, a read-only API runs on `http://127.0.0.1:8765` (this com
 | --- | --- |
 | `GET /random` | one random working proxy; `limit=5` for several |
 | `GET /proxies` | all working proxies, best first (the export order) |
+| `GET /pac` | proxy auto-config for browsers with the 10 best matching proxies |
+| `GET /clash` | Clash / Mihomo config with an automatic fastest-proxy group |
 | `GET /status` | how many are available, when the export was built, which services were checked |
 
 Filters for `/random` and `/proxies`: `protocol=http\|https\|socks5`, `country=DE,NL`, `max_latency=800` (ms), `anonymity=anonymous\|elite`, `limit=N`, `format=json\|txt\|hostport`.
@@ -251,7 +273,7 @@ proxy = httpx.get("http://127.0.0.1:8765/random?protocol=http&max_latency=1500&f
 print(httpx.get("https://example.org/", proxy=proxy, timeout=15).status_code)
 ```
 
-JSON rows contain `proxy`, `protocol`, `host`, `port`, `country`, `anonymity`, `latency_ms`, `jitter_ms`, `reliability`, `uptime`, `checks`, `score`, `checked_at`. The GUI shows the address with a **Copy** button under the download buttons; change the port with `gui.py --api-port 9000` or turn it off with `--no-api`.
+JSON rows contain `proxy`, `protocol`, `host`, `port`, `country`, `exit_ip`, `exit_country`, `anonymity`, `latency_ms`, `jitter_ms`, `reliability`, `uptime`, `checks`, `score`, `checked_at`. The GUI shows the address with a **Copy** button under the download buttons; change the port with `gui.py --api-port 9000` or turn it off with `--no-api`.
 
 To reach the API from other machines (for example from Docker), bind it to a network address and set a token: `serve --host 0.0.0.0 --api-token <secret>` or the `PROXY_WORKBENCH_API_TOKEN` variable. Clients then send `Authorization: Bearer <secret>`.
 
@@ -272,6 +294,8 @@ Serve fresh proxies to other containers: one container re-checks, the other answ
 docker run -d --name pw-check -v "$PWD/data:/app/data" proxy-workbench run --want 50 --watch 30
 docker run -d --name pw-api -p 127.0.0.1:8765:8765 -e PROXY_WORKBENCH_API_TOKEN=change-me \
   -v "$PWD/data:/app/data" proxy-workbench serve --host 0.0.0.0
+docker run -d --name pw-gateway -p 127.0.0.1:8899:8899 -e PROXY_WORKBENCH_API_TOKEN=change-me \
+  -v "$PWD/data:/app/data" proxy-workbench gateway --host 0.0.0.0
 ```
 
 Every release also publishes a ready image to the GitHub Container Registry. It appears under **Packages** in the repository sidebar as `ghcr.io/<owner>/proxy-workbench:<version>` and `:latest`. Results land in the mounted `data/` folder exactly as with a local install.

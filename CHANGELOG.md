@@ -4,6 +4,19 @@
 
 ## [Unreleased]
 
+## [1.9.0] — 2026-09-24
+
+### Added
+
+- **Rotating proxy gateway** on `127.0.0.1:8899`. It starts with the GUI (`--gateway-port`, `--no-gateway`) and runs on servers as the `gateway` command (`--rotate`, filters, `--api-token` password for network binds).
+  - One address accepts HTTP, CONNECT and SOCKS5 clients.
+  - Each new connection goes through the next working proxy, with retries through other proxies and a rest period for failing ones.
+- **Browser and client configs:** `proxy.pac` (10 best proxies, no direct fallback) and `clash.yaml` (Clash / Mihomo with an automatic url-test group). Both are in every export and live at `/pac` and `/clash` in the API with its filters.
+- **Ready-made checks** for Google, YouTube, Telegram, Discord, Instagram, the OpenAI API, GitHub, Wikipedia and Cloudflare in the GUI.
+- **Exit IP and exit country** from the anonymity judge: `exit_ip` / `exit_country` in CSV, JSON and the API; the Country column shows `DE → NL` when they differ.
+- **Keep fresh** in the GUI: re-check working proxies every N minutes while the app stays open; the results table, API and gateway follow each new export.
+- **Protocol and country summary** of matching proxies above the download buttons and in `status.json` (`breakdown`).
+
 ## [1.8.0] — 2026-09-24
 
 ### Added
