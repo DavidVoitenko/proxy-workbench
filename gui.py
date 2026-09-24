@@ -25,6 +25,7 @@ from maintenance import clear_runtime, exclusive_lock
 from reputation import Denylist, normalize_zones, result_allowed
 import anonymity
 import api
+from i18n import tr
 import geoip
 
 ROOT = Path(__file__).resolve().parent
@@ -42,7 +43,7 @@ def public_source(value):
     if not isinstance(value, str):
         return ''
     parts = value.strip().split(None, 1)
-    if len(parts) == 2 and parts[0] in ('http', 'https', 'socks5', 'socks5h', 'geonode', 'http-fields'):
+    if len(parts) == 2 and parts[0] in ('http', 'https', 'socks4', 'socks5', 'socks5h', 'geonode', 'http-fields'):
         return parts[0] + ' ' + core.public_url(parts[1])
     return core.public_url(value)
 
@@ -54,6 +55,8 @@ RESULT_ORDERS = {
     'uptime': "COALESCE(1.0*json_extract(payload,'$.history.passes')/json_extract(payload,'$.history.checks'), 1) DESC, "
               "COALESCE(json_extract(payload,'$.history.checks'), 1) DESC, json_extract(payload,'$.score') DESC, proxy",
 }
+# The UI translates the scanner's log itself, so the scanner always writes Russian here.
+CHILD_ENV = dict(os.environ, PROXY_WORKBENCH_LANG='ru')
 DOWNLOADS = ('proxies.txt', 'ranked.csv', 'ranked.json', *core.PROTOCOL_EXPORTS.values(), 'hostport.txt', 'proxychains.txt')
 
 
@@ -278,7 +281,7 @@ class App:
             self.log_handle = (self.data/'gui-run.log').open('wb')
             try:
                 self.process = subprocess.Popen(command, stdout=self.log_handle, stderr=subprocess.STDOUT,
-                                                stdin=subprocess.DEVNULL, cwd=ROOT)
+                                                stdin=subprocess.DEVNULL, cwd=ROOT, env=CHILD_ENV)
             except OSError:
                 self.log_handle.close()
                 self.log_handle = None
@@ -331,7 +334,8 @@ class App:
         # polling. The CLI takes the data-folder lock, so a scan cannot overlap.
         try:
             done = subprocess.run([sys.executable, str(ROOT/'proxytool.py'), 'update-geoip', '--data', str(self.data)],
-                                  capture_output=True, text=True, timeout=600, cwd=ROOT, stdin=subprocess.DEVNULL)
+                                  capture_output=True, text=True, timeout=600, cwd=ROOT, stdin=subprocess.DEVNULL,
+                                  env=CHILD_ENV)
         except (OSError, subprocess.TimeoutExpired):
             raise ValueError('Не удалось скачать базу стран.') from None
         if done.returncode:
@@ -604,14 +608,14 @@ def make_server(data, port=0):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=f'Локальный интерфейс {PRODUCT_NAME}')
+    parser = argparse.ArgumentParser(description=tr(f'Локальный интерфейс {PRODUCT_NAME}', f'{PRODUCT_NAME} local interface'))
     parser.add_argument('--version', action='version', version=f'{PRODUCT_NAME} {PRODUCT_VERSION}')
     parser.add_argument('--data', type=Path, default=ROOT/'data')
     parser.add_argument('--port', type=int, default=0)
     parser.add_argument('--no-browser', action='store_true')
     parser.add_argument('--api-port', type=int, default=api.DEFAULT_PORT,
-                        help='порт локального API для своих программ (только этот компьютер)')
-    parser.add_argument('--no-api', action='store_true', help='не запускать локальное API')
+                        help=tr('порт локального API для своих программ (только этот компьютер)', 'port of the local API for your programs (this computer only)'))
+    parser.add_argument('--no-api', action='store_true', help=tr('не запускать локальное API', 'do not start the local API'))
     args = parser.parse_args()
     os.umask(0o077)
     try:
@@ -624,7 +628,7 @@ def main():
                 import httpx
                 response = httpx.get(url, timeout=2, trust_env=False)
                 if response.status_code == 200 and PRODUCT_NAME in response.text:
-                    print(f'Приложение уже запущено: {url}', flush=True)
+                    print(tr(f'Приложение уже запущено: {url}', f'The application is already running: {url}'), flush=True)
                     if not args.no_browser:
                         webbrowser.open(url)
                     return
@@ -633,17 +637,17 @@ def main():
         raise SystemExit('Не удалось открыть интерфейс: папка data или порт уже используются.')
     core.atomic(args.data/'gui-address.json', json.dumps(dict(port=server.server_port)))
     url = f'http://127.0.0.1:{server.server_port}/'
-    print(f'{PRODUCT_NAME} {PRODUCT_VERSION}: {url}\nНе закрывайте это окно, пока работает приложение. Ctrl+C — закрыть.', flush=True)
+    print(tr(f'{PRODUCT_NAME} {PRODUCT_VERSION}: {url}\nНе закрывайте это окно, пока работает приложение. Ctrl+C — закрыть.', f'{PRODUCT_NAME} {PRODUCT_VERSION}: {url}\nKeep this window open while you use the application. Ctrl+C closes it.'), flush=True)
     api_server = None
     if not args.no_api:
         try:
             api_server = api.make_api_server(args.data, '127.0.0.1', args.api_port)
         except (OSError, ValueError):
-            print(f'Локальное API не запущено: порт {args.api_port} занят.', flush=True)
+            print(tr(f'Локальное API не запущено: порт {args.api_port} занят.', f'Local API not started: port {args.api_port} is busy.'), flush=True)
         else:
             server.app.api_url = f'http://127.0.0.1:{api_server.server_port}'
             threading.Thread(target=api_server.serve_forever, daemon=True).start()
-            print(f'API для своих программ: {server.app.api_url}/proxies', flush=True)
+            print(tr(f'API для своих программ: {server.app.api_url}/proxies', f'API for your programs: {server.app.api_url}/proxies'), flush=True)
     if not args.no_browser:
         webbrowser.open(url)
     try:
