@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import math
@@ -20,6 +21,7 @@ import webbrowser
 
 from branding import PRODUCT_ID, PRODUCT_NAME, PRODUCT_VERSION, REQUEST_PROFILES
 import proxytool as core
+from maintenance import clear_runtime, exclusive_lock
 from reputation import Denylist, normalize_zones, result_allowed
 
 ROOT = Path(__file__).resolve().parent
@@ -28,7 +30,7 @@ MAX_BODY = 32 * 1024 * 1024
 
 def read_json(path, fallback):
     try:
-        return json.loads(path.read_text())
+        return json.loads(path.read_text(encoding='utf-8'))
     except (OSError, ValueError):
         return fallback
 
@@ -47,9 +49,9 @@ def public_sources(values):
 
 
 def defaults():
-    return dict(targets=[dict(name='Проверка HTTPS', url='https://example.com/', statuses=[200],
+    return dict(settings_version=2, targets=[dict(name='Проверка HTTPS', url='https://example.com/', statuses=[200],
                              contains='Example Domain', headers={}, method='GET')],
-                sources=json.loads((ROOT/'sources.json').read_text()), use_sources=True,
+                sources=json.loads((ROOT/'sources.json').read_text(encoding='utf-8')), use_sources=True,
                 proxies='', attempts=3, timeout=8, workers=128, rate=100,
                 max_bytes=1048576, source_timeout=60, min_success=2/3, top=0, sort='quality',
                 request_profile='workbench', denylist='',
@@ -62,6 +64,9 @@ def validate(settings):
         raise ValueError('Ожидаются настройки проверки.')
     clean = defaults()
     clean.update({k: settings[k] for k in clean if k in settings})
+    if clean['settings_version'] not in (1, 2):
+        raise ValueError('Неизвестная версия настроек.')
+    clean['settings_version'] = 2
     if not isinstance(clean['request_profile'], str) or clean['request_profile'] not in REQUEST_PROFILES:
         raise ValueError('Неизвестный request-профиль.')
     if not isinstance(clean['denylist'], str) or len(clean['denylist']) > 2_000_000:
@@ -143,7 +148,13 @@ class App:
         self.progress_path = self.data/'gui-progress.json'
 
     def settings(self):
-        stored = read_json(self.data/'gui-settings.json', None)
+        settings_path = self.data/'gui-settings.json'
+        try:
+            stored = json.loads(settings_path.read_text(encoding='utf-8')) if settings_path.exists() else None
+        except FileNotFoundError:
+            stored = None
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            raise ValueError('Файл gui-settings.json повреждён или недоступен; исправьте его перед продолжением.') from None
         if stored is None:
             stored = defaults()
             try:
@@ -152,14 +163,16 @@ class App:
                 pass
             except (OSError, UnicodeError):
                 raise ValueError('Не удалось прочитать data/denylist.txt. Исправьте файл перед сохранением.') from None
-        elif isinstance(stored, dict) and 'denylist' not in stored:
+        elif not isinstance(stored, dict):
+            raise ValueError('Файл gui-settings.json должен содержать объект настроек.')
+        elif 'denylist' not in stored:
             try:
                 stored['denylist'] = (self.data/'denylist.txt').read_text(encoding='utf-8')
             except FileNotFoundError:
                 stored['denylist'] = ''
             except (OSError, UnicodeError):
                 raise ValueError('Не удалось прочитать data/denylist.txt. Исправьте файл перед сохранением.') from None
-        return stored
+        return validate(stored)
 
     def save(self, payload):
         if isinstance(payload, dict) and 'denylist' not in payload:
@@ -172,7 +185,13 @@ class App:
         return settings
 
     def running(self):
-        return self.process is not None and self.process.poll() is None
+        return self.process is not None and (self.process.poll() is None or self.log_handle is not None)
+
+    @contextmanager
+    def data_lock(self):
+        with self.mutex:
+            with exclusive_lock(self.data/'workbench.lock'):
+                yield
 
     def start(self, payload):
         with self.mutex:
@@ -248,6 +267,17 @@ class App:
                 self.job['stopping'] = True
             return dict(stopping=self.running())
 
+    def clear_data(self):
+        with self.mutex:
+            if self.running():
+                raise ValueError('Сначала остановите текущую операцию.')
+            try:
+                with self.data_lock():
+                    removed = clear_runtime(self.data, keep_lock=True)
+            except RuntimeError as exc:
+                raise ValueError(str(exc)) from None
+            return dict(removed=removed)
+
     def state(self):
         with self.mutex:
             active = self.running()
@@ -256,7 +286,8 @@ class App:
                          sources=read_json(self.data/'sources-report.json', {}),
                          source_urls=public_sources(read_json(self.data/'gui-sources.json', [])),
                          export=read_json(self.data/'exports/status.json', {}),
-                         downloads=[n for n in ('proxies.txt', 'ranked.csv', 'ranked.json') if (self.data/'exports'/n).exists()])
+                         downloads=[n for n in ('proxies.txt', 'ranked.csv', 'ranked.json')
+                                     if core.export_file(self.data/'exports', n).is_file()])
             if not active and self.job.get('exit_code', 0) not in (0, 130):
                 state['progress']['phase'] = 'error'
             elif not active and state['progress'].get('phase') in ('starting', 'scanning', 'collecting', 'exporting'):
@@ -274,7 +305,7 @@ class App:
         profile_path = self.data/'last-profile.txt'
         if not profile_path.exists() or not (self.data/'proxies.sqlite3').exists():
             return dict(rows=[], total=0, targets=[], profile=None)
-        profile = profile_path.read_text().strip()
+        profile = profile_path.read_text(encoding='utf-8').strip()
         sort = query.get('sort', ['quality'])[0]
         try:
             threshold = float(query.get('min_success', [2/3])[0])
@@ -284,36 +315,60 @@ class App:
         except ValueError:
             raise ValueError('Неверные параметры рейтинга.') from None
         order = "json_extract(payload,'$.latency_ms'), json_extract(payload,'$.reliability') DESC, proxy" if sort == 'speed' else "json_extract(payload,'$.score') DESC, json_extract(payload,'$.latency_ms'), proxy"
-        # Separate read-only connection: no writing or long-lived transaction against the worker.
-        db = sqlite3.connect((self.data/'proxies.sqlite3').as_uri()+'?mode=ro', uri=True, timeout=2)
         try:
-            record = db.execute('SELECT config FROM profiles WHERE id=?', (profile,)).fetchone()
-            cfg = json.loads(record[0]) if record else {}
-            policy = cfg.get('reputation', {})
-            strict = bool(policy.get('strict', False))
-            denylist = Denylist.from_file(self.data/'denylist.txt', normalizer=core.normalize)
-            current_settings = self.settings()
-            local_enabled = current_settings.get('reputation', {}).get('local_enabled', True)
-            active_denylist = denylist if local_enabled else None
-            if active_denylist is not None and active_denylist.error:
-                raise ValueError('Не удалось прочитать локальный denylist; обновите список.')
-            condition = "profile=? AND json_extract(payload,'$.min_target_reliability')>0 AND json_extract(payload,'$.min_target_reliability')+1e-12>=?"
-            total = 0
-            rows = []
-            for (payload,) in db.execute('SELECT payload FROM results WHERE '+condition+' ORDER BY '+order, (profile, threshold)):
-                row = json.loads(payload)
-                if not result_allowed(row, threshold, denylist=active_denylist, strict=strict):
-                    continue
-                if total >= offset and len(rows) < 50:
-                    rows.append(row)
-                total += 1
-            targets = [dict(name=t.get('name',''), url=core.public_url(t['url'])) for t in cfg.get('targets', [])]
-            return dict(rows=rows, total=total, profile=profile, targets=targets, offset=offset,
-                        request_profile=cfg.get('request_profile', 'workbench'),
-                        reputation_policy=policy)
-        finally:
-            db.close()
+            with self.data_lock():
+                db = sqlite3.connect((self.data/'proxies.sqlite3').as_uri()+'?mode=ro', uri=True, timeout=2)
+                try:
+                    record = db.execute('SELECT config FROM profiles WHERE id=?', (profile,)).fetchone()
+                    cfg = json.loads(record[0]) if record else {}
+                    policy = cfg.get('reputation', {})
+                    strict = bool(policy.get('strict', False))
+                    denylist = Denylist.from_file(self.data/'denylist.txt', normalizer=core.normalize)
+                    current_settings = self.settings()
+                    local_enabled = current_settings.get('reputation', {}).get('local_enabled', True)
+                    active_denylist = denylist if local_enabled else None
+                    if active_denylist is not None and active_denylist.error:
+                        raise ValueError('Не удалось прочитать локальный denylist; обновите список.')
+                    condition = "profile=? AND json_extract(payload,'$.min_target_reliability')>0 AND json_extract(payload,'$.min_target_reliability')+1e-12>=?"
+                    total = 0
+                    rows = []
+                    for (payload,) in db.execute('SELECT payload FROM results WHERE '+condition+' ORDER BY '+order, (profile, threshold)):
+                        row = json.loads(payload)
+                        if not result_allowed(row, threshold, denylist=active_denylist, strict=strict):
+                            continue
+                        if total >= offset and len(rows) < 50:
+                            summary = dict(row)
+                            summary.pop('samples', None)
+                            rows.append(summary)
+                        total += 1
+                    targets = [dict(name=t.get('name',''), url=core.public_url(t['url'])) for t in cfg.get('targets', [])]
+                    return dict(rows=rows, total=total, profile=profile, targets=targets, offset=offset,
+                                request_profile=cfg.get('request_profile', 'workbench'),
+                                reputation_policy=policy)
+                finally:
+                    db.close()
+        except RuntimeError as exc:
+            raise ValueError(str(exc)) from None
 
+    def detail(self, proxy):
+        if not isinstance(proxy, str) or not proxy or len(proxy) > 512:
+            raise ValueError('Некорректный адрес прокси.')
+        profile_path = self.data/'last-profile.txt'
+        if not profile_path.exists() or not (self.data/'proxies.sqlite3').exists():
+            raise ValueError('Результаты не найдены.')
+        profile = profile_path.read_text(encoding='utf-8').strip()
+        try:
+            with self.data_lock():
+                db = sqlite3.connect((self.data/'proxies.sqlite3').as_uri()+'?mode=ro', uri=True, timeout=2)
+                try:
+                    record = db.execute('SELECT payload FROM results WHERE profile=? AND proxy=?', (profile, proxy)).fetchone()
+                finally:
+                    db.close()
+        except RuntimeError as exc:
+            raise ValueError(str(exc)) from None
+        if not record:
+            raise ValueError('Детали прокси не найдены.')
+        return json.loads(record[0])
 
     def close(self):
         self.stop()
@@ -369,7 +424,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             if path.path == '/':
-                content = (ROOT/'ui/index.html').read_text().replace('__TOKEN__', self.app.token)
+                content = (ROOT/'ui/index.html').read_text(encoding='utf-8').replace('__TOKEN__', self.app.token)
                 content = content.replace('__PRODUCT_VERSION__', PRODUCT_VERSION)
                 return self.respond(200, content.encode(), 'text/html; charset=utf-8')
             if path.path in ('/app.js', '/style.css'):
@@ -388,20 +443,27 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond(200, self.app.state())
             if path.path == '/api/results':
                 return self.respond(200, self.app.results(parse_qs(path.query)))
+            if path.path == '/api/result-detail':
+                proxy = parse_qs(path.query).get('proxy', [''])[0]
+                return self.respond(200, self.app.detail(proxy))
             if path.path.startswith('/api/download/'):
                 name = path.path.rsplit('/', 1)[1]
                 if name not in ('proxies.txt', 'ranked.csv', 'ranked.json'):
                     return self.respond(404, dict(error='Файл не найден.'))
                 # Stream exports so a large JSON does not fill server memory.
-                with (self.app.data/'exports'/name).open('rb') as handle:
-                    self.send_response(200)
-                    self.send_header('Content-Type', 'application/octet-stream')
-                    self.send_header('Content-Length', str(os.fstat(handle.fileno()).st_size))
-                    self.send_header('Content-Disposition', f'attachment; filename="{name}"')
-                    self.send_header('Cache-Control', 'no-store')
-                    self.end_headers()
-                    while chunk := handle.read(65536):
-                        self.wfile.write(chunk)
+                try:
+                    with self.app.data_lock():
+                        with core.export_file(self.app.data/'exports', name).open('rb') as handle:
+                            self.send_response(200)
+                            self.send_header('Content-Type', 'application/octet-stream')
+                            self.send_header('Content-Length', str(os.fstat(handle.fileno()).st_size))
+                            self.send_header('Content-Disposition', f'attachment; filename="{name}"')
+                            self.send_header('Cache-Control', 'no-store')
+                            self.end_headers()
+                            while chunk := handle.read(65536):
+                                self.wfile.write(chunk)
+                except RuntimeError as exc:
+                    return self.respond(409, dict(error=str(exc)))
                 return
             self.respond(404, dict(error='Не найдено.'))
         except (ValueError, OSError, sqlite3.Error):
@@ -420,6 +482,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond(200, self.app.save(payload))
             if path == '/api/start':
                 return self.respond(200, self.app.start(payload))
+            if path == '/api/clear-data':
+                return self.respond(200, self.app.clear_data())
             if path == '/api/stop':
                 return self.respond(200, self.app.stop())
             self.respond(404, dict(error='Не найдено.'))
@@ -443,6 +507,7 @@ def make_server(data, port=0):
 
 def main():
     parser = argparse.ArgumentParser(description=f'Локальный интерфейс {PRODUCT_NAME}')
+    parser.add_argument('--version', action='version', version=f'{PRODUCT_NAME} {PRODUCT_VERSION}')
     parser.add_argument('--data', type=Path, default=ROOT/'data')
     parser.add_argument('--port', type=int, default=0)
     parser.add_argument('--no-browser', action='store_true')

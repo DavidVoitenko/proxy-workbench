@@ -19,7 +19,7 @@ const profileLabels = {workbench: 'Рабочий профиль', standard: 'С
 const profileDescriptions = {
   workbench: `User-Agent ProxyWorkbench/${PRODUCT_VERSION}, Accept и Accept-Encoding.`,
   standard: `User-Agent ProxyWorkbench/${PRODUCT_VERSION}, Accept для JSON/text и Accept-Encoding.`,
-  minimal: `Только User-Agent ProxyWorkbench/${PRODUCT_VERSION} и Accept.`
+  minimal: `Только User-Agent ProxyWorkbench/${PRODUCT_VERSION}.`
 };
 const reputationLabels = {clean: 'Чистый', listed: 'Blacklist', unknown: 'Неизвестно', local_denied: 'Локальный blacklist'};
 const fmt = n => Number(n || 0).toLocaleString('ru-RU');
@@ -61,7 +61,7 @@ function addTarget(target={}) {
   }
   const node = document.createElement('div');
   node.className = 'target';
-  node.innerHTML = `<div class="target-head"><span>◎</span><input data-field="name" aria-label="Название сервиса" placeholder="Название сервиса" value="${esc(target.name || 'Свой сервис')}"><button data-remove title="Удалить сервис" aria-label="Удалить сервис">×</button></div><label class="target-url">URL для проверки<input data-field="url" type="url" placeholder="https://example.org/health" value="${esc(target.url || '')}"></label><div class="field-grid"><label>Допустимые HTTP-коды<input data-field="statuses" placeholder="200, 204 или 200-299" value="${esc(target.statuses ? (target.statuses.length === 100 && target.statuses[0] === 200 ? '200-299' : target.statuses.join(', ')) : '200-299')}"></label><label>Текст в ответе (необязательно)<input data-field="contains" placeholder="Например: healthy" value="${esc(target.contains || '')}"></label></div><details class="advanced"><summary>Метод, локальные заголовки и SHA-256</summary><label>Метод<select data-field="method"><option>GET</option><option>HEAD</option></select></label><label>Заголовки сервиса — JSON<textarea data-field="headers" rows="2" spellcheck="false">${esc(JSON.stringify(target.headers || {}))}</textarea><small>Сохраняются локально и не попадают в экспорт, но передаются через проверяемый публичный прокси — не добавляйте токены.</small></label><label>SHA-256 тела ответа (необязательно)<input data-field="sha256" value="${esc(target.sha256 || '')}" placeholder="Ожидаемый хеш ответа"></label></details>`;
+  node.innerHTML = `<div class="target-head"><span>◎</span><input data-field="name" aria-label="Название сервиса" placeholder="Название сервиса" value="${esc(target.name || 'Свой сервис')}"><button data-remove title="Удалить сервис" aria-label="Удалить сервис">×</button></div><label class="target-url">URL для проверки<input data-field="url" type="url" placeholder="https://example.org/health" value="${esc(target.url || '')}"></label><div class="field-grid"><label>Допустимые HTTP-коды<input data-field="statuses" placeholder="200, 204 или 200-299" value="${esc(target.statuses ? (target.statuses.length === 100 && target.statuses[0] === 200 ? '200-299' : target.statuses.join(', ')) : '200-299')}"></label><label>Текст в ответе (необязательно)<input data-field="contains" placeholder="Например: healthy" value="${esc(target.contains || '')}"></label></div><details class="advanced"><summary>Метод, локальные заголовки и SHA-256</summary><label>Метод<select data-field="method"><option>GET</option><option>HEAD</option></select></label><label>Заголовки сервиса — JSON<textarea data-field="headers" rows="2" spellcheck="false">${esc(JSON.stringify(target.headers || {}))}</textarea><small>Разрешены только безопасные HTTP-заголовки; значения не экспортируются, но запрос всё равно идёт через публичный прокси.</small></label><label>SHA-256 тела ответа (необязательно)<input data-field="sha256" value="${esc(target.sha256 || '')}" placeholder="Ожидаемый хеш ответа"></label></details>`;
   node.querySelector('[data-field="method"]').value = target.method || 'GET';
   node.querySelector('[data-remove]').onclick = () => {
     if ($('targets').children.length === 1) {
@@ -232,6 +232,7 @@ function renderState(value) {
   const job = value.job || {};
   setBusy(value.running);
   $('phase').textContent = job.stopping && value.running ? 'Останавливаем…' : phases[progress.phase] || 'Готов к запуску';
+  if (value.running && progress.phase === 'exporting') $('stop').disabled = true;
   $('checked').textContent = fmt(progress.checked);
   $('candidates').textContent = fmt(progress.candidates);
   const percent = progress.candidates ? Math.min(100, 100 * (progress.checked || 0) / progress.candidates) : 0;
@@ -301,13 +302,18 @@ async function loadResults() {
   }
 }
 
-function details(row) {
-  $('details-title').textContent = row.proxy;
-  const verdict = row.reputation || {status:'clean', dnsbl:[]};
-  const dnsbl = (verdict.dnsbl || []).map(item => `${esc(item.zone)}: ${esc(item.status === 'listed' ? 'найден' : item.status === 'clear' ? 'чисто' : 'нет ответа')}`).join(' · ') || 'не проверялись';
-  const body = $('details-body');
-  body.innerHTML = `<div class="detail-reputation"><strong>Чистота:</strong> ${esc(reputationLabels[verdict.status] || verdict.status)} · <strong>DNSBL:</strong> ${dnsbl}${verdict.local_rule ? ' · локальное правило: ' + esc(verdict.local_rule) : ''}</div>` + resultTargets.map((target, index) => `<h3>${esc(target.name || 'Сервис ' + (index + 1))} · ${esc(target.url)}</h3><div class="table-wrap"><table><thead><tr><th>Попытка</th><th>Ответ</th><th>Время</th><th>Байт</th><th>Результат</th></tr></thead><tbody>${row.samples.filter(sample => sample.target === index).map(sample => `<tr><td>${sample.attempt}</td><td>${sample.status ?? '—'}</td><td>${sample.ms} мс</td><td>${fmt(sample.bytes)}</td><td class="${sample.ok ? '' : 'status-error'}">${sample.ok ? 'Успешно' : esc(sample.error)}</td></tr>`).join('')}</tbody></table></div>`).join('');
-  $('details-dialog').showModal();
+async function details(summary) {
+  try {
+    const row = await api('/api/result-detail?proxy=' + encodeURIComponent(summary.proxy));
+    $('details-title').textContent = row.proxy;
+    const verdict = row.reputation || {status:'clean', dnsbl:[]};
+    const dnsbl = (verdict.dnsbl || []).map(item => `${esc(item.zone)}: ${esc(item.status === 'listed' ? 'найден' : item.status === 'clear' ? 'чисто' : 'нет ответа')}`).join(' · ') || 'не проверялись';
+    const body = $('details-body');
+    body.innerHTML = `<div class="detail-reputation"><strong>Чистота:</strong> ${esc(reputationLabels[verdict.status] || verdict.status)} · <strong>DNSBL:</strong> ${dnsbl}${verdict.local_rule ? ' · локальное правило: ' + esc(verdict.local_rule) : ''}</div>` + resultTargets.map((target, index) => `<h3>${esc(target.name || 'Сервис ' + (index + 1))} · ${esc(target.url)}</h3><div class="table-wrap"><table><thead><tr><th>Попытка</th><th>Ответ</th><th>Время</th><th>Байт</th><th>Результат</th></tr></thead><tbody>${(row.samples || []).filter(sample => sample.target === index).map(sample => `<tr><td>${sample.attempt}</td><td>${sample.status ?? '—'}</td><td>${sample.ms} мс</td><td>${fmt(sample.bytes)}</td><td class="${sample.ok ? '' : 'status-error'}">${sample.ok ? 'Успешно' : esc(sample.error)}</td></tr>`).join('')}</tbody></table></div>`).join('');
+    $('details-dialog').showModal();
+  } catch (error) {
+    toast(error.message, true);
+  }
 }
 
 $('close-details').onclick = () => $('details-dialog').close();
@@ -320,6 +326,7 @@ $('recheck').onclick = () => start('recheck');
 $('collect').onclick = () => start('collect');
 $('export').onclick = () => start('export');
 $('stop').onclick = async () => { try { $('stop').disabled = true; await api('/api/stop', {}); toast('Останавливаем и сохраняем завершённые проверки.'); await poll(); } catch (error) { toast(error.message, true); } };
+$('clear-data').onclick = async () => { if (!confirm('Удалить локальную базу, профили и экспорты? Настройки и denylist останутся.')) return; try { const result = await api('/api/clear-data', {}); toast('Локальные результаты удалены: ' + result.removed.length + '.'); await poll(); } catch (error) { toast(error.message, true); } };
 $('refresh-results').onclick = () => { offset = 0; loadResults(); };
 ['result-sort', 'result-min'].forEach(id => $(id).onchange = () => { offset = 0; loadResults(); });
 $('prev').onclick = () => { offset = Math.max(0, offset - 50); loadResults(); };
@@ -330,7 +337,31 @@ $('request-profile').onchange = updateIdentity;
 $('dnsbl-enabled').onchange = updateIdentity;
 $('reset-sources').onclick = async () => { try { const value = await api('/api/defaults'); $('sources').value = value.sources.join('\n'); updateSourceCount(); toast('Встроенные источники восстановлены. Сохраните настройки.'); } catch (error) { toast(error.message, true); } };
 $('import-file').onchange = async event => { const file = event.target.files[0]; if (!file) return; if (file.size > 20_000_000) { toast('Максимум 20 МБ на файл.', true); return; } $('proxies').value = await file.text(); toast('Список загружен. Он будет добавлен при сборе.'); };
-document.querySelectorAll('[data-download]').forEach(node => node.onclick = async () => { try { node.disabled = true; const response = await fetch('/api/download/' + node.dataset.download, {headers:{'X-Workbench-Token':token}}); if (!response.ok) throw new Error('Файл ещё не готов.'); const url = URL.createObjectURL(await response.blob()); const anchor = document.createElement('a'); anchor.href = url; anchor.download = node.dataset.download; anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 60000); } catch (error) { toast(error.message, true); } finally { node.disabled = false; } });
+async function downloadFile(name, node) {
+  try {
+    node.disabled = true;
+    const response = await fetch('/api/download/' + name, {headers:{'X-Workbench-Token':token}});
+    if (!response.ok) throw new Error('Файл ещё не готов.');
+    if (window.showSaveFilePicker && response.body) {
+      const handle = await window.showSaveFilePicker({suggestedName:name});
+      const writable = await handle.createWritable();
+      await response.body.pipeTo(writable);
+      await writable.close();
+    } else {
+      const url = URL.createObjectURL(await response.blob());
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = name;
+      anchor.click();
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    }
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    node.disabled = false;
+  }
+}
+document.querySelectorAll('[data-download]').forEach(node => node.onclick = () => downloadFile(node.dataset.download, node));
 
 (async () => {
   try {

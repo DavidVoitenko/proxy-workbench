@@ -1,0 +1,92 @@
+name: Feature request / Предложение функции
+description: Propose a focused improvement with privacy, security, and test impact
+title: "[Feature] "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the user outcome before suggesting the implementation. Keep examples synthetic and do not include credentials, personal data, private proxy endpoints, hostname-specific paths, or live scan output.
+
+  - type: checkboxes
+    id: safety-checks
+    attributes:
+      label: Proposal checks
+      options:
+        - label: The proposal preserves local-first operation and does not require telemetry or an account.
+          required: true
+        - label: The proposal can be tested with local mocks or synthetic fixtures.
+          required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user problem should be solved? Describe when it occurs and why the current behavior is insufficient.
+    validations:
+      required: true
+
+  - type: textarea
+    id: desired-outcome
+    attributes:
+      label: Desired outcome
+      description: Describe the expected result from a user's perspective, not only a code-level change.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Describe existing commands, settings, or workarounds and their limitations.
+    validations:
+      required: false
+
+  - type: dropdown
+    id: affected-area
+    attributes:
+      label: Primary area
+      options:
+        - GUI
+        - CLI
+        - Collection and sources
+        - Scanning and reputation
+        - Results and export
+        - Privacy and security
+        - Documentation and developer experience
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: privacy-security
+    attributes:
+      label: Privacy and security impact
+      description: Identify any new local data, outbound request, credential risk, trust boundary, or retention requirement. Use "None" when not applicable.
+    validations:
+      required: true
+
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Compatibility and migration
+      description: State expected behavior on Python 3.11 and 3.12 and supported operating systems. Explain whether existing profiles, databases, or exports need migration.
+    validations:
+      required: false
+
+  - type: textarea
+    id: test-plan
+    attributes:
+      label: Local test plan
+      description: List deterministic unittest coverage using temporary data and local HTTP/DNS mocks. Do not propose live proxy or network scans.
+    validations:
+      required: true
+
+  - type: textarea
+    id: documentation
+    attributes:
+      label: Documentation impact
+      description: Identify README, security, privacy, contributing, or changelog updates required for the feature.
+    validations:
+      required: false

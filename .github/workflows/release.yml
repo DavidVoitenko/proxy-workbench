@@ -1,0 +1,41 @@
+name: Source release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  source-archive:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned dependencies
+        run: python -m pip install --requirement requirements.txt
+      - name: Run local mock tests
+        env:
+          ALL_PROXY: ''
+          HTTP_PROXY: ''
+          HTTPS_PROXY: ''
+          NO_PROXY: 127.0.0.1,localhost
+        run: python -m unittest discover -s tests -v
+      - name: Build reproducible source archive and checksum
+        run: |
+          mkdir -p dist
+          git archive --format=tar.gz --prefix=proxy-workbench/ -o "dist/proxy-workbench-${GITHUB_REF_NAME}.tar.gz" HEAD
+          sha256sum "dist/proxy-workbench-${GITHUB_REF_NAME}.tar.gz" > "dist/proxy-workbench-${GITHUB_REF_NAME}.tar.gz.sha256"
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/proxy-workbench-*.tar.gz
+            dist/proxy-workbench-*.tar.gz.sha256

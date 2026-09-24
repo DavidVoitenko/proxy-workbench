@@ -1,4 +1,48 @@
-# Proxy Workbench 1.1.0
+# Proxy Workbench 1.2.0
+
+> **Status:** public source-only beta. The project measures reachability and latency; it does not promise anonymity, safety, or stable availability of third-party proxies.
+
+A local, privacy-conscious workbench for collecting public proxy candidates, checking them against user-selected HTTP(S) services, filtering local denylist rules, and recording optional DNSBL reputation signals. The interface runs on `127.0.0.1`; there is no account system, telemetry, advertising SDK, or cloud backend.
+
+## English overview
+
+Proxy Workbench is a small Python 3.11+ tool for repeatable proxy benchmarking. It streams editable public source lists, validates HTTP/HTTPS/CONNECT and SOCKS5 candidates, runs several local measurements per candidate, supports resumable profiles, and exports TXT/CSV/JSON results. It is designed for engineering experiments and defensive quality checks, not for bypassing access controls or hiding online identity.
+
+**Responsible use:** use only sources and endpoints you are allowed to test, respect provider terms and applicable law, and do not send credentials through untrusted public proxies. See [SECURITY.md](SECURITY.md) and [PRIVACY.md](PRIVACY.md).
+
+## Data flow
+
+```text
+editable source URLs / local TXT
+              │
+              ▼
+       candidate normalization
+              │
+              ▼
+     local denylist / DNSBL ──► clean | listed | unknown
+              │
+              ▼
+       HTTP(S) checks via proxy
+              │
+              ▼
+   SQLite profile + TXT/CSV/JSON export
+```
+
+The GUI is loopback-only. Source hosts, DNS resolvers, the tested proxy, and the tested service each observe different parts of a request. The `data/` directory is local, ignored by Git, and may contain URLs, proxy addresses, timings, headers, and results; protect or delete it according to your own policy.
+
+## What is included
+
+- resumable CLI and local browser GUI;
+- all-service checks with status, body substring, and SHA-256 conditions;
+- bounded worker queue, explicit stop/resume, and profile-aware exports;
+- local IP/CIDR/proxy denylist and optional user-selected DNSBL zones;
+- neutral request profiles and explicit safe-header policy;
+- local mock-based tests and cross-platform CI;
+- MIT license, security policy, privacy policy, contribution guide, and changelog.
+
+## Project status and roadmap
+
+The current public line is a feature-complete development snapshot. The next release gate is a clean cross-platform CI run, reproducible source archive/checksum, and a reviewed release tag. Planned hardening work includes stricter source-fetch limits, crash-safe export generations, explicit local-data cleanup, and large-result GUI coverage.
 
 Самостоятельный сборщик и проверяльщик публичных прокси. Папку можно перенести отдельно: исходный проект, его аккаунты и runtime не нужны. Требуется Python 3.11+ и доступ в интернет для установки зависимости.
 
@@ -35,7 +79,7 @@
 ./run.sh run
 ```
 
-Первый запуск создаст `.venv` и установит зависимость. Затем загрузит публичные списки из `sources.json`, удалит дубликаты и проверит **все** адреса. Число кандидатов зависит от источников: 190 тысяч не гарантированы. Нет ограничения на количество проверяемых адресов, общего таймера прохода или остановки при заполнении пула. Фильтры по стране, ChatGPT и инвойсам не выполняются; отдельно доступны локальный denylist и опциональные DNSBL-сигналы.
+Первый запуск создаст `.venv` и установит зависимость. Launcher сохраняет SHA-256 `requirements.txt` и повторно обновляет окружение при изменении зависимостей. Затем загрузит публичные списки из `sources.json`, удалит дубликаты и проверит **все** адреса. Число кандидатов зависит от источников: 190 тысяч не гарантированы. Нет ограничения на количество проверяемых адресов, общего таймера прохода или остановки при заполнении пула. Фильтры по стране, ChatGPT и инвойсам не выполняются; отдельно доступны локальный denylist и опциональные DNSBL-сигналы.
 
 По умолчанию: HTTPS-запрос к `https://example.com/`, 3 независимых замера на адрес, таймаут 8 секунд на запрос, 128 параллельных проверок, до 100 стартов запросов/секунду. Нужны успешные ответы в двух из трёх попыток. При ограничении файловых дескрипторов число воркеров автоматически снижается.
 
@@ -70,7 +114,7 @@ python -m venv .venv
 - `statuses`: допустимые коды, по умолчанию 200–299;
 - `contains`: строка, которая должна присутствовать в теле ответа в UTF-8;
 - `sha256`: ожидаемый SHA-256 полного тела ответа, необязательно;
-- `headers`: заголовки запроса, необязательно; сохраняются локально и не выгружаются, но передаются через проверяемый публичный прокси. Credential-like заголовки (`Authorization`, cookies, API keys и т. п.) намеренно отклоняются;
+- `headers`: необязательные безопасные HTTP-заголовки (`Accept*`, `Cache-Control`, `Pragma`, `User-Agent`, `X-Request-ID`, `X-Client-Version`); произвольные credential-like заголовки отклоняются;
 - `request_profile`: необязательный нейтральный пресет `workbench`, `standard` или `minimal`;
 - `reputation`: необязательные параметры локального denylist и DNSBL (`local_enabled`, `dnsbl_enabled`, `dnsbl_zones`, `timeout`, `strict`).
 
@@ -115,6 +159,16 @@ python -m venv .venv
 
 `speed` сортирует по медиане времени успешного полного запроса, включая соединение и TLS. `quality` сортирует по формуле `100 × минимальная успешность среди targets / (1 + (медиана + стандартное отклонение) / 1000)`. Время указано в миллисекундах. Это текущая оценка доступности и задержки, не измерение пропускной способности в Мбит/с и не гарантия анонимности. Для осмысленного сравнения используйте одинаковый профиль.
 
+## Очистка локальных данных
+
+Удалить базу, профили, экспорты и runtime-отчёты можно явно:
+
+```sh
+./run.sh clear-data --yes
+```
+
+Команда не удаляет `gui-settings.json` и `denylist.txt`, если они уже настроены. Экспорт хранит crash-safe generation-каталоги и автоматически оставляет только последние три; перед удалением убедитесь, что процессы GUI и CLI остановлены. Резервные копии и browser storage приложение не очищает.
+
 ## Полный проход и продолжение
 
 ```sh
@@ -151,7 +205,35 @@ URL, содержимое, заголовки, request-профиль, поли�
 
 База накапливает уникальные адреса. `--no-sources` отключает загрузку, но не удаляет ранее собранные адреса: для полностью отдельного списка используйте новую `--data`.
 
-Списки читаются потоково без лимита количества строк и без обрезки первых N адресов. На загрузку текстового источника или одной страницы API отведено 60 секунд (`--source-timeout`), с одним повтором при ошибке. Ошибки, незавершённые загрузки, исходные и отклонённые строки отражаются в `data/sources-report.json`; уже прочитанные валидные адреса остаются в базе. Полный обход означает проверку всех собранных кандидатов, а не гарантию доступности всех внешних источников.
+Списки читаются потоково с безопасными пределами по умолчанию: до 8 MiB на один удалённый источник, 64 KiB на строку, 100 000 кандидатов на источник и 5 redirect hops. Параметры меняются через `--source-max-bytes`, `--source-max-line-bytes`, `--source-max-candidates` и `--source-max-redirects`. На загрузку текстового источника или одной страницы API отведено 60 секунд (`--source-timeout`), с одним повтором при ошибке. Ошибки, незавершённые загрузки, исходные и отклонённые строки отражаются в `data/sources-report.json`; уже прочитанные валидные адреса остаются в базе. Полный обход означает проверку всех собранных кандидатов, а не гарантию доступности всех внешних источников.
+
+По умолчанию источники не должны указывать на loopback, private/link-local/reserved/metadata адреса. Для локальных mock-сервисов есть явный `--allow-private-sources`; этот флаг небезопасен для обычного запуска. Автоматические redirects отключены, каждый hop проверяется, а выбранный DNS address закрепляется в transport на время запроса.
+
+## Структура проекта
+
+- `proxytool.py` — CLI, collector, scanner, reputation и export pipeline.
+- `gui.py` / `ui/` — loopback-only browser interface.
+- `reputation.py` — denylist/DNSBL verdicts.
+- `branding.py` — versioned neutral request profiles.
+- `tests/` — isolated unit and local mock tests.
+- `.github/` — CI and issue templates.
+- `data/` — ignored local settings, databases, reports and exports.
+
+## Если что-то не запускается
+
+- **Port/Gatekeeper:** запускайте `Start.command` или `Start.bat`; при первом старте macOS может запросить разрешение на запуск локального Python.
+- **Python version:** требуется Python 3.11+; удалите только `.venv/`, затем запустите launcher снова.
+- **Stale dependencies:** launcher сравнивает digest `requirements.txt` и переустанавливает их при изменении.
+- **Data folder is busy:** остановите GUI и CLI-процессы перед `clear-data`; активные симлинки других проектов не трогайте.
+- **No results:** проверьте source report, denylist, DNSBL-зоны и доступность выбранного service endpoint.
+
+## Как продвигать open-source проект
+
+1. Опубликуйте первый проверенный release с changelog, screenshots и коротким demo video.
+2. Добавьте topics и описание GitHub, используйте Discussions для вопросов, а Issues — только для воспроизводимых багов.
+3. Поделитесь не рекламным сообщением, а проверяемым техническим кейсом: что измеряется, какие ограничения и как воспроизвести на local mock.
+4. Подходящие каналы: GitHub topics/releases, Lobsters, r/Python, r/networking, Hacker News при наличии сильной инженерной истории, тематические Telegram/Discord-сообщества.
+5. Не обещайте анонимность и не публикуйте реальные proxy endpoints, credentials или пользовательские данные.
 
 ## Проверки разработки
 

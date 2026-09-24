@@ -5,11 +5,13 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from branding import merge_headers
 import proxytool as p
 from reputation import Denylist, make_policy, result_allowed, screen_proxy
+from maintenance import clear_runtime
 
 
 def config(targets=1):
@@ -61,7 +63,7 @@ class WorkbenchTests(unittest.IsolatedAsyncioTestCase):
         report = p.export(self.db, profile, self.home / 'out', top=137, min_success=1)
         self.assertTrue(report['complete'])
         self.assertEqual(report['exported'], 137)
-        self.assertEqual(len((self.home/'out/proxies.txt').read_text().splitlines()), 137)
+        self.assertEqual(len((self.home/'out/proxies.txt').read_text(encoding='utf-8').splitlines()), 137)
 
     async def test_interruption_resume_and_profile_isolation(self):
         self.db.executemany('INSERT INTO candidates VALUES (?)', ((f'http://11.0.0.{i}:80',) for i in range(12)))
@@ -137,6 +139,29 @@ class WorkbenchTests(unittest.IsolatedAsyncioTestCase):
             result = await p.request_once(proxy, cfg['targets'][0], cfg, p.Rate(0))
             self.assertEqual(result['error'], 'HASH_MISMATCH')
 
+    async def test_source_limits_and_safe_target_headers(self):
+        args = SimpleNamespace(attempts=1, timeout=1, max_bytes=1024)
+        with self.assertRaises(ValueError):
+            p.validate_targets([dict(url='https://example.org/', headers={'Authorization':'secret'})], args)
+        with self.assertRaises(p.SourceFetchError):
+            await p._validate_source_destination('http://127.0.0.1:80')
+        self.assertEqual(p._parse_source_url('https://example.org/list')[2], 443)
+
+    async def test_source_limits_reject_oversized_response(self):
+        payload = b'11.1.1.1:80\n'
+        async def handler(reader, writer):
+            await reader.readuntil(b'\r\n\r\n')
+            writer.write(f'HTTP/1.1 200 OK\r\nContent-Length: {len(payload)}\r\n\r\n'.encode()+payload)
+            await writer.drain()
+            writer.close()
+            await writer.wait_closed()
+        server = await asyncio.start_server(handler, '127.0.0.1', 0)
+        async with server:
+            url = f'http://127.0.0.1:{server.sockets[0].getsockname()[1]}/list'
+            report = await p.collect(self.db, [url], [], allow_private_sources=True, max_source_bytes=4)
+        self.assertEqual(report['sources'][0]['error'], 'SOURCE_TOO_LARGE')
+        self.assertEqual(report['unique'], 0)
+
     async def test_collect_streams_deduplicates_and_reports(self):
         payload = b'11.1.1.1:80\n11.1.1.1:80\nsocks5://11.2.2.2:1080\n127.0.0.1:80\nuser:secret@11.1.1.2:80\n'
         async def handler(reader, writer):
@@ -148,7 +173,7 @@ class WorkbenchTests(unittest.IsolatedAsyncioTestCase):
         server = await asyncio.start_server(handler, '127.0.0.1', 0)
         async with server:
             url = f'http://127.0.0.1:{server.sockets[0].getsockname()[1]}/list'
-            result = await p.collect(self.db, [url, url], [])
+            result = await p.collect(self.db, [url, url], [], allow_private_sources=True)
         self.assertEqual(result['unique'], 2)
         self.assertEqual(result['raw_rows'], 5)
         self.assertEqual(result['sources'][0]['invalid'], 2)
@@ -173,9 +198,9 @@ class WorkbenchTests(unittest.IsolatedAsyncioTestCase):
         out = self.home/'out'
         report = p.export(self.db, 'test', out, min_success=2/3)
         self.assertEqual(report['exported'], 2)
-        self.assertEqual(json.loads((out/'ranked.json').read_text())[0]['proxy'], stable['proxy'])
+        self.assertEqual(json.loads((out/'ranked.json').read_text(encoding='utf-8'))[0]['proxy'], stable['proxy'])
         p.export(self.db, 'test', out, sort='speed', min_success=2/3)
-        self.assertEqual(json.loads((out/'ranked.json').read_text())[0]['proxy'], fast['proxy'])
+        self.assertEqual(json.loads((out/'ranked.json').read_text(encoding='utf-8'))[0]['proxy'], fast['proxy'])
         self.assertEqual(p.export(self.db, 'test', out, min_success=1)['exported'], 1)
         self.assertEqual(p.export(self.db, 'test', out, min_success=0)['exported'], 2)
 
@@ -199,7 +224,7 @@ class WorkbenchTests(unittest.IsolatedAsyncioTestCase):
         server=await asyncio.start_server(handler,'127.0.0.1',0)
         async with server:
             base=f'http://127.0.0.1:{server.sockets[0].getsockname()[1]}'
-            report=await p.collect(self.db,['socks5 '+base+'/socks','geonode '+base+'/api?limit=1'],[])
+            report=await p.collect(self.db,['socks5 '+base+'/socks','geonode '+base+'/api?limit=1'],[],allow_private_sources=True)
         self.assertEqual(report['unique'],7)
         self.assertTrue(all(r['complete'] for r in report['sources']))
         geo=next(r for r in report['sources'] if r['format']=='geonode')
@@ -273,7 +298,33 @@ class WorkbenchTests(unittest.IsolatedAsyncioTestCase):
         report = p.export(self.db, 'fixture', self.home/'clean-out', min_success=1, denylist=Denylist.empty())
         self.assertEqual(report['exported'], 1)
         self.assertEqual(report['reputation']['counts']['listed'], 1)
-        self.assertEqual(json.loads((self.home/'clean-out'/'ranked.json').read_text())[0]['reputation_status'], 'clean')
+        self.assertEqual(json.loads((self.home/'clean-out'/'ranked.json').read_text(encoding='utf-8'))[0]['reputation_status'], 'clean')
+        self.assertTrue((self.home/'clean-out'/'current.json').exists())
+
+    def test_export_generation_retention_is_bounded(self):
+        root = self.home/'exports'/'generations'
+        root.mkdir(parents=True)
+        for index in range(5):
+            path = root/f'.generation-{index}'
+            path.mkdir()
+            (path/'status.json').write_text('{}', encoding='utf-8')
+        removed, failed, remaining = p.prune_export_generations(self.home/'exports', keep=2)
+        self.assertEqual(len(removed), 3)
+        self.assertEqual(failed, [])
+        self.assertEqual(remaining, 2)
+        self.assertEqual(len(list(root.iterdir())), 2)
+
+    def test_clear_runtime_preserves_user_settings(self):
+        (self.home/'gui-settings.json').write_text('{}', encoding='utf-8')
+        (self.home/'denylist.txt').write_text('11.0.0.0/24\n', encoding='utf-8')
+        (self.home/'proxies.sqlite3').write_bytes(b'db')
+        (self.home/'exports').mkdir()
+        (self.home/'exports'/'proxies.txt').write_text('11.0.0.1:80\n', encoding='utf-8')
+        removed = clear_runtime(self.home, keep_lock=True)
+        self.assertIn('proxies.sqlite3', removed)
+        self.assertTrue((self.home/'gui-settings.json').exists())
+        self.assertTrue((self.home/'denylist.txt').exists())
+        self.assertFalse((self.home/'exports').exists())
 
     def test_normalization(self):
         self.assertEqual(p.normalize('https://11.1.1.1:80'), 'https://11.1.1.1:80')

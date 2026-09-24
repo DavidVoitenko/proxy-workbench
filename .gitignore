@@ -2,6 +2,10 @@ data/
 .venv/
 __pycache__/
 *.pyc
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
 
 # Local environments, private settings and generated artifacts
 .env

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+from contextlib import asynccontextmanager
 import csv
 import hashlib
 import ipaddress
@@ -12,22 +13,289 @@ import math
 import os
 from pathlib import Path
 import re
+import shutil
+import socket
 import sqlite3
 import ssl
 import statistics
 import sys
+import tempfile
 import time
-from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
+from urllib.parse import urlsplit, urlunsplit, urljoin, parse_qsl, urlencode
 
 import httpx
 
-from branding import DEFAULT_REQUEST_PROFILE, PRODUCT_NAME, REQUEST_PROFILES, merge_headers, profile_digest, validate_profile
+from branding import DEFAULT_REQUEST_PROFILE, PRODUCT_NAME, PRODUCT_VERSION, REQUEST_PROFILES, merge_headers, profile_digest, validate_profile
 from reputation import Denylist, make_policy, result_allowed, screen_proxy, verdict_blocks
+from maintenance import clear_runtime, exclusive_lock
 
 ROOT = Path(__file__).resolve().parent
 TLS = ssl.create_default_context()
 SCHEMES = {'http', 'https', 'socks5', 'socks5h'}
-SENSITIVE_HEADERS = {'authorization', 'proxy-authorization', 'cookie', 'set-cookie', 'x-api-key', 'api-key', 'x-auth-token'}
+SAFE_TARGET_HEADERS = {'accept', 'accept-encoding', 'accept-language', 'cache-control', 'pragma', 'user-agent', 'x-client-version', 'x-request-id'}
+
+# Source fetching is deliberately bounded before a response is handed to a parser.
+# These defaults are finite so a public list cannot consume unbounded memory or CPU.
+DEFAULT_SOURCE_MAX_BYTES = 8 * 1024 * 1024
+DEFAULT_SOURCE_MAX_LINE_BYTES = 64 * 1024
+DEFAULT_SOURCE_MAX_CANDIDATES = 100_000
+DEFAULT_SOURCE_MAX_REDIRECTS = 5
+MAX_SOURCE_BYTES = 512 * 1024 * 1024
+MAX_SOURCE_LINE_BYTES = 16 * 1024 * 1024
+MAX_SOURCE_CANDIDATES = 10_000_000
+MAX_SOURCE_REDIRECTS = 20
+SOURCE_REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
+SOURCE_METADATA_HOSTS = frozenset({
+    'metadata', 'metadata.google.internal', 'metadata.goog', 'metadata.azure.internal',
+    'metadata.azure.com', 'metadata.oraclecloud.com', 'metadata.tencentyun.com',
+    'metadata.hetzner.cloud', 'metadata.platformequinix.com', 'metadata.packet.net',
+    'instance-data', 'instance-data.ec2.internal', 'host.docker.internal',
+    'kubernetes.default.svc', '169.254.169.254', '168.63.129.16',
+    '169.254.0.23', '169.254.42.42', '169.254.170.2', '100.100.100.200',
+    '147.75.207.207',
+})
+
+
+class SourceFetchError(ValueError):
+    """A source error that can be recorded without exposing response contents."""
+
+    def __init__(self, code, *, retryable=False):
+        super().__init__(code)
+        self.code = code
+        self.retryable = retryable
+
+
+class PinnedSourceTransport(httpx.AsyncBaseTransport):
+    """Resolve once, then connect to the validated IP while preserving Host/SNI."""
+
+    def __init__(self, address, hostname):
+        self.address = address
+        self.hostname = hostname
+        self.transport = httpx.AsyncHTTPTransport(verify=TLS)
+
+    async def handle_async_request(self, request):
+        headers = dict(request.headers)
+        host_header = f'[{self.hostname}]' if ':' in self.hostname else self.hostname
+        port = request.url.port
+        if port and port not in (80, 443):
+            host_header += f':{port}'
+        headers['Host'] = host_header
+        url = request.url.copy_with(host=self.address)
+        extensions = dict(request.extensions)
+        if request.url.scheme == 'https':
+            extensions['sni_hostname'] = self.hostname
+        pinned = httpx.Request(request.method, url, headers=headers, stream=request.stream, extensions=extensions)
+        return await self.transport.handle_async_request(pinned)
+
+    async def aclose(self):
+        await self.transport.aclose()
+
+
+def _source_ip_literal(value):
+    try:
+        return ipaddress.ip_address(value)
+    except ValueError:
+        try:
+            return ipaddress.ip_address(socket.inet_aton(value))
+        except (OSError, TypeError, ValueError, OverflowError):
+            return None
+
+
+def _parse_source_url(value):
+    """Parse and syntactically validate an HTTP(S) source URL."""
+    if not isinstance(value, str):
+        raise ValueError('нужен HTTP/HTTPS URL')
+    raw = value.strip()
+    if not raw or '\\' in raw or any(ord(char) < 0x20 or ord(char) == 0x7f or char.isspace() for char in raw):
+        raise ValueError('некорректный URL')
+    try:
+        parsed = urlsplit(raw)
+        hostname = parsed.hostname
+        port = parsed.port
+        username = parsed.username
+        password = parsed.password
+    except (TypeError, ValueError):
+        raise ValueError('некорректный URL или порт') from None
+    if parsed.scheme not in ('http', 'https') or not hostname or username is not None or password is not None:
+        raise ValueError('нужен HTTP/HTTPS URL без логина и пароля')
+    if '#' in raw or parsed.fragment:
+        raise ValueError('fragment в URL источника запрещен')
+
+    # urlsplit accepts an empty explicit port (for example ``host:``); reject it
+    # instead of silently treating it as the scheme default.
+    authority = parsed.netloc.rsplit('@', 1)[-1]
+    if authority.startswith('['):
+        closing = authority.find(']')
+        suffix = authority[closing + 1:] if closing >= 0 else ''
+        if closing < 0 or suffix == ':' or (suffix and not suffix.startswith(':')):
+            raise ValueError('некорректный порт')
+    elif authority.count(':') == 1 and authority.endswith(':'):
+        raise ValueError('некорректный порт')
+
+    if hostname.startswith('.') or '..' in hostname:
+        raise ValueError('некорректный hostname')
+    host = hostname[:-1].lower() if hostname.endswith('.') else hostname.lower()
+    if not host or '%' in host:
+        raise ValueError('некорректный hostname')
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        if any(char in host for char in '[]:'):
+            raise ValueError('некорректный hostname') from None
+        try:
+            host = host.encode('idna').decode('ascii').lower()
+        except (UnicodeError, ValueError):
+            raise ValueError('некорректный hostname') from None
+    if not host or len(host) > 253:
+        raise ValueError('слишком длинный hostname')
+    effective_port = port if port is not None else (443 if parsed.scheme == 'https' else 80)
+    if not 1 <= effective_port <= 65535:
+        raise ValueError('некорректный порт')
+    return parsed, host, effective_port
+
+
+def _is_blocked_source_ip(value):
+    try:
+        address = ipaddress.ip_address(str(value).split('%', 1)[0])
+    except (TypeError, ValueError):
+        return True
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
+        address = address.ipv4_mapped
+    return (address.is_loopback or address.is_private or address.is_link_local
+            or address.is_reserved or address.is_unspecified or address.is_multicast
+            or getattr(address, 'is_site_local', False) or not address.is_global)
+
+
+def _is_blocked_source_hostname(host):
+    host = host.rstrip('.').lower()
+    return (host in SOURCE_METADATA_HOSTS or host == 'localhost' or host.endswith('.localhost')
+            or host.endswith(('.local', '.internal', '.lan', '.home.arpa')))
+
+
+async def _validate_source_destination(value, allow_private=False):
+    """Validate a source URL and all addresses returned for its hostname."""
+    try:
+        parsed, host, port = _parse_source_url(value)
+    except ValueError as exc:
+        raise SourceFetchError('SOURCE_URL_INVALID') from exc
+    if allow_private:
+        return parsed, host, port, None
+    if _is_blocked_source_hostname(host):
+        raise SourceFetchError('SOURCE_PRIVATE_DESTINATION')
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        alternate = _source_ip_literal(host)
+        if alternate is not None:
+            # Do not let alternate numeric IPv4 spellings diverge between the
+            # validator and httpx/libc URL parsers.
+            if _is_blocked_source_ip(alternate):
+                raise SourceFetchError('SOURCE_PRIVATE_DESTINATION')
+            raise SourceFetchError('SOURCE_URL_INVALID')
+        address = None
+    if address is not None:
+        if _is_blocked_source_ip(address):
+            raise SourceFetchError('SOURCE_PRIVATE_DESTINATION')
+        return parsed, host, port, str(address)
+    try:
+        infos = await asyncio.get_running_loop().getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except (OSError, ValueError) as exc:
+        raise SourceFetchError('SOURCE_DNS_ERROR', retryable=True) from exc
+    addresses = [entry[4][0] for entry in infos if entry[4]]
+    if not addresses or any(_is_blocked_source_ip(address) for address in addresses):
+        raise SourceFetchError('SOURCE_PRIVATE_DESTINATION' if addresses else 'SOURCE_DNS_ERROR', retryable=not addresses)
+    return parsed, host, port, str(addresses[0])
+
+
+@asynccontextmanager
+async def _source_stream(client, url, allow_private=False):
+    _, hostname, _, address = await _validate_source_destination(url, allow_private)
+    if address is None:
+        async with client.stream('GET', url) as response:
+            yield response
+        return
+    transport = PinnedSourceTransport(address, hostname)
+    pinned_client = httpx.AsyncClient(transport=transport, trust_env=False, verify=TLS,
+                                       follow_redirects=False, timeout=15)
+    try:
+        async with pinned_client.stream('GET', url) as response:
+            yield response
+    finally:
+        await pinned_client.aclose()
+
+
+def _source_limit(value, name, *, minimum=1, maximum=None):
+    if isinstance(value, bool) or not isinstance(value, int) or value < minimum or (maximum is not None and value > maximum):
+        raise ValueError(f'{name}: ожидается целое число от {minimum} до {maximum or "∞"}')
+    return value
+
+
+def _declared_response_length(response):
+    try:
+        value = response.headers.get('content-length')
+    except AttributeError:
+        return None
+    if value is None:
+        return None
+    try:
+        length = int(value)
+    except (TypeError, ValueError):
+        return None
+    return length if length >= 0 else None
+
+
+async def _read_bounded_body(response, budget, max_bytes):
+    remaining = max_bytes - budget['used']
+    declared = _declared_response_length(response)
+    if declared is not None and declared > remaining:
+        raise SourceFetchError('SOURCE_TOO_LARGE')
+    body = bytearray()
+    async for chunk in response.aiter_bytes():
+        if len(chunk) > remaining:
+            raise SourceFetchError('SOURCE_TOO_LARGE')
+        body.extend(chunk)
+        budget['used'] += len(chunk)
+        remaining -= len(chunk)
+    return bytes(body)
+
+
+async def _read_bounded_lines(response, budget, max_bytes, max_line_bytes, on_line):
+    remaining = max_bytes - budget['used']
+    declared = _declared_response_length(response)
+    if declared is not None and declared > remaining:
+        raise SourceFetchError('SOURCE_TOO_LARGE')
+    pending = bytearray()
+    chunks = response.aiter_bytes()
+    async for chunk in chunks:
+        if len(chunk) > remaining:
+            raise SourceFetchError('SOURCE_TOO_LARGE')
+        pending.extend(chunk)
+        budget['used'] += len(chunk)
+        remaining -= len(chunk)
+        start = 0
+        while True:
+            newline = pending.find(b'\n', start)
+            carriage_return = pending.find(b'\r', start)
+            positions = [position for position in (newline, carriage_return) if position >= 0]
+            if not positions:
+                if len(pending) - start > max_line_bytes:
+                    raise SourceFetchError('SOURCE_LINE_TOO_LARGE')
+                break
+            end = min(positions)
+            delimiter_length = 1
+            if pending[end:end + 1] == b'\r' and pending[end + 1:end + 2] == b'\n':
+                delimiter_length = 2
+            line = bytes(pending[start:end])
+            start = end + delimiter_length
+            if len(line) > max_line_bytes:
+                raise SourceFetchError('SOURCE_LINE_TOO_LARGE')
+            on_line(line)
+        if start:
+            del pending[:start]
+    if pending:
+        if len(pending) > max_line_bytes:
+            raise SourceFetchError('SOURCE_LINE_TOO_LARGE')
+        on_line(bytes(pending))
 
 
 def normalize(value):
@@ -72,6 +340,56 @@ def atomic(path, content):
     temp.replace(path)
 
 
+EXPORT_GENERATION_RETENTION = 3
+
+
+def current_generation_name(directory):
+    try:
+        manifest = json.loads((Path(directory)/'current.json').read_text(encoding='utf-8'))
+        generation = manifest.get('generation') if isinstance(manifest, dict) else None
+        if isinstance(generation, str) and generation not in ('', '.', '..') and '/' not in generation and '\\' not in generation:
+            return generation
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        pass
+    return None
+
+
+def prune_export_generations(directory, keep=EXPORT_GENERATION_RETENTION, current=None):
+    root = Path(directory)/'generations'
+    if not root.is_dir():
+        return [], [], 0
+    if current is None:
+        current = current_generation_name(directory)
+    entries = [path for path in root.iterdir() if path.is_dir() and path.name.startswith('.generation-')]
+    entries.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+    others = [path for path in entries if path.name != current]
+    keep_others = max(0, keep - (1 if current else 0))
+    removed, failed = [], []
+    for path in others[keep_others:]:
+        try:
+            shutil.rmtree(path)
+            removed.append(path.name)
+        except OSError:
+            failed.append(path.name)
+    remaining = len(entries) - len(removed)
+    return removed, failed, remaining
+
+
+def export_file(directory, name):
+    directory = Path(directory)
+    pointer = directory/'current.json'
+    try:
+        manifest = json.loads(pointer.read_text(encoding='utf-8'))
+        generation = current_generation_name(directory)
+        if generation:
+            candidate = directory/'generations'/generation/name
+            if candidate.is_file():
+                return candidate
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        pass
+    return directory/name
+
+
 def open_db(path):
     path.parent.mkdir(parents=True, exist_ok=True)
     db = sqlite3.connect(path)
@@ -109,13 +427,27 @@ def source_spec(value):
     kind, url = (parts if len(parts) == 2 else ('http', parts[0] if parts else ''))
     if kind not in {'http', 'https', 'socks5', 'socks5h', 'geonode', 'http-fields'}:
         raise ValueError('Неизвестный формат источника.')
-    parsed = urlsplit(url)
-    if parsed.scheme not in ('http', 'https') or not parsed.hostname or parsed.username or parsed.password:
-        raise ValueError('Источник: нужен HTTP/HTTPS URL без логина и пароля.')
+    try:
+        _parse_source_url(url)
+    except ValueError as exc:
+        raise ValueError(f'Источник: {exc}.') from None
     return kind, url
 
 
-async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None):
+async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
+                  allow_private_sources=False,
+                  max_source_bytes=DEFAULT_SOURCE_MAX_BYTES,
+                  max_source_line_bytes=DEFAULT_SOURCE_MAX_LINE_BYTES,
+                  max_source_candidates=DEFAULT_SOURCE_MAX_CANDIDATES,
+                  max_source_redirects=DEFAULT_SOURCE_MAX_REDIRECTS):
+    if not isinstance(allow_private_sources, bool):
+        raise ValueError('allow_private_sources: ожидается bool')
+    max_source_bytes = _source_limit(max_source_bytes, 'max_source_bytes', maximum=MAX_SOURCE_BYTES)
+    max_source_line_bytes = _source_limit(max_source_line_bytes, 'max_source_line_bytes', maximum=MAX_SOURCE_LINE_BYTES)
+    max_source_candidates = _source_limit(max_source_candidates, 'max_source_candidates', maximum=MAX_SOURCE_CANDIDATES)
+    max_source_redirects = _source_limit(max_source_redirects, 'max_source_redirects', minimum=0, maximum=MAX_SOURCE_REDIRECTS)
+    line_limit = min(max_source_line_bytes, max_source_bytes)
+
     reports = []
     total_rows = 0
     denylist = denylist or Denylist.empty()
@@ -146,6 +478,10 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None)
             for line in handle:
                 if not line.strip() or line.lstrip().startswith('#'):
                     continue
+                if len(line.encode('utf-8')) > line_limit:
+                    raise SourceFetchError('SOURCE_LINE_TOO_LARGE')
+                if count >= max_source_candidates:
+                    raise SourceFetchError('SOURCE_CANDIDATE_LIMIT')
                 count += 1
                 outcome = add(line)
                 invalid += outcome == 'invalid'
@@ -155,55 +491,136 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None)
         total_rows += count
         db.commit()
     gate = asyncio.Semaphore(8)
-    async with httpx.AsyncClient(trust_env=False, verify=TLS, follow_redirects=True,
+    async with httpx.AsyncClient(trust_env=False, verify=TLS, follow_redirects=False,
                                  timeout=15) as client:
         async def fetch(index, kind, url):
             nonlocal total_rows
             count = invalid = blocked = pages = attempts = 0
+            candidate_count = 0
+            endpoint_count = 0
+            budget = {'used': 0}
             error = None
             page = 1
             expected_total = None
             signatures = set()
+
+            def consume_candidate():
+                nonlocal candidate_count
+                if candidate_count >= max_source_candidates:
+                    raise SourceFetchError('SOURCE_CANDIDATE_LIMIT')
+                candidate_count += 1
+
+            def consume_line(raw):
+                nonlocal count, invalid, blocked
+                try:
+                    line = raw.decode('utf-8')
+                except UnicodeDecodeError as exc:
+                    raise SourceFetchError('SOURCE_INVALID_UTF8') from exc
+                if not line.strip() or line.lstrip().startswith('#'):
+                    return
+                consume_candidate()
+                count += 1
+                if kind == 'http-fields':
+                    match = re.fullmatch(r"(\d{1,3}(?:\.\d{1,3}){3}:\d{1,5}):[A-Za-z][A-Za-z .'-]*", line.strip())
+                    outcome = add(match[1]) if match else 'invalid'
+                else:
+                    outcome = add(line, kind)
+                invalid += outcome == 'invalid'
+                blocked += outcome == 'blocked'
+
+            def consume_record(record):
+                nonlocal count, invalid, blocked, endpoint_count
+                protocols = []
+                if isinstance(record, dict) and isinstance(record.get('protocols', []), list):
+                    protocols = [protocol for protocol in record['protocols']
+                                 if protocol in ('http', 'https', 'socks5')]
+                if endpoint_count + len(protocols) > max_source_candidates:
+                    raise SourceFetchError('SOURCE_CANDIDATE_LIMIT')
+                consume_candidate()
+                count += 1
+                accepted = False
+                blocked_here = False
+                if isinstance(record, dict):
+                    host = str(record.get('ip', ''))
+                    if ':' in host and not host.startswith('['):
+                        host = '['+host+']'
+                    for protocol in protocols:
+                        # GeoNode https denotes CONNECT capability.
+                        endpoint_count += 1
+                        outcome = add(f"{host}:{record.get('port')}", 'http' if protocol == 'https' else protocol)
+                        accepted = accepted or outcome == 'accepted'
+                        blocked_here = blocked_here or outcome == 'blocked'
+                if not accepted:
+                    blocked += blocked_here
+                    invalid += not blocked_here
+
+            async def request_source(request_url, expected_page=None):
+                current_url = request_url
+                for redirect_count in range(max_source_redirects + 1):
+                    async with _source_stream(client, current_url, allow_private_sources) as response:
+                        status = response.status_code
+                        if status in SOURCE_REDIRECT_STATUSES:
+                            location = response.headers.get('location')
+                            location = location.strip() if isinstance(location, str) else location
+                            if not location:
+                                raise SourceFetchError('SOURCE_REDIRECT_INVALID')
+                            if redirect_count >= max_source_redirects:
+                                raise SourceFetchError('SOURCE_REDIRECT_TOO_MANY')
+                            try:
+                                next_url = urljoin(current_url, location)
+                                current_parsed, _, _ = _parse_source_url(current_url)
+                                next_parsed, _, _ = _parse_source_url(next_url)
+                            except (TypeError, ValueError) as exc:
+                                raise SourceFetchError('SOURCE_URL_INVALID') from exc
+                            if current_parsed.scheme == 'https' and next_parsed.scheme != 'https':
+                                raise SourceFetchError('SOURCE_REDIRECT_DOWNGRADE')
+                            current_url = next_url
+                            continue
+                        if 300 <= status < 400:
+                            raise SourceFetchError('SOURCE_REDIRECT_INVALID')
+                        response.raise_for_status()
+                        if kind == 'geonode':
+                            body = await _read_bounded_body(response, budget, max_source_bytes)
+                            try:
+                                data = json.loads(body.decode('utf-8'))
+                            except UnicodeDecodeError as exc:
+                                raise SourceFetchError('SOURCE_INVALID_UTF8') from exc
+                            except RecursionError as exc:
+                                raise ValueError('Invalid JSON page') from exc
+                            if not isinstance(data, dict) or not isinstance(data.get('data'), list):
+                                raise ValueError('Invalid JSON page')
+                            if int(data.get('page', expected_page)) != expected_page:
+                                raise ValueError('Wrong page returned')
+                            return data
+                        await _read_bounded_lines(response, budget, max_source_bytes, line_limit, consume_line)
+                        return None
+                raise SourceFetchError('SOURCE_REDIRECT_TOO_MANY')
+
             async with gate:
                 while True:
                     data = None
                     succeeded = False
+                    page_url = url
+                    if kind == 'geonode':
+                        parsed = urlsplit(url)
+                        query = dict(parse_qsl(parsed.query))
+                        query.update(page=str(page))
+                        query.setdefault('limit', '500')
+                        page_url = urlunsplit(parsed._replace(query=urlencode(query)))
                     for retry in range(2):
                         attempts += 1
                         try:
                             async with asyncio.timeout(timeout):
-                                if kind == 'geonode':
-                                    parsed = urlsplit(url)
-                                    query = dict(parse_qsl(parsed.query))
-                                    query.update(page=str(page))
-                                    query.setdefault('limit', '500')
-                                    page_url = urlunsplit(parsed._replace(query=urlencode(query)))
-                                    response = await client.get(page_url)
-                                    response.raise_for_status()
-                                    data = response.json()
-                                    if not isinstance(data, dict) or not isinstance(data.get('data'), list):
-                                        raise ValueError('Invalid JSON page')
-                                    if int(data.get('page', page)) != page:
-                                        raise ValueError('Wrong page returned')
-                                else:
-                                    async with client.stream('GET', url) as response:
-                                        response.raise_for_status()
-                                        async for line in response.aiter_lines():
-                                            if not line.strip() or line.lstrip().startswith('#'):
-                                                continue
-                                            count += 1
-                                            if kind == 'http-fields':
-                                                match = re.fullmatch(r"(\d{1,3}(?:\.\d{1,3}){3}:\d{1,5}):[A-Za-z][A-Za-z .'-]*", line.strip())
-                                                outcome = add(match[1]) if match else 'invalid'
-                                            else:
-                                                outcome = add(line, kind)
-                                            invalid += outcome == 'invalid'
-                                            blocked += outcome == 'blocked'
+                                data = await request_source(page_url, page)
                             succeeded = True
                             error = None
                             break
-                        except (httpx.HTTPError, TimeoutError, ValueError) as exc:
-                            error = type(exc).__name__
+                        except asyncio.CancelledError:
+                            raise
+                        except (httpx.HTTPError, TimeoutError, OSError, ValueError, OverflowError) as exc:
+                            error = exc.code if isinstance(exc, SourceFetchError) else type(exc).__name__
+                            if isinstance(exc, SourceFetchError) and not exc.retryable:
+                                break
                             if retry == 0:
                                 await asyncio.sleep(1)
                     if not succeeded:
@@ -221,30 +638,16 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None)
                             break
                         signatures.add(signature)
                         for record in batch:
-                            count += 1
-                            accepted = False
-                            blocked_here = False
-                            if isinstance(record, dict):
-                                host = str(record.get('ip', ''))
-                                if ':' in host and not host.startswith('['):
-                                    host = '['+host+']'
-                                protocols = record.get('protocols', [])
-                                if isinstance(protocols, list):
-                                    for protocol in protocols:
-                                        if protocol in ('http', 'https', 'socks5'):
-                                            # GeoNode https denotes CONNECT capability.
-                                            outcome = add(f"{host}:{record.get('port')}", 'http' if protocol == 'https' else protocol)
-                                            accepted = accepted or outcome == 'accepted'
-                                            blocked_here = blocked_here or outcome == 'blocked'
-                            if not accepted:
-                                blocked += blocked_here
-                                invalid += not blocked_here
+                            consume_record(record)
                         if count >= expected_total:
                             break
                         if not batch:
                             error = 'INCOMPLETE_PAGINATION'
                             break
-                    except (KeyError, ValueError, TypeError):
+                    except SourceFetchError as exc:
+                        error = exc.code
+                        break
+                    except (KeyError, ValueError, TypeError, OverflowError, RecursionError):
                         error = 'INVALID_PAGINATION'
                         break
                     page += 1
@@ -268,7 +671,7 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None)
 
 def target_config(args, denylist=None):
     if args.config:
-        config = json.loads(Path(args.config).read_text())
+        config = json.loads(Path(args.config).read_text(encoding='utf-8'))
     else:
         config = {'targets': [{'url': args.url or 'https://example.com/'}]}
     if not isinstance(config, dict):
@@ -291,6 +694,12 @@ def validate_targets(targets, args, request_profile=None, reputation=None, denyl
         p = urlsplit(t['url'])
         if p.scheme not in ('http', 'https') or not p.hostname or p.username or p.password:
             raise ValueError('target URL: нужен http(s) URL без userinfo')
+        try:
+            port = p.port
+        except ValueError:
+            raise ValueError('target URL: некорректный порт') from None
+        if port is not None and not 1 <= port <= 65535:
+            raise ValueError('target URL: некорректный порт')
         if not isinstance(t.get('method', 'GET'), str):
             raise ValueError('method: ожидается строка')
         t.setdefault('method', 'GET')
@@ -303,8 +712,8 @@ def validate_targets(targets, args, request_profile=None, reputation=None, denyl
         t.setdefault('headers', {})
         if not isinstance(t['headers'], dict) or any(not isinstance(k, str) or not isinstance(v, str) or '\n' in k+v or '\r' in k+v for k, v in t['headers'].items()):
             raise ValueError('headers: ожидается объект со строковыми значениями')
-        if any(name.lower() in SENSITIVE_HEADERS or any(part in name.lower() for part in ('token', 'secret', 'password', 'api-key')) for name in t['headers']):
-            raise ValueError('headers: credential-like заголовки запрещены для публичных прокси')
+        if any(name.lower() not in SAFE_TARGET_HEADERS for name in t['headers']):
+            raise ValueError('headers: разрешены только безопасные HTTP-заголовки без credentials')
         t.setdefault('contains', None)
         t.setdefault('sha256', None)
         if t['contains'] is not None and not isinstance(t['contains'], str):
@@ -524,6 +933,15 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
         active_denylist = None
     if active_denylist is not None and active_denylist.error:
         raise ValueError('Не удалось прочитать локальный denylist; экспорт остановлен.')
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    generations = directory/'generations'
+    generations.mkdir(exist_ok=True)
+    _, failed, remaining = prune_export_generations(directory)
+    if failed and remaining >= EXPORT_GENERATION_RETENTION:
+        raise RuntimeError('Закрытые старые export generations не удаляются; повторите после завершения загрузок.')
+    generation = Path(tempfile.mkdtemp(prefix='.generation-', dir=generations))
+    published = False
     # Keep full samples on disk, including when hundreds of thousands pass.
     db.execute('DROP TABLE IF EXISTS temp.export_rank')
     db.execute('CREATE TEMP TABLE export_rank(proxy TEXT PRIMARY KEY, score REAL, latency REAL, reliability REAL)')
@@ -544,15 +962,14 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
     order = 'e.latency, e.reliability DESC, e.proxy' if sort == 'speed' else 'e.score DESC, e.latency, e.proxy'
     selected = db.execute(f"""SELECT r.payload FROM export_rank e JOIN results r
         ON r.proxy=e.proxy AND r.profile=? ORDER BY {order} LIMIT ?""", (profile, top or -1))
-    directory.mkdir(parents=True, exist_ok=True)
     fields = ['proxy', 'score', 'latency_ms', 'jitter_ms', 'reliability', 'min_target_reliability',
               'successes', 'requests', 'checked_at', 'reputation_status', 'reputation_sources']
     names = ['proxies.txt', 'ranked.json', 'ranked.csv']
     exported = 0
     try:
-        with (directory/'proxies.txt.tmp').open('w', encoding='utf-8') as txt, \
-             (directory/'ranked.json.tmp').open('w', encoding='utf-8') as js, \
-             (directory/'ranked.csv.tmp').open('w', encoding='utf-8', newline='') as csv_file:
+        with (generation/'proxies.txt').open('w', encoding='utf-8') as txt, \
+             (generation/'ranked.json').open('w', encoding='utf-8') as js, \
+             (generation/'ranked.csv').open('w', encoding='utf-8', newline='') as csv_file:
             writer = csv.DictWriter(csv_file, fieldnames=fields, extrasaction='ignore')
             writer.writeheader()
             js.write('[')
@@ -567,29 +984,38 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
                 writer.writerow(row)
                 exported += 1
             js.write('\n]\n')
+        total = db.execute('SELECT count(*) FROM candidates').fetchone()[0]
+        report = dict(profile=profile, candidates=total, checked=checked, pending=total-checked,
+                      passed=passed, local_filtered=local_filtered, exported=exported, complete=checked == total,
+                      generated_at=time.time(), sort=sort, min_success=min_success,
+                      targets=[dict(name=t.get('name', ''), url=public_url(t['url'])) for t in cfg.get('targets', [])],
+                      request_profile=cfg.get('request_profile', 'workbench'),
+                      request_profile_digest=cfg.get('request_profile_digest', ''),
+                      reputation=dict(policy, counts=status_counts), generation=generation.name)
+        atomic(generation/'status.json', json.dumps(report, indent=2) + '\n')
+        atomic(directory/'current.json', json.dumps({'generation':generation.name, 'files':names}, ensure_ascii=False) + '\n')
+        published = True
+        # Keep legacy root filenames for scripts that already consume them.
         for name in names:
-            (directory/(name+'.tmp')).replace(directory/name)
+            temporary = directory/(name+'.tmp')
+            shutil.copyfile(generation/name, temporary)
+            temporary.replace(directory/name)
+        atomic(directory / 'status.json', json.dumps(report, indent=2) + '\n')
+        prune_export_generations(directory, current=generation.name)
     finally:
         selected.close()
-        for name in names:
-            (directory/(name+'.tmp')).unlink(missing_ok=True)
+        if not published:
+            shutil.rmtree(generation, ignore_errors=True)
         db.execute('DROP TABLE temp.export_rank')
         db.commit()
-    total = db.execute('SELECT count(*) FROM candidates').fetchone()[0]
-    report = dict(profile=profile, candidates=total, checked=checked, pending=total-checked,
-                  passed=passed, local_filtered=local_filtered, exported=exported, complete=checked == total, generated_at=time.time(),
-                  sort=sort, min_success=min_success,
-                  targets=[dict(name=t.get('name', ''), url=public_url(t['url'])) for t in cfg.get('targets', [])],
-                  request_profile=cfg.get('request_profile', 'workbench'),
-                  request_profile_digest=cfg.get('request_profile_digest', ''),
-                  reputation=dict(policy, counts=status_counts))
-    atomic(directory / 'status.json', json.dumps(report, indent=2) + '\n')
     return report
 
 
 def parser():
     p = argparse.ArgumentParser(description=f'{PRODUCT_NAME}: сбор и полная проверка публичных прокси под HTTP-сервис')
-    p.add_argument('command', choices=['collect', 'scan', 'run', 'export'])
+    p.add_argument('--version', action='version', version=f'{PRODUCT_NAME} {PRODUCT_VERSION}')
+    p.add_argument('command', choices=['collect', 'scan', 'run', 'export', 'clear-data'])
+    p.add_argument('--yes', action='store_true', help='подтвердить удаление локальных результатов')
     p.add_argument('--progress-file', type=Path, help=argparse.SUPPRESS)
     p.add_argument('--stop-file', type=Path, help=argparse.SUPPRESS)
     p.add_argument('--data', type=Path, default=ROOT / 'data')
@@ -597,6 +1023,16 @@ def parser():
     p.add_argument('--sources', type=Path, default=ROOT / 'sources.json', help='JSON-массив URL текстовых списков')
     p.add_argument('--no-sources', action='store_true')
     p.add_argument('--source-timeout', type=float, default=60)
+    p.add_argument('--allow-private-sources', action='store_true',
+                   help='разрешить loopback/private/link-local/reserved/metadata источники (только для локальных mock-сервисов)')
+    p.add_argument('--source-max-bytes', '--max-source-bytes', dest='source_max_bytes', type=int,
+                   default=DEFAULT_SOURCE_MAX_BYTES, help='максимум байт одного удалённого источника')
+    p.add_argument('--source-max-line-bytes', '--max-source-line-bytes', dest='source_max_line_bytes', type=int,
+                   default=DEFAULT_SOURCE_MAX_LINE_BYTES, help='максимум байт строки списка')
+    p.add_argument('--source-max-candidates', '--max-source-candidates', dest='source_max_candidates', type=int,
+                   default=DEFAULT_SOURCE_MAX_CANDIDATES, help='максимум кандидатов одного источника')
+    p.add_argument('--source-max-redirects', '--max-source-redirects', dest='source_max_redirects', type=int,
+                   default=DEFAULT_SOURCE_MAX_REDIRECTS, help='максимум redirect hops одного запроса')
     target = p.add_mutually_exclusive_group()
     target.add_argument('--url', help='свой URL проверки; по умолчанию https://example.com/')
     target.add_argument('--config', type=Path, help='JSON с targets, HTTP-кодами и проверкой содержимого')
@@ -648,6 +1084,10 @@ def main(argv=None):
             or not math.isfinite(args.rate) or args.rate < 0
             or not math.isfinite(args.timeout) or args.timeout <= 0
             or not math.isfinite(args.source_timeout) or args.source_timeout <= 0
+            or not 1 <= args.source_max_bytes <= MAX_SOURCE_BYTES
+            or not 1 <= args.source_max_line_bytes <= MAX_SOURCE_LINE_BYTES
+            or not 1 <= args.source_max_candidates <= MAX_SOURCE_CANDIDATES
+            or not 0 <= args.source_max_redirects <= MAX_SOURCE_REDIRECTS
             or not 0 <= args.min_success <= 1):
         p.error('Неверные числовые параметры')
     os.umask(0o077)
@@ -669,6 +1109,19 @@ def main(argv=None):
         print('Эта папка data уже используется другим запуском.', file=sys.stderr)
         lock.close()
         return 2
+    if args.command == 'clear-data':
+        if not args.yes:
+            p.error('clear-data требует явного --yes')
+        try:
+            with exclusive_lock(args.data/'gui-instance.lock'):
+                removed = clear_runtime(args.data, keep_lock=True)
+        except RuntimeError as exc:
+            print(str(exc), file=sys.stderr)
+            lock.close()
+            return 2
+        print('Удалено: ' + (', '.join(removed) if removed else 'ничего'), flush=True)
+        lock.close()
+        return 0
     db = open_db(args.data / 'proxies.sqlite3')
     config = None
     profile = None
@@ -688,10 +1141,16 @@ def main(argv=None):
                 collect_denylist = Denylist.empty()
             profile = hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()[:20]
         if args.command in ('collect', 'run'):
-            urls = [] if args.no_sources else json.loads(args.sources.read_text())
+            urls = [] if args.no_sources else json.loads(args.sources.read_text(encoding='utf-8'))
             if not isinstance(urls, list):
                 raise ValueError('sources: ожидается JSON-массив http(s) URL')
-            report = asyncio.run(stoppable(collect(db, urls, args.input, args.source_timeout, update_progress, denylist=collect_denylist), args.stop_file))
+            report = asyncio.run(stoppable(collect(
+                db, urls, args.input, args.source_timeout, update_progress, denylist=collect_denylist,
+                allow_private_sources=args.allow_private_sources,
+                max_source_bytes=args.source_max_bytes,
+                max_source_line_bytes=args.source_max_line_bytes,
+                max_source_candidates=args.source_max_candidates,
+                max_source_redirects=args.source_max_redirects), args.stop_file))
             atomic(args.data / 'sources-report.json', json.dumps(report, indent=2) + '\n')
             print(f'Уникальных кандидатов в базе: {report["unique"]}', flush=True)
         if args.command in ('scan', 'run'):
@@ -711,7 +1170,7 @@ def main(argv=None):
                                        on_progress=update_progress, min_success=args.min_success,
                                        screen=reputation_check, denylist=denylist), args.stop_file))
         elif args.command == 'export':
-            profile = (args.data / 'last-profile.txt').read_text().strip()
+            profile = (args.data / 'last-profile.txt').read_text(encoding='utf-8').strip()
     except (KeyboardInterrupt, asyncio.CancelledError):
         print('Остановлено. Завершённые проверки сохранены; scan продолжит проход.', flush=True)
         code = 130
@@ -723,11 +1182,18 @@ def main(argv=None):
             db.commit()
             if profile and db.execute('SELECT 1 FROM profiles WHERE id=?', (profile,)).fetchone():
                 update_progress(dict(phase='exporting'))
-                report = export(db, profile, args.data / 'exports', top=args.top,
-                                sort=args.sort, min_success=args.min_success, denylist=denylist,
-                                local_override=args.local_denylist)
-                update_progress(report)
-                print(f'Проверено {report["checked"]}/{report["candidates"]}; подходят {report["passed"]}; сохранено {report["exported"]}', flush=True)
+                try:
+                    report = export(db, profile, args.data / 'exports', top=args.top,
+                                    sort=args.sort, min_success=args.min_success, denylist=denylist,
+                                    local_override=args.local_denylist)
+                except Exception as exc:
+                    if not code:
+                        print(f'Ошибка экспорта: {type(exc).__name__}: проверьте data/ и denylist.', file=sys.stderr)
+                        code = 2
+                    update_progress(dict(phase='error', error=type(exc).__name__))
+                else:
+                    update_progress(report)
+                    print(f'Проверено {report["checked"]}/{report["candidates"]}; подходят {report["passed"]}; сохранено {report["exported"]}', flush=True)
         finally:
             update_progress(dict(phase='stopped' if code == 130 else 'error' if code else 'complete', exit_code=code))
             db.close()

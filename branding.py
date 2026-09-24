@@ -11,7 +11,7 @@ import json
 
 PRODUCT_NAME = "Proxy Workbench"
 PRODUCT_ID = "ProxyWorkbench"
-PRODUCT_VERSION = "1.1.0"
+PRODUCT_VERSION = "1.2.0"
 DEFAULT_REQUEST_PROFILE = "workbench"
 
 REQUEST_PROFILES = {
@@ -27,8 +27,6 @@ REQUEST_PROFILES = {
     },
     "minimal": {
         "User-Agent": f"{PRODUCT_ID}/{PRODUCT_VERSION}",
-        "Accept": "*/*",
-        "Accept-Encoding": "identity",
     },
 }
 

@@ -1,0 +1,45 @@
+# Privacy / Приватность
+
+## Scope / Область действия
+
+Эта политика описывает desktop/web-interface версию Proxy Workbench, запускаемую локально из исходников. Она не заменяет privacy policy hosting platform, на которой размещены repository, issues, pull requests и CI artifacts.
+
+## Local data / Локальные данные
+
+Приложение сохраняет настроенные sources, service configuration, denylist, результаты проверок, историю и экспорты локально. Основные runtime-файлы находятся в игнорируемой папке `data/`, включая SQLite database и exports.
+
+Локальное сохранение означает, что данные не отправляются maintainers автоматически, но они могут попасть в резервную копию, screenshot, bug report или archive. Пользователь отвечает за защиту своей копии проекта.
+
+Browser interface может сохранять неперсональные настройки отображения, например выбранную тему, в локальном storage браузера.
+
+## No built-in telemetry / Без встроенной телеметрии
+
+Проект не содержит рекламного SDK, tracking pixel или автоматического сбора usage analytics. Приложение не требует account и не реализует облачную синхронизацию.
+
+## Network disclosure / Раскрытие данных при сетевых операциях
+
+Сеть используется только по команде пользователя:
+
+- источники proxy lists загружаются с указанных в конфигурации серверов; эти серверы видят IP-адрес и метаданные обычного сетевого запроса;
+- проверка service endpoint выполняется через выбранный proxy; proxy может видеть IP-адрес пользователя, destination, timing и переданные headers;
+- проверяемый endpoint видит IP-адрес proxy, а не обязательно IP-адрес пользователя;
+- optional DNSBL lookup обращается к настроенным DNS-серверам и DNSBL-зонам;
+- URL query, fragment и path удаляются из части status/result metadata, но нельзя считать это гарантией отсутствия секретов в любых локальных файлах.
+
+Не передавайте через custom headers, URLs или service configuration credentials и чувствительные данные. Credential-like headers должны отклоняться приложением, но пользователь всё равно должен проверить локальную конфигурацию.
+
+## Issue reports / Публичные сообщения
+
+Issue templates не запрашивают имя, email, account identifiers или machine-specific paths. Maintainers видят всё, что пользователь публикует в открытом issue или pull request. Перед отправкой удалите credentials, персональные данные, локальные пути, hostname и реальные внешние endpoints.
+
+Для чувствительного сообщения используйте приватный maintainer channel; для уязвимостей следуйте `SECURITY.md`.
+
+## Retention and deletion / Хранение и удаление
+
+Приложение не отправляет данные в central service, поэтому автоматического cloud retention нет. Локальные export generations автоматически ограничены последними тремя. Для удаления базовых runtime-результатов можно использовать `clear-data --yes` или кнопку очистки в GUI; настройки и denylist сохраняются. Browser storage и собственные backups приложение не очищает.
+
+После удаления локальных копий отдельные данные могут оставаться в операционной системе, резервных копиях или ранее опубликованных issue и не восстанавливаются приложением.
+
+## Changes / Изменения
+
+Material updates этой политики отражаются в repository history и `CHANGELOG.md`. Вопросы без sensitive content можно задать в public issue; закрытый канал предпочтителен для персональных или security-related данных.

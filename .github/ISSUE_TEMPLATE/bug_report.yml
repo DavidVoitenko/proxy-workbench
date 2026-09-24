@@ -1,0 +1,116 @@
+name: Bug report / Сообщение об ошибке
+description: Report a reproducible problem using sanitized local or synthetic data
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping us fix Proxy Workbench. Use a local mock or synthetic fixture when possible. Do not publish credentials, tokens, account data, private proxy endpoints, real personal data, hostname-specific paths, or live scan results.
+
+  - type: checkboxes
+    id: safety-checks
+    attributes:
+      label: Safety and reproducibility
+      options:
+        - label: I reproduced this with local mocks, synthetic data, or a controlled test endpoint.
+          required: true
+        - label: I removed secrets, personal data, machine-specific paths, hostnames, and private endpoint details from this report.
+          required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Proxy Workbench version
+      description: Release number or short commit identifier.
+      placeholder: "1.1.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: operating-system
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - macOS
+        - Linux
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: python-version
+    attributes:
+      label: Python version
+      description: "Major and minor version, for example 3.11 or 3.12."
+      placeholder: "3.11"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: interface
+    attributes:
+      label: Interface
+      options:
+        - GUI
+        - CLI
+        - Launcher
+        - Background process
+        - Not applicable
+    validations:
+      required: true
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened, and which component was involved?
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps-to-reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Provide the smallest sequence using a local mock or synthetic input. Do not ask maintainers to run a live scan.
+      placeholder: |
+        1. Start the app in a temporary data directory.
+        2. Use a loopback mock endpoint and synthetic proxy fixtures.
+        3. Run the narrowest command that shows the problem.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected-result
+    attributes:
+      label: Expected result
+      description: What should the application do instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual-result
+    attributes:
+      label: Actual result
+      description: Include the exact error or unexpected behavior, without sensitive output.
+    validations:
+      required: true
+
+  - type: textarea
+    id: sanitized-logs
+    attributes:
+      label: Sanitized logs or output
+      description: Optional. Remove custom headers, URL query strings, local absolute paths, hostnames, identifiers, and private endpoint data.
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional context
+      description: Configuration shape, frequency, and whether the issue also occurs in a minimal temporary data directory.
+    validations:
+      required: false
