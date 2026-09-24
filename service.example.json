@@ -1,0 +1,11 @@
+{
+  "targets": [
+    {
+      "url": "https://example.com/",
+      "method": "GET",
+      "statuses": [200],
+      "contains": "Example Domain",
+      "headers": {"User-Agent": "ProxyWorkbench/1.0"}
+    }
+  ]
+}
