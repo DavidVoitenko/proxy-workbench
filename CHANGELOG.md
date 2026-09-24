@@ -4,22 +4,33 @@
 
 ## [Unreleased]
 
+## [1.3.0] — 2026-09-24
+
 ### Added
 
-- English `README.md` with screenshots, feature overview, quick start, FAQ and roadmap; full Russian documentation moved to `README.ru.md`.
+- **Anonymity levels.** Optional judge URL (`--judge-url`, GUI field, config key `anonymity`) rates every working proxy as `transparent`, `anonymous` or `elite`. The machine's own public IP is learned with one direct judge request and kept in memory only.
+- `--min-anonymity any|anonymous|elite` filter for scans, exports and the results table; anonymity column, details and level counts in `status.json`.
+- Per-protocol `host:port` exports: `http.txt`, `https.txt`, `socks5.txt` (also downloadable from the GUI).
+- English interface with an EN/RU toggle next to the theme switch; defaults to the browser language, remembered in `localStorage`, localized number formatting. Server messages and the run log are translated in English mode.
+- English `README.md` with screenshots, feature overview, quick start, FAQ and roadmap; full Russian documentation in `README.ru.md`.
 - Screenshots and social preview image in `docs/assets/` (synthetic data from documentation IP ranges).
 - Pull request template, question issue template, Dependabot configuration, `.editorconfig` and `.gitattributes` (CRLF for `Start.bat`, LF for shell launchers).
-- Pip caching and superseded-run cancellation in CI.
+
+### Changed
+
+- CI caches pip downloads and cancels superseded runs.
+- Profiles without a judge URL keep their previous identity, so existing results stay valid after the upgrade.
+
+## [1.2.0] — 2026-09-24
+
+### Added
 
 - MIT license с нейтральным copyright holder.
 - Public security, privacy, contribution и code of conduct policies.
 - Source-only project metadata с Python 3.11+ и pinned `httpx[socks]` dependency.
 - Cross-platform CI matrix для локальных mock-based unit tests.
 - Structured bug report и feature request issue templates.
-- English translation of the browser GUI with an EN/RU toggle next to the theme switch. The language defaults to the browser locale, is remembered in `localStorage`, and also localizes number formatting. Server-side error messages and the execution log are still Russian only.
 - Bounded source downloads, redirect validation with pinned validated IPs, safe-header policy, crash-safe export generations with bounded retention, on-demand result details, and explicit local-data cleanup.
-
-## [1.2.0] — In development
 
 ### Changed
 

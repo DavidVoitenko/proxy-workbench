@@ -4,9 +4,9 @@
 
 # Proxy Workbench
 
-**Collect free public proxies from 47 open lists, test every one against _your_ services, and keep only the fast, stable and clean ones.**
+**Collect free public proxies from 47 open lists, test every one against _your_ services, and keep only the fast, stable, clean and anonymous ones.**
 
-Local browser GUI + CLI · HTTP / HTTPS (CONNECT) / SOCKS5 · resumable · no accounts, no telemetry
+Local browser GUI (English / Russian) + CLI · HTTP / HTTPS (CONNECT) / SOCKS5 · anonymity levels · resumable · no accounts, no telemetry
 
 ![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)
 ![License: MIT](https://img.shields.io/badge/license-MIT-2ea44f)
@@ -30,7 +30,7 @@ Free proxy lists are everywhere, but most of what they contain is dead, slow, or
 
 - It gathers candidates from dozens of public lists (or your own files) and de-duplicates them.
 - It sends **real HTTP(S) requests through each proxy** to every service you specify — several times — and checks status codes, body text, or even a SHA-256 of the response.
-- It ranks survivors by **median latency, jitter and success rate**, flags **blacklisted IPs** (local denylist + optional DNSBL), and exports TXT / CSV / JSON.
+- It ranks survivors by **median latency, jitter and success rate**, flags **blacklisted IPs** (local denylist + optional DNSBL), rates **anonymity** (transparent / anonymous / elite) and exports TXT / CSV / JSON plus ready-to-use `host:port` lists per protocol.
 
 Everything runs on your machine. The GUI binds to `127.0.0.1` only.
 
@@ -58,11 +58,13 @@ Everything runs on your machine. The GUI binds to `127.0.0.1` only.
 | **Test against your services** | Several targets per profile (up to 20 in the GUI). A proxy passes only if it works for **all** of them. |
 | **Strict success rules** | Allowed status codes, required body substring, expected SHA-256, `GET`/`HEAD`, safe custom headers. Catches captcha and stub pages that still return `200`. |
 | **Repeated measurements** | N attempts per target (default 3), a per-target success threshold (e.g. 2 of 3), median latency and jitter. |
+| **Anonymity levels** | Point it at any echo “judge” page and every working proxy is rated **transparent** (leaks your IP), **anonymous** (reveals itself with `Via` / `X-Forwarded-For`) or **elite**. Filter with one click or `--min-anonymity elite`. |
 | **Cleanliness checks** | Local IP / CIDR / exact-proxy denylist plus optional DNSBL zones. Verdicts: `clean`, `listed`, `local_denied`, `unknown`, with an optional strict mode. |
 | **Built for big lists** | Bounded worker queue, rate limiter, automatic file-descriptor fitting. Tested with 190,000 simulated candidates. |
 | **Stop & resume** | Progress is stored in SQLite. `Ctrl+C` or **Stop** keeps finished work; the same command continues where it left off. |
-| **Ranking & export** | Sort by `quality` or `speed`, export top N (or all) to `proxies.txt`, `ranked.csv`, `ranked.json`. Crash-safe export generations. |
+| **Ranking & export** | Sort by `quality` or `speed`, export top N (or all) to `proxies.txt`, `ranked.csv`, `ranked.json`, plus `http.txt` / `https.txt` / `socks5.txt` in plain `host:port` format for other tools. Crash-safe export generations. |
 | **Safe by default** | Loopback-only GUI with a per-session token, CSRF/Host checks, SSRF-hardened source fetching (no private/metadata IPs, validated redirects, size limits), credential-like headers rejected. |
+| **English & Russian UI** | Switch with the EN/RU button; defaults to your browser language. Dark and light themes. |
 | **Zero setup** | Double-click launcher creates a virtual environment and installs the single dependency (`httpx[socks]`). |
 
 ## 🚀 Quick start
@@ -92,9 +94,10 @@ flowchart LR
     C --> D{"Local denylist /<br/>DNSBL"}
     D -- listed --> X["Excluded"]
     D -- "clean / unknown" --> E["N real requests<br/>per service<br/>through the proxy"]
-    E --> F["SQLite profile<br/>(resumable)"]
+    E --> J["Optional judge:<br/>transparent / anonymous / elite"]
+    J --> F["SQLite profile<br/>(resumable)"]
     F --> G["Rank: quality / speed"]
-    G --> H["proxies.txt · ranked.csv · ranked.json"]
+    G --> H["proxies.txt · ranked.csv · ranked.json<br/>http.txt · https.txt · socks5.txt"]
 ```
 
 **Scoring.** `speed` sorts by median time of a full successful request (connect + TLS + response). `quality` uses
@@ -133,6 +136,9 @@ cp service.example.json data/service.json
 ./run.sh export --top 500 --sort quality
 ./run.sh export --top 0 --sort speed --min-success 1
 
+# Rate anonymity with an echo judge and keep only elite proxies
+./run.sh run --judge-url http://judge.example/azenv.php --min-anonymity elite
+
 # Tune performance and cleanliness
 ./run.sh run --workers 256 --rate 100 --timeout 8 --attempts 3
 ./run.sh run --dnsbl --dnsbl-zone bl.example.org --strict-clean
@@ -148,6 +154,7 @@ cp service.example.json data/service.json
 {
   "request_profile": "workbench",
   "reputation": { "local_enabled": true, "dnsbl_enabled": false, "dnsbl_zones": [], "timeout": 2.5, "strict": false },
+  "anonymity": { "judge_url": "http://judge.example/azenv.php" },
   "targets": [
     {
       "url": "https://example.com/",
@@ -170,6 +177,7 @@ cp service.example.json data/service.json
 | `headers` | Safe headers only: `Accept*`, `Cache-Control`, `Pragma`, `User-Agent`, `X-Request-ID`, `X-Client-Version`. |
 | `request_profile` | `workbench`, `standard` or `minimal` — neutral User-Agent/Accept presets. |
 | `reputation` | Local denylist and DNSBL policy. |
+| `anonymity.judge_url` | Optional echo endpoint for anonymity levels (see [FAQ](#-faq)). |
 
 </details>
 
@@ -190,7 +198,7 @@ Remote lists are streamed with limits (8 MiB, 64 KiB per line, 100,000 candidate
 <details>
 <summary><b>All CLI options</b></summary>
 
-Run `./run.sh --help` for the complete list: `--input`, `--sources`, `--no-sources`, `--source-timeout`, `--url`, `--config`, `--request-profile`, `--attempts`, `--timeout`, `--workers`, `--rate`, `--max-bytes`, `--denylist-file`, `--local-denylist/--no-local-denylist`, `--dnsbl`, `--dnsbl-zone`, `--reputation-timeout`, `--strict-clean`, `--recheck`, `--top`, `--sort`, `--min-success`, `--data`.
+Run `./run.sh --help` for the complete list: `--input`, `--sources`, `--no-sources`, `--source-timeout`, `--url`, `--config`, `--request-profile`, `--attempts`, `--timeout`, `--workers`, `--rate`, `--max-bytes`, `--denylist-file`, `--local-denylist/--no-local-denylist`, `--dnsbl`, `--dnsbl-zone`, `--reputation-timeout`, `--strict-clean`, `--judge-url`, `--min-anonymity`, `--recheck`, `--top`, `--sort`, `--min-success`, `--data`.
 
 </details>
 
@@ -201,7 +209,7 @@ Everything is written to the git-ignored `data/` folder:
 | Path | Content |
 | --- | --- |
 | `data/proxies.sqlite3` | candidates, profiles and every measurement |
-| `data/exports/` | `proxies.txt`, `ranked.csv`, `ranked.json`, `status.json` |
+| `data/exports/` | `proxies.txt`, `ranked.csv`, `ranked.json`, `http.txt`, `https.txt`, `socks5.txt`, `status.json` |
 | `data/sources-report.json` | per-source rows, rejects and errors |
 | `data/denylist.txt` | your IP / CIDR / proxy rules (`#` comments allowed) |
 | `data/gui-settings.json` | GUI settings |
@@ -227,6 +235,18 @@ It depends on how many candidates respond. The worst case — ~190,000 dead addr
 **Why did a proxy that works in my browser fail here?**
 Redirects are not followed, TLS certificates are verified, and each target must pass on its own threshold. Check **Details** for the exact error of every attempt.
 
+**What do transparent / anonymous / elite mean, and which judge should I use?**
+A *judge* is any page that echoes back the IP and headers it received — for example an `httpbin`-style `/get` endpoint or an `azenv.php` script (ideally one you host yourself). Proxy Workbench asks it once directly to learn your public IP (kept in memory only, never saved), then once through every working proxy:
+
+| Level | Meaning |
+| --- | --- |
+| `transparent` | your real IP is visible to the site |
+| `anonymous` | your IP is hidden, but the proxy announces itself (`Via`, `X-Forwarded-For`, …) |
+| `elite` | neither your IP nor proxy headers are visible |
+| `unknown` | the judge request through the proxy failed |
+
+Use an **`http://`** judge: through an HTTPS tunnel a proxy cannot add headers, so every proxy would look elite.
+
 **What does “clean” mean?**
 The IP is not in your local denylist and (if enabled) not listed by the DNSBL zones you chose. It is a reputation signal, not a guarantee of safety.
 
@@ -240,7 +260,8 @@ Checking public lists is generally fine, but you are responsible for respecting 
 
 - [x] English interface with an EN/RU switch
 - [ ] `pipx install` / PyPI package and a single `proxy-workbench` command
-- [ ] Anonymity level detection (transparent / anonymous / elite) via a user-hosted echo endpoint
+- [x] Anonymity level detection (transparent / anonymous / elite)
+- [x] Per-protocol `host:port` exports
 - [ ] Optional GeoIP country column and country filters from a local database
 - [ ] Scheduled re-checks of the best proxies
 - [ ] Docker image for headless servers

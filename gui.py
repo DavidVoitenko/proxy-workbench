@@ -53,7 +53,7 @@ def public_sources(values):
 
 
 def defaults():
-    return dict(settings_version=2, targets=[dict(name='Проверка HTTPS', url='https://example.com/', statuses=[200],
+    return dict(settings_version=2, targets=[dict(name='example.com', url='https://example.com/', statuses=[200],
                              contains='Example Domain', headers={}, method='GET')],
                 sources=json.loads((ROOT/'sources.json').read_text(encoding='utf-8')), use_sources=True,
                 proxies='', attempts=3, timeout=8, workers=128, rate=100,
