@@ -4,7 +4,7 @@
 
 # Proxy Workbench
 
-**Collect free public proxies from 47 open lists, test every one against _your_ services, and keep only the fast, stable, clean and anonymous ones.**
+**Collect free public proxies from 55 open lists and web pages, test every one against _your_ services, and keep only the fast, stable, clean and anonymous ones.**
 
 Local browser GUI (English / Russian) + CLI · HTTP / HTTPS (CONNECT) / SOCKS5 · anonymity levels · resumable · no accounts, no telemetry
 
@@ -59,8 +59,9 @@ Everything runs on your machine. The GUI binds to `127.0.0.1` only.
 
 | | |
 | --- | --- |
-| **47 built-in sources** | Popular GitHub-hosted lists, ProxyScrape, paginated Geonode API. Fully editable in `sources.json` or the GUI; add your own URLs or TXT files. |
-| **Protocols** | HTTP, HTTPS/CONNECT, explicit `https://` proxies, SOCKS5 / SOCKS5h, IPv4 and IPv6. |
+| **55 built-in sources** | Popular GitHub-hosted lists, ProxyScrape, paginated Geonode API and free-proxy web pages. Any web page, CSV or HTML table works as a source: every `ip:port` is pulled out of it. **Remove dead sources** and **Get new sources** keep the list healthy in one click. |
+| **Unknown protocol? No problem** | Addresses without a protocol can be tried as HTTP, SOCKS4 and SOCKS5 at once; the checks keep whichever works. |
+| **Protocols** | HTTP, HTTPS/CONNECT, explicit `https://` proxies, SOCKS4, SOCKS5 / SOCKS5h, IPv4 and IPv6. |
 | **Test against your services** | Several targets per profile (up to 20 in the GUI). A proxy passes only if it works for **all** of them. |
 | **Strict success rules** | Allowed status codes, required body substring, expected SHA-256, `GET`/`HEAD`, safe custom headers. Catches captcha and stub pages that still return `200`. |
 | **Repeated measurements** | N attempts per target (default 3), a per-target success threshold (e.g. 2 of 3), median latency and jitter. |
@@ -123,7 +124,7 @@ so a proxy has to be both reliable _for every service_ and fast to rank high.
 
 ## 💻 Command line
 
-`./run.sh <command>` on macOS/Linux, or `.venv\Scripts\python proxytool.py <command>` on Windows.
+`./run.sh <command>` on macOS/Linux, or `.venv\Scripts\python proxytool.py <command>` on Windows. Messages follow your system language (English or Russian); set `PROXY_WORKBENCH_LANG=en` or `ru` to choose. `--help` lists every option with examples.
 
 ```sh
 # Collect from all sources and check every candidate against example.com
@@ -209,11 +210,13 @@ cp service.example.json data/service.json
 A JSON array of strings, one per source:
 
 - `https://…/list.txt` — plain HTTP/CONNECT list (`IP:port` or `scheme://IP:port`);
-- `socks5 https://…/list.txt` — list of SOCKS5 proxies without a scheme;
+- `socks4 https://…/list.txt` / `socks5 https://…/list.txt` — SOCKS lists without a scheme;
+- `auto https://…/list.txt` — protocol unknown: every address is tried as HTTP, SOCKS4 and SOCKS5;
+- `text https://…` — any web page, CSV or HTML table: every `ip:port` in it is collected;
 - `http-fields https://…` — `IP:port:country` lines;
 - `geonode https://proxylist.geonode.com/api/proxy-list?...` — paginated Geonode JSON API.
 
-Remote lists are streamed with limits (8 MiB, 64 KiB per line, 100,000 candidates, 5 redirects by default; see `--source-max-*`). Per-source results are written to `data/sources-report.json`. SOCKS4, authenticated proxies, hostnames and non-public IPs are rejected.
+Remote lists are streamed with limits (8 MiB, 64 KiB per line, 100,000 candidates, 5 redirects by default; see `--source-max-*`). Per-source results are written to `data/sources-report.json`. Authenticated proxies, hostnames and non-public IPs are rejected. `--detect-protocols` tries addresses without a protocol from your own `--input` files as HTTP, SOCKS4 and SOCKS5.
 
 </details>
 
