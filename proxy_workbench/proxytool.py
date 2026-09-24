@@ -1088,7 +1088,8 @@ def blocked_result(proxy, verdict):
 
 
 async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_proxy, progress=True, on_progress=None, min_success=2/3, screen=None, denylist=None, min_anonymity='any', protocol='all', max_latency=None,
-               countries=(), country_of=None, want=0, recheck_passing=False, prefilter=0, prefilter_timeout=3):
+               countries=(), country_of=None, want=0, recheck_passing=False, prefilter=0, prefilter_timeout=3,
+               exclude_hosting=False, provider_of=None):
     """Check every pending candidate of the profile.
 
     With ``prefilter`` connections a cheap TCP connect runs first: most public
@@ -1111,6 +1112,8 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
         # Protocol and country narrow which candidates are checked; they are not
         # part of the profile, so a later wider run reuses these results.
         if protocol not in (None, 'all') and proxy_protocol(proxy) != protocol:
+            return False
+        if exclude_hosting and is_hosting(proxy, provider_of):
             return False
         return not countries or country_of(proxy) in countries
 
@@ -1313,14 +1316,34 @@ def exit_country(row, country_of=None):
     return country_of(f'http://[{address}]:1' if ':' in address else f'http://{address}:1')
 
 
+def provider_resolver(asn_db):
+    """Provider (AS number, organisation, hosting flag) of a proxy address, or None without a database."""
+    if asn_db is None:
+        return None
+    cache = {}
+
+    def provider_of(proxy):
+        if proxy not in cache:
+            cache[proxy] = asn_db.provider_of(proxy)
+        return cache[proxy]
+    return provider_of
+
+
+def is_hosting(proxy, provider_of):
+    return bool(provider_of and (provider_of(proxy) or {}).get('hosting'))
+
+
 def proxy_protocol(proxy):
     scheme = str(proxy).partition('://')[0]
     return PROTOCOL_ALIASES.get(scheme, scheme)
 
 
-def matches_selection(row, protocol='all', max_latency=None, countries=(), country_of=None):
-    """Selection by protocol, maximum median latency (ms) and country codes."""
+def matches_selection(row, protocol='all', max_latency=None, countries=(), country_of=None,
+                      exclude_hosting=False, provider_of=None):
+    """Selection by protocol, maximum median latency (ms), country codes and hosting providers."""
     if protocol not in (None, 'all') and proxy_protocol(row.get('proxy', '')) != protocol:
+        return False
+    if exclude_hosting and is_hosting(row.get('proxy', ''), provider_of):
         return False
     if countries and row_country(row, country_of) not in countries:
         return False
@@ -1332,7 +1355,7 @@ def matches_selection(row, protocol='all', max_latency=None, countries=(), count
 
 
 def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, denylist=None, local_override=None, min_anonymity='any',
-           protocol='all', max_latency=None, countries=(), country_of=None):
+           protocol='all', max_latency=None, countries=(), country_of=None, exclude_hosting=False, provider_of=None):
     if not db.execute('SELECT 1 FROM profiles WHERE id=?', (profile,)).fetchone():
         raise ValueError('Профиль проверки не найден')
     denylist = denylist or Denylist.empty()
@@ -1378,7 +1401,7 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
         if level:
             anonymity_counts[level] = anonymity_counts.get(level, 0) + 1
         eligible = (result_allowed(row, min_success, denylist=None, strict=strict, min_anonymity=min_anonymity)
-                    and matches_selection(row, protocol, max_latency, countries, country_of))
+                    and matches_selection(row, protocol, max_latency, countries, country_of, exclude_hosting, provider_of))
         if eligible and active_denylist is not None and active_denylist.match(row.get('proxy', '')):
             local_filtered += 1
             eligible = False
@@ -1398,7 +1421,7 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
         ON r.proxy=e.proxy AND r.profile=? ORDER BY {order} LIMIT ?""", (profile, top or -1))
     fields = ['proxy', 'score', 'latency_ms', 'jitter_ms', 'reliability', 'min_target_reliability',
               'successes', 'requests', 'checked_at', 'reputation_status', 'reputation_sources',
-              'anonymity', 'anonymity_signals', 'country', 'exit_ip', 'exit_country', 'mbps', 'checks', 'passes']
+              'anonymity', 'anonymity_signals', 'country', 'exit_ip', 'exit_country', 'asn', 'provider', 'hosting', 'mbps', 'checks', 'passes']
     names = ['proxies.txt', 'ranked.json', 'ranked.csv', *PROTOCOL_EXPORTS.values(), 'hostport.txt', 'proxychains.txt',
              'proxy.pac', 'clash.yaml']
     best = []
@@ -1427,6 +1450,8 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
                 row['country'] = row_country(row, country_of) or ''
                 row['exit_ip'] = judged.get('exit_ip', '')
                 row['exit_country'] = exit_country(row, country_of) or ''
+                provider = (provider_of(row['proxy']) if provider_of else None) or {}
+                row['asn'], row['provider'], row['hosting'] = provider.get('asn'), provider.get('org'), provider.get('hosting')
                 history = row_history(row, min_success)
                 csv_row = dict(row, mbps=(row.get('speed') or {}).get('mbps') or '', anonymity=judged.get('level', ''),
                                anonymity_signals=','.join(judged.get('signals', [])),
@@ -1452,6 +1477,7 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
                       passed=passed, local_filtered=local_filtered, exported=exported, complete=checked == total,
                       generated_at=time.time(), sort=sort, min_success=min_success,
                       protocol=protocol, max_latency=max_latency, countries=list(countries or ()),
+                      exclude_hosting=bool(exclude_hosting and provider_of),
                       targets=[dict(name=t.get('name', ''), url=public_url(t['url'])) for t in cfg.get('targets', [])],
                       request_profile=cfg.get('request_profile', 'workbench'),
                       request_profile_digest=cfg.get('request_profile_digest', ''),
@@ -1592,6 +1618,9 @@ def parser():
     p.add_argument('--country', default='', help=tr('только эти страны (ISO-коды через запятую, например DE,NL); '
                    'другие адреса не проверяются', 'only these countries (ISO codes, e.g. DE,NL); '
                    'other addresses are not checked'))
+    p.add_argument('--no-hosting', action='store_true',
+                   help=tr('пропускать адреса хостинг-провайдеров и дата-центров (нужна база провайдеров: update-geoip)',
+                           'skip addresses of hosting providers and data centres (needs the provider database: update-geoip)'))
     p.add_argument('--want', type=int, default=0,
                    help=tr('остановиться, когда найдено столько подходящих прокси; 0 — проверить все', 'stop once this many matching proxies are found; 0 = check everything'))
     p.add_argument('--geoip-db', type=Path, default=None,
@@ -1631,12 +1660,14 @@ async def stoppable(coro, stop_file):
         await asyncio.gather(task, return_exceptions=True)
 
 
-async def download_geoip(path, timeout=60):
-    """Fetch the latest DB-IP Country Lite CSV; returns the month downloaded."""
+async def download_geoip(path, timeout=60, url=None, validate=None):
+    """Fetch the latest DB-IP Lite CSV (country by default); returns the month downloaded."""
     error = None
+    url = url or geoip.DOWNLOAD_URL
+    validate = validate or geoip.validate_download
     async with httpx.AsyncClient(trust_env=False, verify=TLS, timeout=timeout, follow_redirects=True) as client:
         for month in geoip.candidate_months():
-            async with client.stream('GET', geoip.DOWNLOAD_URL.format(month=month)) as response:
+            async with client.stream('GET', url.format(month=month)) as response:
                 if response.status_code == 404:
                     error = 'HTTP_404'
                     continue
@@ -1646,7 +1677,7 @@ async def download_geoip(path, timeout=60):
                     body.extend(chunk)
                     if len(body) > geoip.MAX_DOWNLOAD_BYTES:
                         raise ValueError('GEOIP_TOO_LARGE')
-            geoip.validate_download(bytes(body))
+            validate(bytes(body))
             path = Path(path)
             path.parent.mkdir(parents=True, exist_ok=True)
             temp = path.with_name(path.name + '.tmp')
@@ -1784,6 +1815,16 @@ def main(argv=None):
             lock.close()
             return 2
         print(tr(f'База стран обновлена: DB-IP {month}. {geoip.ATTRIBUTION}', f'Country database updated: DB-IP {month}. {geoip.ATTRIBUTION}'), flush=True)
+        try:
+            month = asyncio.run(download_geoip(geoip.asn_path(args.data), args.source_timeout, geoip.ASN_URL,
+                                               geoip.validate_asn_download))
+        except (httpx.HTTPError, TimeoutError, OSError, ValueError) as exc:
+            reason = str(exc) if isinstance(exc, ValueError) else type(exc).__name__
+            # Countries already work; providers are an extra and must not fail the update.
+            print(tr(f'Не удалось скачать базу провайдеров: {reason}', f'Could not download the provider database: {reason}'),
+                  file=sys.stderr)
+        else:
+            print(tr(f'База провайдеров обновлена: DB-IP {month}.', f'Provider database updated: DB-IP {month}.'), flush=True)
         lock.close()
         return 0
     try:
@@ -1795,6 +1836,14 @@ def main(argv=None):
         print(tr('База стран не найдена: страна известна только для адресов из Geonode. '
               'Скачайте базу командой update-geoip.', 'No country database: countries are known only for Geonode addresses. '
               'Download it with the update-geoip command.'), file=sys.stderr)
+    try:
+        provider_of = provider_resolver(geoip.AsnDB.load_optional(geoip.asn_path(args.data)))
+    except (OSError, EOFError, UnicodeError, csv.Error):
+        provider_of = None
+    if args.no_hosting and provider_of is None:
+        print(tr('База провайдеров не найдена: --no-hosting не действует. Скачайте её командой update-geoip.',
+                 'No provider database: --no-hosting has no effect. Download it with the update-geoip command.'),
+              file=sys.stderr)
     db = open_db(args.data / 'proxies.sqlite3')
     country_of = country_resolver(db, geo)
     config = None
@@ -1814,7 +1863,8 @@ def main(argv=None):
                       sort=args.sort, min_success=args.min_success, denylist=denylist,
                       local_override=args.local_denylist, min_anonymity=args.min_anonymity,
                       protocol=args.protocol, max_latency=args.max_latency or None,
-                      countries=countries, country_of=country_of)
+                      countries=countries, country_of=country_of, exclude_hosting=args.no_hosting,
+                      provider_of=provider_of)
 
     try:
         if args.command in ('scan', 'run'):
@@ -1870,6 +1920,7 @@ def main(argv=None):
                                            min_anonymity=args.min_anonymity, protocol=args.protocol,
                                            max_latency=args.max_latency or None, countries=countries,
                                            country_of=country_of, prefilter=prefilter,
+                                           exclude_hosting=args.no_hosting, provider_of=provider_of,
                                            prefilter_timeout=min(args.prefilter_timeout, args.connect_timeout),
                                            **options), args.stop_file))
 

@@ -188,7 +188,14 @@ const messages = {
     'geo.title': 'Country database',
     'geo.missing': 'Not downloaded',
     'geo.ready': 'Ready · {count} ranges',
-    'geo.hint': 'Needed for country filters and the Country column. The free DB-IP Country Lite file (about 7 MB) is downloaded once into the local data folder; lookups then work offline. Geonode sources already include countries.',
+    'geo.providers': ' · providers: {count}',
+    'provider.filter': 'Providers',
+    'provider.all': 'All providers',
+    'provider.hide': 'Hide hosting / data centres',
+    'provider.exclude': 'Skip hosting providers and data centres (needs the provider database)',
+    'provider.hosting': 'hosting',
+    'col.provider': 'Provider',
+    'geo.hint': 'Needed for country filters, the Country and Provider columns and hiding hosting providers. The free DB-IP Country Lite and ASN Lite files are downloaded once into the local data folder; lookups then work offline. Geonode sources already include countries.',
     'geo.download': 'Download / update',
     'geo.downloading': 'Downloading the country database…',
     'geo.updated': 'Country database updated.',
@@ -526,13 +533,20 @@ const messages = {
     'preset.hint': 'Быстро: 1 попытка, короткие таймауты, больше воркеров. Тщательно: 5 попыток, терпеливые таймауты.',
     'preset.applied': 'Пресет применён. Сохраните настройки или запустите проверку.',
     'geo.countries': 'Страны',
+    'geo.providers': ' · провайдеров: {count}',
+    'provider.filter': 'Провайдеры',
+    'provider.all': 'Все провайдеры',
+    'provider.hide': 'Скрыть хостинг / дата-центры',
+    'provider.exclude': 'Пропускать хостинг-провайдеров и дата-центры (нужна база провайдеров)',
+    'provider.hosting': 'хостинг',
+    'col.provider': 'Провайдер',
     'geo.countriesHint': 'ISO-коды. Адреса из других стран пропускаются ещё до проверки, поэтому проход намного короче.',
     'want.label': 'Остановиться после',
     'want.hint': '0 — проверить всё. Иначе проверка завершится, как только найдётся столько подходящих прокси.',
     'geo.title': 'База стран',
     'geo.missing': 'Не скачана',
     'geo.ready': 'Готова · диапазонов: {count}',
-    'geo.hint': 'Нужна для фильтра по странам и колонки «Страна». Бесплатный файл DB-IP Country Lite (около 7 МБ) скачивается один раз в локальную папку data, дальше поиск работает офлайн. Источники Geonode уже содержат страну.',
+    'geo.hint': 'Нужна для фильтра по странам, колонок «Страна» и «Провайдер» и скрытия хостинг-провайдеров. Бесплатные файлы DB-IP Country Lite и ASN Lite скачиваются один раз в локальную папку data, дальше поиск работает офлайн. Источники Geonode уже содержат страну.',
     'geo.download': 'Скачать / обновить',
     'geo.downloading': 'Скачиваем базу стран…',
     'geo.updated': 'База стран обновлена.',
@@ -947,6 +961,7 @@ function getSettings() {
   copy.sort = $('sort').value;
   copy.use_sources = $('use_sources').checked;
   copy.detect_protocols = $('detect_protocols').checked;
+  copy.exclude_hosting = $('exclude_hosting').checked;
   copy.sources = $('sources').value.split('\n').map(value => value.trim()).filter(Boolean);
   copy.proxies = $('proxies').value;
   copy.denylist = $('denylist').value;
@@ -1000,6 +1015,7 @@ function fill(value) {
   $('sort').value = value.sort;
   $('use_sources').checked = value.use_sources;
   $('detect_protocols').checked = Boolean(value.detect_protocols);
+  $('exclude_hosting').checked = Boolean(value.exclude_hosting);
   $('sources').value = value.sources.join('\n');
   $('proxies').value = value.proxies || '';
   $('denylist').value = value.denylist || '';
@@ -1178,6 +1194,7 @@ function renderState(value) {
   }
 }
 
+const providerCell = row => row.provider ? `${esc(row.provider.org.length > 28 ? row.provider.org.slice(0, 27) + '…' : row.provider.org)}${row.provider.hosting ? ` <span class="badge subtle">${esc(t('provider.hosting'))}</span>` : ''}` : '—';
 // "DE → NL" when the proxy sends traffic out from another country than its own address.
 const countryLabel = row => row.exit_country && row.exit_country !== row.country ? `${row.country || '?'} → ${row.exit_country}` : (row.country || '—');
 
@@ -1220,7 +1237,7 @@ function renderResults(data) {
   $('result-context').textContent = data && data.profile ? t('results.context', {targets:data.targets.map(target => target.name ? `${target.name} (${target.url})` : target.url).join(' + '), profile:profileLabel(data.request_profile || 'workbench')}) : t('results.empty');
   $('result-total').textContent = t('results.total', {count:fmt(total)});
   $('page-number').textContent = `${fmt(Math.floor(start / 50) + 1)} / ${fmt(Math.max(1, Math.ceil(total / 50)))}`;
-  $('result-rows').innerHTML = page.length ? page.map((row, index) => `<tr><td>${fmt(start + index + 1)}</td><td>${esc(row.proxy)}</td><td><span class="score">${Number(row.score).toFixed(1)}</span></td><td>${esc(ms(Number(row.latency_ms).toFixed(0)))}</td><td>${esc(ms(Number(row.jitter_ms).toFixed(0)))}</td><td>${row.speed && row.speed.mbps != null ? esc(Number(row.speed.mbps).toFixed(1)) : '—'}</td><td>${(Number(row.min_target_reliability) * 100).toFixed(0)}%</td><td>${row.history ? esc(`${fmt(row.history.passes)}/${fmt(row.history.checks)}`) : '1/1'}</td><td>${reputationBadge(row)}</td><td>${anonymityBadge(row)}</td><td class="country" title="${esc(row.anonymity && row.anonymity.exit_ip ? t('results.exitIp', {ip:row.anonymity.exit_ip}) : '')}">${esc(countryLabel(row))}</td><td><button class="text-link" data-details="${index}">${esc(t('results.details'))}</button></td></tr>`).join('') : `<tr><td colspan="12" class="empty">${esc(t(data ? 'results.noneMatching' : 'results.noneYet'))}</td></tr>`;
+  $('result-rows').innerHTML = page.length ? page.map((row, index) => `<tr><td>${fmt(start + index + 1)}</td><td>${esc(row.proxy)}</td><td><span class="score">${Number(row.score).toFixed(1)}</span></td><td>${esc(ms(Number(row.latency_ms).toFixed(0)))}</td><td>${esc(ms(Number(row.jitter_ms).toFixed(0)))}</td><td>${row.speed && row.speed.mbps != null ? esc(Number(row.speed.mbps).toFixed(1)) : '—'}</td><td>${(Number(row.min_target_reliability) * 100).toFixed(0)}%</td><td>${row.history ? esc(`${fmt(row.history.passes)}/${fmt(row.history.checks)}`) : '1/1'}</td><td>${reputationBadge(row)}</td><td>${anonymityBadge(row)}</td><td class="country" title="${esc(row.anonymity && row.anonymity.exit_ip ? t('results.exitIp', {ip:row.anonymity.exit_ip}) : '')}">${esc(countryLabel(row))}</td><td class="provider" title="${esc(row.provider ? `AS${row.provider.asn} ${row.provider.org}` : '')}">${providerCell(row)}</td><td><button class="text-link" data-details="${index}">${esc(t('results.details'))}</button></td></tr>`).join('') : `<tr><td colspan="13" class="empty">${esc(t(data ? 'results.noneMatching' : 'results.noneYet'))}</td></tr>`;
   $('result-rows').querySelectorAll('[data-details]').forEach(node => node.onclick = () => details(page[Number(node.dataset.details)]));
 }
 
@@ -1229,7 +1246,7 @@ async function loadResults() {
   resultBusy = true;
   $('refresh-results').disabled = true;
   try {
-    const query = new URLSearchParams({sort:$('result-sort').value, min_success:$('result-min').value, min_anonymity:$('result-anon').value, protocol:$('result-protocol').value, max_latency:Number($('result-max-latency').value) || 0, country:$('result-country').value.trim(), q:$('result-search').value.trim(), offset});
+    const query = new URLSearchParams({sort:$('result-sort').value, min_success:$('result-min').value, min_anonymity:$('result-anon').value, protocol:$('result-protocol').value, max_latency:Number($('result-max-latency').value) || 0, country:$('result-country').value.trim(), hosting:$('result-hosting').value, q:$('result-search').value.trim(), offset});
     const data = await api('/api/results?' + query);
     resultTargets = data.targets;
     resultData = {...data, offset};
@@ -1276,7 +1293,7 @@ $('export').onclick = () => start('export');
 $('stop').onclick = async () => { try { $('stop').disabled = true; await api('/api/stop', {}); toast(t('toast.stopping')); await poll(); } catch (error) { toast(error.message, true); } };
 $('clear-data').onclick = async () => { if (!confirm(t('confirm.clear'))) return; try { const result = await api('/api/clear-data', {}); toast(t('toast.cleared', {count:result.removed.length})); await poll(); } catch (error) { toast(error.message, true); } };
 $('refresh-results').onclick = () => { offset = 0; loadResults(); };
-['result-sort', 'result-min', 'result-anon', 'result-protocol', 'result-max-latency'].forEach(id => $(id).onchange = () => { offset = 0; loadResults(); });
+['result-sort', 'result-min', 'result-anon', 'result-protocol', 'result-max-latency', 'result-hosting'].forEach(id => $(id).onchange = () => { offset = 0; loadResults(); });
 let searchTimer;
 $('result-search').oninput = () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => { offset = 0; loadResults(); }, 300); };
 $('result-country').oninput = $('result-search').oninput;
@@ -1295,7 +1312,7 @@ document.querySelectorAll('[data-preset]').forEach(node => node.onclick = () => 
 });
 
 function renderGeo(status) {
-  $('geo-status').textContent = status.available ? t('geo.ready', {count:fmt(status.ranges)}) : t('geo.missing');
+  $('geo-status').textContent = status.available ? t('geo.ready', {count:fmt(status.ranges)}) + (status.providers ? t('geo.providers', {count:fmt(status.provider_ranges)}) : '') : t('geo.missing');
 }
 async function loadGeo() {
   try { renderGeo(await api('/api/geoip')); } catch {}

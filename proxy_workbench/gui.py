@@ -84,7 +84,7 @@ def defaults():
                                 timeout=2.5, strict=False),
                 anonymity=dict(judge_url=''), min_anonymity='any',
                 connect_timeout=4, fail_fast=True, protocol='all', max_latency=0, countries='', want=0,
-                detect_protocols=False, watch=0, prefilter=512, speedtest=dict(url='', max_bytes=core.SPEEDTEST_BYTES))
+                detect_protocols=False, watch=0, prefilter=512, exclude_hosting=False, speedtest=dict(url='', max_bytes=core.SPEEDTEST_BYTES))
 
 
 def validate(settings):
@@ -130,7 +130,7 @@ def validate(settings):
         clean[key] = int(value) if integer else value
     if (clean['sort'] not in core.SORTS or clean['protocol'] not in core.PROTOCOLS
             or type(clean['use_sources']) is not bool or type(clean['fail_fast']) is not bool
-            or type(clean['detect_protocols']) is not bool):
+            or type(clean['detect_protocols']) is not bool or type(clean['exclude_hosting']) is not bool):
         raise ValueError('Неверный режим сортировки или источников.')
     if not isinstance(clean['proxies'], str) or len(clean['proxies']) > 20_000_000:
         raise ValueError('Список прокси слишком большой: максимум 20 МБ.')
@@ -194,6 +194,7 @@ class App:
             raise OSError('GUI already running') from None
         self.token = secrets.token_urlsafe(32)
         self.geo_cache = (None, None)
+        self.asn_cache = (None, None)
         self.mutex = threading.RLock()
         self.process = None
         self.log_handle = None
@@ -320,6 +321,8 @@ class App:
             command.append('--fail-fast' if settings['fail_fast'] else '--no-fail-fast')
             if settings['detect_protocols']:
                 command.append('--detect-protocols')
+            if settings['exclude_hosting']:
+                command.append('--no-hosting')
             command.extend(['--country', settings['countries']])
             reputation = settings['reputation']
             command.append('--local-denylist' if reputation['local_enabled'] else '--no-local-denylist')
@@ -386,9 +389,24 @@ class App:
                 self.geo_cache = (stamp, None)
         return self.geo_cache[1]
 
+    def asn(self):
+        """The offline provider (ASN) database, reloaded when the file changes."""
+        path = geoip.asn_path(self.data)
+        try:
+            stamp = path.stat().st_mtime_ns
+        except OSError:
+            return None
+        if self.asn_cache[0] != stamp:
+            try:
+                self.asn_cache = (stamp, geoip.AsnDB.from_file(path))
+            except (OSError, EOFError, UnicodeError, ValueError):
+                self.asn_cache = (stamp, None)
+        return self.asn_cache[1]
+
     def geo_status(self):
-        database = self.geo()
+        database, providers = self.geo(), self.asn()
         return dict(available=database is not None, ranges=database.size if database else 0,
+                    providers=providers is not None, provider_ranges=providers.size if providers else 0,
                     attribution=geoip.ATTRIBUTION)
 
     def update_geo(self):
@@ -460,6 +478,7 @@ class App:
             max_latency = float(query.get('max_latency', ['0'])[0])
             search = query.get('q', [''])[0].strip().lower()[:100]
             countries = frozenset(geoip.parse_countries(query.get('country', [''])[0][:1000]))
+            hide_hosting = query.get('hosting', [''])[0] == 'hide'
             if (not 0 <= threshold <= 1 or order is None or protocol not in core.PROTOCOLS
                     or not math.isfinite(max_latency) or max_latency < 0):
                 raise ValueError()
@@ -482,6 +501,7 @@ class App:
                         # Databases created before 1.5 have no candidate_meta table yet.
                         geo = self.geo()
                         country_of = geo.country_of if geo else None
+                    provider_of = core.provider_resolver(self.asn())
                     current_settings = self.settings()
                     local_enabled = current_settings.get('reputation', {}).get('local_enabled', True)
                     active_denylist = denylist if local_enabled else None
@@ -495,7 +515,8 @@ class App:
                         if not result_allowed(row, threshold, denylist=active_denylist, strict=strict,
                                               min_anonymity=min_anonymity):
                             continue
-                        if not core.matches_selection(row, protocol, max_latency or None, countries, country_of):
+                        if not core.matches_selection(row, protocol, max_latency or None, countries, country_of,
+                                                      hide_hosting, provider_of):
                             continue
                         if search and search not in row.get('proxy', '').lower():
                             continue
@@ -504,6 +525,7 @@ class App:
                             summary.pop('samples', None)
                             summary['country'] = core.row_country(row, country_of)
                             summary['exit_country'] = core.exit_country(row, country_of)
+                            summary['provider'] = provider_of(row['proxy']) if provider_of else None
                             rows.append(summary)
                         total += 1
                     targets = [dict(name=t.get('name',''), url=core.public_url(t['url'])) for t in cfg.get('targets', [])]

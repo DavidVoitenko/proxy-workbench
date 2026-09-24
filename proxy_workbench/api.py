@@ -27,7 +27,7 @@ TOKEN_ENV = 'PROXY_WORKBENCH_API_TOKEN'
 FORMATS = ('json', 'txt', 'hostport')
 MAX_LIMIT = 1_000_000
 ENDPOINTS = {
-    '/proxies': 'working proxies, best first; filters: protocol, country, max_latency, min_mbps, anonymity, limit, format',
+    '/proxies': 'working proxies, best first; filters: protocol, country, max_latency, min_mbps, anonymity, hosting, limit, format',
     '/random': 'random working proxies (limit, default 1); same filters',
     '/pac': 'proxy auto-config for browsers with the best matching proxies; same filters',
     '/clash': 'Clash / Mihomo config with the best matching proxies; same filters',
@@ -59,6 +59,9 @@ def public_row(row):
         'anonymity': (row.get('anonymity') or {}).get('level'),
         'exit_ip': row.get('exit_ip') or None,
         'exit_country': row.get('exit_country') or None,
+        'asn': row.get('asn') or None,
+        'provider': row.get('provider') or None,
+        'hosting': row.get('hosting'),
         'latency_ms': row.get('latency_ms'),
         'mbps': (row.get('speed') or {}).get('mbps'),
         'jitter_ms': row.get('jitter_ms'),
@@ -124,8 +127,11 @@ def parse_query(query):
         raise ValueError('max_latency, min_mbps and limit must be numbers') from None
     if not 0 <= max_latency < float('inf') or not 0 <= min_mbps < float('inf') or not 0 <= limit <= MAX_LIMIT:
         raise ValueError('max_latency, min_mbps and limit must not be negative')
+    hosting = values.get('hosting', '')
+    if hosting not in ('', '0', '1'):
+        raise ValueError('hosting: 0 (hide hosting providers) or 1 (only hosting providers)')
     return dict(protocol=protocol, countries=countries, anonymity=minimum, max_latency=max_latency,
-                min_mbps=min_mbps, limit=limit, format=fmt)
+                min_mbps=min_mbps, limit=limit, format=fmt, hosting=hosting)
 
 
 def select(rows, query):
@@ -141,6 +147,8 @@ def select(rows, query):
         if query['anonymity'] != 'any' and rank.get(row['anonymity'] or 'unknown', -1) < rank[query['anonymity']]:
             continue
         if query.get('min_mbps') and (row.get('mbps') or 0) < query['min_mbps']:
+            continue
+        if query.get('hosting') and bool(row.get('hosting')) != (query['hosting'] == '1'):
             continue
         selected.append(row)
     return selected
