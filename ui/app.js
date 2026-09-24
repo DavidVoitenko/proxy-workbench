@@ -161,6 +161,41 @@ const messages = {
     'col.success': 'Success',
     'col.cleanliness': 'Cleanliness',
     'col.anonymity': 'Anonymity',
+    'col.country': 'Country',
+    'preset.label': 'Preset:',
+    'preset.quick': '⚡ Quick',
+    'preset.balanced': '⚖ Balanced',
+    'preset.thorough': '🔬 Thorough',
+    'preset.hint': 'Quick: 1 attempt, short timeouts, more workers. Thorough: 5 attempts, patient timeouts.',
+    'preset.applied': 'Preset applied. Save or start a scan to use it.',
+    'geo.countries': 'Countries',
+    'geo.countriesHint': 'ISO codes. Other countries are skipped before checking, so the scan is much shorter.',
+    'want.label': 'Stop after finding',
+    'want.hint': '0 — check everything. Otherwise the scan ends as soon as this many proxies match.',
+    'geo.title': 'Country database',
+    'geo.missing': 'Not downloaded',
+    'geo.ready': 'Ready · {count} ranges',
+    'geo.hint': 'Needed for country filters and the Country column. The free DB-IP Country Lite file (about 7 MB) is downloaded once into the local data folder; lookups then work offline. Geonode sources already include countries.',
+    'geo.download': 'Download / update',
+    'geo.downloading': 'Downloading the country database…',
+    'geo.updated': 'Country database updated.',
+    'geo.attribution': 'IP geolocation by DB-IP',
+    'check.connectTimeout': 'Connect timeout, seconds',
+    'check.connectTimeoutHint': 'Dead addresses fail sooner; the full request still gets the main timeout.',
+    'check.failFast': 'Stop early when a proxy can no longer pass',
+    'check.failFastHint': 'Skips the remaining attempts once the success threshold is out of reach. Much faster on big lists.',
+    'sort.stability': 'Stability: lowest jitter first',
+    'results.byStability': 'By stability',
+    'filter.protocol': 'Protocol',
+    'filter.allProtocols': 'All protocols',
+    'filter.maxLatency': 'Max latency, ms',
+    'filter.maxLatencyHint': '0 — no limit',
+    'filter.searchPlaceholder': 'Search by address or port',
+    'filter.copyPage': 'Copy this page',
+    'toast.copied': 'Copied {count} proxies.',
+    'toast.copyEmpty': 'Nothing to copy on this page.',
+    'toast.copyFailed': 'The browser blocked clipboard access.',
+    'details.aborted': 'Stopped early: this proxy could no longer reach the success threshold.',
     'anon.judge': 'Anonymity judge URL (optional)',
     'anon.judgeHint': 'An echo page that shows the client IP and request headers. Each working proxy is rated transparent, anonymous or elite. Use an http:// judge: over HTTPS a proxy cannot add headers. Your own IP is requested once directly and never saved.',
     'anon.min': 'Minimum anonymity',
@@ -424,6 +459,41 @@ const messages = {
     'col.success': 'Успешность',
     'col.cleanliness': 'Чистота',
     'col.anonymity': 'Анонимность',
+    'col.country': 'Страна',
+    'preset.label': 'Пресет:',
+    'preset.quick': '⚡ Быстро',
+    'preset.balanced': '⚖ Баланс',
+    'preset.thorough': '🔬 Тщательно',
+    'preset.hint': 'Быстро: 1 попытка, короткие таймауты, больше воркеров. Тщательно: 5 попыток, терпеливые таймауты.',
+    'preset.applied': 'Пресет применён. Сохраните настройки или запустите проверку.',
+    'geo.countries': 'Страны',
+    'geo.countriesHint': 'ISO-коды. Адреса из других стран пропускаются ещё до проверки, поэтому проход намного короче.',
+    'want.label': 'Остановиться после',
+    'want.hint': '0 — проверить всё. Иначе проверка завершится, как только найдётся столько подходящих прокси.',
+    'geo.title': 'База стран',
+    'geo.missing': 'Не скачана',
+    'geo.ready': 'Готова · диапазонов: {count}',
+    'geo.hint': 'Нужна для фильтра по странам и колонки «Страна». Бесплатный файл DB-IP Country Lite (около 7 МБ) скачивается один раз в локальную папку data, дальше поиск работает офлайн. Источники Geonode уже содержат страну.',
+    'geo.download': 'Скачать / обновить',
+    'geo.downloading': 'Скачиваем базу стран…',
+    'geo.updated': 'База стран обновлена.',
+    'geo.attribution': 'Геолокация IP: DB-IP',
+    'check.connectTimeout': 'Таймаут подключения, секунд',
+    'check.connectTimeoutHint': 'Мёртвые адреса отсеиваются быстрее; на весь запрос по-прежнему действует основной таймаут.',
+    'check.failFast': 'Досрочно отбраковывать безнадёжные прокси',
+    'check.failFastHint': 'Оставшиеся попытки пропускаются, когда порог успешности уже недостижим. Сильно ускоряет большие списки.',
+    'sort.stability': 'Стабильность: минимальный разброс',
+    'results.byStability': 'По стабильности',
+    'filter.protocol': 'Протокол',
+    'filter.allProtocols': 'Все протоколы',
+    'filter.maxLatency': 'Макс. задержка, мс',
+    'filter.maxLatencyHint': '0 — без ограничения',
+    'filter.searchPlaceholder': 'Поиск по адресу или порту',
+    'filter.copyPage': 'Скопировать страницу',
+    'toast.copied': 'Скопировано прокси: {count}.',
+    'toast.copyEmpty': 'На этой странице нечего копировать.',
+    'toast.copyFailed': 'Браузер запретил доступ к буферу обмена.',
+    'details.aborted': 'Проверка остановлена досрочно: прокси уже не мог достичь порога успешности.',
     'anon.judge': 'Judge-URL для проверки анонимности (необязательно)',
     'anon.judgeHint': 'Echo-страница, которая показывает IP клиента и заголовки запроса. Каждый рабочий прокси получает уровень: прозрачный, анонимный или элитный. Используйте http:// judge: через HTTPS прокси не может добавить заголовки. Ваш IP запрашивается один раз напрямую и не сохраняется.',
     'anon.min': 'Минимальная анонимность',
@@ -603,6 +673,11 @@ const serverMessagesEn = {
   'Проверьте поля настроек.': 'Check the settings fields.',
   'Не удалось записать настройки. Проверьте доступ к папке data.': 'Could not write settings. Check access to the data folder.',
   'Данные уже используются другим процессом.': 'The data folder is used by another process.',
+  'Страны: используйте двухбуквенные ISO-коды, например DE,NL.': 'Countries: use two-letter ISO codes, for example DE,NL.',
+  'Страны: ожидается список ISO-кодов, например DE,NL.': 'Countries: a list of ISO codes is expected, for example DE,NL.',
+  'Не удалось скачать базу стран.': 'Could not download the country database.',
+  'База стран повреждена; выполните update-geoip.': 'The country database is damaged; run update-geoip.',
+  'База стран не найдена: страна известна только для адресов из Geonode. Скачайте базу командой update-geoip.': 'Country database not found: countries are known only for Geonode addresses. Download it with update-geoip.',
   'Настройки анонимности должны быть объектом.': 'Anonymity settings must be an object.',
   'anonymity.judge_url: ожидается http(s) URL': 'anonymity.judge_url: an http(s) URL is expected',
   'anonymity.judge_url: нужен http(s) URL без userinfo': 'anonymity.judge_url: an http(s) URL without userinfo is required',
@@ -633,6 +708,8 @@ const serverPatternsEn = [
   [/^Ошибка экспорта: (\w+): проверьте data\/ и denylist\.$/, 'Export error: $1: check data/ and the denylist.'],
   [/^Удалено: (.+)$/, 'Deleted: $1'],
   [/^Проверка анонимности: judge (.+)$/, 'Anonymity check: judge $1'],
+  [/^Не удалось скачать базу стран: (.+)$/, 'Could not download the country database: $1'],
+  [/^База стран обновлена: DB-IP (\S+)\. (.+)$/, 'Country database updated: DB-IP $1. $2'],
   [/^Не удалось определить внешний IP через judge URL: judge URL не показал внешний IP этого устройства$/, 'Could not detect the external IP via the judge URL: the judge did not show this device’s public IP'],
   [/^Не удалось определить внешний IP через judge URL: (.+)$/, 'Could not detect the external IP via the judge URL: $1']
 ];
@@ -659,7 +736,7 @@ function applyI18n(root=document) {
   }
 }
 
-const numeric = ['attempts', 'timeout', 'workers', 'rate', 'max_bytes', 'source_timeout', 'top', 'min_success', 'reputation-timeout'];
+const numeric = ['attempts', 'timeout', 'connect_timeout', 'workers', 'rate', 'max_bytes', 'source_timeout', 'top', 'min_success', 'max_latency', 'want', 'reputation-timeout'];
 const profileLabel = profile => messages.en['profile.' + profile] ? t('profile.' + profile) : profile;
 const fmt = n => Number(n || 0).toLocaleString(lang === 'ru' ? 'ru-RU' : 'en-US');
 const ms = value => t('unit.ms', {value});
@@ -744,6 +821,9 @@ function getSettings() {
   copy.request_profile = $('request-profile').value;
   copy.anonymity = {judge_url: $('judge-url').value.trim()};
   copy.min_anonymity = $('min_anonymity').value;
+  copy.protocol = $('protocol').value;
+  copy.countries = $('countries').value;
+  copy.fail_fast = $('fail_fast').checked;
   const zoneValues = zones();
   copy.reputation = {
     local_enabled: $('local-denylist-enabled').checked,
@@ -796,6 +876,9 @@ function fill(value) {
   $('strict-clean').checked = !!reputation.strict;
   $('judge-url').value = (value.anonymity && value.anonymity.judge_url) || '';
   $('min_anonymity').value = value.min_anonymity || 'any';
+  $('protocol').value = value.protocol || 'all';
+  $('countries').value = value.countries || '';
+  $('fail_fast').checked = value.fail_fast !== false;
   $('targets').replaceChildren();
   value.targets.forEach(addTarget);
   updateIdentity();
@@ -809,6 +892,9 @@ function syncResultControls() {
   if (![...$('result-min').options].some(option => option.value === value)) $('result-min').add(new Option(`${Math.round(Number(value) * 100)}%`, value));
   $('result-min').value = value;
   $('result-anon').value = $('min_anonymity').value;
+  $('result-protocol').value = $('protocol').value;
+  $('result-max-latency').value = $('max_latency').value;
+  $('result-country').value = $('countries').value;
   $('result-top').value = $('top').value;
 }
 
@@ -822,6 +908,7 @@ async function save() {
     toast(t('toast.saved'));
     updateIdentity();
     updateSourceCount();
+    syncResultControls();
   } catch (error) {
     toast(error.message, true);
   }
@@ -835,7 +922,13 @@ async function start(action) {
       value.min_success = Number($('result-min').value);
       value.top = Number($('result-top').value);
       value.min_anonymity = $('result-anon').value;
+      value.protocol = $('result-protocol').value;
+      value.max_latency = Number($('result-max-latency').value) || 0;
+      value.countries = $('result-country').value;
+      $('countries').value = value.countries;
       $('min_anonymity').value = value.min_anonymity;
+      $('protocol').value = value.protocol;
+      $('max_latency').value = value.max_latency;
       $('sort').value = value.sort;
       $('min_success').value = value.min_success;
       $('top').value = value.top;
@@ -962,7 +1055,7 @@ function renderResults(data) {
   $('result-context').textContent = data && data.profile ? t('results.context', {targets:data.targets.map(target => target.name ? `${target.name} (${target.url})` : target.url).join(' + '), profile:profileLabel(data.request_profile || 'workbench')}) : t('results.empty');
   $('result-total').textContent = t('results.total', {count:fmt(total)});
   $('page-number').textContent = `${fmt(Math.floor(start / 50) + 1)} / ${fmt(Math.max(1, Math.ceil(total / 50)))}`;
-  $('result-rows').innerHTML = page.length ? page.map((row, index) => `<tr><td>${fmt(start + index + 1)}</td><td>${esc(row.proxy)}</td><td><span class="score">${Number(row.score).toFixed(1)}</span></td><td>${esc(ms(Number(row.latency_ms).toFixed(0)))}</td><td>${esc(ms(Number(row.jitter_ms).toFixed(0)))}</td><td>${(Number(row.min_target_reliability) * 100).toFixed(0)}%</td><td>${reputationBadge(row)}</td><td>${anonymityBadge(row)}</td><td><button class="text-link" data-details="${index}">${esc(t('results.details'))}</button></td></tr>`).join('') : `<tr><td colspan="9" class="empty">${esc(t(data ? 'results.noneMatching' : 'results.noneYet'))}</td></tr>`;
+  $('result-rows').innerHTML = page.length ? page.map((row, index) => `<tr><td>${fmt(start + index + 1)}</td><td>${esc(row.proxy)}</td><td><span class="score">${Number(row.score).toFixed(1)}</span></td><td>${esc(ms(Number(row.latency_ms).toFixed(0)))}</td><td>${esc(ms(Number(row.jitter_ms).toFixed(0)))}</td><td>${(Number(row.min_target_reliability) * 100).toFixed(0)}%</td><td>${reputationBadge(row)}</td><td>${anonymityBadge(row)}</td><td class="country">${esc(row.country || '—')}</td><td><button class="text-link" data-details="${index}">${esc(t('results.details'))}</button></td></tr>`).join('') : `<tr><td colspan="10" class="empty">${esc(t(data ? 'results.noneMatching' : 'results.noneYet'))}</td></tr>`;
   $('result-rows').querySelectorAll('[data-details]').forEach(node => node.onclick = () => details(page[Number(node.dataset.details)]));
 }
 
@@ -971,7 +1064,7 @@ async function loadResults() {
   resultBusy = true;
   $('refresh-results').disabled = true;
   try {
-    const query = new URLSearchParams({sort:$('result-sort').value, min_success:$('result-min').value, min_anonymity:$('result-anon').value, offset});
+    const query = new URLSearchParams({sort:$('result-sort').value, min_success:$('result-min').value, min_anonymity:$('result-anon').value, protocol:$('result-protocol').value, max_latency:Number($('result-max-latency').value) || 0, country:$('result-country').value.trim(), q:$('result-search').value.trim(), offset});
     const data = await api('/api/results?' + query);
     resultTargets = data.targets;
     resultData = {...data, offset};
@@ -991,7 +1084,7 @@ function renderDetails(row) {
   const verdict = row.reputation || {status:'clean', dnsbl:[]};
   const dnsbl = (verdict.dnsbl || []).map(item => `${esc(item.zone)}: ${esc(t(item.status === 'listed' ? 'dnsbl.listed' : item.status === 'clear' ? 'dnsbl.clear' : 'dnsbl.noAnswer'))}`).join(' · ') || esc(t('dnsbl.notChecked'));
   const head = ['col.attempt', 'col.response', 'col.time', 'col.bytes', 'col.result'].map(key => `<th>${esc(t(key))}</th>`).join('');
-  $('details-body').innerHTML = `<div class="detail-reputation"><strong>${esc(t('details.cleanliness'))}</strong> ${esc(reputationLabel(verdict.status))} · <strong>DNSBL:</strong> ${dnsbl}${verdict.local_rule ? esc(t('details.localRule')) + esc(verdict.local_rule) : ''}${anonymityDetails(row)}</div>` + resultTargets.map((target, index) => `<h3>${esc(target.name || t('details.service', {number:index + 1}))} · ${esc(target.url)}</h3><div class="table-wrap"><table><thead><tr>${head}</tr></thead><tbody>${(row.samples || []).filter(sample => sample.target === index).map(sample => `<tr><td>${esc(sample.attempt)}</td><td>${esc(sample.status ?? '—')}</td><td>${esc(ms(sample.ms))}</td><td>${fmt(sample.bytes)}</td><td class="${sample.ok ? '' : 'status-error'}">${esc(sample.ok ? t('details.success') : sample.error)}</td></tr>`).join('')}</tbody></table></div>`).join('');
+  $('details-body').innerHTML = `<div class="detail-reputation"><strong>${esc(t('details.cleanliness'))}</strong> ${esc(reputationLabel(verdict.status))} · <strong>DNSBL:</strong> ${dnsbl}${verdict.local_rule ? esc(t('details.localRule')) + esc(verdict.local_rule) : ''}${anonymityDetails(row)}${row.aborted ? ' · ' + esc(t('details.aborted')) : ''}</div>` + resultTargets.map((target, index) => `<h3>${esc(target.name || t('details.service', {number:index + 1}))} · ${esc(target.url)}</h3><div class="table-wrap"><table><thead><tr>${head}</tr></thead><tbody>${(row.samples || []).filter(sample => sample.target === index).map(sample => `<tr><td>${esc(sample.attempt)}</td><td>${esc(sample.status ?? '—')}</td><td>${esc(ms(sample.ms))}</td><td>${fmt(sample.bytes)}</td><td class="${sample.ok ? '' : 'status-error'}">${esc(sample.ok ? t('details.success') : sample.error)}</td></tr>`).join('')}</tbody></table></div>`).join('');
 }
 
 async function details(summary) {
@@ -1017,7 +1110,54 @@ $('export').onclick = () => start('export');
 $('stop').onclick = async () => { try { $('stop').disabled = true; await api('/api/stop', {}); toast(t('toast.stopping')); await poll(); } catch (error) { toast(error.message, true); } };
 $('clear-data').onclick = async () => { if (!confirm(t('confirm.clear'))) return; try { const result = await api('/api/clear-data', {}); toast(t('toast.cleared', {count:result.removed.length})); await poll(); } catch (error) { toast(error.message, true); } };
 $('refresh-results').onclick = () => { offset = 0; loadResults(); };
-['result-sort', 'result-min', 'result-anon'].forEach(id => $(id).onchange = () => { offset = 0; loadResults(); });
+['result-sort', 'result-min', 'result-anon', 'result-protocol', 'result-max-latency'].forEach(id => $(id).onchange = () => { offset = 0; loadResults(); });
+let searchTimer;
+$('result-search').oninput = () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => { offset = 0; loadResults(); }, 300); };
+$('result-country').oninput = $('result-search').oninput;
+
+const presets = {
+  quick: {attempts:1, timeout:5, connect_timeout:2, workers:256, fail_fast:true},
+  balanced: {attempts:3, timeout:8, connect_timeout:4, workers:128, fail_fast:true},
+  thorough: {attempts:5, timeout:12, connect_timeout:6, workers:128, fail_fast:true}
+};
+document.querySelectorAll('[data-preset]').forEach(node => node.onclick = () => {
+  const preset = presets[node.dataset.preset];
+  for (const [key, value] of Object.entries(preset)) {
+    if (typeof value === 'boolean') $(key).checked = value; else $(key).value = value;
+  }
+  toast(t('preset.applied'));
+});
+
+function renderGeo(status) {
+  $('geo-status').textContent = status.available ? t('geo.ready', {count:fmt(status.ranges)}) : t('geo.missing');
+}
+async function loadGeo() {
+  try { renderGeo(await api('/api/geoip')); } catch {}
+}
+$('geo-update').onclick = async () => {
+  $('geo-update').disabled = true;
+  toast(t('geo.downloading'));
+  try {
+    renderGeo(await api('/api/geoip/update', {}));
+    toast(t('geo.updated'));
+    if (currentTab === 'results') loadResults();
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    $('geo-update').disabled = false;
+  }
+};
+loadGeo();
+$('copy-page').onclick = async () => {
+  const proxies = ((resultData && resultData.rows) || []).map(row => row.proxy);
+  if (!proxies.length) { toast(t('toast.copyEmpty'), true); return; }
+  try {
+    await navigator.clipboard.writeText(proxies.join('\n') + '\n');
+    toast(t('toast.copied', {count:fmt(proxies.length)}));
+  } catch {
+    toast(t('toast.copyFailed'), true);
+  }
+};
 $('prev').onclick = () => { offset = Math.max(0, offset - 50); loadResults(); };
 $('next').onclick = () => { offset += 50; loadResults(); };
 $('sources').oninput = updateSourceCount;

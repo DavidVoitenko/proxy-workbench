@@ -209,7 +209,9 @@ class GuiTests(unittest.TestCase):
             self.assertEqual(result['job']['exit_code'],0,result['log'])
             self.assertEqual(result['export']['checked'],2)
             self.assertEqual(result['export']['passed'],1)
-            self.assertEqual(len(requested),12)
+            # 6 requests for the good proxy; fail-fast stops the rejecting one after its
+            # first failure on service two (strict threshold), instead of 6 more.
+            self.assertEqual(len(requested),8)
             self.assertEqual(self.client.get('/api/download/proxies.txt').text.strip(),proxies[0])
             servers[0].slow=True;servers[1].slow=True
             self.client.post('/api/start',json=dict(action='recheck',settings=settings)).raise_for_status()
