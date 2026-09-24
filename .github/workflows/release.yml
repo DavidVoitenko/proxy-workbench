@@ -1,9 +1,17 @@
 name: Source release
 
+# Runs on a pushed v* tag, or manually from the Actions tab
+# ("Run workflow", enter e.g. v1.3.0), which creates the tag on the
+# selected branch's latest commit.
 on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to create, for example v1.3.0'
+        required: true
 
 permissions:
   contents: write
@@ -11,6 +19,8 @@ permissions:
 jobs:
   source-archive:
     runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -18,6 +28,13 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Check tag matches product version
+        run: |
+          version=$(python -c 'import branding; print(branding.PRODUCT_VERSION)')
+          if [ "$TAG" != "v$version" ]; then
+            echo "Tag $TAG does not match PRODUCT_VERSION $version" >&2
+            exit 1
+          fi
       - name: Install pinned dependencies
         run: python -m pip install --requirement requirements.txt
       - name: Run local mock tests
@@ -30,11 +47,23 @@ jobs:
       - name: Build reproducible source archive and checksum
         run: |
           mkdir -p dist
-          git archive --format=tar.gz --prefix=proxy-workbench/ -o "dist/proxy-workbench-${GITHUB_REF_NAME}.tar.gz" HEAD
-          sha256sum "dist/proxy-workbench-${GITHUB_REF_NAME}.tar.gz" > "dist/proxy-workbench-${GITHUB_REF_NAME}.tar.gz.sha256"
+          git archive --format=tar.gz --prefix=proxy-workbench/ -o "dist/proxy-workbench-${TAG}.tar.gz" HEAD
+          (cd dist && sha256sum "proxy-workbench-${TAG}.tar.gz" > "proxy-workbench-${TAG}.tar.gz.sha256")
+      - name: Extract release notes from CHANGELOG
+        run: |
+          awk -v version="${TAG#v}" '
+            index($0, "## [" version "]") == 1 { found = 1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > dist/notes.md
+          test -s dist/notes.md || echo "See CHANGELOG.md." > dist/notes.md
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.TAG }}
+          target_commitish: ${{ github.sha }}
+          name: Proxy Workbench ${{ env.TAG }}
+          body_path: dist/notes.md
           generate_release_notes: true
           files: |
             dist/proxy-workbench-*.tar.gz
