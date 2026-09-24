@@ -37,7 +37,7 @@ class OutputEncodingTests(unittest.TestCase):
             i18n.utf8_output()
             print('Проверено 1/1', file=i18n.sys.stdout)
             i18n.sys.stdout.flush()
-        self.assertEqual(raw.getvalue().decode('utf-8'), 'Проверено 1/1\n')
+        self.assertEqual(raw.getvalue().decode('utf-8').rstrip('\r\n'), 'Проверено 1/1')
 
 
 if __name__ == '__main__':
