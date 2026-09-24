@@ -21,6 +21,6 @@ body:
     id: version
     attributes:
       label: Proxy Workbench version
-      placeholder: "1.5.0"
+      placeholder: "1.5.1"
     validations:
       required: false
