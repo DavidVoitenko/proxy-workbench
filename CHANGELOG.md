@@ -4,6 +4,21 @@
 
 ## [Unreleased]
 
+## [2.1.0] — 2026-09-24
+
+### Added
+
+- **Rotating proxy for scrapers.**
+  - The user name picks what you need: `country-de_nl`, `protocol-socks5`, `latency-800`, `anonymity-elite`.
+  - `session-<id>` keeps one proxy for a whole session while it works.
+  - `--max-per-proxy` caps simultaneous connections per proxy.
+  - `GET /status` on the gateway shows the pool, sessions and per-proxy counts.
+- **Real download speed:** an optional speed test file (`--speedtest-url`, GUI field) is downloaded through each working proxy.
+  - The Mbit/s column, the bandwidth sort, `mbps` in exports and the API, and an API `min_mbps` filter show the result.
+- **Provider of every proxy:** `update-geoip` also fetches DB-IP ASN Lite. Each proxy gets its AS number, organisation and a hosting flag.
+  - `--no-hosting` and the GUI option skip cloud and data-centre ranges before checking.
+  - The results table gets a Provider column and a filter; exports and the API get `asn`, `provider`, `hosting` and `hosting=0/1`.
+
 ## [2.0.0] — 2026-09-24
 
 ### Added

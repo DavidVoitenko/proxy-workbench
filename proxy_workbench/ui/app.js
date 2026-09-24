@@ -188,7 +188,14 @@ const messages = {
     'geo.title': 'Country database',
     'geo.missing': 'Not downloaded',
     'geo.ready': 'Ready · {count} ranges',
-    'geo.hint': 'Needed for country filters and the Country column. The free DB-IP Country Lite file (about 7 MB) is downloaded once into the local data folder; lookups then work offline. Geonode sources already include countries.',
+    'geo.providers': ' · providers: {count}',
+    'provider.filter': 'Providers',
+    'provider.all': 'All providers',
+    'provider.hide': 'Hide hosting / data centres',
+    'provider.exclude': 'Skip hosting providers and data centres (needs the provider database)',
+    'provider.hosting': 'hosting',
+    'col.provider': 'Provider',
+    'geo.hint': 'Needed for country filters, the Country and Provider columns and hiding hosting providers. The free DB-IP Country Lite and ASN Lite files are downloaded once into the local data folder; lookups then work offline. Geonode sources already include countries.',
     'geo.download': 'Download / update',
     'geo.downloading': 'Downloading the country database…',
     'geo.updated': 'Country database updated.',
@@ -211,6 +218,12 @@ const messages = {
     'breakdown.countries': 'Countries',
     'breakdown.unknown': 'unknown',
     'results.exitIp': 'Exit IP seen by the judge: {ip}',
+    'sort.bandwidth': 'Bandwidth: most Mbit/s first',
+    'results.byBandwidth': 'By bandwidth',
+    'col.mbps': 'Mbit/s',
+    'col.mbpsHint': 'Download speed from the speed test',
+    'speed.url': 'Speed test file (optional)',
+    'speed.hint': 'Every proxy that works for your services downloads this file once, and the table shows its real download speed in Mbit/s. Leave empty to skip; it adds a few seconds per working proxy.',
     'check.prefilter': 'Quick pre-check, connections',
     'check.prefilterHint': 'Drops addresses that do not even accept a connection before the full check. 0 — off.',
     'presets.label': 'Or add a ready-made check',
@@ -520,13 +533,20 @@ const messages = {
     'preset.hint': 'Быстро: 1 попытка, короткие таймауты, больше воркеров. Тщательно: 5 попыток, терпеливые таймауты.',
     'preset.applied': 'Пресет применён. Сохраните настройки или запустите проверку.',
     'geo.countries': 'Страны',
+    'geo.providers': ' · провайдеров: {count}',
+    'provider.filter': 'Провайдеры',
+    'provider.all': 'Все провайдеры',
+    'provider.hide': 'Скрыть хостинг / дата-центры',
+    'provider.exclude': 'Пропускать хостинг-провайдеров и дата-центры (нужна база провайдеров)',
+    'provider.hosting': 'хостинг',
+    'col.provider': 'Провайдер',
     'geo.countriesHint': 'ISO-коды. Адреса из других стран пропускаются ещё до проверки, поэтому проход намного короче.',
     'want.label': 'Остановиться после',
     'want.hint': '0 — проверить всё. Иначе проверка завершится, как только найдётся столько подходящих прокси.',
     'geo.title': 'База стран',
     'geo.missing': 'Не скачана',
     'geo.ready': 'Готова · диапазонов: {count}',
-    'geo.hint': 'Нужна для фильтра по странам и колонки «Страна». Бесплатный файл DB-IP Country Lite (около 7 МБ) скачивается один раз в локальную папку data, дальше поиск работает офлайн. Источники Geonode уже содержат страну.',
+    'geo.hint': 'Нужна для фильтра по странам, колонок «Страна» и «Провайдер» и скрытия хостинг-провайдеров. Бесплатные файлы DB-IP Country Lite и ASN Lite скачиваются один раз в локальную папку data, дальше поиск работает офлайн. Источники Geonode уже содержат страну.',
     'geo.download': 'Скачать / обновить',
     'geo.downloading': 'Скачиваем базу стран…',
     'geo.updated': 'База стран обновлена.',
@@ -549,6 +569,12 @@ const messages = {
     'breakdown.countries': 'Страны',
     'breakdown.unknown': 'неизвестно',
     'results.exitIp': 'Выходной IP, который увидел judge: {ip}',
+    'sort.bandwidth': 'Пропускная способность: больше Мбит/с первыми',
+    'results.byBandwidth': 'По скорости загрузки',
+    'col.mbps': 'Мбит/с',
+    'col.mbpsHint': 'Скорость загрузки по замеру',
+    'speed.url': 'Файл для замера скорости (необязательно)',
+    'speed.hint': 'Каждый прокси, прошедший ваши сервисы, один раз скачивает этот файл, и в таблице видна реальная скорость загрузки в Мбит/с. Оставьте пустым, чтобы не замерять; замер добавляет несколько секунд на каждый рабочий прокси.',
     'check.prefilter': 'Быстрая предпроверка, соединений',
     'check.prefilterHint': 'Отсеивает адреса, которые даже не принимают подключение, до полной проверки. 0 — выключено.',
     'presets.label': 'Или добавьте готовую проверку',
@@ -763,6 +789,9 @@ const serverMessagesEn = {
   'anonymity.judge_url: ожидается http(s) URL': 'anonymity.judge_url: an http(s) URL is expected',
   'anonymity.judge_url: нужен http(s) URL без userinfo': 'anonymity.judge_url: an http(s) URL without userinfo is required',
   'anonymity.judge_url: некорректный порт': 'anonymity.judge_url: invalid port',
+  'speedtest.url: ожидается http(s) URL': 'speedtest.url: an http(s) URL is expected',
+  'speedtest.url: нужен http(s) URL без userinfo': 'speedtest.url: an http(s) URL without userinfo is required',
+  'speedtest.max_bytes: от 10000 до 200000000': 'speedtest.max_bytes: from 10000 to 200000000',
   'Уровень анонимности: any, anonymous или elite.': 'Anonymity level: any, anonymous or elite.',
   'Остановлено. Завершённые проверки сохранены; scan продолжит проход.': 'Stopped. Finished checks are saved; scan will resume the pass.',
   'Эта папка data уже используется другим запуском.': 'This data folder is already used by another run.',
@@ -932,11 +961,13 @@ function getSettings() {
   copy.sort = $('sort').value;
   copy.use_sources = $('use_sources').checked;
   copy.detect_protocols = $('detect_protocols').checked;
+  copy.exclude_hosting = $('exclude_hosting').checked;
   copy.sources = $('sources').value.split('\n').map(value => value.trim()).filter(Boolean);
   copy.proxies = $('proxies').value;
   copy.denylist = $('denylist').value;
   copy.request_profile = $('request-profile').value;
   copy.anonymity = {judge_url: $('judge-url').value.trim()};
+  copy.speedtest = {url: $('speedtest-url').value.trim(), max_bytes: (settings.speedtest && settings.speedtest.max_bytes) || 5000000};
   copy.min_anonymity = $('min_anonymity').value;
   copy.protocol = $('protocol').value;
   copy.countries = $('countries').value;
@@ -984,6 +1015,7 @@ function fill(value) {
   $('sort').value = value.sort;
   $('use_sources').checked = value.use_sources;
   $('detect_protocols').checked = Boolean(value.detect_protocols);
+  $('exclude_hosting').checked = Boolean(value.exclude_hosting);
   $('sources').value = value.sources.join('\n');
   $('proxies').value = value.proxies || '';
   $('denylist').value = value.denylist || '';
@@ -993,6 +1025,7 @@ function fill(value) {
   $('local-denylist-enabled').checked = reputation.local_enabled !== false;
   $('strict-clean').checked = !!reputation.strict;
   $('judge-url').value = (value.anonymity && value.anonymity.judge_url) || '';
+  $('speedtest-url').value = (value.speedtest && value.speedtest.url) || '';
   $('min_anonymity').value = value.min_anonymity || 'any';
   $('protocol').value = value.protocol || 'all';
   $('countries').value = value.countries || '';
@@ -1161,6 +1194,7 @@ function renderState(value) {
   }
 }
 
+const providerCell = row => row.provider ? `${esc(row.provider.org.length > 28 ? row.provider.org.slice(0, 27) + '…' : row.provider.org)}${row.provider.hosting ? ` <span class="badge subtle">${esc(t('provider.hosting'))}</span>` : ''}` : '—';
 // "DE → NL" when the proxy sends traffic out from another country than its own address.
 const countryLabel = row => row.exit_country && row.exit_country !== row.country ? `${row.country || '?'} → ${row.exit_country}` : (row.country || '—');
 
@@ -1203,7 +1237,7 @@ function renderResults(data) {
   $('result-context').textContent = data && data.profile ? t('results.context', {targets:data.targets.map(target => target.name ? `${target.name} (${target.url})` : target.url).join(' + '), profile:profileLabel(data.request_profile || 'workbench')}) : t('results.empty');
   $('result-total').textContent = t('results.total', {count:fmt(total)});
   $('page-number').textContent = `${fmt(Math.floor(start / 50) + 1)} / ${fmt(Math.max(1, Math.ceil(total / 50)))}`;
-  $('result-rows').innerHTML = page.length ? page.map((row, index) => `<tr><td>${fmt(start + index + 1)}</td><td>${esc(row.proxy)}</td><td><span class="score">${Number(row.score).toFixed(1)}</span></td><td>${esc(ms(Number(row.latency_ms).toFixed(0)))}</td><td>${esc(ms(Number(row.jitter_ms).toFixed(0)))}</td><td>${(Number(row.min_target_reliability) * 100).toFixed(0)}%</td><td>${row.history ? esc(`${fmt(row.history.passes)}/${fmt(row.history.checks)}`) : '1/1'}</td><td>${reputationBadge(row)}</td><td>${anonymityBadge(row)}</td><td class="country" title="${esc(row.anonymity && row.anonymity.exit_ip ? t('results.exitIp', {ip:row.anonymity.exit_ip}) : '')}">${esc(countryLabel(row))}</td><td><button class="text-link" data-details="${index}">${esc(t('results.details'))}</button></td></tr>`).join('') : `<tr><td colspan="11" class="empty">${esc(t(data ? 'results.noneMatching' : 'results.noneYet'))}</td></tr>`;
+  $('result-rows').innerHTML = page.length ? page.map((row, index) => `<tr><td>${fmt(start + index + 1)}</td><td>${esc(row.proxy)}</td><td><span class="score">${Number(row.score).toFixed(1)}</span></td><td>${esc(ms(Number(row.latency_ms).toFixed(0)))}</td><td>${esc(ms(Number(row.jitter_ms).toFixed(0)))}</td><td>${row.speed && row.speed.mbps != null ? esc(Number(row.speed.mbps).toFixed(1)) : '—'}</td><td>${(Number(row.min_target_reliability) * 100).toFixed(0)}%</td><td>${row.history ? esc(`${fmt(row.history.passes)}/${fmt(row.history.checks)}`) : '1/1'}</td><td>${reputationBadge(row)}</td><td>${anonymityBadge(row)}</td><td class="country" title="${esc(row.anonymity && row.anonymity.exit_ip ? t('results.exitIp', {ip:row.anonymity.exit_ip}) : '')}">${esc(countryLabel(row))}</td><td class="provider" title="${esc(row.provider ? `AS${row.provider.asn} ${row.provider.org}` : '')}">${providerCell(row)}</td><td><button class="text-link" data-details="${index}">${esc(t('results.details'))}</button></td></tr>`).join('') : `<tr><td colspan="13" class="empty">${esc(t(data ? 'results.noneMatching' : 'results.noneYet'))}</td></tr>`;
   $('result-rows').querySelectorAll('[data-details]').forEach(node => node.onclick = () => details(page[Number(node.dataset.details)]));
 }
 
@@ -1212,7 +1246,7 @@ async function loadResults() {
   resultBusy = true;
   $('refresh-results').disabled = true;
   try {
-    const query = new URLSearchParams({sort:$('result-sort').value, min_success:$('result-min').value, min_anonymity:$('result-anon').value, protocol:$('result-protocol').value, max_latency:Number($('result-max-latency').value) || 0, country:$('result-country').value.trim(), q:$('result-search').value.trim(), offset});
+    const query = new URLSearchParams({sort:$('result-sort').value, min_success:$('result-min').value, min_anonymity:$('result-anon').value, protocol:$('result-protocol').value, max_latency:Number($('result-max-latency').value) || 0, country:$('result-country').value.trim(), hosting:$('result-hosting').value, q:$('result-search').value.trim(), offset});
     const data = await api('/api/results?' + query);
     resultTargets = data.targets;
     resultData = {...data, offset};
@@ -1259,7 +1293,7 @@ $('export').onclick = () => start('export');
 $('stop').onclick = async () => { try { $('stop').disabled = true; await api('/api/stop', {}); toast(t('toast.stopping')); await poll(); } catch (error) { toast(error.message, true); } };
 $('clear-data').onclick = async () => { if (!confirm(t('confirm.clear'))) return; try { const result = await api('/api/clear-data', {}); toast(t('toast.cleared', {count:result.removed.length})); await poll(); } catch (error) { toast(error.message, true); } };
 $('refresh-results').onclick = () => { offset = 0; loadResults(); };
-['result-sort', 'result-min', 'result-anon', 'result-protocol', 'result-max-latency'].forEach(id => $(id).onchange = () => { offset = 0; loadResults(); });
+['result-sort', 'result-min', 'result-anon', 'result-protocol', 'result-max-latency', 'result-hosting'].forEach(id => $(id).onchange = () => { offset = 0; loadResults(); });
 let searchTimer;
 $('result-search').oninput = () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => { offset = 0; loadResults(); }, 300); };
 $('result-country').oninput = $('result-search').oninput;
@@ -1278,7 +1312,7 @@ document.querySelectorAll('[data-preset]').forEach(node => node.onclick = () => 
 });
 
 function renderGeo(status) {
-  $('geo-status').textContent = status.available ? t('geo.ready', {count:fmt(status.ranges)}) : t('geo.missing');
+  $('geo-status').textContent = status.available ? t('geo.ready', {count:fmt(status.ranges)}) + (status.providers ? t('geo.providers', {count:fmt(status.provider_ranges)}) : '') : t('geo.missing');
 }
 async function loadGeo() {
   try { renderGeo(await api('/api/geoip')); } catch {}

@@ -171,6 +171,71 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):
             await gateway.start(self.home, host='0.0.0.0', port=0)
 
+    async def tagged_socks(self, tag):
+        """A SOCKS5 upstream that records which client connection it served."""
+        async def handler(reader, writer):
+            greeting = await reader.readexactly(2)
+            await reader.readexactly(greeting[1])
+            writer.write(b'\x05\x00')
+            _, _, _, kind = await reader.readexactly(4)
+            if kind == 1:
+                host = ipaddress.IPv4Address(await reader.readexactly(4)).compressed
+            else:
+                host = (await reader.readexactly((await reader.readexactly(1))[0])).decode()
+            port = struct.unpack('>H', await reader.readexactly(2))[0]
+            self.seen.append(tag)
+            upstream = await asyncio.open_connection(host, port)
+            writer.write(b'\x05\x00\x00\x01' + bytes(6))
+            await splice(reader, writer, *upstream)
+        return f'socks5://127.0.0.1:{await self.listen(handler)}'
+
+    async def test_client_options_sessions_and_status(self):
+        de, nl = await self.tagged_socks('DE'), await self.tagged_socks('NL')
+        (self.home / 'exports').mkdir(exist_ok=True)
+        (self.home / 'exports' / 'ranked.json').write_text(json.dumps([row(de, country='DE'), row(nl, country='NL')]))
+        server, address = await self.start()
+        url = f'http://127.0.0.1:{self.service_port}/'
+
+        async def fetch(user, scheme='http'):
+            async with httpx.AsyncClient(proxy=f'{scheme}://{user}:x@{address}', trust_env=False) as client:
+                return (await client.get(url)).status_code
+        for _ in range(3):
+            self.assertEqual(await fetch('country-nl'), 200)
+            self.assertEqual(await fetch('country-de', 'socks5'), 200)
+        self.assertEqual(self.seen, ['NL', 'DE'] * 3)
+        self.seen.clear()
+        for _ in range(4):
+            await fetch('session-alpha')
+        self.assertEqual(len(set(self.seen)), 1)  # a session keeps its proxy
+        self.assertEqual(await fetch('country-us'), 502)  # nothing matches
+        self.assertEqual(await fetch('protocol-ftp'), 400)
+        async with httpx.AsyncClient(trust_env=False) as client:
+            status = (await client.get(f'http://{address}/status')).json()
+        self.assertEqual((status['proxies'], status['sessions']), (2, 1))
+        self.assertGreaterEqual(sum(item['ok'] for item in status['top']), 10)
+        self.assertEqual(status['active'], 0)
+
+    def test_client_options_parsing(self):
+        self.assertEqual(gateway.client_options('user'), ({}, None))
+        self.assertEqual(gateway.client_options('country-de_nl-protocol-SOCKS5-latency-800-anonymity-elite-session-s1'),
+                         ({'countries': ('DE', 'NL'), 'protocol': 'socks5', 'max_latency': 800.0, 'anonymity': 'elite'}, 's1'))
+        for bad in ('country-germany', 'protocol-https', 'latency-fast', 'session-a/b'):
+            with self.assertRaises(ValueError):
+                gateway.client_options(bad)
+
+    def test_per_proxy_limit(self):
+        pool = gateway.Pool(self.home, max_per_proxy=1)
+        (self.home / 'exports').mkdir(exist_ok=True)
+        (self.home / 'exports' / 'ranked.json').write_text(json.dumps([row('http://11.0.0.1:80'), row('http://11.0.0.2:80')]))
+        first = pool.pick()
+        pool.acquire(first)
+        second = pool.pick()
+        pool.acquire(second)
+        self.assertNotEqual(first, second)
+        self.assertIsNone(pool.pick())
+        pool.release(first)
+        self.assertEqual(pool.pick(), first)
+
     def test_pool_filters_and_skips_https_proxies(self):
         (self.home / 'exports').mkdir()
         rows = [row('http://11.0.0.1:80', country='DE'), row('https://11.0.0.2:443', country='DE'),

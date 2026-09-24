@@ -12,13 +12,15 @@ import base64
 import contextlib
 import hmac
 import ipaddress
+import json
 import random
+import re
 import socket
 import struct
 import time
 from pathlib import Path
 
-from . import socks4
+from . import geoip, socks4
 from .api import Exports, is_loopback, select
 from .i18n import tr
 
@@ -26,6 +28,7 @@ DEFAULT_PORT = 8899
 SUPPORTED = ('http', 'socks4', 'socks5')
 STRATEGIES = ('round-robin', 'random')
 MAX_HEAD = 64 * 1024
+SESSION = re.compile(r'[A-Za-z0-9_]{1,64}')
 HOP_HEADERS = {b'proxy-authorization', b'proxy-connection', b'connection', b'keep-alive'}
 
 
@@ -34,50 +37,128 @@ class UpstreamError(Exception):
 
 
 class Pool:
-    """Working proxies from the latest export with rotation and failure cool-down."""
+    """Working proxies from the latest export with rotation, sessions, limits and failure cool-down."""
 
-    def __init__(self, data, filters=None, strategy='round-robin', max_failures=2, cooldown=300):
+    def __init__(self, data, filters=None, strategy='round-robin', max_failures=2, cooldown=300,
+                 max_per_proxy=0, session_ttl=600):
         self.exports = Exports(Path(data) / 'exports')
         self.filters = {'protocol': 'all', 'countries': (), 'anonymity': 'any', 'max_latency': 0, **(filters or {})}
         self.strategy = strategy
         self.max_failures = max_failures
         self.cooldown = cooldown
+        self.max_per_proxy = max_per_proxy
+        self.session_ttl = session_ttl
         self.failures = {}
         self.resting = {}
+        self.active = {}
+        self.usage = {}
+        self.sessions = {}
         self.position = 0
         self.key = None
-        self.proxies = []
+        self.rows = []
+        self.cache = {}
         self.stats = dict(connections=0, failed=0, retries=0)
 
     def refresh(self):
         rows, _ = self.exports.load()
         if self.exports.key != self.key:
             self.key = self.exports.key
-            self.proxies = [row['proxy'] for row in select(rows, self.filters)
-                            if row['protocol'] in SUPPORTED and not row['proxy'].startswith('https://')]
-        return self.proxies
+            self.rows = [row for row in select(rows, self.filters)
+                         if row['protocol'] in SUPPORTED and not row['proxy'].startswith('https://')]
+            self.cache.clear()
+        return [row['proxy'] for row in self.rows]
 
-    def available(self, now=None):
+    def matching(self, request=None):
+        """Proxies allowed by the gateway filters and, if given, one client's own filters."""
+        everything = self.refresh()
+        if not request:
+            return everything
+        key = tuple(sorted(request.items()))
+        if key not in self.cache:
+            query = {'protocol': 'all', 'countries': (), 'anonymity': 'any', 'max_latency': 0, **request}
+            self.cache[key] = [row['proxy'] for row in select(self.rows, query)]
+        return self.cache[key]
+
+    def available(self, request=None, now=None):
         now = time.monotonic() if now is None else now
-        return [proxy for proxy in self.refresh() if self.resting.get(proxy, 0) <= now]
+        return [proxy for proxy in self.matching(request) if self.resting.get(proxy, 0) <= now
+                and (not self.max_per_proxy or self.active.get(proxy, 0) < self.max_per_proxy)]
 
-    def pick(self, exclude=()):
-        candidates = [proxy for proxy in self.available() if proxy not in exclude]
+    def pick(self, exclude=(), request=None, session=None):
+        now = time.monotonic()
+        candidates = [proxy for proxy in self.available(request, now) if proxy not in exclude]
+        if session:
+            # The same session keeps its proxy while it works, so a site sees one address.
+            proxy, expires = self.sessions.get(session, (None, 0))
+            if proxy in candidates and expires > now:
+                self.sessions[session] = (proxy, now + self.session_ttl)
+                return proxy
         if not candidates:
             return None
         if self.strategy == 'random':
-            return random.choice(candidates)
-        self.position = (self.position + 1) % len(candidates)
-        return candidates[self.position]
+            choice = random.choice(candidates)
+        else:
+            self.position = (self.position + 1) % len(candidates)
+            choice = candidates[self.position]
+        if session:
+            if len(self.sessions) > 10_000:
+                self.sessions = {key: value for key, value in self.sessions.items() if value[1] > now}
+            self.sessions[session] = (choice, now + self.session_ttl)
+        return choice
+
+    def acquire(self, proxy):
+        self.active[proxy] = self.active.get(proxy, 0) + 1
+
+    def release(self, proxy):
+        if self.active.get(proxy, 0) > 1:
+            self.active[proxy] -= 1
+        else:
+            self.active.pop(proxy, None)
 
     def ok(self, proxy):
         self.failures.pop(proxy, None)
+        self.usage.setdefault(proxy, {'ok': 0, 'failed': 0})['ok'] += 1
 
     def failed(self, proxy):
+        self.usage.setdefault(proxy, {'ok': 0, 'failed': 0})['failed'] += 1
         self.failures[proxy] = self.failures.get(proxy, 0) + 1
         if self.failures[proxy] >= self.max_failures:
             self.resting[proxy] = time.monotonic() + self.cooldown
             self.failures.pop(proxy)
+
+    def snapshot(self, top=20):
+        now = time.monotonic()
+        busiest = sorted(self.usage.items(), key=lambda item: (-item[1]['ok'], item[1]['failed']))[:top]
+        return dict(self.stats, proxies=len(self.refresh()), available=len(self.available(now=now)),
+                    resting=sum(until > now for until in self.resting.values()),
+                    sessions=sum(expires > now for _, expires in self.sessions.values()),
+                    active=sum(self.active.values()),
+                    top=[dict(proxy=proxy, active=self.active.get(proxy, 0), **counts) for proxy, counts in busiest])
+
+
+def client_options(username):
+    """Per-client choices carried in the proxy user name, e.g. ``country-de_nl-protocol-socks5-session-a1``."""
+    parts = [part for part in (username or '').split('-') if part]
+    request, session = {}, None
+    for key, value in zip(parts[::2], parts[1::2]):
+        key = key.lower()
+        if key == 'country':
+            request['countries'] = geoip.parse_countries(value.replace('_', ','))
+        elif key == 'protocol':
+            if value.lower() not in SUPPORTED:
+                raise ValueError('protocol')
+            request['protocol'] = value.lower()
+        elif key == 'latency':
+            request['max_latency'] = float(int(value))
+        elif key == 'anonymity':
+            if value.lower() not in ('anonymous', 'elite'):
+                raise ValueError('anonymity')
+            request['anonymity'] = value.lower()
+        elif key == 'session':
+            if not SESSION.fullmatch(value):
+                raise ValueError('session')
+            session = value
+    return request, session
 
 
 async def resolve(host, port, family=socket.AF_UNSPEC):
@@ -196,10 +277,11 @@ class Gateway:
         self.connect_timeout = connect_timeout
         self.idle_timeout = idle_timeout
 
-    async def connect(self, host, port, forward=False):
+    async def connect(self, host, port, forward=False, request=None, session=None):
+        """A tunnel through a working proxy; the caller must release() the returned proxy."""
         tried = []
         for attempt in range(self.attempts):
-            proxy = self.pool.pick(exclude=tried)
+            proxy = self.pool.pick(exclude=tried, request=request, session=session)
             if proxy is None:
                 break
             tried.append(proxy)
@@ -210,24 +292,26 @@ class Gateway:
                 self.pool.failed(proxy)
                 continue
             self.pool.ok(proxy)
+            self.pool.acquire(proxy)
             return proxy, stream
         self.pool.stats['failed'] += 1
         raise UpstreamError('NO_WORKING_PROXY' if tried else 'NO_PROXIES')
 
-    def authorized(self, headers):
-        if not self.token:
-            return True
-        value = headers.get(b'proxy-authorization', b'')
-        scheme, _, encoded = value.partition(b' ')
-        if scheme.lower() != b'basic':
-            return False
-        try:
-            password = base64.b64decode(encoded, validate=True).partition(b':')[2]
-        except ValueError:
-            return False
-        return hmac.compare_digest(password, self.token.encode())
+    def password_ok(self, password):
+        return not self.token or hmac.compare_digest(password, self.token.encode())
 
-    async def relay(self, client_reader, client_writer, upstream, first=b''):
+    @staticmethod
+    def basic_credentials(headers):
+        scheme, _, encoded = headers.get(b'proxy-authorization', b'').partition(b' ')
+        if scheme.lower() != b'basic':
+            return b'', b''
+        try:
+            user, _, password = base64.b64decode(encoded, validate=True).partition(b':')
+        except ValueError:
+            return b'', b''
+        return user, password
+
+    async def relay(self, client_reader, client_writer, proxy, upstream, first=b''):
         upstream_reader, upstream_writer = upstream
         if first:
             upstream_writer.write(first)
@@ -236,6 +320,7 @@ class Gateway:
                                  pipe(upstream_reader, client_writer, self.idle_timeout))
         finally:
             upstream_writer.close()
+            self.pool.release(proxy)
 
     async def handle(self, reader, writer):
         self.pool.stats['connections'] += 1
@@ -261,11 +346,19 @@ class Gateway:
             headers[name.strip().lower()] = value.strip()
             if name.strip().lower() not in HOP_HEADERS:
                 kept.append(line)
-        if not self.authorized(headers):
+        user, password = self.basic_credentials(headers)
+        if not self.password_ok(password):
             writer.write(b'HTTP/1.1 407 Proxy Authentication Required\r\n'
                          b'Proxy-Authenticate: Basic realm="proxy-workbench"\r\nContent-Length: 0\r\n\r\n')
             return await writer.drain()
+        if method == b'GET' and target.split(b'?')[0] in (b'/', b'/status'):
+            # Asked directly rather than as a proxy: show the pool state.
+            body = json.dumps(self.pool.snapshot(), indent=1).encode() + b'\n'
+            writer.write(b'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nCache-Control: no-store\r\n'
+                         b'Content-Length: %d\r\nConnection: close\r\n\r\n' % len(body) + body)
+            return await writer.drain()
         try:
+            request, session = client_options(user.decode('utf-8', 'replace'))
             if method == b'CONNECT':
                 host, port = split_target(target.decode('ascii'), 443)
                 path = None
@@ -281,7 +374,7 @@ class Gateway:
             writer.write(b'HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n')
             return await writer.drain()
         try:
-            proxy, upstream = await self.connect(host, port, forward=path is not None)
+            proxy, upstream = await self.connect(host, port, forward=path is not None, request=request, session=session)
         except UpstreamError as exc:
             message = tr('Нет рабочих прокси: запустите проверку.', 'No working proxies: run a check first.') \
                 if str(exc) == 'NO_PROXIES' else tr('Все выбранные прокси не ответили.', 'None of the tried proxies answered.')
@@ -292,26 +385,28 @@ class Gateway:
         if path is None:
             writer.write(b'HTTP/1.1 200 Connection established\r\n\r\n')
             await writer.drain()
-            return await self.relay(reader, writer, upstream)
+            return await self.relay(reader, writer, proxy, upstream)
         # Plain HTTP: one request per connection keeps rotation simple and predictable.
         target = absolute if proxy.startswith('http://') else path
-        request = b'\r\n'.join([b' '.join([method, target.encode('ascii'), version or b'HTTP/1.1']), *kept,
+        payload = b'\r\n'.join([b' '.join([method, target.encode('ascii'), version or b'HTTP/1.1']), *kept,
                                 b'Connection: close']) + b'\r\n\r\n'
-        await self.relay(reader, writer, upstream, request)
+        await self.relay(reader, writer, proxy, upstream, payload)
 
     async def handle_socks5(self, reader, writer):
         methods = await reader.readexactly((await reader.readexactly(1))[0])
-        wanted = 2 if self.token else 0
+        # User/password is required with a token and preferred otherwise: the user name carries options.
+        wanted = 2 if self.token or 2 in methods else 0
         if wanted not in methods:
             writer.write(b'\x05\xff')
             return await writer.drain()
         writer.write(bytes([5, wanted]))
         await writer.drain()
+        user = b''
         if wanted == 2:
             await reader.readexactly(1)
-            await reader.readexactly((await reader.readexactly(1))[0])
+            user = await reader.readexactly((await reader.readexactly(1))[0])
             password = await reader.readexactly((await reader.readexactly(1))[0])
-            granted = hmac.compare_digest(password, self.token.encode())
+            granted = self.password_ok(password)
             writer.write(b'\x01\x00' if granted else b'\x01\x01')
             await writer.drain()
             if not granted:
@@ -330,20 +425,22 @@ class Gateway:
             writer.write(b'\x05\x07\x00\x01' + bytes(6))
             return await writer.drain()
         try:
-            _, upstream = await self.connect(host, port)
-        except UpstreamError:
+            request, session = client_options(user.decode('utf-8', 'replace'))
+            proxy, upstream = await self.connect(host, port, request=request, session=session)
+        except (UpstreamError, ValueError):
             writer.write(b'\x05\x01\x00\x01' + bytes(6))
             return await writer.drain()
         writer.write(b'\x05\x00\x00\x01' + bytes(6))
         await writer.drain()
-        await self.relay(reader, writer, upstream)
+        await self.relay(reader, writer, proxy, upstream)
 
 
-async def start(data, host='127.0.0.1', port=DEFAULT_PORT, token=None, filters=None, strategy='round-robin'):
+async def start(data, host='127.0.0.1', port=DEFAULT_PORT, token=None, filters=None, strategy='round-robin',
+                max_per_proxy=0, session_ttl=600):
     if not is_loopback(host) and not token:
         raise ValueError(tr(f'Шлюз на {host} доступен из сети: задайте пароль через --api-token.',
                             f'the gateway on {host} is reachable from the network: set a password with --api-token'))
-    gateway = Gateway(Pool(data, filters, strategy), token)
+    gateway = Gateway(Pool(data, filters, strategy, max_per_proxy=max_per_proxy, session_ttl=session_ttl), token)
     server = await asyncio.start_server(gateway.handle, host, port, limit=MAX_HEAD)
     server.gateway = gateway
     return server
