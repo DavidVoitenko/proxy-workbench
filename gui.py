@@ -23,6 +23,7 @@ from branding import PRODUCT_ID, PRODUCT_NAME, PRODUCT_VERSION, REQUEST_PROFILES
 import proxytool as core
 from maintenance import clear_runtime, exclusive_lock
 from reputation import Denylist, normalize_zones, result_allowed
+import anonymity
 
 ROOT = Path(__file__).resolve().parent
 MAX_BODY = 32 * 1024 * 1024
@@ -44,6 +45,9 @@ def public_source(value):
     return core.public_url(value)
 
 
+DOWNLOADS = ('proxies.txt', 'ranked.csv', 'ranked.json', *core.PROTOCOL_EXPORTS.values())
+
+
 def public_sources(values):
     return [public_source(value) for value in values] if isinstance(values, list) else []
 
@@ -56,7 +60,8 @@ def defaults():
                 max_bytes=1048576, source_timeout=60, min_success=2/3, top=0, sort='quality',
                 request_profile='workbench', denylist='',
                 reputation=dict(local_enabled=True, dnsbl_enabled=False, dnsbl_zones=[],
-                                timeout=2.5, strict=False))
+                                timeout=2.5, strict=False),
+                anonymity=dict(judge_url=''), min_anonymity='any')
 
 
 def validate(settings):
@@ -120,6 +125,16 @@ def validate(settings):
         if not isinstance(name, str) or len(name) > 160:
             raise ValueError('Название сервиса: максимум 160 символов.')
     clean['targets'] = normalized['targets']
+    judge = clean['anonymity']
+    if not isinstance(judge, dict):
+        raise ValueError('Настройки анонимности должны быть объектом.')
+    judge_url = judge.get('judge_url') or ''
+    if not isinstance(judge_url, str):
+        raise ValueError('anonymity.judge_url: ожидается http(s) URL')
+    judge_url = judge_url.strip()
+    anonymity.validate_judge({'judge_url': judge_url})
+    clean['anonymity'] = dict(judge_url=judge_url)
+    anonymity.validate_min_level(clean['min_anonymity'])
     return clean
 
 
@@ -207,7 +222,7 @@ class App:
                 raise ValueError('Включите источники или добавьте свой список прокси.')
             core.atomic(self.data/'gui-targets.json', json.dumps({
                 'targets': settings['targets'], 'request_profile': settings['request_profile'],
-                'reputation': settings['reputation']}, ensure_ascii=False))
+                'reputation': settings['reputation'], 'anonymity': settings['anonymity']}, ensure_ascii=False))
             core.atomic(self.data/'gui-sources.json', json.dumps(settings['sources']))
             core.atomic(self.data/'gui-input.txt', settings['proxies'])
             self.stop_path.unlink(missing_ok=True)
@@ -217,7 +232,7 @@ class App:
                        '--sources', str(self.data/'gui-sources.json'), '--input', str(self.data/'gui-input.txt'),
                        '--denylist-file', str(self.data/'denylist.txt'),
                        '--progress-file', str(self.progress_path), '--stop-file', str(self.stop_path)]
-            for key in ('attempts', 'timeout', 'workers', 'rate', 'max_bytes', 'source_timeout', 'min_success', 'top', 'sort'):
+            for key in ('attempts', 'timeout', 'workers', 'rate', 'max_bytes', 'source_timeout', 'min_success', 'top', 'sort', 'min_anonymity'):
                 command.extend(['--'+key.replace('_', '-'), str(settings[key])])
             reputation = settings['reputation']
             command.append('--local-denylist' if reputation['local_enabled'] else '--no-local-denylist')
@@ -235,7 +250,8 @@ class App:
             self.job = dict(id=secrets.token_hex(8), action=action, started_at=time.time(),
                             targets=[dict(name=t.get('name', ''), url=core.public_url(t['url'])) for t in settings['targets']],
                             min_success=settings['min_success'], sort=settings['sort'], top=settings['top'],
-                            request_profile=settings['request_profile'], reputation=reputation)
+                            request_profile=settings['request_profile'], reputation=reputation,
+                            anonymity=bool(settings['anonymity']['judge_url']), min_anonymity=settings['min_anonymity'])
             if self.log_handle:
                 self.log_handle.close()
             self.log_handle = (self.data/'gui-run.log').open('wb')
@@ -286,7 +302,7 @@ class App:
                          sources=read_json(self.data/'sources-report.json', {}),
                          source_urls=public_sources(read_json(self.data/'gui-sources.json', [])),
                          export=read_json(self.data/'exports/status.json', {}),
-                         downloads=[n for n in ('proxies.txt', 'ranked.csv', 'ranked.json')
+                         downloads=[n for n in DOWNLOADS
                                      if core.export_file(self.data/'exports', n).is_file()])
             if not active and self.job.get('exit_code', 0) not in (0, 130):
                 state['progress']['phase'] = 'error'
@@ -310,6 +326,7 @@ class App:
         try:
             threshold = float(query.get('min_success', [2/3])[0])
             offset = max(0, int(query.get('offset', ['0'])[0]))
+            min_anonymity = anonymity.validate_min_level(query.get('min_anonymity', ['any'])[0])
             if not 0 <= threshold <= 1:
                 raise ValueError()
         except ValueError:
@@ -323,6 +340,8 @@ class App:
                     cfg = json.loads(record[0]) if record else {}
                     policy = cfg.get('reputation', {})
                     strict = bool(policy.get('strict', False))
+                    if not cfg.get('anonymity'):
+                        min_anonymity = 'any'
                     denylist = Denylist.from_file(self.data/'denylist.txt', normalizer=core.normalize)
                     current_settings = self.settings()
                     local_enabled = current_settings.get('reputation', {}).get('local_enabled', True)
@@ -334,7 +353,8 @@ class App:
                     rows = []
                     for (payload,) in db.execute('SELECT payload FROM results WHERE '+condition+' ORDER BY '+order, (profile, threshold)):
                         row = json.loads(payload)
-                        if not result_allowed(row, threshold, denylist=active_denylist, strict=strict):
+                        if not result_allowed(row, threshold, denylist=active_denylist, strict=strict,
+                                              min_anonymity=min_anonymity):
                             continue
                         if total >= offset and len(rows) < 50:
                             summary = dict(row)
@@ -344,7 +364,7 @@ class App:
                     targets = [dict(name=t.get('name',''), url=core.public_url(t['url'])) for t in cfg.get('targets', [])]
                     return dict(rows=rows, total=total, profile=profile, targets=targets, offset=offset,
                                 request_profile=cfg.get('request_profile', 'workbench'),
-                                reputation_policy=policy)
+                                reputation_policy=policy, anonymity=bool(cfg.get('anonymity')))
                 finally:
                     db.close()
         except RuntimeError as exc:
@@ -448,7 +468,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond(200, self.app.detail(proxy))
             if path.path.startswith('/api/download/'):
                 name = path.path.rsplit('/', 1)[1]
-                if name not in ('proxies.txt', 'ranked.csv', 'ranked.json'):
+                if name not in DOWNLOADS:
                     return self.respond(404, dict(error='Файл не найден.'))
                 # Stream exports so a large JSON does not fill server memory.
                 try:
