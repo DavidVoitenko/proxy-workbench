@@ -24,6 +24,7 @@ import proxytool as core
 from maintenance import clear_runtime, exclusive_lock
 from reputation import Denylist, normalize_zones, result_allowed
 import anonymity
+import geoip
 
 ROOT = Path(__file__).resolve().parent
 MAX_BODY = 32 * 1024 * 1024
@@ -45,6 +46,11 @@ def public_source(value):
     return core.public_url(value)
 
 
+RESULT_ORDERS = {
+    'quality': "json_extract(payload,'$.score') DESC, json_extract(payload,'$.latency_ms'), proxy",
+    'speed': "json_extract(payload,'$.latency_ms'), json_extract(payload,'$.reliability') DESC, proxy",
+    'stability': "json_extract(payload,'$.jitter_ms'), json_extract(payload,'$.latency_ms'), proxy",
+}
 DOWNLOADS = ('proxies.txt', 'ranked.csv', 'ranked.json', *core.PROTOCOL_EXPORTS.values())
 
 
@@ -61,7 +67,8 @@ def defaults():
                 request_profile='workbench', denylist='',
                 reputation=dict(local_enabled=True, dnsbl_enabled=False, dnsbl_zones=[],
                                 timeout=2.5, strict=False),
-                anonymity=dict(judge_url=''), min_anonymity='any')
+                anonymity=dict(judge_url=''), min_anonymity='any',
+                connect_timeout=4, fail_fast=True, protocol='all', max_latency=0, countries='', want=0)
 
 
 def validate(settings):
@@ -98,12 +105,14 @@ def validate(settings):
     clean['reputation'] = reputation
     for key, low, high, integer in [('attempts', 1, 100, True), ('timeout', .1, 300, False),
             ('workers', 1, 2048, True), ('rate', 0, 10000, False), ('max_bytes', 1, 100_000_000, True),
-            ('source_timeout', 1, 3600, False), ('top', 0, 1_000_000_000, True), ('min_success', 0, 1, False)]:
+            ('source_timeout', 1, 3600, False), ('top', 0, 1_000_000_000, True), ('min_success', 0, 1, False),
+            ('connect_timeout', .1, 300, False), ('max_latency', 0, 600_000, False), ('want', 0, 1_000_000_000, True)]:
         value = clean[key]
         if type(value) not in (int, float) or not math.isfinite(value) or not low <= value <= high or (integer and int(value) != value):
             raise ValueError(f'Недопустимое значение: {key}.')
         clean[key] = int(value) if integer else value
-    if clean['sort'] not in ('speed', 'quality') or type(clean['use_sources']) is not bool:
+    if (clean['sort'] not in core.SORTS or clean['protocol'] not in core.PROTOCOLS
+            or type(clean['use_sources']) is not bool or type(clean['fail_fast']) is not bool):
         raise ValueError('Неверный режим сортировки или источников.')
     if not isinstance(clean['proxies'], str) or len(clean['proxies']) > 20_000_000:
         raise ValueError('Список прокси слишком большой: максимум 20 МБ.')
@@ -135,6 +144,9 @@ def validate(settings):
     anonymity.validate_judge({'judge_url': judge_url})
     clean['anonymity'] = dict(judge_url=judge_url)
     anonymity.validate_min_level(clean['min_anonymity'])
+    if not isinstance(clean['countries'], str) or len(clean['countries']) > 1000:
+        raise ValueError('Страны: используйте двухбуквенные ISO-коды, например DE,NL.')
+    clean['countries'] = ','.join(geoip.parse_countries(clean['countries']))
     return clean
 
 
@@ -155,6 +167,7 @@ class App:
             self.instance_lock.close()
             raise OSError('GUI already running') from None
         self.token = secrets.token_urlsafe(32)
+        self.geo_cache = (None, None)
         self.mutex = threading.RLock()
         self.process = None
         self.log_handle = None
@@ -232,8 +245,11 @@ class App:
                        '--sources', str(self.data/'gui-sources.json'), '--input', str(self.data/'gui-input.txt'),
                        '--denylist-file', str(self.data/'denylist.txt'),
                        '--progress-file', str(self.progress_path), '--stop-file', str(self.stop_path)]
-            for key in ('attempts', 'timeout', 'workers', 'rate', 'max_bytes', 'source_timeout', 'min_success', 'top', 'sort', 'min_anonymity'):
+            for key in ('attempts', 'timeout', 'connect_timeout', 'workers', 'rate', 'max_bytes', 'source_timeout',
+                        'min_success', 'top', 'sort', 'min_anonymity', 'protocol', 'max_latency', 'want'):
                 command.extend(['--'+key.replace('_', '-'), str(settings[key])])
+            command.append('--fail-fast' if settings['fail_fast'] else '--no-fail-fast')
+            command.extend(['--country', settings['countries']])
             reputation = settings['reputation']
             command.append('--local-denylist' if reputation['local_enabled'] else '--no-local-denylist')
             if reputation['dnsbl_enabled']:
@@ -283,6 +299,41 @@ class App:
                 self.job['stopping'] = True
             return dict(stopping=self.running())
 
+    def geo(self):
+        """The offline country database, reloaded when the file changes."""
+        path = geoip.default_path(self.data)
+        try:
+            stamp = path.stat().st_mtime_ns
+        except OSError:
+            return None
+        if self.geo_cache[0] != stamp:
+            try:
+                self.geo_cache = (stamp, geoip.CountryDB.from_file(path))
+            except (OSError, EOFError, UnicodeError, ValueError):
+                self.geo_cache = (stamp, None)
+        return self.geo_cache[1]
+
+    def geo_status(self):
+        database = self.geo()
+        return dict(available=database is not None, ranges=database.size if database else 0,
+                    attribution=geoip.ATTRIBUTION)
+
+    def update_geo(self):
+        with self.mutex:
+            if self.running():
+                raise ValueError('Сначала остановите текущую операцию.')
+        # Not under the mutex: the download can take a while and the UI keeps
+        # polling. The CLI takes the data-folder lock, so a scan cannot overlap.
+        try:
+            done = subprocess.run([sys.executable, str(ROOT/'proxytool.py'), 'update-geoip', '--data', str(self.data)],
+                                  capture_output=True, text=True, timeout=600, cwd=ROOT, stdin=subprocess.DEVNULL)
+        except (OSError, subprocess.TimeoutExpired):
+            raise ValueError('Не удалось скачать базу стран.') from None
+        if done.returncode:
+            lines = (done.stderr or done.stdout).strip().splitlines()
+            raise ValueError(lines[-1] if lines else 'Не удалось скачать базу стран.')
+        return self.geo_status()
+
     def clear_data(self):
         with self.mutex:
             if self.running():
@@ -322,16 +373,20 @@ class App:
         if not profile_path.exists() or not (self.data/'proxies.sqlite3').exists():
             return dict(rows=[], total=0, targets=[], profile=None)
         profile = profile_path.read_text(encoding='utf-8').strip()
-        sort = query.get('sort', ['quality'])[0]
+        order = RESULT_ORDERS.get(query.get('sort', ['quality'])[0])
         try:
             threshold = float(query.get('min_success', [2/3])[0])
             offset = max(0, int(query.get('offset', ['0'])[0]))
             min_anonymity = anonymity.validate_min_level(query.get('min_anonymity', ['any'])[0])
-            if not 0 <= threshold <= 1:
+            protocol = query.get('protocol', ['all'])[0]
+            max_latency = float(query.get('max_latency', ['0'])[0])
+            search = query.get('q', [''])[0].strip().lower()[:100]
+            countries = frozenset(geoip.parse_countries(query.get('country', [''])[0][:1000]))
+            if (not 0 <= threshold <= 1 or order is None or protocol not in core.PROTOCOLS
+                    or not math.isfinite(max_latency) or max_latency < 0):
                 raise ValueError()
         except ValueError:
             raise ValueError('Неверные параметры рейтинга.') from None
-        order = "json_extract(payload,'$.latency_ms'), json_extract(payload,'$.reliability') DESC, proxy" if sort == 'speed' else "json_extract(payload,'$.score') DESC, json_extract(payload,'$.latency_ms'), proxy"
         try:
             with self.data_lock():
                 db = sqlite3.connect((self.data/'proxies.sqlite3').as_uri()+'?mode=ro', uri=True, timeout=2)
@@ -343,6 +398,12 @@ class App:
                     if not cfg.get('anonymity'):
                         min_anonymity = 'any'
                     denylist = Denylist.from_file(self.data/'denylist.txt', normalizer=core.normalize)
+                    try:
+                        country_of = core.country_resolver(db, self.geo())
+                    except sqlite3.Error:
+                        # Databases created before 1.5 have no candidate_meta table yet.
+                        geo = self.geo()
+                        country_of = geo.country_of if geo else None
                     current_settings = self.settings()
                     local_enabled = current_settings.get('reputation', {}).get('local_enabled', True)
                     active_denylist = denylist if local_enabled else None
@@ -356,9 +417,14 @@ class App:
                         if not result_allowed(row, threshold, denylist=active_denylist, strict=strict,
                                               min_anonymity=min_anonymity):
                             continue
+                        if not core.matches_selection(row, protocol, max_latency or None, countries, country_of):
+                            continue
+                        if search and search not in row.get('proxy', '').lower():
+                            continue
                         if total >= offset and len(rows) < 50:
                             summary = dict(row)
                             summary.pop('samples', None)
+                            summary['country'] = core.row_country(row, country_of)
                             rows.append(summary)
                         total += 1
                     targets = [dict(name=t.get('name',''), url=core.public_url(t['url'])) for t in cfg.get('targets', [])]
@@ -457,6 +523,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond(204, b'')
             if path.path == '/api/settings':
                 return self.respond(200, self.app.settings())
+            if path.path == '/api/geoip':
+                return self.respond(200, self.app.geo_status())
             if path.path == '/api/defaults':
                 return self.respond(200, defaults())
             if path.path == '/api/state':
@@ -502,6 +570,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond(200, self.app.save(payload))
             if path == '/api/start':
                 return self.respond(200, self.app.start(payload))
+            if path == '/api/geoip/update':
+                return self.respond(200, self.app.update_geo())
             if path == '/api/clear-data':
                 return self.respond(200, self.app.clear_data())
             if path == '/api/stop':
