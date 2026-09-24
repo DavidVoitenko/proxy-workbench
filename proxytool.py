@@ -1339,6 +1339,7 @@ EPILOG_EN = """examples:
   run --url https://example.org/health              check against your own service
   run --want 50 --watch 30                          find 50 and re-check them every 30 minutes
   serve                                             API on http://127.0.0.1:8765
+  gateway --protocol socks5 --country DE            rotating proxy on 127.0.0.1:8899 (HTTP and SOCKS5)
 
 set PROXY_WORKBENCH_LANG=ru for Russian messages."""
 EPILOG_RU = """примеры:
@@ -1346,6 +1347,7 @@ EPILOG_RU = """примеры:
   run --url https://example.org/health              проверить на своём сервисе
   run --want 50 --watch 30                          найти 50 и перепроверять их каждые 30 минут
   serve                                             API на http://127.0.0.1:8765
+  gateway --protocol socks5 --country DE            ротирующий прокси на 127.0.0.1:8899 (HTTP и SOCKS5)
 
 PROXY_WORKBENCH_LANG=en — сообщения на английском."""
 
@@ -1354,12 +1356,14 @@ def parser():
     p = argparse.ArgumentParser(formatter_class=argparse.RawDescriptionHelpFormatter, epilog=tr(EPILOG_RU, EPILOG_EN),
                                 description=tr(f'{PRODUCT_NAME}: сбор и полная проверка публичных прокси под HTTP-сервис', f'{PRODUCT_NAME}: collect public proxies and fully check them against your HTTP services'))
     p.add_argument('--version', action='version', version=f'{PRODUCT_NAME} {PRODUCT_VERSION}')
-    p.add_argument('command', choices=['collect', 'scan', 'run', 'export', 'serve', 'clear-data', 'update-geoip'],
+    p.add_argument('command', choices=['collect', 'scan', 'run', 'export', 'serve', 'gateway', 'clear-data', 'update-geoip'],
                    help=tr('run — собрать и проверить; collect — только собрать; scan — только проверить; '
-                           'export — пересобрать файлы; serve — локальное API; update-geoip — база стран; '
+                           'export — пересобрать файлы; serve — локальное API; gateway — ротирующий прокси; '
+                           'update-geoip — база стран; '
                            'clear-data — удалить результаты',
                            'run: collect and check; collect: only collect; scan: only check; '
-                           'export: rebuild the files; serve: local API; update-geoip: country database; '
+                           'export: rebuild the files; serve: local API; gateway: rotating proxy; '
+                           'update-geoip: country database; '
                            'clear-data: delete results'))
     p.add_argument('--yes', action='store_true', help=tr('подтвердить удаление локальных результатов', 'confirm deleting local results'))
     p.add_argument('--progress-file', type=Path, help=argparse.SUPPRESS)
@@ -1433,7 +1437,11 @@ def parser():
                    help=tr('CSV-база DB-IP Country Lite; по умолчанию data/geoip/' + geoip.DB_NAME, 'DB-IP Country Lite CSV; default data/geoip/' + geoip.DB_NAME))
     p.add_argument('--min-success', type=float, default=2/3, help=tr('минимальная доля успехов КАЖДОГО target, 0..1', 'minimum success share for EACH target, 0..1'))
     p.add_argument('--host', default='127.0.0.1', help=tr('serve: адрес локального API; по умолчанию только этот компьютер', 'serve: API address; default is this computer only'))
-    p.add_argument('--port', type=int, default=8765, help=tr('serve: порт локального API', 'serve: API port'))
+    p.add_argument('--port', type=int, default=None,
+                   help=tr('serve/gateway: порт; по умолчанию 8765 для API и 8899 для шлюза',
+                           'serve/gateway: port; default 8765 for the API and 8899 for the gateway'))
+    p.add_argument('--rotate', choices=['round-robin', 'random'], default='round-robin',
+                   help=tr('gateway: порядок выбора прокси', 'gateway: how the next proxy is chosen'))
     p.add_argument('--api-token', default=os.environ.get('PROXY_WORKBENCH_API_TOKEN') or None,
                    help=tr('serve: токен доступа к API (или переменная PROXY_WORKBENCH_API_TOKEN); '
                         'обязателен, если API слушает не loopback-адрес', 'serve: API access token (or PROXY_WORKBENCH_API_TOKEN); '
@@ -1484,11 +1492,12 @@ async def download_geoip(path, timeout=60):
 def serve(args):
     """Read-only HTTP API over the latest export; runs next to scans without the data lock."""
     import api
-    if not 0 <= args.port <= 65535:
+    port = api.DEFAULT_PORT if args.port is None else args.port
+    if not 0 <= port <= 65535:
         print(tr('Неверный порт API', 'Invalid API port'), file=sys.stderr)
         return 2
     try:
-        server = api.make_api_server(args.data, args.host, args.port, args.api_token)
+        server = api.make_api_server(args.data, args.host, port, args.api_token)
     except (ValueError, OSError) as exc:
         print(tr(f'API не запущено: {exc}', f'API not started: {exc}'), file=sys.stderr)
         return 2
@@ -1503,6 +1512,37 @@ def serve(args):
         pass
     finally:
         server.server_close()
+    return 0
+
+
+def run_gateway(args, countries):
+    """Rotating local proxy over the latest export; like serve, it never takes the data lock."""
+    import gateway
+    port = gateway.DEFAULT_PORT if args.port is None else args.port
+    if not 0 <= port <= 65535:
+        print(tr('Неверный порт шлюза', 'Invalid gateway port'), file=sys.stderr)
+        return 2
+    filters = dict(protocol=args.protocol, countries=countries, anonymity=args.min_anonymity,
+                   max_latency=args.max_latency)
+
+    async def run():
+        server = await gateway.start(args.data, args.host, port, args.api_token, filters, args.rotate)
+        pool = server.gateway.pool
+        shown = f'[{args.host}]' if ':' in args.host else args.host
+        address = f'{shown}:{server.sockets[0].getsockname()[1]}'
+        print(tr(f'Ротирующий прокси: {address} (HTTP и SOCKS5), в пуле {len(pool.refresh())} прокси. Ctrl+C — остановить.',
+                 f'Rotating proxy: {address} (HTTP and SOCKS5), {len(pool.refresh())} proxies in the pool. Ctrl+C to stop.'),
+              flush=True)
+        print(f'  curl -x http://{address} https://example.org/', flush=True)
+        async with server:
+            await server.serve_forever()
+    try:
+        asyncio.run(run())
+    except (ValueError, OSError) as exc:
+        print(tr(f'Шлюз не запущен: {exc}', f'Gateway not started: {exc}'), file=sys.stderr)
+        return 2
+    except KeyboardInterrupt:
+        pass
     return 0
 
 
@@ -1530,6 +1570,8 @@ def main(argv=None):
     args.data.mkdir(parents=True, exist_ok=True)
     if args.command == 'serve':
         return serve(args)
+    if args.command == 'gateway':
+        return run_gateway(args, countries)
     denylist_path = args.denylist_file or args.data / 'denylist.txt'
     denylist = Denylist.from_file(denylist_path, normalizer=normalize)
     collect_denylist = Denylist.empty() if args.local_denylist is False else denylist

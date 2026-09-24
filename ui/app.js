@@ -200,6 +200,10 @@ const messages = {
     'filter.maxLatencyHint': '0 — no limit',
     'filter.searchPlaceholder': 'Search by address or port',
     'filter.copyPage': 'Copy this page',
+    'gateway.label': 'Rotating proxy for browsers and apps:',
+    'gateway.hint': 'Set it as an HTTP or SOCKS5 proxy anywhere. Every new connection goes through the next working proxy from the latest export; failed ones are skipped automatically.',
+    'gateway.stats': '{proxies} in rotation · {connections} connections',
+    'toast.gatewayCopied': 'Proxy address copied.',
     'api.label': 'API for your programs:',
     'api.copy': 'Copy',
     'api.hint': 'Returns the latest export, filtered by protocol, country, latency and anonymity. See README → Local API.',
@@ -519,6 +523,10 @@ const messages = {
     'filter.maxLatencyHint': '0 — без ограничения',
     'filter.searchPlaceholder': 'Поиск по адресу или порту',
     'filter.copyPage': 'Скопировать страницу',
+    'gateway.label': 'Ротирующий прокси для браузера и программ:',
+    'gateway.hint': 'Укажите его как HTTP- или SOCKS5-прокси где угодно. Каждое новое соединение идёт через следующий рабочий прокси из последнего экспорта; неработающие пропускаются автоматически.',
+    'gateway.stats': 'в ротации {proxies} · соединений {connections}',
+    'toast.gatewayCopied': 'Адрес прокси скопирован.',
     'api.label': 'API для своих программ:',
     'api.copy': 'Скопировать',
     'api.hint': 'Отдаёт последний экспорт с фильтрами по протоколу, стране, задержке и анонимности. Подробнее: README → Local API.',
@@ -1068,6 +1076,11 @@ function renderState(value) {
     $('export-note').textContent = t('results.exportReady', {exported:fmt(exportReport.exported), passed:fmt(exportReport.passed), checked:fmt(exportReport.checked), candidates:fmt(exportReport.candidates), clean:fmt(counts.clean || 0), listed:fmt((counts.listed || 0) + (counts.local_denied || 0)), unknown:fmt(counts.unknown || 0), local:(exportReport.local_filtered ? t('results.localFiltered', {count:fmt(exportReport.local_filtered)}) : '') + anonymityCounts(exportReport)});
   }
   $('api-line').classList.toggle('hidden', !value.api);
+  $('gateway-line').classList.toggle('hidden', !value.gateway);
+  if (value.gateway) {
+    $('gateway-address').textContent = value.gateway.address;
+    $('gateway-stats').textContent = t('gateway.stats', {proxies:fmt(value.gateway.proxies), connections:fmt(value.gateway.connections)});
+  }
   $('api-example').textContent = value.api ? `${value.api}/random?protocol=socks5&format=txt` : '';
   document.querySelectorAll('[data-download]').forEach(node => { node.disabled = !(value.downloads || []).includes(node.dataset.download) || (value.running && progress.phase === 'exporting'); });
   const report = progress.sources ? progress : value.sources || {};
@@ -1205,6 +1218,14 @@ $('copy-page').onclick = async () => {
   try {
     await navigator.clipboard.writeText(proxies.join('\n') + '\n');
     toast(t('toast.copied', {count:fmt(proxies.length)}));
+  } catch {
+    toast(t('toast.copyFailed'), true);
+  }
+};
+$('copy-gateway').onclick = async () => {
+  try {
+    await navigator.clipboard.writeText($('gateway-address').textContent);
+    toast(t('toast.gatewayCopied'));
   } catch {
     toast(t('toast.copyFailed'), true);
   }
