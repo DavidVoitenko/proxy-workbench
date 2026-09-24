@@ -6,6 +6,11 @@
 
 ### Added
 
+- English `README.md` with screenshots, feature overview, quick start, FAQ and roadmap; full Russian documentation moved to `README.ru.md`.
+- Screenshots and social preview image in `docs/assets/` (synthetic data from documentation IP ranges).
+- Pull request template, question issue template, Dependabot configuration, `.editorconfig` and `.gitattributes` (CRLF for `Start.bat`, LF for shell launchers).
+- Pip caching and superseded-run cancellation in CI.
+
 - MIT license с нейтральным copyright holder.
 - Public security, privacy, contribution и code of conduct policies.
 - Source-only project metadata с Python 3.11+ и pinned `httpx[socks]` dependency.

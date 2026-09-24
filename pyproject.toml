@@ -1,14 +1,14 @@
 [project]
 name = "proxy-workbench"
 version = "1.2.0"
-description = "Local workbench for collecting and checking public proxy endpoints"
+description = "Collect free public proxies and keep only the ones that work for your services: local GUI + CLI checker for HTTP, HTTPS and SOCKS5"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { file = "LICENSE" }
 authors = [
   { name = "Proxy Workbench contributors" },
 ]
-keywords = ["proxy", "http", "https", "socks5", "benchmark"]
+keywords = ["proxy", "proxy-checker", "proxy-list", "free-proxy", "proxy-scraper", "http", "https", "socks5", "dnsbl", "benchmark"]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Environment :: Console",
