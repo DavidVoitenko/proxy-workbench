@@ -50,8 +50,10 @@ RESULT_ORDERS = {
     'quality': "json_extract(payload,'$.score') DESC, json_extract(payload,'$.latency_ms'), proxy",
     'speed': "json_extract(payload,'$.latency_ms'), json_extract(payload,'$.reliability') DESC, proxy",
     'stability': "json_extract(payload,'$.jitter_ms'), json_extract(payload,'$.latency_ms'), proxy",
+    'uptime': "COALESCE(1.0*json_extract(payload,'$.history.passes')/json_extract(payload,'$.history.checks'), 1) DESC, "
+              "COALESCE(json_extract(payload,'$.history.checks'), 1) DESC, json_extract(payload,'$.score') DESC, proxy",
 }
-DOWNLOADS = ('proxies.txt', 'ranked.csv', 'ranked.json', *core.PROTOCOL_EXPORTS.values())
+DOWNLOADS = ('proxies.txt', 'ranked.csv', 'ranked.json', *core.PROTOCOL_EXPORTS.values(), 'hostport.txt', 'proxychains.txt')
 
 
 def public_sources(values):
@@ -226,7 +228,7 @@ class App:
             if self.running():
                 raise ValueError('Проверка уже идёт. Сначала остановите её.')
             action = payload.get('action', 'run')
-            if action not in ('run', 'scan', 'recheck', 'collect', 'export'):
+            if action not in ('run', 'scan', 'recheck', 'recheck_passing', 'collect', 'export'):
                 raise ValueError('Неизвестное действие.')
             settings = self.save(payload.get('settings', self.settings()))
             if action == 'export' and not (self.data/'last-profile.txt').exists():
@@ -240,7 +242,7 @@ class App:
             core.atomic(self.data/'gui-input.txt', settings['proxies'])
             self.stop_path.unlink(missing_ok=True)
             core.atomic(self.progress_path, json.dumps(dict(phase='starting', checked=0, candidates=0)))
-            command = [sys.executable, '-u', str(ROOT/'proxytool.py'), 'scan' if action == 'recheck' else action,
+            command = [sys.executable, '-u', str(ROOT/'proxytool.py'), 'scan' if action in ('recheck', 'recheck_passing') else action,
                        '--data', str(self.data), '--config', str(self.data/'gui-targets.json'),
                        '--sources', str(self.data/'gui-sources.json'), '--input', str(self.data/'gui-input.txt'),
                        '--denylist-file', str(self.data/'denylist.txt'),
@@ -263,6 +265,8 @@ class App:
                 command.append('--no-sources')
             if action == 'recheck':
                 command.append('--recheck')
+            if action == 'recheck_passing':
+                command.append('--recheck-passing')
             self.job = dict(id=secrets.token_hex(8), action=action, started_at=time.time(),
                             targets=[dict(name=t.get('name', ''), url=core.public_url(t['url'])) for t in settings['targets']],
                             min_success=settings['min_success'], sort=settings['sort'], top=settings['top'],
@@ -352,6 +356,8 @@ class App:
                          progress=read_json(self.progress_path, {}),
                          sources=read_json(self.data/'sources-report.json', {}),
                          source_urls=public_sources(read_json(self.data/'gui-sources.json', [])),
+                         source_keys=[core.source_key(url) for url in read_json(self.data/'gui-sources.json', [])
+                                      if isinstance(url, str)],
                          export=read_json(self.data/'exports/status.json', {}),
                          downloads=[n for n in DOWNLOADS
                                      if core.export_file(self.data/'exports', n).is_file()])

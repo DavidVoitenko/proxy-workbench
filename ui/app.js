@@ -127,6 +127,7 @@ const messages = {
     'action.run': 'Collect + check',
     'action.scan': 'Continue database',
     'action.recheck': 'New check',
+    'action.recheck_passing': 'Re-check of matching proxies',
     'action.collect': 'Address collection',
     'action.export': 'Export',
     'action.fallback': 'Check',
@@ -161,6 +162,13 @@ const messages = {
     'col.success': 'Success',
     'col.cleanliness': 'Cleanliness',
     'col.anonymity': 'Anonymity',
+    'monitor.recheckPassing': 'Re-check only matching proxies (fast)',
+    'sort.uptime': 'Uptime: passed most re-checks first',
+    'results.byUptime': 'By uptime',
+    'col.uptime': 'Uptime',
+    'col.uptimeHint': 'Passed re-checks / all checks',
+    'col.working': 'Working',
+    'col.workingHint': 'Matching / checked in the last export',
     'col.country': 'Country',
     'preset.label': 'Preset:',
     'preset.quick': '⚡ Quick',
@@ -425,6 +433,7 @@ const messages = {
     'action.run': 'Сбор + проверка',
     'action.scan': 'Продолжение базы',
     'action.recheck': 'Новая проверка',
+    'action.recheck_passing': 'Перепроверка подходящих',
     'action.collect': 'Сбор адресов',
     'action.export': 'Экспорт',
     'action.fallback': 'Проверка',
@@ -459,6 +468,13 @@ const messages = {
     'col.success': 'Успешность',
     'col.cleanliness': 'Чистота',
     'col.anonymity': 'Анонимность',
+    'monitor.recheckPassing': 'Перепроверить только подходящие (быстро)',
+    'sort.uptime': 'Живучесть: чаще проходили перепроверки',
+    'results.byUptime': 'По живучести',
+    'col.uptime': 'Живучесть',
+    'col.uptimeHint': 'Пройдено перепроверок / всего проверок',
+    'col.working': 'Рабочих',
+    'col.workingHint': 'Подходящих / проверено в последнем экспорте',
     'col.country': 'Страна',
     'preset.label': 'Пресет:',
     'preset.quick': '⚡ Быстро',
@@ -708,6 +724,7 @@ const serverPatternsEn = [
   [/^Ошибка экспорта: (\w+): проверьте data\/ и denylist\.$/, 'Export error: $1: check data/ and the denylist.'],
   [/^Удалено: (.+)$/, 'Deleted: $1'],
   [/^Проверка анонимности: judge (.+)$/, 'Anonymity check: judge $1'],
+  [/^Сохранено (\d+)\. Следующая перепроверка рабочих прокси через (\S+) мин\.$/, 'Saved $1. Next re-check of working proxies in $2 min.'],
   [/^Не удалось скачать базу стран: (.+)$/, 'Could not download the country database: $1'],
   [/^База стран обновлена: DB-IP (\S+)\. (.+)$/, 'Country database updated: DB-IP $1. $2'],
   [/^Не удалось определить внешний IP через judge URL: judge URL не показал внешний IP этого устройства$/, 'Could not detect the external IP via the judge URL: the judge did not show this device’s public IP'],
@@ -948,12 +965,12 @@ async function start(action) {
 }
 
 function setBusy(active) {
-  ['start', 'resume', 'recheck', 'collect', 'export'].forEach(id => { $(id).disabled = active; });
+  ['start', 'resume', 'recheck', 'recheck-passing', 'collect', 'export'].forEach(id => { $(id).disabled = active; });
   $('stop').disabled = !active;
 }
 
 const phases = ['starting', 'collecting', 'scanning', 'exporting', 'complete', 'stopped', 'interrupted', 'error'];
-const actions = ['run', 'scan', 'recheck', 'collect', 'export'];
+const actions = ['run', 'scan', 'recheck', 'recheck_passing', 'collect', 'export'];
 
 function duration(seconds) {
   if (seconds == null) return '—';
@@ -1023,7 +1040,7 @@ function renderState(value) {
   }
   document.querySelectorAll('[data-download]').forEach(node => { node.disabled = !(value.downloads || []).includes(node.dataset.download) || (value.running && progress.phase === 'exporting'); });
   const report = progress.sources ? progress : value.sources || {};
-  renderSources(report, value.source_urls || []);
+  renderSources(report, value.source_urls || [], value.source_keys || [], (value.export || {}).source_quality || {});
   const finished = job.id && !value.running ? job.id : null;
   if (finished && finished !== lastFinished) {
     lastFinished = finished;
@@ -1031,13 +1048,15 @@ function renderState(value) {
   }
 }
 
-function renderSources(report, urls) {
+function renderSources(report, urls, keys=[], quality={}) {
   const sourceRows = report.sources || [];
   $('sources-status').textContent = report.denylist_error ? t('report.denylistError') : (sourceRows.length ? t('report.loaded', {done:sourceRows.filter(row => row.complete).length, total:sourceRows.length}) : t('report.none'));
   $('source-rows').innerHTML = sourceRows.length ? sourceRows.map(row => {
     const label = row.source ? urls[row.source - 1] || t('report.source', {number:row.source}) : t('report.ownList');
-    return `<tr><td title="${esc(label)}" style="max-width:440px;overflow:hidden;text-overflow:ellipsis">${esc(label)}</td><td>${fmt(row.rows)}</td><td>${fmt(row.invalid)}</td><td>${fmt(row.blocked || 0)}</td><td class="${row.complete ? '' : 'status-error'}">${esc(row.complete ? (row.rows === 0 ? t('report.emptyList') : row.rows === row.invalid ? t('report.noValid') : t('report.done')) : row.error || t('report.incomplete'))}</td></tr>`;
-  }).join('') : `<tr><td colspan="5" class="empty">${esc(t('report.empty'))}</td></tr>`;
+    const stats = quality[row.source ? keys[row.source - 1] : 'local'];
+    const working = stats ? `${fmt(stats.passed)} / ${fmt(stats.checked)}` : '—';
+    return `<tr><td title="${esc(label)}" style="max-width:440px;overflow:hidden;text-overflow:ellipsis">${esc(label)}</td><td>${fmt(row.rows)}</td><td>${fmt(row.invalid)}</td><td>${fmt(row.blocked || 0)}</td><td class="${row.complete ? '' : 'status-error'}">${esc(row.complete ? (row.rows === 0 ? t('report.emptyList') : row.rows === row.invalid ? t('report.noValid') : t('report.done')) : row.error || t('report.incomplete'))}</td><td>${esc(working)}</td></tr>`;
+  }).join('') : `<tr><td colspan="6" class="empty">${esc(t('report.empty'))}</td></tr>`;
 }
 
 async function poll() {
@@ -1055,7 +1074,7 @@ function renderResults(data) {
   $('result-context').textContent = data && data.profile ? t('results.context', {targets:data.targets.map(target => target.name ? `${target.name} (${target.url})` : target.url).join(' + '), profile:profileLabel(data.request_profile || 'workbench')}) : t('results.empty');
   $('result-total').textContent = t('results.total', {count:fmt(total)});
   $('page-number').textContent = `${fmt(Math.floor(start / 50) + 1)} / ${fmt(Math.max(1, Math.ceil(total / 50)))}`;
-  $('result-rows').innerHTML = page.length ? page.map((row, index) => `<tr><td>${fmt(start + index + 1)}</td><td>${esc(row.proxy)}</td><td><span class="score">${Number(row.score).toFixed(1)}</span></td><td>${esc(ms(Number(row.latency_ms).toFixed(0)))}</td><td>${esc(ms(Number(row.jitter_ms).toFixed(0)))}</td><td>${(Number(row.min_target_reliability) * 100).toFixed(0)}%</td><td>${reputationBadge(row)}</td><td>${anonymityBadge(row)}</td><td class="country">${esc(row.country || '—')}</td><td><button class="text-link" data-details="${index}">${esc(t('results.details'))}</button></td></tr>`).join('') : `<tr><td colspan="10" class="empty">${esc(t(data ? 'results.noneMatching' : 'results.noneYet'))}</td></tr>`;
+  $('result-rows').innerHTML = page.length ? page.map((row, index) => `<tr><td>${fmt(start + index + 1)}</td><td>${esc(row.proxy)}</td><td><span class="score">${Number(row.score).toFixed(1)}</span></td><td>${esc(ms(Number(row.latency_ms).toFixed(0)))}</td><td>${esc(ms(Number(row.jitter_ms).toFixed(0)))}</td><td>${(Number(row.min_target_reliability) * 100).toFixed(0)}%</td><td>${row.history ? esc(`${fmt(row.history.passes)}/${fmt(row.history.checks)}`) : '1/1'}</td><td>${reputationBadge(row)}</td><td>${anonymityBadge(row)}</td><td class="country">${esc(row.country || '—')}</td><td><button class="text-link" data-details="${index}">${esc(t('results.details'))}</button></td></tr>`).join('') : `<tr><td colspan="11" class="empty">${esc(t(data ? 'results.noneMatching' : 'results.noneYet'))}</td></tr>`;
   $('result-rows').querySelectorAll('[data-details]').forEach(node => node.onclick = () => details(page[Number(node.dataset.details)]));
 }
 
@@ -1105,6 +1124,7 @@ $('save-sources').onclick = save;
 $('start').onclick = () => start('run');
 $('resume').onclick = () => start('scan');
 $('recheck').onclick = () => start('recheck');
+$('recheck-passing').onclick = () => start('recheck_passing');
 $('collect').onclick = () => start('collect');
 $('export').onclick = () => start('export');
 $('stop').onclick = async () => { try { $('stop').disabled = true; await api('/api/stop', {}); toast(t('toast.stopping')); await poll(); } catch (error) { toast(error.message, true); } };
