@@ -1,6 +1,7 @@
 import asyncio
 import copy
 import json
+import re
 from pathlib import Path
 import sqlite3
 import sys
@@ -45,7 +46,8 @@ class GuiTests(unittest.TestCase):
     def test_local_api_security_and_settings(self):
         response = self.client.get('/')
         self.assertEqual(response.status_code, 200)
-        self.assertIn('Прокси под ваши задачи', response.text)
+        self.assertIn('Proxies for your tasks', response.text)
+        self.assertIn('id="lang-toggle"', response.text)
         self.assertIn(self.server.app.token, response.text)
         self.assertEqual(self.client.get('/api/state', headers={'X-Workbench-Token':''}).status_code, 403)
         self.assertEqual(self.client.post('/api/stop', json={}, headers={'Origin':'http://untrusted.invalid'}).status_code, 403)
@@ -236,6 +238,24 @@ class GuiTests(unittest.TestCase):
         response=self.client.post('/api/start',json=dict(action='run',settings=gui.defaults()))
         self.server.app.process=None
         self.assertEqual(response.status_code,400)
+
+
+class TranslationTests(unittest.TestCase):
+    def test_every_ui_key_is_translated(self):
+        ui = Path(__file__).resolve().parents[1]/'ui'
+        script = (ui/'app.js').read_text(encoding='utf-8')
+        page = (ui/'index.html').read_text(encoding='utf-8')
+        block = script[script.index('const messages = {'):script.index('\n};\n')]
+        english, russian = block.split('\n  ru: {')
+        keys = lambda text: re.findall(r"^    '([\w.]+)': '((?:[^'\\]|\\.)*)',?$", text, re.M)
+        english, russian = dict(keys(english)), dict(keys(russian))
+        self.assertGreater(len(english), 100)
+        self.assertEqual(english.keys(), russian.keys())
+        self.assertFalse([key for key, value in english.items() if re.search('[\u0400-\u04ff]', value)])
+        self.assertFalse(re.search('[\u0400-\u04ff]', page))
+        used = set(re.findall(r'data-i18n(?:-[a-z-]+)?="([^"]+)"', page))
+        used |= set(re.findall(r"(?:\bt\(|text\(|attr\('[a-z-]+', )'([a-zA-Z]+\.[\w.]+)'", script))
+        self.assertFalse(used - english.keys())
 
 
 if __name__=='__main__':

@@ -11,6 +11,7 @@
 - Source-only project metadata с Python 3.11+ и pinned `httpx[socks]` dependency.
 - Cross-platform CI matrix для локальных mock-based unit tests.
 - Structured bug report и feature request issue templates.
+- English translation of the browser GUI with an EN/RU toggle next to the theme switch. The language defaults to the browser locale, is remembered in `localStorage`, and also localizes number formatting. Server-side error messages and the execution log are still Russian only.
 - Bounded source downloads, redirect validation with pinned validated IPs, safe-header policy, crash-safe export generations with bounded retention, on-demand result details, and explicit local-data cleanup.
 
 ## [1.2.0] — In development

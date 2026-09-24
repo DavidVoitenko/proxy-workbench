@@ -32,7 +32,7 @@ The GUI is loopback-only. Source hosts, DNS resolvers, the tested proxy, and the
 
 ## What is included
 
-- resumable CLI and local browser GUI;
+- resumable CLI and local browser GUI in English and Russian (header toggle; defaults to the browser language and remembers the choice);
 - all-service checks with status, body substring, and SHA-256 conditions;
 - bounded worker queue, explicit stop/resume, and profile-aware exports;
 - local IP/CIDR/proxy denylist and optional user-selected DNSBL zones;
@@ -58,7 +58,7 @@ The current public line is a feature-complete development snapshot. The next rel
 - **Windows:** откройте `Start.bat` (нужен Python 3.11+ с Python Launcher).
 - **Linux / терминал:** `./run.sh` или `./run.sh gui`.
 
-Откроется локальная страница в вашем браузере. По умолчанию включена тёмная тема; кнопка вверху переключает на светлую. Выбор сохраняется в браузере. Сервер доступен только на этом устройстве. Повторный запуск открывает уже работающий интерфейс.
+Откроется локальная страница в вашем браузере. По умолчанию включена тёмная тема; кнопка вверху переключает на светлую. Рядом кнопка EN/RU переключает язык интерфейса: по умолчанию используется язык браузера (русский для `ru`, иначе английский). Оба выбора сохраняются в браузере. Сообщения об ошибках от локального сервера и журнал выполнения пока только на русском. Сервер доступен только на этом устройстве. Повторный запуск открывает уже работающий интерфейс.
 
 1. В разделе **Проверка** добавьте один или несколько сервисов, HTTP-коды и при необходимости текст ответа. Условие **«все сервисы»** действует всегда.
 2. При необходимости откройте **Источники**: редактируйте URL, добавьте свои списки вставкой или TXT-файлом. SOCKS5-списки указываются как `socks5 URL`, Geonode JSON API — как `geonode URL`.
