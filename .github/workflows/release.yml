@@ -58,7 +58,7 @@ jobs:
           ' CHANGELOG.md > dist/notes.md
           test -s dist/notes.md || echo "See CHANGELOG.md." > dist/notes.md
       - name: Publish GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ env.TAG }}
           target_commitish: ${{ github.sha }}
