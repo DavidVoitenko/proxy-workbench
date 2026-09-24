@@ -72,7 +72,7 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(picked, 'http://11.0.0.1:8080\n')
             self.assertEqual(len(client.get('/random?limit=2').json()['proxies']), 2)
             self.assertEqual(client.get('/random?country=US').status_code, 404)
-            for bad in ('protocol=socks4', 'country=Germany', 'limit=-1', 'format=xml', 'anonymity=max',
+            for bad in ('protocol=ftp', 'country=Germany', 'limit=-1', 'format=xml', 'anonymity=max',
                         'max_latency=abc'):
                 self.assertEqual(client.get('/proxies?' + bad).status_code, 400, bad)
             self.assertEqual(client.get('/nope').status_code, 404)

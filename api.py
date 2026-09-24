@@ -18,6 +18,7 @@ from urllib.parse import parse_qs, urlsplit
 import anonymity
 import geoip
 from branding import PRODUCT_NAME, PRODUCT_VERSION
+from i18n import tr
 from proxytool import PROTOCOLS, proxy_protocol, row_history
 
 DEFAULT_PORT = 8765
@@ -138,7 +139,8 @@ def select(rows, query):
 
 def make_api_server(data, host='127.0.0.1', port=DEFAULT_PORT, token=None):
     if not is_loopback(host) and not token:
-        raise ValueError(f'API на {host} доступно из сети: задайте токен через --api-token или {TOKEN_ENV}.')
+        raise ValueError(tr(f'API на {host} доступно из сети: задайте токен через --api-token или {TOKEN_ENV}.',
+                            f'the API on {host} is reachable from the network: set a token with --api-token or {TOKEN_ENV}'))
     exports = Exports(Path(data) / 'exports')
 
     class Handler(BaseHTTPRequestHandler):
