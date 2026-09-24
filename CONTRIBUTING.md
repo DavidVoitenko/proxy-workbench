@@ -50,6 +50,12 @@ Tests используют временные данные и локальные
 5. Убедитесь, что workflow выполняет unittest only и не делает proxy/network checks.
 6. Откройте pull request с neutral title, кратким контекстом и результатами локальных test runs.
 
+## Releases / Релизы
+
+1. Обновите `PRODUCT_VERSION` в `branding.py`, `version` в `pyproject.toml` и перенесите пункты из `Unreleased` в новый раздел `CHANGELOG.md`.
+2. После merge в `main` откройте **Actions → Source release → Run workflow** и введите тег, например `v1.3.0` (или отправьте такой тег через git).
+3. Workflow проверит совпадение тега и версии, прогонит тесты, соберёт архив с SHA-256 и опубликует релиз с заметками из `CHANGELOG.md`.
+
 ## Data and artifacts / Данные и артефакты
 
 Храните private configuration, databases, exports и generated reports только в игнорируемой папке `data/`. Не добавляйте их в patch. Перед публикацией проверьте diff на наличие secrets, account configuration, live endpoint responses, hostname, personal names, email addresses и absolute home paths.
