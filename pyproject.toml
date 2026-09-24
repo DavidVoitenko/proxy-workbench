@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "proxy-workbench"
-version = "2.1.0"
+version = "2.2.0"
 description = "Collect free public proxies and keep only the ones that work for your services: local GUI + CLI checker for HTTP, HTTPS and SOCKS5"
 readme = "README.md"
 requires-python = ">=3.11"
