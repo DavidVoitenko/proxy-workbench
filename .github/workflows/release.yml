@@ -68,3 +68,29 @@ jobs:
           files: |
             dist/proxy-workbench-*.tar.gz
             dist/proxy-workbench-*.tar.gz.sha256
+
+  container-image:
+    needs: source-archive
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+      - name: Log in to GitHub Container Registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io --username "${{ github.actor }}" --password-stdin
+      - name: Build and push image
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+          docker build \
+            --label "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            --label "org.opencontainers.image.description=Proxy Workbench CLI: collect and check public proxies" \
+            --label "org.opencontainers.image.licenses=MIT" \
+            --label "org.opencontainers.image.version=${TAG#v}" \
+            --tag "$image:${TAG#v}" --tag "$image:latest" .
+          docker run --rm "$image:${TAG#v}" --version
+          docker push "$image:${TAG#v}"
+          docker push "$image:latest"
