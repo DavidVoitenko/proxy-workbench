@@ -10,6 +10,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   PYTHONDONTWRITEBYTECODE: "1"
   PYTHONUTF8: "1"
@@ -39,6 +43,8 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: requirements.txt
 
       - name: Install pinned dependencies
         run: python -m pip install --requirement requirements.txt
