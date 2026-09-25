@@ -237,14 +237,16 @@ Run `./run.sh --help` for the complete list: `--input`, `--sources`, `--no-sourc
 
 ## 🔁 Rotating proxy gateway
 
-While the GUI is open, `127.0.0.1:8899` works as one proxy that rotates through all working proxies of the latest export. Use it as an **HTTP** or **SOCKS5** proxy anywhere:
+While the GUI is open, `127.0.0.1:8899` works as one local proxy that rotates TCP connections through all working proxies of the latest export. The GUI also binds an authenticated LAN listener by default so a phone on the same Wi-Fi can use the Telegram QR; the QR contains the computer's LAN address and a per-session password. Allow the port in the local firewall. Use `--gateway-host 127.0.0.1` with `gui` if you want to disable LAN sharing.
+
+The local endpoint is **HTTP/SOCKS5 TCP only**. SOCKS5 UDP ASSOCIATE, Telegram calls and games that require UDP are not implemented by this local gateway; use a dedicated VPN/tunnel for those workloads.
 
 ```sh
 curl -x http://127.0.0.1:8899 https://example.org/
 curl -x socks5h://127.0.0.1:8899 https://example.org/
 ```
 
-- Every new connection takes the next proxy (`--rotate random` picks at random).
+- Every new TCP connection takes the next proxy (`--rotate random` picks at random).
 - If a proxy fails, the same connection is retried through another one (up to 3). A proxy that fails twice rests for 5 minutes.
 - Plain `http://` requests reach HTTP proxies directly, because many of them allow CONNECT only to port 443.
 

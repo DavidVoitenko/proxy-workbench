@@ -4,7 +4,9 @@ from pathlib import Path
 import sqlite3
 import sys
 import tempfile
+import time
 import unittest
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from proxy_workbench import proxytool as p
@@ -64,6 +66,84 @@ class FreshnessTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sorted(seen), sorted(self.proxies[:2]))
         self.assertEqual(self.histories(profile)[self.proxies[0]]['checks'], 3)
 
+    async def test_scan_snapshot_states_and_scope_counts(self):
+        wanted = {}
+        await self.scan(want=1, run_state=wanted)
+        self.assertEqual((wanted['state'], wanted['stop_reason']), ('partial', 'want_reached'))
+        self.assertLess(wanted['checked'], wanted['scope_candidates'])
+        self.assertGreaterEqual(wanted['pending'], 1)
+
+        complete = {}
+        await self.scan(run_state=complete)
+        self.assertEqual((complete['state'], complete['stop_reason']), ('complete', 'complete'))
+        self.assertEqual((complete['checked'], complete['pending']), (6, 0))
+
+        self.alive = set(self.proxies[:2])
+        refresh = {}
+        await self.scan(recheck_passing=True, run_state=refresh)
+        self.assertEqual((refresh['state'], refresh['stop_reason']), ('partial', 'recheck_passing'))
+        self.assertEqual((refresh['scope_candidates'], refresh['checked'], refresh['pending']), (3, 3, 0))
+
+    async def test_resume_rechecks_unreachable_and_expired_rows(self):
+        profile, _ = await self.scan()
+        rows = dict(self.db.execute('SELECT proxy, payload FROM results WHERE profile=?', (profile,)))
+        dead = json.loads(rows[self.proxies[0]])
+        dead['error'] = 'UNREACHABLE'
+        expired = json.loads(rows[self.proxies[1]])
+        expired['checked_at'] = 1
+        expired['valid_until'] = 1
+        self.db.execute('UPDATE results SET payload=? WHERE profile=? AND proxy=?',
+                        (json.dumps(dead), profile, self.proxies[0]))
+        self.db.execute('UPDATE results SET payload=? WHERE profile=? AND proxy=?',
+                        (json.dumps(expired), profile, self.proxies[1]))
+        self.db.commit()
+        seen = []
+
+        async def probe(proxy, cfg, rate):
+            seen.append(proxy)
+            return measured(proxy, cfg, ok=True)
+
+        state = {}
+        await p.scan(self.db, config(), workers=2, rate=0, probe=probe, progress=False,
+                     min_success=1, run_state=state)
+        self.assertEqual(set(seen), {self.proxies[0], self.proxies[1]})
+        self.assertEqual((state['checked'], state['pending']), (6, 0))
+
+    async def test_cancelled_recheck_keeps_current_and_old_rows(self):
+        profile, _ = await self.scan()
+        out = self.home / 'exports'
+        current = p.export(self.db, profile, out, min_success=1)
+        before = dict(self.db.execute('SELECT proxy, payload FROM results WHERE profile=?', (profile,)))
+        self.assertTrue(current['complete'])
+        pointer = json.loads((out / 'current.json').read_text(encoding='utf-8'))['generation']
+        stop = self.home / 'stop-recheck'
+        state = {}
+        seen = 0
+
+        async def probe(proxy, cfg, rate):
+            nonlocal seen
+            seen += 1
+            if seen == 2:
+                stop.write_text('stop', encoding='utf-8')
+                await asyncio.sleep(60)
+            return measured(proxy, cfg, ok=proxy in self.alive)
+
+        with self.assertRaises(asyncio.CancelledError):
+            await p.stoppable(p.scan(self.db, config(), workers=1, rate=0, probe=probe, progress=False,
+                                     min_success=1, recheck=True, run_state=state), stop)
+        after = dict(self.db.execute('SELECT proxy, payload FROM results WHERE profile=?', (profile,)))
+        self.assertEqual(set(before), set(after))
+        self.assertEqual(after[self.proxies[2]], before[self.proxies[2]])
+        self.assertEqual(state['checked'], 1)
+        self.assertEqual((state['state'], state['stop_reason']), ('partial', 'stopped'))
+
+        diagnostic = p.export(self.db, profile, out, min_success=1, run_state=state, diagnostic=True)
+        self.assertEqual(json.loads((out / 'current.json').read_text(encoding='utf-8'))['generation'], pointer)
+        self.assertEqual((diagnostic['state'], diagnostic['stop_reason'], diagnostic['complete']),
+                         ('partial', 'stopped', False))
+        self.assertEqual(p.current_generation_name(out), pointer)
+        self.assertNotEqual(p.current_generation_name(out, 'diagnostic.json'), pointer)
+
     async def test_full_recheck_keeps_history_and_uptime_sort(self):
         profile, _ = await self.scan()
         self.alive = {self.proxies[1]}
@@ -114,6 +194,66 @@ class ExportFormatTests(unittest.TestCase):
         self.assertEqual(sorted(chains[1:]), ['http 11.0.0.1 8080', 'socks5 11.0.0.4 1080'])
         self.assertEqual(report['source_quality'], {'aaa': {'checked': 2, 'passed': 1}, 'bbb': {'checked': 1, 'passed': 1},
                                                     'unknown': {'checked': 1, 'passed': 1}})
+        ranked = json.loads(p.export_file(out, 'ranked.json').read_text(encoding='utf-8'))
+        self.assertTrue(all(row['reputation_status'] == 'unknown' for row in ranked))
+
+    def test_empty_formats_and_publication_fail_closed(self):
+        cfg = config()
+        self.db.execute('INSERT INTO profiles VALUES (?,?)', ('empty', json.dumps(cfg)))
+        self.db.commit()
+        out = self.home / 'empty-out'
+        report = p.export(self.db, 'empty', out, min_success=1)
+        self.assertEqual((report['state'], report['exported'], report['complete'], report['stale']),
+                         ('stale', 0, False, True))
+        self.assertLessEqual(report['valid_until'], report['generated_at'])
+        clash = (out / 'clash.yaml').read_text(encoding='utf-8')
+        singbox = json.loads((out / 'singbox.json').read_text(encoding='utf-8'))
+        self.assertNotIn('DIRECT', clash)
+        self.assertIn('REJECT', clash)
+        self.assertEqual(singbox['outbounds'][0]['type'], 'block')
+        self.assertEqual(singbox['route']['final'], 'blocked')
+
+    def test_publication_copy_failure_keeps_old_pointer_and_profile(self):
+        cfg = config()
+        self.db.execute('INSERT INTO profiles VALUES (?,?)', ('fixture', json.dumps(cfg)))
+        proxy = 'http://11.0.0.1:80'
+        row = measured(proxy, cfg)
+        self.db.execute('INSERT INTO candidates VALUES (?)', (proxy,))
+        self.db.execute('INSERT INTO results VALUES (?,?,?)', ('fixture', proxy, json.dumps(row)))
+        self.db.commit()
+        out = self.home / 'publication'
+        profile_file = self.home / 'last-profile.txt'
+        first = p.export(self.db, 'fixture', out, min_success=1, active_profile_path=profile_file)
+        old_generation = p.current_generation_name(out)
+        with mock.patch.object(p.shutil, 'copyfile', side_effect=OSError('locked')):
+            with self.assertRaises(OSError):
+                p.export(self.db, 'fixture', out, min_success=1, active_profile_path=profile_file)
+        self.assertEqual(p.current_generation_name(out), old_generation)
+        self.assertEqual(profile_file.read_text(encoding='utf-8').strip(), 'fixture')
+        self.assertEqual(json.loads(p.export_file(out, 'status.json').read_text())['generation'], old_generation)
+        self.assertEqual(first['generation'], old_generation)
+
+    def test_snapshot_schema_and_watch_freshness(self):
+        cfg = config()
+        self.db.execute('INSERT INTO profiles VALUES (?,?)', ('fresh', json.dumps(cfg)))
+        now = time.time()
+        for index, checked_at in enumerate((now - 500, now - 100), 1):
+            proxy = f'http://11.0.0.{index}:80'
+            row = measured(proxy, cfg)
+            row['checked_at'] = checked_at
+            self.db.execute('INSERT INTO candidates VALUES (?)', (proxy,))
+            self.db.execute('INSERT INTO results VALUES (?,?,?)', ('fresh', proxy, json.dumps(row)))
+        self.db.commit()
+        out = self.home / 'fresh-out'
+        report = p.export(self.db, 'fresh', out, min_success=1, watch_minutes=120)
+        self.assertEqual(report['schema_version'], 1)
+        self.assertEqual((report['state'], report['stop_reason'], report['complete']), ('complete', 'complete', True))
+        self.assertEqual(report['scope_candidates'], report['checked'])
+        rows = json.loads(p.export_file(out, 'ranked.json').read_text(encoding='utf-8'))
+        self.assertTrue(all(row['valid_until'] > row['checked_at'] for row in rows))
+        self.assertAlmostEqual(min(row['valid_until'] for row in rows),
+                               min(row['checked_at'] for row in rows) + 14400, places=3)
+        self.assertEqual(report['valid_until'], min(row['valid_until'] for row in rows))
 
 
 class SourceTrackingTests(unittest.IsolatedAsyncioTestCase):
@@ -137,6 +277,28 @@ class SourceTrackingTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(meta['http://11.0.0.10:80'], (None, 'local'))
                 self.assertEqual(p.source_key('socks5 https://example.org/list.txt'),
                                  p.source_key('  socks5 https://example.org/list.txt '))
+            finally:
+                db.close()
+
+    def test_overlap_health_and_provenance_use_every_source(self):
+        with tempfile.TemporaryDirectory() as temp:
+            db = p.open_db(Path(temp) / 'db.sqlite3')
+            try:
+                cfg = config()
+                db.execute('INSERT INTO profiles VALUES (?,?)', ('fx', json.dumps(cfg)))
+                proxy = 'http://11.0.0.1:80'
+                row = measured(proxy, cfg)
+                db.execute('INSERT INTO candidates VALUES (?)', (proxy,))
+                db.execute('INSERT INTO candidate_meta(proxy, source) VALUES (?,?)', (proxy, 'aaa'))
+                db.execute('INSERT INTO candidate_seen VALUES (?,?)', (proxy, 'bbb'))
+                db.execute('INSERT INTO results VALUES (?,?,?)', ('fx', proxy, json.dumps(row)))
+                db.commit()
+                self.assertEqual(p.source_map(db)[proxy], ('aaa', 'bbb'))
+                report = p.export(db, 'fx', Path(temp) / 'out', min_success=1)
+                self.assertEqual(report['source_quality'], {
+                    'aaa': {'checked': 1, 'passed': 1}, 'bbb': {'checked': 1, 'passed': 1}})
+                ranked = json.loads(p.export_file(Path(temp) / 'out', 'ranked.json').read_text())
+                self.assertEqual(ranked[0]['source_keys'], ['aaa', 'bbb'])
             finally:
                 db.close()
 

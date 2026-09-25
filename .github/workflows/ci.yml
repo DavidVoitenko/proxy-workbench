@@ -59,7 +59,12 @@ jobs:
           NO_PROXY: "127.0.0.1,localhost"
         run: python -m unittest discover -s tests -v
 
+      - name: Check UI JavaScript syntax
+        run: node --check proxy_workbench/ui/app.js
+
   # Builds what users install and runs a GUI -> check -> API -> gateway flow against local mocks.
+  # macOS is intentionally covered as an installed wheel/source-package path; this job does
+  # not claim to produce or validate a signed .app/.dmg.
   package:
     name: Package / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
@@ -69,6 +74,7 @@ jobs:
       matrix:
         os:
           - ubuntu-latest
+          - macos-latest
           - windows-latest
     env:
       ALL_PROXY: ""
@@ -78,6 +84,13 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v7
+
+      - name: Check source launcher syntax
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          sh -n run.sh
+          sh -n Start.command
 
       - name: Set up Python
         uses: actions/setup-python@v7

@@ -27,7 +27,7 @@ class LooseParserTests(unittest.TestCase):
     def test_source_kinds(self):
         for kind in ('auto', 'text', 'socks4'):
             self.assertEqual(p.source_spec(f'{kind} https://example.org/x')[0], kind)
-        self.assertEqual(gui.public_source('text https://example.org/list?key=secret'), 'text https://example.org/')
+        self.assertEqual(gui.public_source('text https://example.org/list?key=secret', keyed=False), 'text https://example.org/')
 
 
 class CollectTests(unittest.IsolatedAsyncioTestCase):

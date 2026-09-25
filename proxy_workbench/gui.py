@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import argparse
 import copy
-from contextlib import contextmanager
+import asyncio
+from contextlib import contextmanager, suppress
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import math
@@ -16,7 +17,7 @@ import subprocess
 import sys
 import threading
 import time
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, quote, urlsplit
 import webbrowser
 
 import httpx
@@ -34,6 +35,7 @@ from . import geoip
 
 ROOT = paths.PACKAGE
 MAX_BODY = 32 * 1024 * 1024
+MAX_SELECTION = 1000
 
 
 def read_json(path, fallback):
@@ -43,13 +45,18 @@ def read_json(path, fallback):
         return fallback
 
 
-def public_source(value):
+def public_source(value, *, keyed=True):
     if not isinstance(value, str):
         return ''
     parts = value.strip().split(None, 1)
     if len(parts) == 2 and parts[0] in core.SOURCE_KINDS:
-        return parts[0] + ' ' + core.public_url(parts[1])
-    return core.public_url(value)
+        label = parts[0] + ' ' + core.public_url(parts[1])
+    else:
+        label = core.public_url(value)
+    # Paths and query strings are intentionally hidden, but a host-only label
+    # is ambiguous for several GitHub/raw mirrors.  A short stable digest lets
+    # users identify the exact configured entry without exposing credentials.
+    return label + ' [' + core.source_key(value)[:8] + ']' if keyed else label
 
 
 RESULT_ORDERS = {
@@ -69,10 +76,23 @@ PRUNE_MIN_CHECKED = 20
 CHILD_ENV = dict(os.environ, PROXY_WORKBENCH_LANG='ru', PYTHONUNBUFFERED='1', PYTHONUTF8='1', PYTHONIOENCODING='utf-8')
 DOWNLOADS = ('proxies.txt', 'ranked.csv', 'ranked.json', *core.PROTOCOL_EXPORTS.values(), 'hostport.txt', 'proxychains.txt',
              'proxy.pac', 'clash.yaml', 'singbox.json')
+# An empty/stale generation may still be inspected as plain text, but a
+# ready-made client configuration must not be presented as usable.
+EMPTY_SAFE_DOWNLOADS = {'proxies.txt', 'ranked.csv', 'ranked.json', *core.PROTOCOL_EXPORTS.values(),
+                        'hostport.txt', 'proxychains.txt'}
 
 
-def public_sources(values):
-    return [public_source(value) for value in values] if isinstance(values, list) else []
+def public_sources(values, *, keyed=True):
+    return [public_source(value, keyed=keyed) for value in values] if isinstance(values, list) else []
+
+
+def normalize_hosting_filter(value):
+    """Map the two UI labels to the backend's canonical keep/hide values."""
+    if value in ('', 'any', 'keep'):
+        return ''
+    if value in ('hide', 'exclude'):
+        return 'hide'
+    raise ValueError('Неверный фильтр провайдера для экспорта.')
 
 
 def defaults():
@@ -101,6 +121,11 @@ def validate(settings):
         raise ValueError('Неизвестный request-профиль.')
     if not isinstance(clean['denylist'], str) or len(clean['denylist']) > 2_000_000:
         raise ValueError('Список denylist слишком большой: максимум 2 МБ.')
+    for line in clean['denylist'].splitlines():
+        value = line.strip()
+        if value and not value.startswith('#') and ('@' in value or
+                ('://' in value and core.normalize_custom(value) is None)):
+            raise ValueError('Denylist не должен содержать логин или пароль.')
     incoming_rep = settings.get('reputation', {})
     if not isinstance(incoming_rep, dict):
         raise ValueError('Настройки чистоты должны быть объектом.')
@@ -136,6 +161,11 @@ def validate(settings):
         raise ValueError('Неверный режим сортировки или источников.')
     if not isinstance(clean['proxies'], str) or len(clean['proxies']) > 20_000_000:
         raise ValueError('Список прокси слишком большой: максимум 20 МБ.')
+    # Normalize the user import before it can be persisted or exported.  This
+    # rejects URL credentials while retaining private/hostname entries for
+    # explicitly local user setups; the public collector still applies its
+    # separate global-IP policy during collection.
+    clean['proxies'] = core.normalize_custom_list(clean['proxies'])
     if not isinstance(clean['sources'], list) or len(clean['sources']) > 5000:
         raise ValueError('Источники должны быть списком URL (до 5000).')
     for url in clean['sources']:
@@ -201,6 +231,7 @@ class App:
         self.process = None
         self.log_handle = None
         self.job = read_json(self.data/'gui-job.json', {})
+        self.export_reader = api.Exports(self.data/'exports')
         self.stop_path = self.data/'gui-stop'
         self.progress_path = self.data/'gui-progress.json'
 
@@ -241,17 +272,60 @@ class App:
             core.atomic(self.data/'denylist.txt', settings['denylist'])
         return settings
 
+    def export_settings(self, payload):
+        """Validate a settings backup without persisting the submitted form."""
+        if not isinstance(payload, dict):
+            raise ValueError('Ожидается JSON объект настроек.')
+        if 'denylist' not in payload:
+            payload = dict(payload)
+            payload['denylist'] = self.settings().get('denylist', '')
+        return validate(payload)
+
+    def export_status(self):
+        """Return the same fresh, coherent current snapshot used by the API."""
+        rows, status = self.export_reader.load()
+        if status:
+            status['available'] = len(rows)
+        return status
+
+    def export_downloads(self, status=None):
+        """Advertise files only for a coherent, non-stale published snapshot."""
+        status = self.export_status() if status is None else status
+        if not status or status.get('stale') or status.get('state') in ('error', 'stale'):
+            return []
+        return [name for name in DOWNLOADS
+                if core.export_file(self.data/'exports', name).is_file()]
+
     def gateway_state(self):
         runner = getattr(self, 'gateway', None)
         if runner is None:
             return None
         snapshot = runner.server.gateway.pool.snapshot(top=5)
-        return dict(snapshot, address=f'127.0.0.1:{runner.port}', proxies=snapshot['available'])
+        host = getattr(runner, 'display_host', '127.0.0.1')
+        address = f'[{host}]:{runner.port}' if ':' in host else f'{host}:{runner.port}'
+        token = getattr(runner, 'token', None)
+        # A phone can use the QR only when the listener is reachable beyond
+        # this computer.  A loopback gateway remains useful locally, but must
+        # not be advertised as a mobile connection.
+        mobile_ready = (not api.is_loopback(getattr(runner, 'host', '127.0.0.1'))
+                        and not api.is_loopback(host) and bool(token))
+        copy_address = address
+        if token:
+            copy_address = f'http://workbench:{quote(token, safe="")}@{address}'
+        return dict(snapshot, address=address, copy_address=copy_address,
+                    bind_host=getattr(runner, 'host', '127.0.0.1'),
+                    mobile_ready=mobile_ready, udp_supported=False,
+                    username='workbench' if token else None,
+                    password=token if token else None, proxies=snapshot['available'])
 
     def prune_sources(self, payload):
-        """Drop sources that delivered only non-working proxies in the last export."""
+        """Drop sources that delivered only non-working fresh profile checks."""
         settings = validate(payload)
-        quality = read_json(self.data/'exports/status.json', {}).get('source_quality') or {}
+        status = read_json(core.export_file(self.data/'exports', 'status.json'), {})
+        if status.get('stale') or status.get('state') in ('error', 'stale'):
+            quality = {}
+        else:
+            quality = status.get('source_quality') or {}
         dead = [source for source in settings['sources']
                 if (stats := quality.get(core.source_key(source))) and stats.get('checked', 0) >= PRUNE_MIN_CHECKED
                 and not stats.get('passed')]
@@ -294,16 +368,79 @@ class App:
 
     def start(self, payload):
         with self.mutex:
+            if not isinstance(payload, dict):
+                raise ValueError('Ожидается JSON объект.')
             if self.running():
                 raise ValueError('Проверка уже идёт. Сначала остановите её.')
             action = payload.get('action', 'run')
             if action not in ('run', 'scan', 'recheck', 'recheck_passing', 'collect', 'export'):
                 raise ValueError('Неизвестное действие.')
-            settings = self.save(payload.get('settings', self.settings()))
-            if action == 'export' and not (self.data/'last-profile.txt').exists():
-                raise ValueError('Сначала запустите проверку.')
+
+            selection = None
+            export_query = ''
+            export_hosting = ''
+            export_quick = ''
+            if action == 'export':
+                if 'selection' in payload:
+                    values = payload.get('selection')
+                    if not isinstance(values, list) or not 1 <= len(values) <= MAX_SELECTION:
+                        raise ValueError('Выберите от 1 до 1000 прокси для экспорта.')
+                    selection = []
+                    seen = set()
+                    for value in values:
+                        if not isinstance(value, str):
+                            raise ValueError('Выбран список содержит некорректный адрес прокси.')
+                        normalized = core.normalize(value)
+                        if normalized is None:
+                            raise ValueError('Нужен публичный IP-адрес, порт и протокол без логина или пароля.')
+                        if normalized not in seen:
+                            seen.add(normalized)
+                            selection.append(normalized)
+                export_query = payload.get('q', '')
+                if not isinstance(export_query, str) or len(export_query) > 100:
+                    raise ValueError('Поиск экспорта слишком длинный: максимум 100 символов.')
+                export_query = export_query.strip()
+                export_hosting = normalize_hosting_filter(payload.get('hosting', ''))
+                export_quick = payload.get('quick', '')
+                if export_quick not in ('', 'clean', 'speed', 'http'):
+                    raise ValueError('Неверный быстрый фильтр экспорта.')
+                try:
+                    active_profile = (self.data/'last-profile.txt').read_text(encoding='utf-8').strip()
+                except (OSError, UnicodeError):
+                    active_profile = ''
+                if not active_profile or not (self.data/'proxies.sqlite3').is_file():
+                    raise ValueError('Сначала запустите проверку.')
+                try:
+                    db = sqlite3.connect((self.data/'proxies.sqlite3').as_uri()+'?mode=ro', uri=True, timeout=2)
+                    try:
+                        active = db.execute('SELECT 1 FROM profiles WHERE id=?', (active_profile,)).fetchone()
+                    finally:
+                        db.close()
+                except sqlite3.Error:
+                    raise ValueError('Не удалось прочитать активный профиль. Перезапустите проверку.') from None
+                if active is None:
+                    raise ValueError('Активный профиль не найден. Сначала запустите проверку.')
+            elif 'selection' in payload:
+                raise ValueError('Выбранные адреса можно экспортировать только действием export.')
+
+            submitted = payload.get('settings')
+            if action == 'export':
+                # Export controls are deliberately transient. Only scans and collection
+                # update the settings that define the next profile.
+                settings = validate(self.settings() if submitted is None else submitted)
+                if 'hosting' in payload:
+                    settings['exclude_hosting'] = export_hosting == 'hide'
+                if selection is not None:
+                    settings['top'] = 0
+            else:
+                settings = self.save(self.settings() if submitted is None else submitted)
             if action in ('run', 'collect') and not settings['proxies'].strip() and (not settings['use_sources'] or not settings['sources']):
                 raise ValueError('Включите источники или добавьте свой список прокси.')
+
+            selection_path = self.data/'gui-selection.json'
+            selection_path.unlink(missing_ok=True)
+            if selection is not None:
+                core.atomic(selection_path, json.dumps(selection, ensure_ascii=False))
             core.atomic(self.data/'gui-targets.json', json.dumps({
                 'targets': settings['targets'], 'request_profile': settings['request_profile'],
                 'reputation': settings['reputation'], 'anonymity': settings['anonymity'],
@@ -317,6 +454,15 @@ class App:
                        '--sources', str(self.data/'gui-sources.json'), '--input', str(self.data/'gui-input.txt'),
                        '--denylist-file', str(self.data/'denylist.txt'),
                        '--progress-file', str(self.progress_path), '--stop-file', str(self.stop_path))
+            if selection is not None:
+                command.extend(['--selection-file', str(selection_path)])
+            if action == 'export':
+                if 'q' in payload:
+                    command.extend(['--export-query', export_query])
+                if 'hosting' in payload:
+                    command.extend(['--export-hosting', export_hosting])
+                if 'quick' in payload:
+                    command.extend(['--export-quick', export_quick])
             for key in ('attempts', 'timeout', 'connect_timeout', 'workers', 'rate', 'max_bytes', 'source_timeout',
                         'min_success', 'top', 'sort', 'min_anonymity', 'protocol', 'max_latency', 'want', 'watch', 'prefilter'):
                 command.extend(['--'+key.replace('_', '-'), str(settings[key])])
@@ -345,7 +491,8 @@ class App:
                             targets=[dict(name=t.get('name', ''), url=core.public_url(t['url'])) for t in settings['targets']],
                             min_success=settings['min_success'], sort=settings['sort'], top=settings['top'],
                             request_profile=settings['request_profile'], reputation=reputation,
-                            anonymity=bool(settings['anonymity']['judge_url']), min_anonymity=settings['min_anonymity'])
+                            anonymity=bool(settings['anonymity']['judge_url']), min_anonymity=settings['min_anonymity'],
+                            selection_requested=len(selection) if selection is not None else 0)
             if self.log_handle:
                 self.log_handle.close()
             self.log_handle = (self.data/'gui-run.log').open('wb')
@@ -355,6 +502,7 @@ class App:
             except OSError:
                 self.log_handle.close()
                 self.log_handle = None
+                selection_path.unlink(missing_ok=True)
                 raise ValueError('Не удалось запустить проверку.') from None
             core.atomic(self.data/'gui-job.json', json.dumps(self.job))
             threading.Thread(target=self._wait, args=(self.process,), daemon=True).start()
@@ -366,6 +514,7 @@ class App:
             if self.process is process:
                 self.job.update(exit_code=code, finished_at=time.time())
                 core.atomic(self.data/'gui-job.json', json.dumps(self.job))
+                (self.data/'gui-selection.json').unlink(missing_ok=True)
                 if self.log_handle:
                     self.log_handle.close()
                     self.log_handle = None
@@ -442,17 +591,19 @@ class App:
     def state(self):
         with self.mutex:
             active = self.running()
+            export = self.export_status()
             state = dict(running=active, job=dict(self.job),
                          progress=read_json(self.progress_path, {}),
                          sources=read_json(self.data/'sources-report.json', {}),
-                         source_urls=public_sources(read_json(self.data/'gui-sources.json', [])),
+                         source_urls=public_sources(read_json(self.data/'gui-sources.json', []), keyed=True),
                          source_keys=[core.source_key(url) for url in read_json(self.data/'gui-sources.json', [])
                                       if isinstance(url, str)],
-                         export=read_json(self.data/'exports/status.json', {}),
+                         export=export,
+                         diagnostic=read_json(core.export_file(self.data/'exports', 'status.json',
+                                                                pointer='diagnostic.json'), {}),
                          api=getattr(self, 'api_url', None),
                          gateway=self.gateway_state(),
-                         downloads=[n for n in DOWNLOADS
-                                     if core.export_file(self.data/'exports', n).is_file()])
+                         downloads=self.export_downloads(export))
             if not active and self.job.get('exit_code', 0) not in (0, 130):
                 state['progress']['phase'] = 'error'
             elif not active and state['progress'].get('phase') in ('starting', 'scanning', 'collecting', 'exporting', 'waiting'):
@@ -467,10 +618,18 @@ class App:
             return state
 
     def results(self, query):
-        profile_path = self.data/'last-profile.txt'
-        if not profile_path.exists() or not (self.data/'proxies.sqlite3').exists():
-            return dict(rows=[], total=0, targets=[], profile=None)
-        profile = profile_path.read_text(encoding='utf-8').strip()
+        # The table and the public API must describe the same generation.  A
+        # legacy database is still readable when no coherent export has ever
+        # been published, but once a current pointer exists an empty/stale
+        # generation must never fall back to arbitrary SQLite rows.
+        export_rows, export_status = self.export_reader.load()
+        current_generation = core.current_generation_name(self.data/'exports')
+        has_snapshot = bool(current_generation)
+        if isinstance(export_status, dict):
+            has_snapshot = has_snapshot or bool(export_status.get('profile'))
+        coherent = (bool(export_status) and bool(export_status.get('profile'))
+                    and not export_status.get('stale') and export_status.get('state') != 'error')
+        visible = {row['proxy']: row for row in export_rows} if coherent else None
         sort = query.get('sort', ['quality'])[0]
         order = RESULT_ORDERS.get(sort)
         try:
@@ -478,21 +637,42 @@ class App:
             offset = max(0, int(query.get('offset', ['0'])[0]))
             min_anonymity = anonymity.validate_min_level(query.get('min_anonymity', ['any'])[0])
             protocol = query.get('protocol', ['all'])[0]
+            quick = query.get('quick', [''])[0]
             max_latency = float(query.get('max_latency', ['0'])[0])
             search = query.get('q', [''])[0].strip().lower()[:100]
             countries = frozenset(geoip.parse_countries(query.get('country', [''])[0][:1000]))
-            hide_hosting = query.get('hosting', [''])[0] == 'hide'
+            hide_hosting = normalize_hosting_filter(query.get('hosting', [''])[0]) == 'hide'
             if (not 0 <= threshold <= 1 or order is None or protocol not in core.PROTOCOLS
+                    or quick not in ('', 'clean', 'speed', 'http')
                     or not math.isfinite(max_latency) or max_latency < 0):
                 raise ValueError()
         except ValueError:
             raise ValueError('Неверные параметры рейтинга.') from None
+        if has_snapshot and not coherent:
+            status_profile = export_status.get('profile') if isinstance(export_status, dict) else None
+            return dict(rows=[], total=0, targets=[], profile=status_profile, offset=offset)
+        if not (self.data/'proxies.sqlite3').exists():
+            return dict(rows=[], total=0, targets=[], profile=None, offset=offset)
+        if coherent:
+            profile = export_status.get('profile')
+        else:
+            profile_path = self.data/'last-profile.txt'
+            if not profile_path.exists():
+                return dict(rows=[], total=0, targets=[], profile=None, offset=offset)
+            try:
+                profile = profile_path.read_text(encoding='utf-8').strip()
+            except (OSError, UnicodeError):
+                return dict(rows=[], total=0, targets=[], profile=None, offset=offset)
+        if not profile:
+            return dict(rows=[], total=0, targets=[], profile=None, offset=offset)
         try:
             with self.data_lock():
                 db = sqlite3.connect((self.data/'proxies.sqlite3').as_uri()+'?mode=ro', uri=True, timeout=2)
                 try:
                     record = db.execute('SELECT config FROM profiles WHERE id=?', (profile,)).fetchone()
-                    cfg = json.loads(record[0]) if record else {}
+                    if not record:
+                        return dict(rows=[], total=0, targets=[], profile=profile, offset=offset)
+                    cfg = json.loads(record[0])
                     policy = cfg.get('reputation', {})
                     strict = bool(policy.get('strict', False))
                     if not cfg.get('anonymity'):
@@ -505,6 +685,7 @@ class App:
                         geo = self.geo()
                         country_of = geo.country_of if geo else None
                     provider_of = core.provider_resolver(self.asn())
+                    source_keys = core.source_map(db)
                     current_settings = self.settings()
                     local_enabled = current_settings.get('reputation', {}).get('local_enabled', True)
                     active_denylist = denylist if local_enabled else None
@@ -512,11 +693,9 @@ class App:
                         raise ValueError('Не удалось прочитать локальный denylist; обновите список.')
                     recommended = None
                     if sort == 'recommended':
-                        exported = read_json(self.data/'exports/status.json', {})
-                        try:
-                            sources = dict(db.execute('SELECT proxy, source FROM candidate_meta WHERE source IS NOT NULL'))
-                        except sqlite3.Error:
-                            sources = {}
+                        exported = export_status if coherent else read_json(
+                            core.export_file(self.data/'exports', 'status.json'), {})
+                        sources = source_keys
                         recommended = core.recommender(exported.get('source_quality'), core.listed_counts(db), sources, threshold)
                         ranked = []
                     condition = "profile=? AND json_extract(payload,'$.min_target_reliability')>0 AND json_extract(payload,'$.min_target_reliability')+1e-12>=?"
@@ -524,17 +703,30 @@ class App:
                     rows = []
                     for (payload,) in db.execute('SELECT payload FROM results WHERE '+condition+' ORDER BY '+order, (profile, threshold)):
                         row = json.loads(payload)
+                        proxy = row.get('proxy', '')
+                        if visible is not None and proxy not in visible:
+                            continue
+                        if not core.row_fresh(row):
+                            continue
                         if not result_allowed(row, threshold, denylist=active_denylist, strict=strict,
                                               min_anonymity=min_anonymity):
+                            continue
+                        if quick == 'clean' and core.reputation_status(row) != 'clean':
+                            continue
+                        speed_data = row.get('speed') if isinstance(row.get('speed'), dict) else {}
+                        speed_mbps = speed_data.get('mbps', row.get('mbps'))
+                        if quick == 'speed' and not (speed_mbps is not None and speed_mbps > 0):
+                            continue
+                        if quick == 'http' and core.proxy_protocol(proxy) not in ('http', 'https'):
                             continue
                         if not core.matches_selection(row, protocol, max_latency or None, countries, country_of,
                                                       hide_hosting, provider_of):
                             continue
-                        if search and search not in row.get('proxy', '').lower():
+                        if search and search not in proxy.lower():
                             continue
                         if recommended is not None:
                             row.pop('samples', None)
-                            ranked.append((-recommended(row), row['proxy'], row))
+                            ranked.append((-recommended(row), proxy, row))
                             total += 1
                             continue
                         if total >= offset and len(rows) < 50:
@@ -542,7 +734,8 @@ class App:
                             summary.pop('samples', None)
                             summary['country'] = core.row_country(row, country_of)
                             summary['exit_country'] = core.exit_country(row, country_of)
-                            summary['provider'] = provider_of(row['proxy']) if provider_of else None
+                            summary['provider'] = provider_of(proxy) if provider_of else None
+                            summary['source_keys'] = list(source_keys.get(proxy, ()))
                             rows.append(summary)
                         total += 1
                     if recommended is not None:
@@ -554,23 +747,43 @@ class App:
                             summary['country'] = core.row_country(row, country_of)
                             summary['exit_country'] = core.exit_country(row, country_of)
                             summary['provider'] = provider_of(row['proxy']) if provider_of else None
+                            summary['source_keys'] = list(source_keys.get(row['proxy'], ()))
                             rows.append(summary)
-                    targets = [dict(name=t.get('name',''), url=core.public_url(t['url'])) for t in cfg.get('targets', [])]
+                    targets = [dict(name=t.get('name', ''), url=core.public_url(t['url'])) for t in cfg.get('targets', [])]
                     return dict(rows=rows, total=total, profile=profile, targets=targets, offset=offset,
                                 request_profile=cfg.get('request_profile', 'workbench'),
-                                reputation_policy=policy, anonymity=bool(cfg.get('anonymity')))
+                                reputation_policy=policy, anonymity=bool(cfg.get('anonymity')),
+                                generation=export_status.get('generation') if coherent else None,
+                                stale=False)
                 finally:
                     db.close()
         except RuntimeError as exc:
             raise ValueError(str(exc)) from None
 
+
     def detail(self, proxy):
         if not isinstance(proxy, str) or not proxy or len(proxy) > 512:
             raise ValueError('Некорректный адрес прокси.')
-        profile_path = self.data/'last-profile.txt'
-        if not profile_path.exists() or not (self.data/'proxies.sqlite3').exists():
+        export_rows, export_status = self.export_reader.load()
+        has_snapshot = bool(core.current_generation_name(self.data/'exports'))
+        if isinstance(export_status, dict):
+            has_snapshot = has_snapshot or bool(export_status.get('profile'))
+        if has_snapshot:
+            if export_status.get('stale') or export_status.get('state') == 'error':
+                raise ValueError('Снимок экспорта устарел или завершился ошибкой.')
+            profile = export_status.get('profile')
+            if not any(row.get('proxy') == proxy for row in export_rows):
+                raise ValueError('Детали прокси не найдены в текущем снимке.')
+        else:
+            profile_path = self.data/'last-profile.txt'
+            if not profile_path.exists():
+                raise ValueError('Результаты не найдены.')
+            try:
+                profile = profile_path.read_text(encoding='utf-8').strip()
+            except (OSError, UnicodeError):
+                raise ValueError('Результаты не найдены.')
+        if not profile or not (self.data/'proxies.sqlite3').exists():
             raise ValueError('Результаты не найдены.')
-        profile = profile_path.read_text(encoding='utf-8').strip()
         try:
             with self.data_lock():
                 db = sqlite3.connect((self.data/'proxies.sqlite3').as_uri()+'?mode=ro', uri=True, timeout=2)
@@ -582,16 +795,131 @@ class App:
             raise ValueError(str(exc)) from None
         if not record:
             raise ValueError('Детали прокси не найдены.')
-        return json.loads(record[0])
+        row = json.loads(record[0])
+        if not core.row_fresh(row):
+            raise ValueError('Результат прокси устарел; выполните перепроверку.')
+        return row
+
+    def test_proxy(self, payload):
+        if not isinstance(payload, dict):
+            raise ValueError('Ожидается JSON объект.')
+        proxy = core.normalize(str(payload.get('proxy') or '').strip())
+        if proxy is None:
+            raise ValueError('Укажите публичный IP-адрес и порт прокси без credentials.')
+        try:
+            threshold = float(payload.get('min_success', 2/3))
+        except (TypeError, ValueError):
+            raise ValueError('Некорректный порог успешности.') from None
+        if not 0 <= threshold <= 1:
+            raise ValueError('Некорректный порог успешности.')
+
+        _, export_status = self.export_reader.load()
+        profile = export_status.get('profile') if isinstance(export_status, dict) else None
+        if not profile:
+            profile_path = self.data/'last-profile.txt'
+            try:
+                profile = profile_path.read_text(encoding='utf-8').strip()
+            except (OSError, UnicodeError):
+                profile = ''
+        if not profile or not (self.data/'proxies.sqlite3').exists():
+            raise ValueError('Сначала выполните проверку: быстрый тест использует её targets.')
+        try:
+            with self.data_lock():
+                db = sqlite3.connect((self.data/'proxies.sqlite3').as_uri()+'?mode=ro', uri=True, timeout=2)
+                try:
+                    record = db.execute('SELECT config FROM profiles WHERE id=?', (profile,)).fetchone()
+                finally:
+                    db.close()
+        except RuntimeError as exc:
+            raise ValueError(str(exc)) from None
+        if not record:
+            raise ValueError('Активный профиль проверки не найден.')
+        try:
+            profile_config = json.loads(record[0])
+        except (TypeError, ValueError):
+            raise ValueError('Конфигурация активного профиля повреждена.') from None
+        targets = profile_config.get('targets') if isinstance(profile_config, dict) else None
+        if not isinstance(targets, list) or not targets:
+            raise ValueError('В активном профиле нет targets для быстрого теста.')
+
+        config = dict(profile_config)
+        # A row test verifies service availability, not a second anonymity/speed
+        # campaign. Keep the configured targets and threshold, but cap the
+        # auxiliary request budget so one click cannot hang the GUI.
+        config['anonymity'] = None
+        config['speedtest'] = None
+        config['timeout'] = min(max(float(config.get('timeout', 5)), .1), 10.0)
+        config['max_bytes'] = min(max(int(config.get('max_bytes', 1024*1024)), 1024), 1024*1024)
+        target_names = [str(item.get('name') or core.public_url(item.get('url', ''))) for item in targets
+                        if isinstance(item, dict)]
+
+        async def _test():
+            row = await core.check_proxy(proxy, config, core.Rate(0))
+            ok = core.result_allowed(row, threshold, strict=False, min_anonymity='any')
+            errors = [sample.get('error') for sample in row.get('samples', [])
+                      if isinstance(sample, dict) and sample.get('error')]
+            return dict(ok=bool(ok), latency_ms=row.get('latency_ms'),
+                        status=row.get('min_target_reliability'),
+                        error=row.get('error') or (errors[0] if errors else ('CHECK_FAILED' if not ok else None)),
+                        targets=target_names, profile=profile)
+        try:
+            return asyncio.run(_test())
+        except Exception as exc:
+            return dict(ok=False, error=type(exc).__name__, latency_ms=None,
+                        targets=target_names, profile=profile)
+
+    def add_denylist(self, payload):
+        if not isinstance(payload, dict):
+            raise ValueError('Ожидается JSON объект.')
+        proxies = payload.get('proxies')
+        if not isinstance(proxies, list) or not 1 <= len(proxies) <= MAX_SELECTION:
+            raise ValueError('Выберите от 1 до 1000 прокси для локального denylist.')
+        normalized = []
+        seen = set()
+        for value in proxies:
+            if not isinstance(value, str):
+                raise ValueError('Выбран список содержит некорректный адрес прокси.')
+            proxy = core.normalize(value)
+            if proxy is None:
+                raise ValueError('Нужен публичный IP-адрес, порт и протокол без логина или пароля.')
+            if proxy not in seen:
+                seen.add(proxy)
+                normalized.append(proxy)
+
+        with self.mutex:
+            if self.running():
+                raise ValueError('Сначала остановите текущую операцию.')
+            settings = self.settings()
+            existing = set(line.strip() for line in settings.get('denylist', '').splitlines() if line.strip())
+            existing_proxies = {core.normalize(line) for line in existing}
+            existing_proxies.discard(None)
+            added = [proxy for proxy in normalized if proxy not in existing_proxies]
+            if added:
+                settings['denylist'] = '\n'.join(sorted(existing | set(added)))
+                self.save(settings)
+            return dict(added=added, count=len(added))
 
     def close(self):
         self.stop()
-        if self.process:
+        process = self.process
+        if process and hasattr(process, 'wait'):
             try:
-                self.process.wait(timeout=30)
-            except subprocess.TimeoutExpired:
-                self.process.terminate()
-                self.process.wait(timeout=10)
+                process.wait(timeout=30)
+            except (subprocess.TimeoutExpired, OSError):
+                if hasattr(process, 'terminate'):
+                    with suppress(OSError):
+                        process.terminate()
+                try:
+                    process.wait(timeout=10)
+                except (subprocess.TimeoutExpired, OSError):
+                    # A worker stuck in native I/O must not keep the GUI lock forever.
+                    if hasattr(process, 'kill'):
+                        with suppress(OSError):
+                            process.kill()
+                        with suppress(subprocess.TimeoutExpired, OSError):
+                            process.wait(timeout=5)
+        with suppress(OSError):
+            (self.data/'gui-selection.json').unlink(missing_ok=True)
         self.instance_lock.close()
 
 
@@ -666,9 +994,22 @@ class Handler(BaseHTTPRequestHandler):
                 name = path.path.rsplit('/', 1)[1]
                 if name not in DOWNLOADS:
                     return self.respond(404, dict(error='Файл не найден.'))
-                # Stream exports so a large JSON does not fill server memory.
+                # Stream exports so a large JSON does not fill server memory. Keep
+                # the status check and file open under the same data lock as a
+                # worker publication, so a pointer switch cannot mix generations.
                 try:
                     with self.app.data_lock():
+                        status = self.app.export_status()
+                        if not status:
+                            return self.respond(409, dict(error='Нет опубликованного снимка экспорта.'))
+                        empty_at_publish = (status.get('empty_export') is True
+                                            and status.get('exported') == 0
+                                            and status.get('valid_until') == status.get('generated_at'))
+                        if (status.get('stale') or status.get('state') == 'stale') and not (
+                                empty_at_publish and name in EMPTY_SAFE_DOWNLOADS):
+                            return self.respond(410, dict(error='Снимок экспорта устарел; выполните перепроверку.'))
+                        if status.get('state') == 'error':
+                            return self.respond(409, dict(error='Снимок экспорта завершился ошибкой.'))
                         with core.export_file(self.app.data/'exports', name).open('rb') as handle:
                             self.send_response(200)
                             self.send_header('Content-Type', 'application/octet-stream')
@@ -696,6 +1037,8 @@ class Handler(BaseHTTPRequestHandler):
             path = urlsplit(self.path).path
             if path == '/api/settings':
                 return self.respond(200, self.app.save(payload))
+            if path == '/api/settings/export':
+                return self.respond(200, self.app.export_settings(payload))
             if path == '/api/start':
                 return self.respond(200, self.app.start(payload))
             if path == '/api/sources/prune':
@@ -708,6 +1051,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond(200, self.app.clear_data())
             if path == '/api/stop':
                 return self.respond(200, self.app.stop())
+            if path == '/api/test-proxy':
+                return self.respond(200, self.app.test_proxy(payload))
+            if path == '/api/denylist/add':
+                return self.respond(200, self.app.add_denylist(payload))
             self.respond(404, dict(error='Не найдено.'))
         except (ValueError, KeyError, TypeError, AttributeError) as exc:
             message = str(exc) if isinstance(exc, ValueError) and not isinstance(exc, json.JSONDecodeError) else 'Проверьте поля настроек.'
@@ -739,6 +1086,12 @@ def main(argv=None):
     parser.add_argument('--no-api', action='store_true', help=tr('не запускать локальное API', 'do not start the local API'))
     parser.add_argument('--gateway-port', type=int, default=gateway.DEFAULT_PORT,
                         help=tr('порт ротирующего прокси (только этот компьютер)', 'port of the rotating proxy (this computer only)'))
+    parser.add_argument('--gateway-host', default=os.environ.get('PROXY_WORKBENCH_GATEWAY_HOST', '0.0.0.0'),
+                        help=tr('адрес шлюза; 0.0.0.0 (по умолчанию) включает защищённый LAN-режим для телефона',
+                                'gateway bind address; 0.0.0.0 (default) enables authenticated LAN mode for a phone'))
+    parser.add_argument('--gateway-token', default=os.environ.get('PROXY_WORKBENCH_GATEWAY_TOKEN'),
+                        help=tr('пароль LAN-шлюза; если задан 0.0.0.0, используется пароль GUI',
+                                'LAN gateway password; for 0.0.0.0 the GUI password is used when omitted'))
     parser.add_argument('--no-gateway', action='store_true', help=tr('не запускать ротирующий прокси', 'do not start the rotating proxy'))
     args = parser.parse_args(argv)
     os.umask(0o077)
@@ -773,14 +1126,24 @@ def main(argv=None):
             threading.Thread(target=api_server.serve_forever, daemon=True).start()
             print(tr(f'API для своих программ: {server.app.api_url}/proxies', f'API for your programs: {server.app.api_url}/proxies'), flush=True)
     if not args.no_gateway:
+        gateway_token = args.gateway_token
+        if not api.is_loopback(args.gateway_host) and not gateway_token:
+            # The token is generated per GUI instance and is deliberately not
+            # persisted in settings or logs.  It is returned only to the local
+            # page for an authenticated phone QR.
+            gateway_token = server.app.token
         try:
-            server.app.gateway = gateway.Background(args.data, '127.0.0.1', args.gateway_port)
-        except (OSError, ValueError):
-            print(tr(f'Ротирующий прокси не запущен: порт {args.gateway_port} занят.',
-                     f'Rotating proxy not started: port {args.gateway_port} is busy.'), flush=True)
+            server.app.gateway = gateway.Background(args.data, args.gateway_host, args.gateway_port, token=gateway_token)
+        except (OSError, ValueError) as exc:
+            print(tr(f'Ротирующий прокси не запущен: {exc}. Проверьте порт и адрес.',
+                     f'Rotating proxy not started: {exc}. Check the port and bind address.'), flush=True)
         else:
-            print(tr(f'Ротирующий прокси: 127.0.0.1:{server.app.gateway.port} (HTTP и SOCKS5)',
-                     f'Rotating proxy: 127.0.0.1:{server.app.gateway.port} (HTTP and SOCKS5)'), flush=True)
+            gateway_state = server.app.gateway_state()
+            print(tr(f'Ротирующий прокси: {gateway_state["address"]} (HTTP и SOCKS5, только TCP)',
+                     f'Rotating proxy: {gateway_state["address"]} (HTTP and SOCKS5, TCP only)'), flush=True)
+            if gateway_state['mobile_ready']:
+                print(tr('LAN-шлюз включён: QR содержит пароль; разрешите порт в брандмауэре.',
+                         'LAN gateway enabled: the QR contains the password; allow the port in the firewall.'), flush=True)
     if not args.no_browser:
         webbrowser.open(url)
     try:

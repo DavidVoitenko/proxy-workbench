@@ -4,9 +4,11 @@ import contextlib
 import ipaddress
 import json
 from pathlib import Path
+import socket
 import struct
 import sys
 import tempfile
+import time
 import unittest
 
 import httpx
@@ -215,6 +217,28 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(sum(item['ok'] for item in status['top']), 10)
         self.assertEqual(status['active'], 0)
 
+    def test_pool_drops_expired_generation_rows_and_missing_file(self):
+        exports = self.home / 'exports'
+        generation = exports / 'generations' / '.generation-test'
+        generation.mkdir(parents=True)
+        proxy = 'http://11.0.0.1:80'
+        current = dict(proxy=proxy, reliability=1, min_target_reliability=1, latency_ms=100,
+                       jitter_ms=1, score=90, successes=3, requests=3, checked_at=time.time(),
+                       valid_until=time.time() + 60, samples=[])
+        (generation / 'ranked.json').write_text(json.dumps([current]), encoding='utf-8')
+        (generation / 'status.json').write_text(json.dumps({'schema_version': 1, 'generation': generation.name,
+                                                             'state': 'complete', 'stop_reason': 'complete',
+                                                             'complete': True, 'valid_until': current['valid_until']}),
+                                                 encoding='utf-8')
+        (exports / 'current.json').write_text(json.dumps({'generation': generation.name}), encoding='utf-8')
+        pool = gateway.Pool(self.home)
+        self.assertEqual(pool.refresh(), [proxy])
+        current['valid_until'] = time.time() - 1
+        (generation / 'ranked.json').write_text(json.dumps([current]), encoding='utf-8')
+        self.assertEqual(pool.refresh(), [])
+        (generation / 'ranked.json').unlink()
+        self.assertEqual(pool.refresh(), [])
+
     def test_client_options_parsing(self):
         self.assertEqual(gateway.client_options('user'), ({}, None))
         self.assertEqual(gateway.client_options('country-de_nl-protocol-SOCKS5-latency-800-anonymity-elite-session-s1'),
@@ -245,6 +269,29 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
                                                              'socks5://11.0.0.4:1080'])
         pool = gateway.Pool(self.home, dict(countries=('DE',), max_latency=500))
         self.assertEqual(pool.refresh(), ['http://11.0.0.1:80'])
+
+
+class BackgroundTests(unittest.TestCase):
+    def test_background_closes_idle_handlers_before_loop(self):
+        with tempfile.TemporaryDirectory() as temp:
+            background = gateway.Background(Path(temp), '127.0.0.1', 0)
+            client = socket.create_connection(('127.0.0.1', background.port), timeout=2)
+            try:
+                background.close()
+                self.assertFalse(background.thread.is_alive())
+                self.assertTrue(background.loop.is_closed())
+            finally:
+                client.close()
+
+    def test_authenticated_lan_bind_exposes_non_loopback_qr_target(self):
+        with tempfile.TemporaryDirectory() as temp:
+            background = gateway.Background(Path(temp), '0.0.0.0', 0, token='fixture-password')
+            try:
+                self.assertEqual(background.host, '0.0.0.0')
+                self.assertTrue(background.display_host)
+                self.assertTrue(background.token)
+            finally:
+                background.close()
 
 
 if __name__ == '__main__':

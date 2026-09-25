@@ -20,6 +20,52 @@ let resultBusy = false;
 
 const messages = {
   en: {
+    'lang.currentName': 'English',
+    'help.btnScan': 'Start proxy search',
+    'help.btnGateway': 'Local Gateway',
+    'help.btnMobile': 'Mobile & Clients',
+    'help.flowTitle': 'How it works: 4 simple steps',
+    'help.flowSubtitle': 'Automatic pipeline from discovery to connection',
+    'help.flow1': '1. Collection',
+    'help.flow1Desc': 'Thousands of free proxies',
+    'help.flow2': '2. Your Services',
+    'help.flow2Desc': 'YouTube, Telegram, API',
+    'help.flow3': '3. Smart Check',
+    'help.flow3Desc': 'Speed, ping, DNSBL clean',
+    'help.flow4': '4. Ready to Use',
+    'help.flow4Desc': '1-click Gateway or export',
+    'help.s1.bullet1': 'Preconfigured presets for popular services in 1 click',
+    'help.s1.bullet2': 'HTTP 200 response & content verification',
+    'help.s1.bullet3': 'Strict matching across all chosen targets',
+    'help.linkServices': 'Configure services',
+    'help.s2.bullet1': 'Latency measurement in milliseconds (ms)',
+    'help.s2.bullet2': 'Multiple attempts to filter out unstable proxies',
+    'help.s2.bullet3': 'Real throughput test in Mbit/s',
+    'help.linkCheck': 'Adjust parameters',
+    'help.s3.bullet1': 'DNSBL real-time spam blacklist checks',
+    'help.s3.bullet2': 'Anonymity level rating (Elite / Anonymous)',
+    'help.s3.bullet3': 'Local subnet and IP denylist filter',
+    'help.linkDenylist': 'Manage denylist',
+    'help.s4.bullet1': 'Rotating gateway for local TCP clients',
+    'help.s4.bullet2': 'Authenticated LAN mode can share the gateway with a phone',
+    'help.s4.bullet3': 'Fail-closed exports to TXT, CSV, JSON, PAC, Clash, Sing-Box',
+    'help.linkGateway': 'Open Gateway',
+    'help.faqTitle': 'Frequently Asked Questions',
+    'help.faqSubtitle': 'Everything you need to know about proxies and privacy',
+    'help.faq1Q': 'What is a proxy and why do I need it?',
+    'help.faq1A': 'A proxy acts as an intermediary between your device and the internet. Websites see the proxy\'s IP address instead of your real IP, allowing you to bypass regional restrictions, access blocked services, and protect your privacy.',
+    'help.faq2Q': 'What is the difference between HTTP and SOCKS5?',
+    'help.faq2A': 'HTTP/HTTPS proxies are designed for web browsers and websites. SOCKS5 handles TCP streams and DNS through the proxy. This local gateway does not implement SOCKS5 UDP ASSOCIATE, Telegram calls and games that require UDP are not supported here.',
+    'help.faq3Q': 'Why do free proxies stop working after some time?',
+    'help.faq3A': 'Public proxies are hosted on servers worldwide and can be overloaded or restarted. Proxy Workbench includes an automatic Keep-Fresh (Watch) mode that continually re-checks working proxies every few minutes in the background, keeping your pool 100% active!',
+    'help.faq4Q': 'How does the Local Rotating Gateway (127.0.0.1:8899) work?',
+    'help.faq4A': 'Instead of copying dozens of proxy addresses manually into your apps, you configure only one address: 127.0.0.1:8899. The gateway automatically routes each new connection through the best verified proxy, instantly switching if any proxy drops.',
+    'help.faq5Q': 'Where is my data stored and is it private?',
+    'help.faq5A': '100% of your data, history, and settings are stored locally on your own computer in the data/ folder. The application is completely offline-first, has no tracking, no cloud telemetry, and sends no personal data anywhere.',
+    'help.manageSettings': 'Settings Management',
+    'help.manageSettingsDesc': 'Save your target URLs and check parameters to a JSON file or restore them anytime.',
+    'help.manageData': 'Storage Maintenance',
+    'help.manageDataDesc': 'Clear checked candidates and cache while keeping your settings and custom denylist intact.',
     'lang.button': 'RU',
     'lang.label': 'Switch interface to Russian',
     'theme.light': '☀ Light theme',
@@ -72,6 +118,8 @@ const messages = {
     'identity.strict': 'Strict mode',
     'identity.strictHint': 'Do not export if a DNSBL did not respond.',
     'identity.denylist': 'Local denylist',
+    'identity.local': 'Local denylist',
+    'identity.localHint': 'IPs or CIDR blocks permanently excluded from tests and exports.',
     'identity.denylistPlaceholder': '11.0.0.0/24\nhttp://11.0.0.1:8080\n# comment',
     'identity.denylistHint': 'IP, CIDR or exact proxy address. Stored only in data/denylist.txt and never included in the code.',
     'identity.applyDenylist': 'Apply the local denylist during collection, checks and export',
@@ -117,6 +165,8 @@ const messages = {
     'watch.label': 'Keep fresh: re-check every, min',
     'watch.hint': '0 — off. Otherwise, after the check the app keeps running and re-checks the working proxies on this schedule, so exports, the API and the rotating proxy stay fresh.',
     'phase.complete': 'Complete',
+    'phase.partial': 'Partial snapshot',
+    'phase.stale': 'Snapshot expired',
     'phase.stopped': 'Stopped',
     'phase.interrupted': 'Interrupted',
     'phase.error': 'Error',
@@ -137,6 +187,7 @@ const messages = {
     'action.collect': 'Address collection',
     'action.export': 'Export',
     'action.fallback': 'Check',
+    'action.test': 'Quick live test',
     'results.eyebrow': 'SELECTION WITH CLEANLINESS CHECK',
     'results.title': 'Proxy ranking',
     'results.empty': 'Matching addresses will appear here after a check.',
@@ -152,10 +203,32 @@ const messages = {
     'results.top': 'How many to export',
     'results.topHint': '0 — everything that passed',
     'results.export': 'Build export',
-    'results.exportNote': 'Exports are built after a check or with the button. Table filters alone do not change the files.',
-    'results.exportReady': 'Export ready: {exported} of {passed} matching · checked {checked} / {candidates} · clean: {clean} · blacklist: {listed} · unknown: {unknown}{local}.',
+    'results.exportNote': 'Build export applies the table filters. Changing table controls alone does not rebuild files.',
+    'results.exportReady': 'Latest export: {exported} of {passed} matching · checked {checked} / {candidates} · clean: {clean} · blacklist: {listed} · unknown: {unknown}{local}.',
+    'results.snapshot': 'Snapshot #{generation}.',
+    'results.snapshotFresh': 'Snapshot #{generation} · valid until {time}.',
+    'results.snapshotStale': 'Snapshot #{generation} expired at {time}. Re-check before using or downloading it.',
+    'results.snapshotPartial': 'Partial snapshot: {reason} · checked {checked} of {candidates}.',
+    'results.snapshotError': 'Snapshot error: {reason}. The previous published results were kept.',
+    'results.reason.complete': 'scope completed',
+    'results.reason.want_reached': 'requested count reached',
+    'results.reason.recheck_passing': 'matching-proxy refresh',
+    'results.reason.stopped': 'stopped before the full scope',
+    'results.reason.error': 'operation failed',
+    'results.reason.expired': 'snapshot expired',
+    'results.selectionReport': 'Selected export: {exported} of {requested} written · {missing} unavailable, stale or excluded by a filter.',
+    'results.diagnostic': 'Last unfinished run: {status} ({reason}) · checked {checked} of {candidates}. The current published export was kept.',
     'results.localFiltered': ' · filtered locally: {count}',
     'results.downloads': 'Download ready files:',
+    'results.groupData': 'Data & Tables',
+    'results.groupProtocols': 'By Protocol',
+    'results.groupClients': 'Client Configs',
+    'results.pageStatus': 'Page {page} of {pages} ({total} proxies)',
+    'results.copied': 'Copied',
+    'results.copyProxy': 'Copy proxy address',
+    'gateway.title': 'Rotating Proxy Gateway',
+    'gateway.online': 'Online',
+    'gateway.offline': 'Offline',
     'results.noneYet': 'No results yet. Start a check on the first tab.',
     'results.noneMatching': 'No matching proxies for these conditions yet.',
     'results.total': '{count} matching',
@@ -182,6 +255,19 @@ const messages = {
     'preset.thorough': '🔬 Thorough',
     'preset.hint': 'Quick: 1 attempt, short timeouts, more workers. Thorough: 5 attempts, patient timeouts.',
     'preset.applied': 'Preset applied. Save or start a scan to use it.',
+    'presets.subtitle': 'YouTube, Telegram, Discord, GitHub, Cloudflare...',
+    'group.network': 'Network & Concurrency',
+    'group.speed': 'Speed & Early Filtering',
+    'group.limits': 'Data & Payload Limits',
+    'unit.sec': 'sec',
+    'unit.attempts': 'tries',
+    'unit.workers': 'threads',
+    'unit.threads': 'threads',
+    'unit.conns': 'conns',
+    'unit.bytes': 'bytes',
+    'unit.pcs': 'pcs',
+    'unit.min': 'min',
+    'unit.ms_badge': 'ms',
     'geo.countries': 'Countries',
     'geo.countriesHint': 'ISO codes. Other countries are skipped before checking, so the scan is much shorter.',
     'want.label': 'Stop after finding',
@@ -211,6 +297,9 @@ const messages = {
     'filter.allProtocols': 'All protocols',
     'filter.maxLatency': 'Max latency, ms',
     'filter.maxLatencyHint': '0 — no limit',
+    'filter.excludeHosting': 'Hosting:',
+    'filter.keepHosting': 'Keep all',
+    'filter.excludeHostingAction': 'Exclude',
     'filter.searchPlaceholder': 'Search by address or port',
     'filter.copyPage': 'Copy this page',
     'download.pacHint': 'Browser auto-config: the 10 best proxies in order',
@@ -228,8 +317,32 @@ const messages = {
     'check.prefilter': 'Quick pre-check, connections',
     'check.prefilterHint': 'Drops addresses that do not even accept a connection before the full check. 0 — off.',
     'presets.label': 'Or add a ready-made check',
+    'presets.quickServices': 'Quick add service:',
     'presets.choose': 'Choose a service…',
     'presets.added': 'Added a check for {name}. A proxy must pass every service in the list.',
+    'geo.selectTitle': 'Select or type countries',
+    'geo.inputPlaceholder': 'DE, NL, US or select from list…',
+    'geo.typeMore': '+ add…',
+    'geo.clearAll': 'Clear all',
+    'geo.openDropdown': 'Open country list',
+    'geo.searchPlaceholder': 'Search country by name or ISO code…',
+    'geo.searchEmpty': 'No countries found',
+    'geo.selectedCount': '{count} selected',
+    'geo.quickRegions': 'Quick regions:',
+    'geo.regionTop': '⭐ Top 5',
+    'geo.regionEu': '🇪🇺 Europe',
+    'geo.regionNa': '🇺🇸 N. America',
+    'geo.regionAsia': '🌏 Asia',
+    'geo.regionCis': '🌐 CIS',
+    'geo.popularGroup': 'Popular for proxies',
+    'geo.allGroup': 'All countries (A–Z)',
+    'chip.unlimited': 'No limit',
+    'chip.all': 'All (0)',
+    'chip.off': 'Off (0)',
+    'chip.fast': '1 fast',
+    'chip.balanced': '3 balanced',
+    'chip.thorough': '5 thorough',
+    'chip.clear': 'Clear',
     'gateway.telegram': 'Use in Telegram',
     'sort.recommended': 'Recommended: quality, survival, rare lists, trusted sources',
     'results.byRecommended': 'Recommended',
@@ -239,7 +352,9 @@ const messages = {
     'toast.settingsImported': 'Settings loaded and saved.',
     'toast.settingsBad': 'This file does not contain Proxy Workbench settings.',
     'gateway.label': 'Rotating proxy for browsers and apps:',
-    'gateway.hint': 'Set it as an HTTP or SOCKS5 proxy anywhere. Every new connection goes through the next working proxy from the latest export; failed ones are skipped automatically.',
+    'gateway.hint': 'Set it as an HTTP or SOCKS5 proxy anywhere. Every new TCP connection goes through the next working proxy from the latest export; failed ones are skipped automatically. UDP is not supported by this local gateway.',
+    'gateway.mobileUnavailable': 'Phone QR is available only in authenticated LAN mode. Restart the GUI with --gateway-host 0.0.0.0 and allow the port in the firewall.',
+    'gateway.qrTooLong': 'The gateway address is too long for a QR code; use Copy address instead.',
     'gateway.stats': '{proxies} in rotation · {connections} connections',
     'toast.gatewayCopied': 'Proxy address copied.',
     'api.label': 'API for your programs:',
@@ -325,21 +440,21 @@ const messages = {
     'report.noValid': 'No usable addresses',
     'report.done': 'Done',
     'report.incomplete': 'Not completed',
-    'help.eyebrow': 'QUICK START',
+    'help.eyebrow': 'QUICK START · USER GUIDE',
     'help.title': 'From a list to working proxies',
-    'help.lead': 'Configure once. Come back to checks and results in this window.',
+    'help.lead': 'Proxy Workbench finds thousands of public proxies, checks them against your targets, and provides a single rotating gateway for all your apps.',
     'help.s1.title': 'Choose services',
     'help.s1.p1': 'Enter the URL of every service you need. A proxy is selected only if it works with all of them. Code 200 is a normal successful response; for APIs that use other codes, specify your own.',
     'help.s1.p2': 'To guard against placeholder pages, specify text that must appear in the response. Redirects are not followed: use the final URL.',
-    'help.s2.title': 'Set the request profile',
-    'help.s2.p1': 'The preset sets only User-Agent and Accept/Accept-Encoding. It is part of the check profile, so changing it creates separate results. Personal values are never added automatically.',
-    'help.s2.p2': 'This is technical identification of the HTTP request, not browser impersonation, TLS/JA3/JA4 masking or a guarantee of anonymity.',
-    'help.s3.title': 'Check cleanliness',
-    'help.s3.p1': 'The local denylist matches IPs, CIDRs and exact addresses. DNSBL flags responses from public blacklist zones; in strict mode an unknown response is not treated as clean.',
-    'help.s3.p2': 'DNSBL is enabled manually and uses DNS queries only. The list and zones are stored locally in data/.',
-    'help.s4.title': 'Pick the best and download',
-    'help.s4.p1': '“By speed” puts the lowest latency first. “By quality” balances success rate, speed and jitter. Enter any number; 0 keeps every matching proxy.',
-    'help.s4.p2': 'TXT contains the addresses, CSV the ranking table, JSON detailed request results and safe cleanliness statuses.',
+    'help.s2.title': 'Smart testing & speed',
+    'help.s2.p1': 'Checks stability and latency with repeated requests. Filters out proxies that drop connections or respond too slowly.',
+    'help.s2.p2': 'You can also specify a speed test URL to measure real download throughput in Mbit/s for smooth video streaming.',
+    'help.s3.title': 'Cleanliness & privacy',
+    'help.s3.p1': 'The local denylist matches IPs and subnets. Real-time DNSBL checks verify that proxies are not listed on public spam blacklists.',
+    'help.s3.p2': 'Optional anonymity judge detects whether proxies hide your real IP (Transparent, Anonymous or Elite).',
+    'help.s4.title': '1-Click connection & export',
+    'help.s4.p1': 'Sort by speed (lowest latency first) or by quality (balanced stability and speed). Export to TXT, CSV, JSON, PAC or Clash.',
+    'help.s4.p2': 'Or enable the Local Rotating Gateway (127.0.0.1:8899): configure it once in Telegram or your browser, and it rotates working proxies automatically!',
     'help.s5.title': 'Good to know',
     'help.s5.p1': 'This measures availability and response time, not throughput in Mbit/s. A public proxy may stop working after the check: use “Recheck” for fresh results.',
     'help.s5.p2': 'New URLs, measurement parameters, request profile or cleanliness policy create a separate profile. Settings and history are stored locally. Closing the tab does not stop the application; to exit, press Ctrl+C in its terminal window.',
@@ -376,9 +491,151 @@ const messages = {
     'toast.cleared': 'Local results deleted: {count}.',
     'toast.sourcesReset': 'Built-in sources restored. Save the settings.',
     'toast.listLoaded': 'List loaded. It will be added during collection.',
-    'confirm.clear': 'Delete the local database, profiles and exports? Settings and the denylist will be kept.'
+    'sources.lines': 'lines',
+    'sources.editorTitle': 'Editor',
+    'sources.fileDropHint': 'or drag and drop file here (.txt, .list)',
+    'report.statusDone': 'Done',
+    'report.statusError': 'Error',
+    'report.statusBlocked': 'Blocked',
+    'report.statusEmpty': 'Empty',
+    'report.statusNoValid': 'No valid addresses',
+    'details.attemptNum': 'Attempt #{number}',
+    'details.targetService': 'Service {number}',
+    'details.time': 'Time',
+    'details.bytes': 'Bytes',
+    'details.status': 'Status',
+    'details.passedRatio': '{passed} / {total} passed',
+    'confirm.clear': 'Delete the local database, profiles and exports? Settings and the denylist will be kept.',
+    'confirm.denylist': 'Add {count} selected proxies to the local denylist? Future collections, checks and exports will exclude them.',
+    'nav.gateway': 'Rotating Gateway',
+    'nav.mobile': 'Mobile & Clients',
+    'scenario.title': 'One-Click Quick Scenarios',
+    'scenario.subtitle': 'Preconfigured smart templates for popular workflows',
+    'scenario.telegram': 'Telegram (TCP)',
+    'scenario.telegramDesc': 'SOCKS5 TCP proxies for messaging; calls and UDP need a separate tunnel',
+    'scenario.youtube': 'YouTube & 4K Video',
+    'scenario.youtubeDesc': 'Bandwidth testing in Mbit/s with high throughput for 4K streaming',
+    'scenario.anon': 'Elite Privacy',
+    'scenario.anonDesc': 'Judge verified anonymity with strict DNSBL blacklist filtering',
+    'scenario.scrape': 'Fast Scraping',
+    'scenario.scrapeDesc': '256 threads, 2s connect timeout, quick prefiltering for big lists',
+    'scenario.custom': 'Custom Pro',
+    'scenario.customDesc': 'Manual control over all check, identity and export parameters',
+    'scenario.applied': 'Scenario applied. Click Find and check to begin.',
+    'scenario.customUnchanged': 'Custom settings unchanged; adjust the fields manually.',
+    'monitor.liveStream': 'Live Inspection Stream',
+    'monitor.liveStreamIdle': 'Checked proxies appear here in real time with ping and status.',
+    'monitor.gaugeTitle': 'OVERALL PROGRESS',
+    'monitor.proxiesFound': 'Matching proxies',
+    'filter.all': 'All Alive',
+    'filter.fast': '⚡ Fast (<300ms)',
+    'filter.socks5': '🔒 SOCKS5',
+    'filter.http': '🌐 HTTP/S',
+    'filter.elite': '🛡️ Elite',
+    'filter.clean': '🧹 Verified clean IP',
+    'filter.withSpeed': '🚀 With Speed',
+    'results.test': 'Test',
+    'results.testing': 'Testing…',
+    'results.testOk': 'Alive ({ms} ms)',
+    'results.testFail': 'Failed: {error}',
+    'results.select': 'Select',
+    'results.selectAll': 'Select all proxies on this page',
+    'results.selectProxy': 'Select proxy {proxy}',
+    'results.selectedRegion': 'Actions for selected proxies',
+    'results.selectedCount': 'Selected: {count}',
+    'results.copySelected': 'Copy Selected',
+    'results.exportSelected': 'Download Selected',
+    'results.banSelected': 'Add to Denylist',
+    'results.clearSelection': 'Clear',
+    'results.copyIpPort': 'IP:Port',
+    'results.copyUrl': 'Protocol URL',
+    'results.copyCurl': 'cURL command',
+    'results.copyPython': 'Python snippet',
+    'results.copyJson': 'JSON object',
+    'results.geoBarTitle': 'Country Distribution',
+    'gateway.heading': 'Local Rotating Proxy Gateway',
+    'gateway.lead': 'A local endpoint that rotates TCP connections through your pool of verified proxies. Use authenticated LAN mode to share it with a phone on the same network.',
+    'gateway.protocols': 'HTTP & SOCKS5 TCP',
+    'gateway.tabTelegram': 'Telegram',
+    'gateway.tabCurl': 'cURL',
+    'gateway.tabPython': 'Python',
+    'gateway.tabBrowser': 'Browser & Apps',
+    'gateway.openTelegram': 'Open in Telegram Desktop',
+    'gateway.qrHint': 'With authenticated LAN mode, scan this QR to add the SOCKS5 gateway to Telegram mobile:',
+    'gateway.copyCode': 'Copy Code',
+    'gateway.copy': 'Copy address',
+    'mobile.heading': 'Mobile Profiles & Client Configs',
+    'mobile.lead': 'Client configs are fail-closed: an empty or expired pool blocks traffic instead of silently using DIRECT. The local gateway supports TCP, not UDP calls.',
+    'mobile.singboxTitle': 'sing-box (iOS & Android)',
+    'mobile.singboxDesc': 'Client config with an automatic proxy group; verify the client version and routing rules before enabling TUN mode.',
+    'mobile.clashTitle': 'Clash / Mihomo',
+    'mobile.clashDesc': 'Fail-closed URLTest group with fastest-latency selection; no implicit DIRECT fallback.',
+    'mobile.telegramTitle': 'Telegram Mobile',
+    'mobile.telegramDesc': 'Use the authenticated LAN QR for a TCP SOCKS5 connection. Calls and other UDP traffic are not provided by this gateway.',
+    'mobile.copyConfig': 'Copy Config',
+    'mobile.downloadConfig': 'Download File',
+    'mobile.qrCode': 'QR Code for Phone',
+    'mobile.guideTitle': 'How to setup on Mobile',
+    'mobile.guideIos': '1. Install a supported client. 2. Import the fail-closed config or authenticated LAN QR. 3. Enable TUN mode after reviewing its rules.',
+    'mobile.guideAndroid': '1. Install a supported client. 2. Add the config or authenticated LAN QR. 3. Connect; UDP applications need a different tunnel.',
+    'toast.banned': 'Added {count} proxies to local denylist.',
+    'toast.tested': 'Proxy test completed.',
+    'region.top': '⭐ Top 5',
+    'region.eu': '🇪🇺 Europe',
+    'region.na': '🇺🇸 N. America',
+    'region.asia': '🌏 Asia',
+    'header.localBadge': 'LOCAL APP',
+    'log.terminalTitle': 'Terminal Output — Log',
+    'help.pipelineBadge': 'WORKFLOW',
+    'region.cis': '🌐 CIS',
   },
   ru: {
+    'lang.currentName': 'Русский язык',
+    'help.btnScan': 'Начать поиск прокси',
+    'help.btnGateway': 'Локальный шлюз',
+    'help.btnMobile': 'Для телефона и Telegram',
+    'help.flowTitle': 'Схема работы: 4 простых шага',
+    'help.flowSubtitle': 'Автоматический путь от поиска до подключения',
+    'help.flow1': '1. Сбор источников',
+    'help.flow1Desc': 'Тысячи бесплатных прокси',
+    'help.flow2': '2. Ваши сервисы',
+    'help.flow2Desc': 'YouTube, Telegram, API',
+    'help.flow3': '3. Умная проверка',
+    'help.flow3Desc': 'Скорость, пинг, DNSBL',
+    'help.flow4': '4. Готово к работе',
+    'help.flow4Desc': 'Шлюз в 1 клик или экспорт',
+    'help.s1.bullet1': 'Готовые пресеты популярных сервисов в 1 клик',
+    'help.s1.bullet2': 'Проверка кода 200 OK и ключевого текста',
+    'help.s1.bullet3': 'Строгий отбор: прокси должен открывать все выбранные сайты',
+    'help.linkServices': 'Настроить сервисы',
+    'help.s2.bullet1': 'Замер задержки (Latency) в миллисекундах',
+    'help.s2.bullet2': 'Несколько попыток для отсева рвущих соединение',
+    'help.s2.bullet3': 'Замер реальной скорости загрузки в Мбит/с',
+    'help.linkCheck': 'Настроить параметры',
+    'help.s3.bullet1': 'Проверка по публичным спам-базам DNSBL',
+    'help.s3.bullet2': 'Определение анонимности (Elite / Anonymous)',
+    'help.s3.bullet3': 'Локальный черный список нежелательных сетей',
+    'help.linkDenylist': 'Черный список',
+    'help.s4.bullet1': 'Ротирующий шлюз для локальных TCP-клиентов',
+    'help.s4.bullet2': 'Защищённый режим LAN позволяет подключить телефон',
+    'help.s4.bullet3': 'Экспорт с безопасным отказом при пустом пуле',
+    'help.linkGateway': 'Открыть шлюз',
+    'help.faqTitle': 'Частые вопросы и ответы',
+    'help.faqSubtitle': 'Всё, что нужно знать о прокси и безопасности',
+    'help.faq1Q': 'Что такое прокси и для чего они нужны?',
+    'help.faq1A': 'Прокси выступает промежуточным узлом между вашим устройством и интернетом. Сайты видят адрес прокси вместо вашего реального IP, что позволяет открывать заблокированные ресурсы, обходить ограничения провайдеров и сохранять приватность.',
+    'help.faq2Q': 'В чём разница между HTTP, HTTPS и SOCKS5?',
+    'help.faq2A': 'HTTP/HTTPS прокси предназначены для веб-страниц и браузеров. SOCKS5 передаёт TCP-потоки и DNS через прокси. Этот локальный шлюз не реализует SOCKS5 UDP ASSOCIATE, поэтому звонки Telegram и игры, которым нужен UDP, здесь не поддерживаются.',
+    'help.faq3Q': 'Почему бесплатные прокси со временем перестают работать?',
+    'help.faq3A': 'Публичные прокси работают на серверах по всему миру и могут перегружаться или отключаться. В Proxy Workbench есть функция «Авто-перепроверка» (Watch mode): она в фоне регулярно проверяет рабочие прокси каждые N минут, поэтому в вашем списке всегда только живые адреса!',
+    'help.faq4Q': 'Как работает локальный шлюз (127.0.0.1:8899)?',
+    'help.faq4A': 'Вам больше не нужно вручную копировать и менять IP в приложениях! Вы указываете один адрес 127.0.0.1:8899 в настройках Telegram или браузера. Шлюз сам автоматически направляет трафик через самый быстрый и стабильный прокси из вашего пула.',
+    'help.faq5Q': 'Где хранятся мои данные и это безопасно?',
+    'help.faq5A': 'Все 100% данных, история и настройки хранятся исключительно локально на вашем компьютере в папке data/. Приложение работает автономно, не содержит трекеров, не отправляет никакой телеметрии и полностью приватно.',
+    'help.manageSettings': 'Настройки приложения',
+    'help.manageSettingsDesc': 'Сохраняйте настроенные сервисы и параметры проверки в JSON-файл для переноса или бэкапа.',
+    'help.manageData': 'Очистка локальной базы',
+    'help.manageDataDesc': 'Удаление кэша и базы найденных прокси с сохранением ваших настроек и персонального черного списка.',
     'lang.button': 'EN',
     'lang.label': 'Переключить интерфейс на английский',
     'theme.light': '☀ Светлая тема',
@@ -431,6 +688,8 @@ const messages = {
     'identity.strict': 'Строгий режим',
     'identity.strictHint': 'Не экспортировать, если DNSBL не ответил.',
     'identity.denylist': 'Локальный denylist',
+    'identity.local': 'Локальный denylist',
+    'identity.localHint': 'IP и CIDR, навсегда исключённые из проверок и экспорта.',
     'identity.denylistPlaceholder': '11.0.0.0/24\nhttp://11.0.0.1:8080\n# комментарий',
     'identity.denylistHint': 'IP, CIDR или точный адрес прокси. Хранится только в data/denylist.txt и не включается в код.',
     'identity.applyDenylist': 'Применять локальный denylist при сборе, проверке и экспорте',
@@ -476,6 +735,8 @@ const messages = {
     'watch.label': 'Держать свежим: перепроверять каждые, мин',
     'watch.hint': '0 — выключено. Иначе после проверки приложение продолжает работать и перепроверяет рабочие прокси по этому расписанию, чтобы экспорт, API и ротирующий прокси оставались свежими.',
     'phase.complete': 'Завершено',
+    'phase.partial': 'Частичный снимок',
+    'phase.stale': 'Снимок устарел',
     'phase.stopped': 'Остановлено',
     'phase.interrupted': 'Прервано',
     'phase.error': 'Ошибка',
@@ -496,6 +757,7 @@ const messages = {
     'action.collect': 'Сбор адресов',
     'action.export': 'Экспорт',
     'action.fallback': 'Проверка',
+    'action.test': 'Быстрая живая проверка',
     'results.eyebrow': 'ОТБОР С ПРОВЕРКОЙ ЧИСТОТЫ',
     'results.title': 'Рейтинг прокси',
     'results.empty': 'После проверки здесь появятся подходящие адреса.',
@@ -511,10 +773,32 @@ const messages = {
     'results.top': 'Сколько экспортировать',
     'results.topHint': '0 — все прошедшие',
     'results.export': 'Сформировать экспорт',
-    'results.exportNote': 'Экспорт создаётся после проверки или по кнопке. Фильтры таблицы сами по себе не меняют файлы.',
-    'results.exportReady': 'Готовый экспорт: {exported} из {passed} подходящих · проверено {checked} / {candidates} · чистых: {clean} · blacklist: {listed} · неизвестных: {unknown}{local}.',
+    'results.exportNote': 'Кнопка экспорта применяет фильтры таблицы. Одни изменения фильтров не пересобирают файлы.',
+    'results.exportReady': 'Последний экспорт: {exported} из {passed} подходящих · проверено {checked} / {candidates} · чистых: {clean} · blacklist: {listed} · неизвестных: {unknown}{local}.',
+    'results.snapshot': 'Снимок #{generation}.',
+    'results.snapshotFresh': 'Снимок #{generation} · действует до {time}.',
+    'results.snapshotStale': 'Снимок #{generation} истёк в {time}. Перепроверьте его перед использованием и загрузкой.',
+    'results.snapshotPartial': 'Частичный снимок: {reason} · проверено {checked} из {candidates}.',
+    'results.snapshotError': 'Ошибка снимка: {reason}. Предыдущий опубликованный результат сохранён.',
+    'results.reason.complete': 'область проверки завершена',
+    'results.reason.want_reached': 'достигнуто заданное количество',
+    'results.reason.recheck_passing': 'обновление подходящих прокси',
+    'results.reason.stopped': 'остановлено до завершения всей области',
+    'results.reason.error': 'операция завершилась ошибкой',
+    'results.reason.expired': 'снимок истёк',
+    'results.selectionReport': 'Выбранных экспортировано: {exported} из {requested} · недоступно, устарело или отсечено фильтром: {missing}.',
+    'results.diagnostic': 'Последний незавершённый проход: {status} ({reason}) · проверено {checked} из {candidates}. Текущий опубликованный экспорт сохранён.',
     'results.localFiltered': ' · локально отсечено: {count}',
-    'results.downloads': 'Скачать готовые файлы:',
+    'results.downloads': 'Центр загрузки файлов:',
+    'results.groupData': 'Данные и таблицы',
+    'results.groupProtocols': 'По протоколам',
+    'results.groupClients': 'Конфигурации клиентов',
+    'results.pageStatus': 'Страница {page} из {pages} ({total} прокси)',
+    'results.copied': 'Скопировано',
+    'results.copyProxy': 'Скопировать адрес прокси',
+    'gateway.title': 'Шлюз с ротацией прокси',
+    'gateway.online': 'В сети',
+    'gateway.offline': 'Отключен',
     'results.noneYet': 'Ещё нет результатов. Запустите проверку на первой вкладке.',
     'results.noneMatching': 'По этим условиям пока нет подходящих прокси.',
     'results.total': '{count} подходящих',
@@ -541,7 +825,26 @@ const messages = {
     'preset.thorough': '🔬 Тщательно',
     'preset.hint': 'Быстро: 1 попытка, короткие таймауты, больше воркеров. Тщательно: 5 попыток, терпеливые таймауты.',
     'preset.applied': 'Пресет применён. Сохраните настройки или запустите проверку.',
+    'presets.subtitle': 'YouTube, Telegram, Discord, GitHub, Cloudflare...',
+    'group.network': 'Сеть и параллелизм',
+    'group.speed': 'Скорость и ранний отсев',
+    'group.limits': 'Лимиты данных',
+    'unit.sec': 'сек',
+    'unit.attempts': 'шт.',
+    'unit.workers': 'потоков',
+    'unit.threads': 'потоков',
+    'unit.conns': 'соед.',
+    'unit.bytes': 'байт',
+    'unit.pcs': 'шт.',
+    'unit.min': 'мин',
+    'unit.ms_badge': 'мс',
     'geo.countries': 'Страны',
+    'geo.countriesHint': 'ISO-коды. Адреса из других стран пропускаются ещё до проверки, поэтому проход намного короче.',
+    'want.label': 'Остановиться после',
+    'want.hint': '0 — проверить всё. Иначе проверка завершится, как только найдётся столько подходящих прокси.',
+    'geo.title': 'База стран',
+    'geo.missing': 'Не скачана',
+    'geo.ready': 'Готова · диапазонов: {count}',
     'geo.providers': ' · провайдеров: {count}',
     'provider.filter': 'Провайдеры',
     'provider.all': 'Все провайдеры',
@@ -549,12 +852,6 @@ const messages = {
     'provider.exclude': 'Пропускать хостинг-провайдеров и дата-центры (нужна база провайдеров)',
     'provider.hosting': 'хостинг',
     'col.provider': 'Провайдер',
-    'geo.countriesHint': 'ISO-коды. Адреса из других стран пропускаются ещё до проверки, поэтому проход намного короче.',
-    'want.label': 'Остановиться после',
-    'want.hint': '0 — проверить всё. Иначе проверка завершится, как только найдётся столько подходящих прокси.',
-    'geo.title': 'База стран',
-    'geo.missing': 'Не скачана',
-    'geo.ready': 'Готова · диапазонов: {count}',
     'geo.hint': 'Нужна для фильтра по странам, колонок «Страна» и «Провайдер» и скрытия хостинг-провайдеров. Бесплатные файлы DB-IP Country Lite и ASN Lite скачиваются один раз в локальную папку data, дальше поиск работает офлайн. Источники Geonode уже содержат страну.',
     'geo.download': 'Скачать / обновить',
     'geo.downloading': 'Скачиваем базу стран…',
@@ -570,6 +867,9 @@ const messages = {
     'filter.allProtocols': 'Все протоколы',
     'filter.maxLatency': 'Макс. задержка, мс',
     'filter.maxLatencyHint': '0 — без ограничения',
+    'filter.excludeHosting': 'Хостинг:',
+    'filter.keepHosting': 'Оставить все',
+    'filter.excludeHostingAction': 'Исключить',
     'filter.searchPlaceholder': 'Поиск по адресу или порту',
     'filter.copyPage': 'Скопировать страницу',
     'download.pacHint': 'Автонастройка браузера: 10 лучших прокси по порядку',
@@ -587,8 +887,32 @@ const messages = {
     'check.prefilter': 'Быстрая предпроверка, соединений',
     'check.prefilterHint': 'Отсеивает адреса, которые даже не принимают подключение, до полной проверки. 0 — выключено.',
     'presets.label': 'Или добавьте готовую проверку',
+    'presets.quickServices': 'Быстро добавить сервис:',
     'presets.choose': 'Выберите сервис…',
     'presets.added': 'Добавлена проверка {name}. Прокси должен пройти все сервисы из списка.',
+    'geo.selectTitle': 'Выберите или введите страны',
+    'geo.inputPlaceholder': 'DE, NL, US или выберите из списка…',
+    'geo.typeMore': '+ добавить…',
+    'geo.clearAll': 'Очистить все',
+    'geo.openDropdown': 'Открыть список стран',
+    'geo.searchPlaceholder': 'Поиск страны по названию или коду…',
+    'geo.searchEmpty': 'Страны не найдены',
+    'geo.selectedCount': 'Выбрано: {count}',
+    'geo.quickRegions': 'Быстрый выбор регионов:',
+    'geo.regionTop': '⭐ Топ-5',
+    'geo.regionEu': '🇪🇺 Европа',
+    'geo.regionNa': '🇺🇸 Сев. Америка',
+    'geo.regionAsia': '🌏 Азия',
+    'geo.regionCis': '🌐 СНГ',
+    'geo.popularGroup': 'Популярные для прокси',
+    'geo.allGroup': 'Все страны (А–Я)',
+    'chip.unlimited': 'Без лимита',
+    'chip.all': 'Все (0)',
+    'chip.off': 'Выкл (0)',
+    'chip.fast': '1 быстро',
+    'chip.balanced': '3 баланс',
+    'chip.thorough': '5 тщательно',
+    'chip.clear': 'Очистить',
     'gateway.telegram': 'Открыть в Telegram',
     'sort.recommended': 'Рекомендуемые: качество, живучесть, редкие списки, надёжные источники',
     'results.byRecommended': 'Рекомендуемые',
@@ -598,7 +922,9 @@ const messages = {
     'toast.settingsImported': 'Настройки загружены и сохранены.',
     'toast.settingsBad': 'В этом файле нет настроек Proxy Workbench.',
     'gateway.label': 'Ротирующий прокси для браузера и программ:',
-    'gateway.hint': 'Укажите его как HTTP- или SOCKS5-прокси где угодно. Каждое новое соединение идёт через следующий рабочий прокси из последнего экспорта; неработающие пропускаются автоматически.',
+    'gateway.hint': 'Укажите его как HTTP- или SOCKS5-прокси где угодно. Каждое новое TCP-соединение идёт через следующий рабочий прокси из последнего экспорта; неработающие пропускаются автоматически. UDP этот локальный шлюз не поддерживает.',
+    'gateway.mobileUnavailable': 'QR для телефона доступен только в защищённом режиме LAN. Перезапустите GUI с --gateway-host 0.0.0.0 и разрешите порт в брандмауэре.',
+    'gateway.qrTooLong': 'Адрес шлюза слишком длинный для QR-кода; используйте копирование адреса.',
     'gateway.stats': 'в ротации {proxies} · соединений {connections}',
     'toast.gatewayCopied': 'Адрес прокси скопирован.',
     'api.label': 'API для своих программ:',
@@ -684,26 +1010,26 @@ const messages = {
     'report.noValid': 'Нет подходящих адресов',
     'report.done': 'Готово',
     'report.incomplete': 'Не завершено',
-    'help.eyebrow': 'БЫСТРЫЙ СТАРТ',
-    'help.title': 'От списка к рабочим прокси',
-    'help.lead': 'Настройте один раз. Возвращайтесь к проверке и результатам в этом окне.',
-    'help.s1.title': 'Выберите сервисы',
-    'help.s1.p1': 'Введите URL каждого нужного сервиса. Прокси проходит отбор, только если работает со всеми. Код 200 — обычный успешный ответ; для API с другими кодами укажите свои.',
-    'help.s1.p2': 'Для защиты от заглушек укажите текст, который должен быть в ответе. Редиректы не выполняются: используйте конечный URL.',
-    'help.s2.title': 'Задайте request-профиль',
-    'help.s2.p1': 'Пресет задаёт только User-Agent и Accept/Accept-Encoding. Он входит в профиль проверки, поэтому изменение создаёт отдельные результаты. Персональные значения не добавляются автоматически.',
-    'help.s2.p2': 'Это техническая идентификация HTTP-запроса, а не browser impersonation, скрытие TLS/JA3/JA4 или гарантия анонимности.',
-    'help.s3.title': 'Проверьте чистоту',
-    'help.s3.p1': 'Локальный denylist сравнивает IP, CIDR и точные адреса. DNSBL отмечает ответы публичных blacklist-зон; неизвестный ответ не считается чистым в строгом режиме.',
-    'help.s3.p2': 'DNSBL включается вручную и использует только DNS-запросы. Список и зоны хранятся локально в data/.',
-    'help.s4.title': 'Выберите лучшие и скачайте',
-    'help.s4.p1': '«По скорости» — сначала минимальная задержка. «По качеству» — баланс успешности, скорости и разброса. Укажите любое количество; 0 сохраняет все подходящие.',
-    'help.s4.p2': 'TXT содержит адреса, CSV — таблицу рейтинга, JSON — подробные результаты запросов и безопасные статусы чистоты.',
+    'help.eyebrow': 'БЫСТРЫЙ СТАРТ · РУКОВОДСТВО',
+    'help.title': 'От списков до проверенных рабочих прокси',
+    'help.lead': 'Proxy Workbench автоматически находит тысячи публичных прокси, проверяет их на реальных сайтах и предоставляет единый адрес для всех ваших программ.',
+    'help.s1.title': 'Выберите ваши сервисы',
+    'help.s1.p1': 'Укажите сайты или API, для которых вам нужны прокси (например, YouTube или Telegram). Прокси отбирается только в том случае, если гарантированно открывает каждый из них.',
+    'help.s1.p2': 'Для защиты от страниц-заглушек провайдера можно указать ключевое слово, которое обязательно должно присутствовать в ответе сервиса.',
+    'help.s2.title': 'Умная проверка и замер скорости',
+    'help.s2.p1': 'Приложение тестирует отклик, стабильность и скорость прокси несколькими повторными запросами. Это отсеивает нестабильные адреса, которые рвут соединение.',
+    'help.s2.p2': 'Также можно включить замер реальной скорости загрузки в Мбит/с, чтобы отобрать прокси, идеально подходящие для потокового 4K видео.',
+    'help.s3.title': 'Чистота, безопасность и анонимность',
+    'help.s3.p1': 'Проверка по спам-базам DNSBL и локальному черному списку отсекает заблокированные адреса, снижая риск капчи или блокировки аккаунтов.',
+    'help.s3.p2': 'Судья анонимности (Judge) определяет, скрывает ли прокси ваш реальный IP адрес: прозрачный, анонимный или элитный (Elite).',
+    'help.s4.title': 'Подключение в 1 клик и экспорт',
+    'help.s4.p1': 'Сортируйте прокси по скорости (минимальный пинг) или качеству. Скачивайте готовые списки или конфигурации для браузеров и клиентов.',
+    'help.s4.p2': 'Или используйте локальный шлюз 127.0.0.1:8899: укажите его один раз в Telegram или браузере, и он будет автоматически переключать прокси без вашего участия!',
     'help.s5.title': 'Что важно понимать',
     'help.s5.p1': 'Это оценка доступности и времени ответа, не пропускной способности в Мбит/с. Публичный прокси может перестать работать после проверки: используйте «Перепроверить» для свежих результатов.',
     'help.s5.p2': 'Новые URL, параметры замеров, request-профиль или политика чистоты создают отдельный профиль. Настройки и история хранятся локально. Закрытие вкладки не останавливает приложение; для выхода закройте его окно терминала через Ctrl+C.',
     'help.clear': 'Удалить локальные результаты',
-    'help.clearHint': 'Удаляет базу, профили и экспорты, но сохраняет настройки и denylist. Действие необратимо для локальных результатов.',
+    'help.clearHint': 'Очищает базу проверенных прокси, но сохраняет все ваши персональные настройки и черный список (denylist).',
     'footer.tagline': 'Полный обход · Повторные замеры · Ваши сервисы',
     'target.name': 'Название сервиса',
     'target.defaultName': 'Свой сервис',
@@ -735,9 +1061,106 @@ const messages = {
     'toast.cleared': 'Локальные результаты удалены: {count}.',
     'toast.sourcesReset': 'Встроенные источники восстановлены. Сохраните настройки.',
     'toast.listLoaded': 'Список загружен. Он будет добавлен при сборе.',
-    'confirm.clear': 'Удалить локальную базу, профили и экспорты? Настройки и denylist останутся.'
+    'sources.lines': 'строк',
+    'sources.editorTitle': 'Редактор',
+    'sources.fileDropHint': 'или перетащите файл сюда (.txt, .list)',
+    'report.statusDone': 'Выполнено',
+    'report.statusError': 'Ошибка',
+    'report.statusBlocked': 'Заблокировано',
+    'report.statusEmpty': 'Пустой список',
+    'report.statusNoValid': 'Нет адресов',
+    'details.attemptNum': 'Попытка #{number}',
+    'details.targetService': 'Сервис {number}',
+    'details.time': 'Время',
+    'details.bytes': 'Байты',
+    'details.status': 'Статус',
+    'details.passedRatio': '{passed} из {total} успешно',
+    'confirm.clear': 'Удалить локальную базу, профили и экспорты? Настройки и denylist останутся.',
+    'confirm.denylist': 'Добавить выбранные прокси ({count}) в локальный denylist? Их исключат из будущего сбора, проверок и экспорта.',
+    'nav.gateway': 'Ротирующий шлюз',
+    'nav.mobile': 'Мобильные клиенты',
+    'scenario.title': 'Умные экспресс-сценарии',
+    'scenario.subtitle': 'Готовые смарт-шаблоны под популярные задачи',
+    'scenario.telegram': 'Telegram (TCP)',
+    'scenario.telegramDesc': 'SOCKS5 TCP-прокси для сообщений; звонки и UDP требуют отдельного туннеля',
+    'scenario.youtube': 'YouTube и видео',
+    'scenario.youtubeDesc': 'Замер реальной скорости в Mbit/s для стабильного 1080p/4K видео',
+    'scenario.anon': 'Elite Приватность',
+    'scenario.anonDesc': 'Проверка скрытности через Judge и жесткая фильтрация по черным спискам',
+    'scenario.scrape': 'Турбо-сбор',
+    'scenario.scrapeDesc': '256 потоков, 2с таймаут, мгновенный отсев для десятков тысяч адресов',
+    'scenario.custom': 'Экспертный',
+    'scenario.customDesc': 'Полный ручной контроль всех сетевых параметров и фильтров',
+    'scenario.applied': 'Сценарий применён. Нажмите «Найти и проверить» для запуска.',
+    'scenario.customUnchanged': 'Пользовательские настройки не изменены; измените поля вручную.',
+    'monitor.liveStream': 'Живая лента проверок',
+    'monitor.liveStreamIdle': 'Проверяемые адреса отображаются здесь с пингом и статусом.',
+    'monitor.gaugeTitle': 'ОБЩИЙ ПРОГРЕСС',
+    'monitor.proxiesFound': 'Подходящих прокси',
+    'filter.all': 'Все живые',
+    'filter.fast': '⚡ Быстрые (<300мс)',
+    'filter.socks5': '🔒 SOCKS5',
+    'filter.http': '🌐 HTTP/S',
+    'filter.elite': '🛡️ Elite',
+    'filter.clean': '🧹 Проверенно чистый IP',
+    'filter.withSpeed': '🚀 Со скоростью',
+    'results.test': 'Тест',
+    'results.testing': 'Проверка…',
+    'results.testOk': 'Работает ({ms} мс)',
+    'results.testFail': 'Ошибка: {error}',
+    'results.select': 'Выбрать',
+    'results.selectAll': 'Выбрать все прокси на странице',
+    'results.selectProxy': 'Выбрать прокси {proxy}',
+    'results.selectedRegion': 'Действия с выбранными прокси',
+    'results.selectedCount': 'Выбрано: {count}',
+    'results.copySelected': 'Скопировать',
+    'results.exportSelected': 'Скачать',
+    'results.banSelected': 'В бан-лист',
+    'results.clearSelection': 'Снять',
+    'results.copyIpPort': 'IP:Port',
+    'results.copyUrl': 'URL с протоколом',
+    'results.copyCurl': 'Команда cURL',
+    'results.copyPython': 'Код Python',
+    'results.copyJson': 'JSON объект',
+    'results.geoBarTitle': 'Распределение по странам',
+    'gateway.heading': 'Локальный ротирующий шлюз',
+    'gateway.lead': 'Локальная точка, которая распределяет TCP-соединения по пулу проверенных прокси. Для телефона включите защищённый режим LAN.',
+    'gateway.protocols': 'HTTP и SOCKS5 TCP',
+    'gateway.tabTelegram': 'Telegram',
+    'gateway.tabCurl': 'cURL',
+    'gateway.tabPython': 'Python',
+    'gateway.tabBrowser': 'Браузеры',
+    'gateway.openTelegram': 'Открыть в Telegram Desktop',
+    'gateway.qrHint': 'В защищённом режиме LAN отсканируйте QR, чтобы добавить SOCKS5-шлюз в Telegram:',
+    'gateway.copyCode': 'Скопировать код',
+    'gateway.copy': 'Скопировать адрес',
+    'mobile.heading': 'Мобильные профили и клиенты',
+    'mobile.lead': 'Конфигурации клиентов закрыты при пустом или просроченном пуле: трафик блокируется, а не уходитDIRECT. Локальный шлюз поддерживает TCP, но не UDP-звонки.',
+    'mobile.singboxTitle': 'sing-box (iOS и Android)',
+    'mobile.singboxDesc': 'Конфигурация с автоматической группой прокси; перед TUN проверьте версию клиента и правила маршрутизации.',
+    'mobile.clashTitle': 'Clash / Mihomo',
+    'mobile.clashDesc': 'Группа URLTest с выбором fastest latency и безопасным отказом вместо скрытого DIRECT.',
+    'mobile.telegramTitle': 'Telegram на смартфоне',
+    'mobile.telegramDesc': 'Используйте QR защищённого LAN-режима для TCP SOCKS5. Звонки и другой UDP-трафик шлюз не обеспечивает.',
+    'mobile.copyConfig': 'Скопировать конфиг',
+    'mobile.downloadConfig': 'Скачать файл',
+    'mobile.qrCode': 'QR-код для телефона',
+    'mobile.guideTitle': 'Инструкция по настройке',
+    'mobile.guideIos': '1. Установите поддерживаемый клиент. 2. Импортируйте безопасный конфиг или QR защищённого LAN. 3. Проверьте правила и включите TUN.',
+    'mobile.guideAndroid': '1. Установите поддерживаемый клиент. 2. Добавьте конфиг или QR защищённого LAN. 3. Подключитесь; для UDP нужен другой туннель.',
+    'toast.banned': 'Добавлено {count} прокси в локальный черный список.',
+    'toast.tested': 'Проверка прокси завершена.',
+    'region.top': '⭐ Топ-5',
+    'region.eu': '🇪🇺 Европа',
+    'region.na': '🇺🇸 Сев. Америка',
+    'region.asia': '🌏 Азия',
+    'header.localBadge': 'ЛОКАЛЬНЫЙ РЕЖИМ',
+    'log.terminalTitle': 'Терминал — Лог выполнения',
+    'help.pipelineBadge': 'ПРОЦЕСС',
+    'region.cis': '🌐 СНГ',
   }
 };
+
 
 function initialLang() {
   let saved = null;
@@ -749,7 +1172,14 @@ function initialLang() {
 let lang = initialLang();
 
 function t(key, values={}) {
-  const text = messages[lang][key] ?? messages.en[key] ?? key;
+  if (!key) return '';
+  if ((key === 'unit.ms' || key === 'unit.ms_badge') && (!values || values.value === undefined)) {
+    return lang === 'ru' ? 'мс' : 'ms';
+  }
+  const dict = messages[lang] || messages.en || {};
+  const fallback = messages.en || {};
+  const text = dict[key] ?? fallback[key] ?? String(key);
+  if (typeof text !== 'string') return String(text ?? key ?? '');
   return text.replace(/\{(\w+)\}/g, (match, name) => name in values ? String(values[name]) : match);
 }
 
@@ -779,6 +1209,15 @@ const serverMessagesEn = {
   'Проверка уже идёт. Сначала остановите её.': 'A scan is already running. Stop it first.',
   'Неизвестное действие.': 'Unknown action.',
   'Сначала запустите проверку.': 'Run a scan first.',
+  'Не удалось прочитать активный профиль. Перезапустите проверку.': 'Could not read the active profile. Run the scan again.',
+  'Активный профиль не найден. Сначала запустите проверку.': 'Active profile not found. Run a scan first.',
+  'Выберите от 1 до 1000 прокси для экспорта.': 'Select between 1 and 1000 proxies to export.',
+  'Выберите от 1 до 1000 прокси для локального denylist.': 'Select between 1 and 1000 proxies for the local denylist.',
+  'Выбран список содержит некорректный адрес прокси.': 'The selection contains an invalid proxy address.',
+  'Нужен публичный IP-адрес, порт и протокол без логина или пароля.': 'A public IP address, port and protocol without credentials are required.',
+  'Выбранные адреса можно экспортировать только действием export.': 'Selected addresses can only be used with the export action.',
+  'Поиск экспорта слишком длинный: максимум 100 символов.': 'The export search is too long: 100 characters maximum.',
+  'Неверный фильтр провайдера для экспорта.': 'Invalid provider filter for export.',
   'Включите источники или добавьте свой список прокси.': 'Enable sources or add your own proxy list.',
   'Не удалось запустить проверку.': 'Could not start the scan.',
   'Сначала остановите текущую операцию.': 'Stop the current operation first.',
@@ -857,7 +1296,19 @@ function serverText(text) {
 const serverLog = text => lang === 'en' ? String(text).split('\n').map(serverText).join('\n') : text;
 
 function applyI18n(root=document) {
-  root.querySelectorAll('[data-i18n]').forEach(node => { node.textContent = t(node.dataset.i18n); });
+  root.querySelectorAll('[data-i18n]').forEach(node => {
+    if (node.classList.contains('gateway-status-badge')) {
+      const isOnline = Boolean(typeof state !== 'undefined' && state && state.gateway && state.gateway.address);
+      node.textContent = isOnline ? t('gateway.online') : t('gateway.offline');
+      return;
+    }
+    const key = node.dataset.i18n;
+    if (key === 'unit.ms') {
+      node.textContent = lang === 'ru' ? 'мс' : 'ms';
+    } else {
+      node.textContent = t(key);
+    }
+  });
   // Only static dictionary markup is inserted here; user data never reaches this path.
   root.querySelectorAll('[data-i18n-html]').forEach(node => { node.innerHTML = t(node.dataset.i18nHtml); });
   for (const attribute of ['placeholder', 'title', 'aria-label']) {
@@ -871,12 +1322,111 @@ const fmt = n => Number(n || 0).toLocaleString(lang === 'ru' ? 'ru-RU' : 'en-US'
 const ms = value => t('unit.ms', {value});
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]));
 
+const animatedNumbersMap = new WeakMap();
+
+function animateNumber(element, targetValue) {
+  if (!element) return;
+  const target = Math.max(0, Math.round(Number(targetValue) || 0));
+
+  if (!animatedNumbersMap.has(element)) {
+    animatedNumbersMap.set(element, target);
+    element.textContent = fmt(target);
+    return;
+  }
+
+  const current = animatedNumbersMap.get(element);
+  if (current === target) return;
+
+  animatedNumbersMap.set(element, target);
+
+  if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    element.textContent = fmt(target);
+    return;
+  }
+
+  const start = current;
+  const diff = target - start;
+  const duration = Math.min(450, Math.max(160, Math.abs(diff) * 8));
+  const startTime = performance.now();
+
+  function step(now) {
+    const elapsed = now - startTime;
+    const progress = Math.min(1, elapsed / duration);
+    const factor = 1 - Math.pow(1 - progress, 3);
+    const val = Math.round(start + diff * factor);
+    element.textContent = fmt(val);
+    if (progress < 1) {
+      requestAnimationFrame(step);
+    } else {
+      element.textContent = fmt(target);
+    }
+  }
+
+  requestAnimationFrame(step);
+}
+
+function formatLogTerminal(text) {
+  if (!text) return '';
+  const lines = String(text).split('\n');
+  return lines.map(line => {
+    let safe = esc(line);
+
+    // 1. Success keywords (OK, PASS, SUCCESS, no errors, matching proxies)
+    safe = safe.replace(/\b(ошибка\s+нет|no\s+errors|ошибка:\s*нет|error:\s*none)\b/gi, '<span class="log-ok">$1</span>');
+    safe = safe.replace(/\b(OK|PASS|SUCCESS)\b|\[(OK|PASS)\]/g, match => `<span class="log-ok">${match}</span>`);
+    safe = safe.replace(/\b(подходят\s+\d+|matching\s+\d+|сохранено\s+\d+|saved\s+\d+)\b/gi, match => `<span class="log-ok">${match}</span>`);
+
+    // 2. Error and failure keywords (ERR, ERROR, FAIL, blocked items)
+    safe = safe.replace(/\b(ERR|ERROR|FAIL|FAILED)\b|\[(ERR|ERROR|FAIL)\]/g, match => `<span class="log-err">${match}</span>`);
+    safe = safe.replace(/\b(ошибка|error):\s*([^\s<]+)/gi, (match, prefix, val) => {
+      if (val.toLowerCase() === 'нет' || val.toLowerCase() === 'none') {
+        return `<span class="log-ok">${match}</span>`;
+      }
+      return `<span class="log-err">${match}</span>`;
+    });
+    safe = safe.replace(/\b(заблокировано\s+[1-9]\d*|blocked\s+[1-9]\d*)\b/gi, match => `<span class="log-err">${match}</span>`);
+
+    // 3. Warning keywords (WARN, WARNING)
+    safe = safe.replace(/\b(WARN|WARNING)\b|\[(WARN|WARNING)\]/g, match => `<span class="log-warn">${match}</span>`);
+
+    // 4. Progress accent highlights
+    safe = safe.replace(/\b(Проверено|Checked|Источник|Source)\b/g, match => `<span class="log-accent">${match}</span>`);
+
+    return safe;
+  }).join('\n');
+}
+
+let toastHideTimer;
+
 function toast(message, error=false) {
-  $('toast').textContent = message;
-  $('toast').className = error ? 'error' : '';
-  $('toast').hidden = false;
+  if (message === null || message === undefined) return;
+  const text = String(message).trim();
+  if (!text) return; // NEVER show with empty text
+
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { $('toast').hidden = true; }, error ? 9000 : 4500);
+  clearTimeout(toastHideTimer);
+  const node = $('toast');
+  if (!node) return;
+
+  node.classList.remove('toast-hiding');
+  node.className = error ? 'error' : '';
+  node.style.pointerEvents = 'none'; // Never block clicks
+  node.innerHTML = `<span class="toast-icon">${error ? '✕' : '✓'}</span><span class="toast-msg">${esc(text)}</span>`;
+  node.hidden = false;
+
+  // Restart CSS animation for smooth slide down + fade
+  node.style.animation = 'none';
+  void node.offsetWidth;
+  node.style.animation = '';
+
+  toastTimer = setTimeout(() => {
+    node.classList.add('toast-hiding');
+    toastHideTimer = setTimeout(() => {
+      node.hidden = true;
+      node.classList.remove('toast-hiding');
+      node.textContent = '';
+    }, 240);
+  }, 3500);
 }
 
 async function api(path, body) {
@@ -892,14 +1442,32 @@ async function api(path, body) {
 
 function showTab(name) {
   currentTab = name;
-  document.querySelectorAll('.page').forEach(node => node.classList.toggle('active', node.id === 'page-' + name));
-  document.querySelectorAll('.nav').forEach(node => node.classList.toggle('active', node.dataset.tab === name));
-  $('page-label').textContent = t('nav.' + name);
+  document.querySelectorAll('.page').forEach(node => {
+    node.classList.toggle('active', node.id === 'page-' + name);
+  });
+  document.querySelectorAll('.nav').forEach(node => {
+    node.classList.toggle('active', node.dataset.tab === name);
+  });
+  const label = $('page-label');
+  if (label) label.textContent = t('nav.' + name) || name;
+  window.scrollTo({top: 0, behavior: 'instant'});
   if (name === 'results') loadResults();
 }
 
+
 document.querySelectorAll('[data-tab]').forEach(node => node.onclick = () => showTab(node.dataset.tab));
-document.querySelectorAll('[data-go]').forEach(node => node.onclick = () => showTab(node.dataset.go));
+document.querySelectorAll('[data-go]').forEach(node => {
+  const activate = () => showTab(node.dataset.go);
+  node.onclick = activate;
+  if (node.getAttribute('role') === 'button') {
+    node.onkeydown = event => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        activate();
+      }
+    };
+  }
+});
 
 // Final URLs only: redirects are not followed. Each check proves the service answers through the proxy.
 const TARGET_PRESETS = [
@@ -916,26 +1484,712 @@ const TARGET_PRESETS = [
 
 function fillPresets() {
   const select = $('target-preset');
-  select.querySelectorAll('option[data-service]').forEach(node => node.remove());
-  TARGET_PRESETS.forEach((preset, index) => {
-    const option = document.createElement('option');
-    option.value = String(index);
-    option.dataset.service = '';
-    option.textContent = preset.name;
-    select.appendChild(option);
-  });
-  select.onchange = () => {
-    const preset = TARGET_PRESETS[Number(select.value)];
-    select.value = '';
-    if (!preset) return;
-    addTarget({...preset, headers:{}, method:'GET'});
-    toast(t('presets.added', {name:preset.name}));
-  };
+  if (select) {
+    select.querySelectorAll('option[data-service]').forEach(node => node.remove());
+    TARGET_PRESETS.forEach((preset, index) => {
+      const option = document.createElement('option');
+      option.value = String(index);
+      option.dataset.service = '';
+      option.textContent = preset.name;
+      select.appendChild(option);
+    });
+    select.onchange = () => {
+      const preset = TARGET_PRESETS[Number(select.value)];
+      select.value = '';
+      if (!preset) return;
+      addTarget({...preset, headers:{}, method:'GET'});
+      toast(t('presets.added', {name:preset.name}));
+    };
+  }
+
+  const chipsContainer = $('quick-services-chips');
+  if (chipsContainer) {
+    chipsContainer.replaceChildren();
+    TARGET_PRESETS.forEach(preset => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'quick-service-chip';
+      btn.innerHTML = `<span class="service-chip-plus">＋</span> ${esc(preset.name)}`;
+      btn.onclick = () => {
+        addTarget({...preset, headers:{}, method:'GET'});
+        toast(t('presets.added', {name:preset.name}));
+      };
+      chipsContainer.appendChild(btn);
+    });
+  }
 }
 fillPresets();
 
+// ============================================================================
+// Countries Database & Smart Country Combobox
+// ============================================================================
+
+const COUNTRIES_LIST = [
+  {code: 'US', nameEn: 'United States', nameRu: 'США', popular: true, region: 'na'},
+  {code: 'DE', nameEn: 'Germany', nameRu: 'Германия', popular: true, region: 'eu'},
+  {code: 'NL', nameEn: 'Netherlands', nameRu: 'Нидерланды', popular: true, region: 'eu'},
+  {code: 'GB', nameEn: 'United Kingdom', nameRu: 'Великобритания', popular: true, region: 'eu'},
+  {code: 'FR', nameEn: 'France', nameRu: 'Франция', popular: true, region: 'eu'},
+  {code: 'RU', nameEn: 'Russia', nameRu: 'Россия', popular: true, region: 'cis'},
+  {code: 'PL', nameEn: 'Poland', nameRu: 'Польша', popular: true, region: 'eu'},
+  {code: 'UA', nameEn: 'Ukraine', nameRu: 'Украина', popular: true, region: 'cis'},
+  {code: 'KZ', nameEn: 'Kazakhstan', nameRu: 'Казахстан', popular: true, region: 'cis'},
+  {code: 'JP', nameEn: 'Japan', nameRu: 'Япония', popular: true, region: 'asia'},
+  {code: 'SG', nameEn: 'Singapore', nameRu: 'Сингапур', popular: true, region: 'asia'},
+  {code: 'CA', nameEn: 'Canada', nameRu: 'Канада', popular: true, region: 'na'},
+  {code: 'CH', nameEn: 'Switzerland', nameRu: 'Швейцария', popular: true, region: 'eu'},
+  {code: 'SE', nameEn: 'Sweden', nameRu: 'Швеция', popular: true, region: 'eu'},
+  {code: 'FI', nameEn: 'Finland', nameRu: 'Финляндия', popular: true, region: 'eu'},
+  {code: 'NO', nameEn: 'Norway', nameRu: 'Норвегия', popular: true, region: 'eu'},
+  {code: 'IT', nameEn: 'Italy', nameRu: 'Италия', popular: true, region: 'eu'},
+  {code: 'ES', nameEn: 'Spain', nameRu: 'Испания', popular: true, region: 'eu'},
+  {code: 'TR', nameEn: 'Turkey', nameRu: 'Турция', popular: true, region: 'asia'},
+  {code: 'KR', nameEn: 'South Korea', nameRu: 'Южная Корея', popular: true, region: 'asia'},
+  {code: 'HK', nameEn: 'Hong Kong', nameRu: 'Гонконг', popular: true, region: 'asia'},
+  {code: 'TW', nameEn: 'Taiwan', nameRu: 'Тайвань', popular: false, region: 'asia'},
+  {code: 'IN', nameEn: 'India', nameRu: 'Индия', popular: true, region: 'asia'},
+  {code: 'BR', nameEn: 'Brazil', nameRu: 'Бразилия', popular: true, region: 'sa'},
+  {code: 'AU', nameEn: 'Australia', nameRu: 'Австралия', popular: false, region: 'other'},
+  {code: 'AT', nameEn: 'Austria', nameRu: 'Австрия', popular: false, region: 'eu'},
+  {code: 'BE', nameEn: 'Belgium', nameRu: 'Бельгия', popular: false, region: 'eu'},
+  {code: 'CZ', nameEn: 'Czech Republic', nameRu: 'Чехия', popular: false, region: 'eu'},
+  {code: 'RO', nameEn: 'Romania', nameRu: 'Румыния', popular: false, region: 'eu'},
+  {code: 'BG', nameEn: 'Bulgaria', nameRu: 'Болгария', popular: false, region: 'eu'},
+  {code: 'DK', nameEn: 'Denmark', nameRu: 'Дания', popular: false, region: 'eu'},
+  {code: 'IE', nameEn: 'Ireland', nameRu: 'Ирландия', popular: false, region: 'eu'},
+  {code: 'PT', nameEn: 'Portugal', nameRu: 'Португалия', popular: false, region: 'eu'},
+  {code: 'GR', nameEn: 'Greece', nameRu: 'Греция', popular: false, region: 'eu'},
+  {code: 'HU', nameEn: 'Hungary', nameRu: 'Венгрия', popular: false, region: 'eu'},
+  {code: 'SK', nameEn: 'Slovakia', nameRu: 'Словакия', popular: false, region: 'eu'},
+  {code: 'EE', nameEn: 'Estonia', nameRu: 'Эстония', popular: false, region: 'eu'},
+  {code: 'LV', nameEn: 'Latvia', nameRu: 'Латвия', popular: false, region: 'eu'},
+  {code: 'LT', nameEn: 'Lithuania', nameRu: 'Литва', popular: false, region: 'eu'},
+  {code: 'CY', nameEn: 'Cyprus', nameRu: 'Кипр', popular: false, region: 'eu'},
+  {code: 'IL', nameEn: 'Israel', nameRu: 'Израиль', popular: false, region: 'asia'},
+  {code: 'AE', nameEn: 'United Arab Emirates', nameRu: 'ОАЭ', popular: false, region: 'asia'},
+  {code: 'TH', nameEn: 'Thailand', nameRu: 'Таиланд', popular: false, region: 'asia'},
+  {code: 'VN', nameEn: 'Vietnam', nameRu: 'Вьетнам', popular: false, region: 'asia'},
+  {code: 'ID', nameEn: 'Indonesia', nameRu: 'Индонезия', popular: false, region: 'asia'},
+  {code: 'MY', nameEn: 'Malaysia', nameRu: 'Малайзия', popular: false, region: 'asia'},
+  {code: 'CN', nameEn: 'China', nameRu: 'Китай', popular: false, region: 'asia'},
+  {code: 'AR', nameEn: 'Argentina', nameRu: 'Аргентина', popular: false, region: 'sa'},
+  {code: 'MX', nameEn: 'Mexico', nameRu: 'Мексика', popular: false, region: 'na'},
+  {code: 'CL', nameEn: 'Chile', nameRu: 'Чили', popular: false, region: 'sa'},
+  {code: 'CO', nameEn: 'Colombia', nameRu: 'Колумбия', popular: false, region: 'sa'},
+  {code: 'ZA', nameEn: 'South Africa', nameRu: 'ЮАР', popular: false, region: 'other'},
+  {code: 'EG', nameEn: 'Egypt', nameRu: 'Египет', popular: false, region: 'other'},
+  {code: 'BY', nameEn: 'Belarus', nameRu: 'Беларусь', popular: false, region: 'cis'},
+  {code: 'GE', nameEn: 'Georgia', nameRu: 'Грузия', popular: false, region: 'cis'},
+  {code: 'AM', nameEn: 'Armenia', nameRu: 'Армения', popular: false, region: 'cis'},
+  {code: 'AZ', nameEn: 'Azerbaijan', nameRu: 'Азербайджан', popular: false, region: 'cis'},
+  {code: 'UZ', nameEn: 'Uzbekistan', nameRu: 'Узбекистан', popular: false, region: 'cis'},
+  {code: 'MD', nameEn: 'Moldova', nameRu: 'Молдова', popular: false, region: 'cis'},
+  {code: 'RS', nameEn: 'Serbia', nameRu: 'Сербия', popular: false, region: 'eu'},
+  {code: 'HR', nameEn: 'Croatia', nameRu: 'Хорватия', popular: false, region: 'eu'},
+  {code: 'IS', nameEn: 'Iceland', nameRu: 'Исландия', popular: false, region: 'eu'},
+  {code: 'LU', nameEn: 'Luxembourg', nameRu: 'Люксембург', popular: false, region: 'eu'},
+  {code: 'NZ', nameEn: 'New Zealand', nameRu: 'Новая Зеландия', popular: false, region: 'other'}
+];
+
+const COUNTRIES_BY_CODE = new Map(COUNTRIES_LIST.map(c => [c.code, c]));
+
+const REGION_PRESETS = {
+  top: ['US', 'DE', 'NL', 'GB', 'FR'],
+  eu: ['DE', 'NL', 'FR', 'GB', 'PL', 'SE', 'CH', 'IT', 'ES', 'FI', 'AT', 'CZ'],
+  na: ['US', 'CA'],
+  asia: ['JP', 'SG', 'KR', 'HK', 'IN', 'TW'],
+  cis: ['RU', 'KZ', 'BY', 'AM', 'GE', 'UZ']
+};
+
+function getCountryFlag(code) {
+  if (!code || typeof code !== 'string' || code.length !== 2) return '🌐';
+  const c = code.toUpperCase();
+  if (!/^[A-Z]{2}$/.test(c)) return '🌐';
+  return String.fromCodePoint(...[...c].map(ch => 127397 + ch.charCodeAt(0)));
+}
+
+function getCountryName(code) {
+  const item = COUNTRIES_BY_CODE.get(code.toUpperCase());
+  if (item) return lang === 'ru' ? item.nameRu : item.nameEn;
+  return code.toUpperCase();
+}
+
+class SmartCountryCombobox {
+  constructor(rootElement, targetInputId, badgeCountId) {
+    this.root = rootElement;
+    this.targetInputId = targetInputId;
+    this.targetInput = this.root.querySelector('.country-native-input') || $(targetInputId);
+    this.badgeCount = badgeCountId ? $(badgeCountId) : null;
+    this.selected = new Set();
+    this.isOpen = false;
+    this.searchQuery = '';
+    SmartCountryCombobox.instances.push(this);
+
+    this.bindElements();
+    this.attachEvents();
+    this.syncFromInput();
+  }
+
+  bindElements() {
+    this.comboboxBox = this.root.querySelector('.country-input-box');
+    this.chipsList = this.root.querySelector('.country-chips-list');
+    this.typeaheadInput = this.root.querySelector('.country-typeahead-input');
+    this.clearBtn = this.root.querySelector('.country-clear-btn');
+    this.toggleBtn = this.root.querySelector('.country-toggle-btn');
+    this.dropdown = this.root.querySelector('.country-dropdown');
+    this.searchInput = this.root.querySelector('.country-search-input');
+    this.searchClearBtn = this.root.querySelector('.country-search-clear');
+    this.countLabel = this.root.querySelector('.country-count-label');
+    this.actionClearBtn = this.root.querySelector('.country-action-clear-btn');
+    this.listScroll = this.root.querySelector('.country-list-scroll');
+    this.doneBtn = this.root.querySelector('.country-done-btn');
+  }
+
+  attachEvents() {
+    if (this.comboboxBox) {
+      this.comboboxBox.onclick = (e) => {
+        if (e.target.closest('.country-chip-remove') || e.target.closest('.country-clear-btn')) return;
+        if (!this.isOpen) {
+          this.open();
+        } else {
+          if (!e.target.closest('.country-typeahead-input')) {
+            this.close();
+          }
+        }
+      };
+    }
+
+    if (this.toggleBtn) {
+      this.toggleBtn.onclick = (e) => {
+        e.stopPropagation();
+        this.toggle();
+      };
+    }
+
+    if (this.clearBtn) {
+      this.clearBtn.onclick = (e) => {
+        e.stopPropagation();
+        this.clear();
+        if (this.typeaheadInput) this.typeaheadInput.focus();
+      };
+    }
+
+    if (this.actionClearBtn) {
+      this.actionClearBtn.onclick = (e) => {
+        e.stopPropagation();
+        this.clear();
+      };
+    }
+
+    if (this.doneBtn) {
+      this.doneBtn.onclick = (e) => {
+        e.stopPropagation();
+        this.close();
+      };
+    }
+
+    if (this.typeaheadInput) {
+      this.typeaheadInput.onfocus = () => {
+        if (!this.isOpen) this.open();
+      };
+
+      this.typeaheadInput.oninput = () => {
+        const val = this.typeaheadInput.value;
+        if (val.includes(',') || val.includes(';') || (val.length === 2 && /^[A-Za-z]{2}$/.test(val) && val.includes(' '))) {
+          this.addRawString(val);
+          this.typeaheadInput.value = '';
+          return;
+        }
+        this.searchQuery = val.trim();
+        if (this.searchInput) {
+          this.searchInput.value = this.searchQuery;
+          if (this.searchClearBtn) this.searchClearBtn.classList.toggle('hidden', !this.searchQuery);
+        }
+        this.renderList();
+        if (!this.isOpen) this.open();
+      };
+
+      this.typeaheadInput.onkeydown = (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          const val = this.typeaheadInput.value.trim();
+          if (val) {
+            this.handleEnterAdd(val);
+            this.typeaheadInput.value = '';
+            this.searchQuery = '';
+            if (this.searchInput) this.searchInput.value = '';
+            this.renderList();
+          }
+        } else if (e.key === 'Backspace' && !this.typeaheadInput.value && this.selected.size > 0) {
+          const lastCode = [...this.selected].pop();
+          if (lastCode) this.removeCode(lastCode);
+        } else if (e.key === 'Escape') {
+          this.close();
+        } else if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          if (!this.isOpen) this.open();
+          if (this.searchInput) this.searchInput.focus();
+        }
+      };
+
+      this.typeaheadInput.onpaste = (e) => {
+        const text = (e.clipboardData || window.clipboardData).getData('text');
+        if (text && (text.includes(',') || text.includes(' ') || text.length === 2)) {
+          e.preventDefault();
+          this.addRawString(text);
+          this.typeaheadInput.value = '';
+        }
+      };
+    }
+
+    if (this.searchInput) {
+      this.searchInput.oninput = () => {
+        this.searchQuery = this.searchInput.value.trim();
+        if (this.searchClearBtn) this.searchClearBtn.classList.toggle('hidden', !this.searchQuery);
+        this.renderList();
+      };
+
+      this.searchInput.onkeydown = (e) => {
+        if (e.key === 'Escape') {
+          this.close();
+        } else if (e.key === 'Enter') {
+          e.preventDefault();
+          const q = this.searchQuery.toLowerCase();
+          const match = COUNTRIES_LIST.find(c =>
+            c.code.toLowerCase() === q ||
+            c.nameRu.toLowerCase() === q ||
+            c.nameEn.toLowerCase() === q ||
+            c.nameRu.toLowerCase().startsWith(q) ||
+            c.nameEn.toLowerCase().startsWith(q)
+          );
+          if (match) {
+            this.toggleCode(match.code);
+            this.searchInput.value = '';
+            this.searchQuery = '';
+            if (this.searchClearBtn) this.searchClearBtn.classList.add('hidden');
+            this.renderList();
+          }
+        }
+      };
+    }
+
+    if (this.searchClearBtn) {
+      this.searchClearBtn.onclick = () => {
+        if (this.searchInput) {
+          this.searchInput.value = '';
+          this.searchInput.focus();
+        }
+        this.searchQuery = '';
+        this.searchClearBtn.classList.add('hidden');
+        this.renderList();
+      };
+    }
+
+    this.root.querySelectorAll('.region-chip').forEach(btn => {
+      btn.onclick = (e) => {
+        e.stopPropagation();
+        this.toggleRegion(btn.dataset.reg);
+      };
+    });
+
+    document.addEventListener('click', (e) => {
+      if (!this.root.contains(e.target)) {
+        this.close();
+      }
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && this.isOpen) {
+        this.close();
+      }
+    });
+
+    if (this.targetInput) {
+      this.targetInput.addEventListener('change', () => this.syncFromInput());
+      this.targetInput.addEventListener('input', () => this.syncFromInput());
+    }
+  }
+
+  handleEnterAdd(query) {
+    const q = query.toUpperCase();
+    if (/^[A-Z]{2}$/.test(q)) {
+      this.addCode(q);
+      return;
+    }
+    const match = COUNTRIES_LIST.find(c =>
+      c.code === q ||
+      c.nameRu.toLowerCase().includes(query.toLowerCase()) ||
+      c.nameEn.toLowerCase().includes(query.toLowerCase())
+    );
+    if (match) {
+      this.addCode(match.code);
+    }
+  }
+
+  addRawString(str) {
+    const tokens = str.split(/[,;\s]+/).map(s => s.trim().toUpperCase()).filter(Boolean);
+    tokens.forEach(tok => {
+      if (/^[A-Z]{2}$/.test(tok)) {
+        this.selected.add(tok);
+      } else {
+        const match = COUNTRIES_LIST.find(c =>
+          c.nameRu.toLowerCase() === tok.toLowerCase() ||
+          c.nameEn.toLowerCase() === tok.toLowerCase()
+        );
+        if (match) this.selected.add(match.code);
+      }
+    });
+    this.update();
+  }
+
+  toggleRegion(regionKey) {
+    const codes = REGION_PRESETS[regionKey];
+    if (!codes) return;
+    const allSelected = codes.every(c => this.selected.has(c));
+    if (allSelected) {
+      codes.forEach(c => this.selected.delete(c));
+    } else {
+      codes.forEach(c => this.selected.add(c));
+    }
+    this.update();
+  }
+
+  addCode(code) {
+    const c = code.toUpperCase();
+    if (/^[A-Z]{2}$/.test(c)) {
+      this.selected.add(c);
+      this.update();
+    }
+  }
+
+  removeCode(code) {
+    const c = code.toUpperCase();
+    this.selected.delete(c);
+    this.update();
+  }
+
+  toggleCode(code) {
+    const c = code.toUpperCase();
+    if (this.selected.has(c)) {
+      this.selected.delete(c);
+    } else {
+      this.selected.add(c);
+    }
+    this.update();
+  }
+
+  clear() {
+    this.selected.clear();
+    this.searchQuery = '';
+    if (this.searchInput) this.searchInput.value = '';
+    if (this.searchClearBtn) this.searchClearBtn.classList.add('hidden');
+    this.update();
+  }
+
+  open() {
+    if (this.isOpen) return;
+    SmartCountryCombobox.instances.forEach(inst => { if (inst !== this) inst.close(); });
+    this.isOpen = true;
+    if (this.dropdown) this.dropdown.classList.remove('hidden');
+    if (this.comboboxBox) {
+      this.comboboxBox.classList.add('focused');
+      this.comboboxBox.setAttribute('aria-expanded', 'true');
+    }
+    this.renderList();
+    setTimeout(() => {
+      if (this.searchInput && this.isOpen) this.searchInput.focus();
+    }, 50);
+  }
+
+  close() {
+    if (!this.isOpen) return;
+    this.isOpen = false;
+    if (this.dropdown) this.dropdown.classList.add('hidden');
+    if (this.comboboxBox) {
+      this.comboboxBox.classList.remove('focused');
+      this.comboboxBox.setAttribute('aria-expanded', 'false');
+    }
+  }
+
+  toggle() {
+    if (this.isOpen) this.close();
+    else this.open();
+  }
+
+  update(triggerEvent = true) {
+    const arrayCodes = [...this.selected];
+    const valString = arrayCodes.join(', ');
+
+    if (!this.targetInput) this.targetInput = this.root.querySelector('.country-native-input') || $(this.targetInputId);
+    if (this.targetInput && this.targetInput.value !== valString) {
+      this.targetInput.value = valString;
+      if (triggerEvent) {
+        this.targetInput.dispatchEvent(new Event('input', {bubbles: true}));
+        this.targetInput.dispatchEvent(new Event('change', {bubbles: true}));
+      }
+    }
+
+    this.renderChips();
+    this.renderList();
+    this.updateStats();
+
+    SmartCountryCombobox.instances.forEach(inst => {
+      if (inst !== this && inst.targetInput && this.targetInput && inst.targetInput.value === this.targetInput.value) {
+        inst.syncFromInput(false);
+      }
+    });
+  }
+
+  syncFromInput(render = true) {
+    if (!this.targetInput) this.targetInput = this.root.querySelector('.country-native-input') || $(this.targetInputId);
+    const val = (this.targetInput ? this.targetInput.value : '') || '';
+    const codes = val.split(/[,;\s]+/).map(s => s.trim().toUpperCase()).filter(s => /^[A-Z]{2}$/.test(s));
+    this.selected = new Set(codes);
+    if (render) {
+      this.renderChips();
+      this.renderList();
+      this.updateStats();
+    }
+  }
+
+  renderChips() {
+    if (!this.chipsList) return;
+    this.chipsList.replaceChildren();
+    this.selected.forEach(code => {
+      const chip = document.createElement('span');
+      chip.className = 'country-chip';
+      chip.dataset.code = code;
+      const flag = getCountryFlag(code);
+      const name = getCountryName(code);
+      chip.title = `${flag} ${name} (${code})`;
+      chip.innerHTML = `
+        <span class="chip-flag">${flag}</span>
+        <span class="chip-code">${code}</span>
+        <button type="button" class="country-chip-remove" aria-label="Remove ${code}">×</button>
+      `;
+      chip.querySelector('.country-chip-remove').onclick = (e) => {
+        e.stopPropagation();
+        this.removeCode(code);
+      };
+      this.chipsList.appendChild(chip);
+    });
+
+    const hasItems = this.selected.size > 0;
+    if (this.clearBtn) this.clearBtn.classList.toggle('hidden', !hasItems);
+    if (this.typeaheadInput) {
+      this.typeaheadInput.placeholder = hasItems ? t('geo.typeMore') : t('geo.inputPlaceholder');
+    }
+  }
+
+  updateStats() {
+    const count = this.selected.size;
+    const text = t('geo.selectedCount', {count});
+    if (this.countLabel) this.countLabel.textContent = text;
+    if (this.badgeCount) {
+      this.badgeCount.textContent = count > 0 ? `${count}` : '';
+      this.badgeCount.classList.toggle('hidden', count === 0);
+    }
+    this.root.querySelectorAll('.region-chip').forEach(btn => {
+      const regCodes = REGION_PRESETS[btn.dataset.reg];
+      if (regCodes) {
+        const active = regCodes.length > 0 && regCodes.every(c => this.selected.has(c));
+        btn.classList.toggle('active', active);
+      }
+    });
+    if (this.targetInput) {
+      document.querySelectorAll(`.country-quick-chips[data-for-country="${this.targetInput.id}"] .region-chip-btn`).forEach(btn => {
+        const regCodes = REGION_PRESETS[btn.dataset.region];
+        if (regCodes) {
+          const active = regCodes.length > 0 && regCodes.every(c => this.selected.has(c));
+          btn.classList.toggle('active', active);
+        }
+      });
+    }
+  }
+
+  renderList() {
+    if (!this.listScroll) return;
+    this.listScroll.setAttribute('role', 'listbox');
+    this.listScroll.setAttribute('aria-multiselectable', 'true');
+    this.listScroll.setAttribute('aria-label', t('geo.selectTitle'));
+    this.listScroll.replaceChildren();
+
+    const q = this.searchQuery.toLowerCase();
+    let filtered = COUNTRIES_LIST;
+    if (q) {
+      filtered = COUNTRIES_LIST.filter(c =>
+        c.code.toLowerCase().includes(q) ||
+        c.nameRu.toLowerCase().includes(q) ||
+        c.nameEn.toLowerCase().includes(q)
+      );
+    }
+
+    if (filtered.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'country-list-empty';
+      empty.textContent = t('geo.searchEmpty');
+      this.listScroll.appendChild(empty);
+      return;
+    }
+
+    if (!q) {
+      const popular = filtered.filter(c => c.popular);
+      const all = filtered;
+
+      const popGroupTitle = document.createElement('div');
+      popGroupTitle.className = 'country-group-title';
+      popGroupTitle.textContent = t('geo.popularGroup');
+      this.listScroll.appendChild(popGroupTitle);
+
+      popular.forEach(c => this.listScroll.appendChild(this.createCountryRow(c)));
+
+      const allGroupTitle = document.createElement('div');
+      allGroupTitle.className = 'country-group-title';
+      allGroupTitle.textContent = t('geo.allGroup');
+      this.listScroll.appendChild(allGroupTitle);
+
+      all.forEach(c => this.listScroll.appendChild(this.createCountryRow(c)));
+    } else {
+      filtered.forEach(c => this.listScroll.appendChild(this.createCountryRow(c)));
+    }
+  }
+
+  createCountryRow(c) {
+    const row = document.createElement('div');
+    const isSelected = this.selected.has(c.code);
+    row.className = `country-item ${isSelected ? 'selected' : ''}`;
+    const flag = getCountryFlag(c.code);
+    const name = lang === 'ru' ? c.nameRu : c.nameEn;
+    const secondaryName = lang === 'ru' ? c.nameEn : c.nameRu;
+
+    row.innerHTML = `
+      <div class="country-checkbox ${isSelected ? 'checked' : ''}">
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+      </div>
+      <span class="country-flag">${flag}</span>
+      <div class="country-info">
+        <span class="country-name">${esc(name)}</span>
+        <span class="country-secondary">${esc(secondaryName)}</span>
+      </div>
+      <span class="country-code-pill">${c.code}</span>
+    `;
+
+    row.setAttribute('role', 'option');
+    row.setAttribute('aria-selected', String(isSelected));
+    row.tabIndex = 0;
+    row.onclick = (e) => {
+      e.stopPropagation();
+      this.toggleCode(c.code);
+    };
+    row.onkeydown = (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        e.stopPropagation();
+        this.toggleCode(c.code);
+      }
+    };
+
+    return row;
+  }
+}
+SmartCountryCombobox.instances = [];
+
+let countriesComboboxInstance = null;
+let resultCountryComboboxInstance = null;
+
+function setupCountryComboboxes() {
+  const c1 = $('countries-combobox-wrap') || $('countries-combobox');
+  if (c1 && !countriesComboboxInstance) {
+    try {
+      countriesComboboxInstance = new SmartCountryCombobox(c1, 'countries', 'countries-count-badge');
+    } catch (e) {
+      console.error('Failed to init countries combobox', e);
+    }
+  }
+  const c2 = $('result-country-combobox-wrap') || $('result-country-combobox');
+  if (c2 && !resultCountryComboboxInstance) {
+    try {
+      resultCountryComboboxInstance = new SmartCountryCombobox(c2, 'result-country', 'result-countries-count-badge');
+    } catch (e) {
+      console.error('Failed to init result-country combobox', e);
+    }
+  }
+
+  document.querySelectorAll('.region-chip-btn').forEach(btn => {
+    if (!btn) return;
+    btn.onclick = (e) => {
+      e.preventDefault();
+      const parent = btn.closest('[data-for-country]');
+      const targetId = parent ? parent.dataset.forCountry : 'countries';
+      const inst = targetId === 'result-country' ? resultCountryComboboxInstance : countriesComboboxInstance;
+      if (inst) {
+        inst.toggleRegion(btn.dataset.region);
+      }
+    };
+  });
+}
+
+function setupFieldPresetChips() {
+  document.querySelectorAll('.field-preset-chips[data-for]').forEach(container => {
+    if (!container) return;
+    const targetId = container.dataset.for;
+    const input = $(targetId);
+    if (!input) return;
+
+    container.querySelectorAll('.preset-chip').forEach(chip => {
+      if (!chip) return;
+      chip.onclick = (e) => {
+        e.preventDefault();
+        input.value = chip.dataset.val;
+        input.dispatchEvent(new Event('input', {bubbles: true}));
+        input.dispatchEvent(new Event('change', {bubbles: true}));
+        syncPresetChipsForInput(input, container);
+      };
+    });
+
+    input.addEventListener('input', () => syncPresetChipsForInput(input, container));
+    input.addEventListener('change', () => syncPresetChipsForInput(input, container));
+    syncPresetChipsForInput(input, container);
+  });
+
+  document.querySelectorAll('.field-preset-chips[data-for-url]').forEach(container => {
+    if (!container) return;
+    const targetId = container.dataset.forUrl;
+    const input = $(targetId);
+    if (!input) return;
+
+    container.querySelectorAll('.url-preset-btn').forEach(btn => {
+      if (!btn) return;
+      btn.onclick = (e) => {
+        e.preventDefault();
+        input.value = btn.dataset.url;
+        input.dispatchEvent(new Event('input', {bubbles: true}));
+        input.dispatchEvent(new Event('change', {bubbles: true}));
+      };
+    });
+  });
+}
+
+function syncPresetChipsForInput(input, container) {
+  if (!input || !container) return;
+  const currentVal = String(input.value).trim();
+  container.querySelectorAll('.preset-chip').forEach(chip => {
+    const chipVal = String(chip.dataset.val).trim();
+    chip.classList.toggle('active', chipVal === currentVal);
+  });
+}
+
+function syncAllPresetChips() {
+  document.querySelectorAll('.field-preset-chips[data-for]').forEach(container => {
+    const input = $(container.dataset.for);
+    if (input) syncPresetChipsForInput(input, container);
+  });
+}
+
 function addTarget(target={}) {
-  if ($('targets').children.length >= 20) {
+  const targetsContainer = $('targets');
+  if (!targetsContainer) return;
+  if (targetsContainer.children.length >= 20) {
     toast(t('error.maxTargets'), true);
     return;
   }
@@ -943,16 +2197,134 @@ function addTarget(target={}) {
   node.className = 'target';
   const text = key => `data-i18n="${key}">${esc(t(key))}`;
   const attr = (name, key) => `${name}="${esc(t(key))}" data-i18n-${name}="${key}"`;
-  node.innerHTML = `<div class="target-head"><span>◎</span><input data-field="name" ${attr('aria-label', 'target.name')} ${attr('placeholder', 'target.name')} value="${esc(target.name || t('target.defaultName'))}"><button data-remove ${attr('title', 'target.remove')} ${attr('aria-label', 'target.remove')}>×</button></div><label class="target-url"><span ${text('target.url')}</span><input data-field="url" type="url" placeholder="https://example.org/health" value="${esc(target.url || '')}"></label><div class="field-grid"><label><span ${text('target.statuses')}</span><input data-field="statuses" ${attr('placeholder', 'target.statusesPlaceholder')} value="${esc(target.statuses ? (target.statuses.length === 100 && target.statuses[0] === 200 ? '200-299' : target.statuses.join(', ')) : '200-299')}"></label><label><span ${text('target.contains')}</span><input data-field="contains" ${attr('placeholder', 'target.containsPlaceholder')} value="${esc(target.contains || '')}"></label></div><details class="advanced"><summary ${text('target.advanced')}</summary><label><span ${text('target.method')}</span><select data-field="method"><option>GET</option><option>HEAD</option></select></label><label><span ${text('target.headers')}</span><textarea data-field="headers" rows="2" spellcheck="false">${esc(JSON.stringify(target.headers || {}))}</textarea><small ${text('target.headersHint')}</small></label><label><span ${text('target.sha256')}</span><input data-field="sha256" value="${esc(target.sha256 || '')}" ${attr('placeholder', 'target.sha256Placeholder')}></label></details>`;
-  node.querySelector('[data-field="method"]').value = target.method || 'GET';
-  node.querySelector('[data-remove]').onclick = () => {
-    if ($('targets').children.length === 1) {
-      toast(t('error.needTarget'), true);
-      return;
+  const initialMethod = (target.method || 'GET').toUpperCase();
+
+  let proto = 'https://';
+  let cleanUrl = String(target.url || '').trim();
+  if (/^https:\/\//i.test(cleanUrl)) {
+    proto = 'https://';
+    cleanUrl = cleanUrl.replace(/^https:\/\//i, '');
+  } else if (/^http:\/\//i.test(cleanUrl)) {
+    proto = 'http://';
+    cleanUrl = cleanUrl.replace(/^http:\/\//i, '');
+  }
+
+  const sName = (target.name || '').toLowerCase();
+  let sIcon = '🌐';
+  if (sName.includes('youtube')) sIcon = '🎬';
+  else if (sName.includes('telegram')) sIcon = '✈️';
+  else if (sName.includes('google')) sIcon = '🔍';
+  else if (sName.includes('discord')) sIcon = '💬';
+  else if (sName.includes('github')) sIcon = '🐙';
+  else if (sName.includes('cloudflare')) sIcon = '☁️';
+  else if (sName.includes('instagram')) sIcon = '📷';
+  else if (sName.includes('wiki')) sIcon = '📖';
+  else if (sName.includes('openai')) sIcon = '🤖';
+
+  node.innerHTML = `
+    <div class="target-main-row">
+      <span class="target-icon">${sIcon}</span>
+      <input data-field="name" class="target-name-input" ${attr('aria-label', 'target.name')} ${attr('placeholder', 'target.name')} value="${esc(target.name || t('target.defaultName'))}">
+      
+      <div class="target-url-compact-wrap clean-url-wrap">
+        <div class="target-proto-pill">
+          <select data-field="protocol" class="target-proto-select" title="Protocol">
+            <option value="https://"${proto === 'https://' ? ' selected' : ''}>HTTPS</option>
+            <option value="http://"${proto === 'http://' ? ' selected' : ''}>HTTP</option>
+          </select>
+          <svg class="proto-chevron" width="7" height="7" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+        </div>
+        <input data-field="url" class="mono-input clean-url-input" type="text" placeholder="domain.com/path" value="${esc(cleanUrl)}">
+      </div>
+
+      <div class="target-col-method">
+        <select data-field="method" class="target-method-select" title="${esc(t('target.method'))}">
+          <option value="GET"${initialMethod === 'GET' ? ' selected' : ''}>GET</option>
+          <option value="HEAD"${initialMethod === 'HEAD' ? ' selected' : ''}>HEAD</option>
+        </select>
+      </div>
+
+      <div class="target-col-status" title="${esc(t('target.statuses'))}">
+        <input data-field="statuses" class="mono-input target-status-input" ${attr('placeholder', 'target.statusesPlaceholder')} value="${esc(target.statuses ? (target.statuses.length === 100 && target.statuses[0] === 200 ? '200' : target.statuses.join(', ')) : '200')}">
+      </div>
+
+      <div class="target-col-actions">
+        <button type="button" class="target-btn-advanced" data-toggle-advanced title="${esc(t('target.advanced'))}">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        </button>
+        <button type="button" data-remove class="target-remove-btn" ${attr('title', 'target.remove')} ${attr('aria-label', 'target.remove')}>
+          <svg class="target-remove-icon icon-trash" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="3 6 5 6 21 6"></polyline>
+            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+            <line x1="10" y1="11" x2="10" y2="17"></line>
+            <line x1="14" y1="11" x2="14" y2="17"></line>
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <div class="target-advanced-drawer hidden">
+      <div class="target-drawer-grid">
+        <label class="drawer-field">
+          <span ${text('target.contains')}</span>
+          <input data-field="contains" class="mono-input" ${attr('placeholder', 'target.containsPlaceholder')} value="${esc(target.contains || '')}">
+        </label>
+        <label class="drawer-field">
+          <span ${text('target.sha256')}</span>
+          <input data-field="sha256" class="mono-input" value="${esc(target.sha256 || '')}" ${attr('placeholder', 'target.sha256Placeholder')}>
+        </label>
+        <label class="drawer-field drawer-field-full">
+          <span ${text('target.headers')}</span>
+          <textarea data-field="headers" rows="1" spellcheck="false" class="mono-textarea" placeholder="{}">${esc(JSON.stringify(target.headers || {}))}</textarea>
+        </label>
+      </div>
+    </div>`;
+
+  const advBtn = node.querySelector('[data-toggle-advanced]');
+  const drawer = node.querySelector('.target-advanced-drawer');
+  if (advBtn && drawer) {
+    advBtn.onclick = () => {
+      drawer.classList.toggle('hidden');
+      advBtn.classList.toggle('active', !drawer.classList.contains('hidden'));
+    };
+    if (target.contains || target.sha256 || (target.headers && Object.keys(target.headers).length)) {
+      drawer.classList.remove('hidden');
+      advBtn.classList.add('active');
     }
-    node.remove();
-  };
-  $('targets').appendChild(node);
+  }
+
+  const protoSelect = node.querySelector('[data-field="protocol"]');
+  const urlInput = node.querySelector('[data-field="url"]');
+
+  if (urlInput) {
+    urlInput.oninput = () => {
+      let v = urlInput.value.trim();
+      if (/^https:\/\//i.test(v)) {
+        if (protoSelect) protoSelect.value = 'https://';
+        urlInput.value = v.replace(/^https:\/\//i, '');
+      } else if (/^http:\/\//i.test(v)) {
+        if (protoSelect) protoSelect.value = 'http://';
+        urlInput.value = v.replace(/^http:\/\//i, '');
+      }
+    };
+  }
+
+  const removeBtn = node.querySelector('[data-remove]');
+  if (removeBtn) {
+    removeBtn.onclick = () => {
+      const container = $('targets');
+      if (!container) return;
+      if (container.children.length <= 1) {
+        toast(t('error.needTarget'), true);
+        return;
+      }
+      node.classList.add('removing');
+      setTimeout(() => {
+        if (node.parentNode) node.remove();
+      }, 180);
+    };
+  }
+  targetsContainer.appendChild(node);
 }
 
 function statuses(raw) {
@@ -969,54 +2341,81 @@ function statuses(raw) {
 }
 
 function zones() {
-  return $('dnsbl-zones').value.split(/[\s,]+/).map(value => value.trim()).filter(Boolean);
+  const el = $('dnsbl-zones');
+  return el ? el.value.split(/[\s,]+/).map(value => value.trim()).filter(Boolean) : [];
 }
 
 function getSettings() {
   const copy = {...settings};
-  for (const key of numeric) copy[key.replace('-', '_')] = Number($(key).value);
-  copy.sort = $('sort').value;
-  copy.use_sources = $('use_sources').checked;
-  copy.detect_protocols = $('detect_protocols').checked;
-  copy.exclude_hosting = $('exclude_hosting').checked;
-  copy.sources = $('sources').value.split('\n').map(value => value.trim()).filter(Boolean);
-  copy.proxies = $('proxies').value;
-  copy.denylist = $('denylist').value;
-  copy.request_profile = $('request-profile').value;
-  copy.anonymity = {judge_url: $('judge-url').value.trim()};
-  copy.speedtest = {url: $('speedtest-url').value.trim(), max_bytes: (settings.speedtest && settings.speedtest.max_bytes) || 5000000};
-  copy.min_anonymity = $('min_anonymity').value;
-  copy.protocol = $('protocol').value;
-  copy.countries = $('countries').value;
-  copy.fail_fast = $('fail_fast').checked;
+  const val = (id, fallback='') => {
+    const el = $(id);
+    return el ? el.value : fallback;
+  };
+  const checked = id => {
+    const el = $(id);
+    return el ? el.checked : false;
+  };
+
+  for (const key of numeric) {
+    const el = $(key);
+    if (el) copy[key.replace('-', '_')] = Number(el.value);
+  }
+  copy.sort = val('sort', copy.sort || 'recommended');
+  copy.use_sources = checked('use_sources');
+  copy.detect_protocols = checked('detect_protocols');
+  copy.exclude_hosting = checked('exclude_hosting');
+  copy.sources = val('sources').split('\n').map(value => value.trim()).filter(Boolean);
+  copy.proxies = val('proxies');
+  copy.denylist = val('denylist');
+  copy.request_profile = val('request-profile', 'workbench');
+  copy.anonymity = {judge_url: val('judge-url').trim()};
+  copy.speedtest = {url: val('speedtest-url').trim(), max_bytes: (settings.speedtest && settings.speedtest.max_bytes) || 5000000};
+  copy.min_anonymity = val('min_anonymity', 'any');
+  copy.protocol = val('protocol', 'all');
+  copy.countries = val('countries');
+  copy.fail_fast = checked('fail_fast');
   const zoneValues = zones();
   copy.reputation = {
-    local_enabled: $('local-denylist-enabled').checked,
-    dnsbl_enabled: $('dnsbl-enabled').checked && zoneValues.length > 0,
+    local_enabled: checked('local-denylist-enabled'),
+    dnsbl_enabled: checked('dnsbl-enabled') && zoneValues.length > 0,
     dnsbl_zones: zoneValues,
-    timeout: Number($('reputation-timeout').value),
-    strict: $('strict-clean').checked
+    timeout: Number(val('reputation-timeout', 2.5)),
+    strict: checked('strict-clean')
   };
-  copy.targets = [...$('targets').children].map(node => {
-    const value = key => node.querySelector(`[data-field="${key}"]`).value.trim();
+  const targetsWrap = $('targets');
+  copy.targets = targetsWrap ? [...targetsWrap.children].map(node => {
+    const value = key => {
+      const el = node.querySelector(`[data-field="${key}"]`);
+      return el ? el.value.trim() : '';
+    };
     let headers;
     try {
       headers = JSON.parse(value('headers') || '{}');
     } catch {
       throw new Error(t('error.headersJson'));
     }
-    if (!value('url')) throw new Error(t('error.urlRequired'));
-    return {name:value('name'), url:value('url'), method:value('method'), statuses:statuses(value('statuses')), contains:value('contains') || null, sha256:value('sha256') || null, headers};
-  });
+    let url = value('url');
+    if (!url) throw new Error(t('error.urlRequired'));
+    const protoEl = node.querySelector('[data-field="protocol"]');
+    const proto = protoEl ? protoEl.value : 'https://';
+    if (!/^https?:\/\//i.test(url)) url = proto + url;
+    return {name:value('name'), url, method:value('method') || 'GET', statuses:statuses(value('statuses')), contains:value('contains') || null, sha256:value('sha256') || null, headers};
+  }) : [];
   return copy;
 }
 
 function updateIdentity() {
-  const profile = $('request-profile').value;
+  const reqProfile = $('request-profile');
+  if (!reqProfile) return;
+  const profile = reqProfile.value;
   const known = Boolean(messages.en['profile.' + profile]);
-  $('profile-summary').textContent = known ? t('profile.' + profile) : t('profile.fallback');
-  $('profile-description').textContent = known ? t('profileDesc.' + profile, {version:PRODUCT_VERSION}) : t('profileDesc.fallback');
-  $('dnsbl-fields').classList.toggle('hidden', !$('dnsbl-enabled').checked);
+  const profSummary = $('profile-summary');
+  if (profSummary) profSummary.textContent = known ? t('profile.' + profile) : t('profile.fallback');
+  const profDesc = $('profile-description');
+  if (profDesc) profDesc.textContent = known ? t('profileDesc.' + profile, {version:PRODUCT_VERSION}) : t('profileDesc.fallback');
+  const dnsblFields = $('dnsbl-fields');
+  const dnsblEnabled = $('dnsbl-enabled');
+  if (dnsblFields && dnsblEnabled) dnsblFields.classList.toggle('hidden', !dnsblEnabled.checked);
 }
 
 function fill(value) {
@@ -1024,50 +2423,70 @@ function fill(value) {
   const reputation = {...(value.reputation || {local_enabled:true, dnsbl_enabled:false, dnsbl_zones:[], timeout:2.5, strict:false})};
   for (const key of numeric) {
     const element = $(key);
+    if (!element) continue;
     if (element.tagName === 'SELECT' && ![...element.options].some(option => option.value === String(value[key.replace('-', '_')]))) {
       element.add(new Option(`${Math.round(value[key.replace('-', '_')] * 100)}%`, value[key.replace('-', '_')]));
     }
     element.value = key === 'reputation-timeout' ? reputation.timeout : value[key.replace('-', '_')];
   }
-  $('sort').value = value.sort;
-  $('use_sources').checked = value.use_sources;
-  $('detect_protocols').checked = Boolean(value.detect_protocols);
-  $('exclude_hosting').checked = Boolean(value.exclude_hosting);
-  $('sources').value = value.sources.join('\n');
-  $('proxies').value = value.proxies || '';
-  $('denylist').value = value.denylist || '';
-  $('request-profile').value = value.request_profile || 'workbench';
-  $('dnsbl-zones').value = (reputation.dnsbl_zones || []).join('\n');
-  $('dnsbl-enabled').checked = !!reputation.dnsbl_enabled && $('dnsbl-zones').value.trim().length > 0;
-  $('local-denylist-enabled').checked = reputation.local_enabled !== false;
-  $('strict-clean').checked = !!reputation.strict;
-  $('judge-url').value = (value.anonymity && value.anonymity.judge_url) || '';
-  $('speedtest-url').value = (value.speedtest && value.speedtest.url) || '';
-  $('min_anonymity').value = value.min_anonymity || 'any';
-  $('protocol').value = value.protocol || 'all';
-  $('countries').value = value.countries || '';
-  $('fail_fast').checked = value.fail_fast !== false;
-  $('targets').replaceChildren();
-  value.targets.forEach(addTarget);
+  if ($('sort')) $('sort').value = value.sort;
+  if ($('use_sources')) $('use_sources').checked = Boolean(value.use_sources);
+  if ($('detect_protocols')) $('detect_protocols').checked = Boolean(value.detect_protocols);
+  if ($('exclude_hosting')) $('exclude_hosting').checked = Boolean(value.exclude_hosting);
+  if ($('sources')) $('sources').value = (value.sources || []).join('\n');
+  if ($('proxies')) $('proxies').value = value.proxies || '';
+  if ($('denylist')) $('denylist').value = value.denylist || '';
+  if ($('request-profile')) $('request-profile').value = value.request_profile || 'workbench';
+  if ($('dnsbl-zones')) $('dnsbl-zones').value = (reputation.dnsbl_zones || []).join('\n');
+  if ($('dnsbl-enabled')) $('dnsbl-enabled').checked = !!reputation.dnsbl_enabled && ($('dnsbl-zones') ? $('dnsbl-zones').value.trim().length > 0 : false);
+  if ($('local-denylist-enabled')) $('local-denylist-enabled').checked = reputation.local_enabled !== false;
+  if ($('strict-clean')) $('strict-clean').checked = !!reputation.strict;
+  if ($('judge-url')) $('judge-url').value = (value.anonymity && value.anonymity.judge_url) || '';
+  if ($('speedtest-url')) $('speedtest-url').value = (value.speedtest && value.speedtest.url) || '';
+  if ($('min_anonymity')) $('min_anonymity').value = value.min_anonymity || 'any';
+  if ($('protocol')) $('protocol').value = value.protocol || 'all';
+  if ($('countries')) $('countries').value = value.countries || '';
+  if ($('fail_fast')) $('fail_fast').checked = value.fail_fast !== false;
+  if ($('targets')) {
+    $('targets').replaceChildren();
+    if (Array.isArray(value.targets)) value.targets.forEach(addTarget);
+  }
   updateIdentity();
   syncResultControls();
   updateSourceCount();
+  updateLineCounts();
+  updateSegmentedGlider();
+  syncAllPresetChips();
+  if (countriesComboboxInstance) countriesComboboxInstance.syncFromInput();
+  if (resultCountryComboboxInstance) resultCountryComboboxInstance.syncFromInput();
+  if (typeof updateCodeEditors === 'function') updateCodeEditors();
 }
 
 function syncResultControls() {
-  $('result-sort').value = $('sort').value;
-  const value = $('min_success').value;
-  if (![...$('result-min').options].some(option => option.value === value)) $('result-min').add(new Option(`${Math.round(Number(value) * 100)}%`, value));
-  $('result-min').value = value;
-  $('result-anon').value = $('min_anonymity').value;
-  $('result-protocol').value = $('protocol').value;
-  $('result-max-latency').value = $('max_latency').value;
-  $('result-country').value = $('countries').value;
-  $('result-top').value = $('top').value;
+  if ($('result-sort') && $('sort')) $('result-sort').value = $('sort').value;
+  const minSuccess = $('min_success');
+  const resultMin = $('result-min');
+  if (minSuccess && resultMin) {
+    const value = minSuccess.value;
+    if (![...resultMin.options].some(option => option.value === value)) resultMin.add(new Option(`${Math.round(Number(value) * 100)}%`, value));
+    resultMin.value = value;
+  }
+  if ($('result-anon') && $('min_anonymity')) $('result-anon').value = $('min_anonymity').value;
+  if ($('result-protocol') && $('protocol')) $('result-protocol').value = $('protocol').value;
+  if ($('result-max-latency') && $('max_latency')) $('result-max-latency').value = $('max_latency').value;
+  if ($('result-country') && $('countries')) $('result-country').value = $('countries').value;
+  if ($('result-top') && $('top')) $('result-top').value = $('top').value;
+  syncAllPresetChips();
+  if (countriesComboboxInstance) countriesComboboxInstance.syncFromInput();
+  if (resultCountryComboboxInstance) resultCountryComboboxInstance.syncFromInput();
 }
 
 function updateSourceCount() {
-  $('source-count').textContent = $('use_sources').checked ? fmt(new Set($('sources').value.split('\n').map(value => value.trim()).filter(Boolean)).size) : t('sources.off');
+  const sc = $('source-count');
+  const us = $('use_sources');
+  const src = $('sources');
+  if (!sc || !us || !src) return;
+  sc.textContent = us.checked ? fmt(new Set(src.value.split('\n').map(value => value.trim()).filter(Boolean)).size) : t('sources.off');
 }
 
 async function save() {
@@ -1082,30 +2501,38 @@ async function save() {
   }
 }
 
-async function start(action) {
+function resultHostingFilter() {
+  return $('result-hosting') && $('result-hosting').value === 'exclude' ? 'hide' : '';
+}
+
+function activeQuickFilter() {
+  const chip = document.querySelector('#results-filter-chips .filter-chip.active');
+  const value = chip ? chip.dataset.filter : '';
+  return ['clean', 'speed', 'http'].includes(value) ? value : '';
+}
+
+async function start(action, selection=null) {
   try {
     let value = getSettings();
+    const request = {action, settings:value};
     if (action === 'export') {
-      value.sort = $('result-sort').value;
-      value.min_success = Number($('result-min').value);
-      value.top = Number($('result-top').value);
-      value.min_anonymity = $('result-anon').value;
-      value.protocol = $('result-protocol').value;
-      value.max_latency = Number($('result-max-latency').value) || 0;
-      value.countries = $('result-country').value;
-      $('countries').value = value.countries;
-      $('min_anonymity').value = value.min_anonymity;
-      $('protocol').value = value.protocol;
-      $('max_latency').value = value.max_latency;
-      $('sort').value = value.sort;
-      $('min_success').value = value.min_success;
-      $('top').value = value.top;
+      value.sort = $('result-sort') ? $('result-sort').value : 'recommended';
+      value.min_success = Number($('result-min') ? $('result-min').value : 1);
+      value.top = Number($('result-top') ? $('result-top').value : 0);
+      value.min_anonymity = $('result-anon') ? $('result-anon').value : 'any';
+      value.protocol = $('result-protocol') ? $('result-protocol').value : 'all';
+      value.max_latency = Number($('result-max-latency') ? $('result-max-latency').value : 0) || 0;
+      value.countries = $('result-country') ? $('result-country').value : '';
+      request.q = $('result-search') ? $('result-search').value.trim() : '';
+      request.quick = activeQuickFilter();
+      request.hosting = resultHostingFilter();
+      if (selection !== null) request.selection = selection;
     } else {
       syncResultControls();
     }
     setBusy(true);
-    await api('/api/start', {action, settings:value});
-    settings = value;
+    await api('/api/start', request);
+    if (action !== 'export') settings = value;
     toast(action === 'export' ? t('toast.exporting') : t('toast.started'));
     if (action === 'collect') showTab('sources');
     await poll();
@@ -1116,11 +2543,20 @@ async function start(action) {
 }
 
 function setBusy(active) {
-  ['start', 'resume', 'recheck', 'recheck-passing', 'collect', 'export'].forEach(id => { $(id).disabled = active; });
-  $('stop').disabled = !active;
+  ['start', 'resume', 'recheck', 'recheck-passing', 'collect', 'export'].forEach(id => {
+    const el = $(id);
+    if (el) el.disabled = active;
+  });
+  if ($('action-export-selected')) $('action-export-selected').disabled = active;
+  if ($('action-ban-selected')) $('action-ban-selected').disabled = active;
+  const stopBtn = $('stop');
+  if (stopBtn) {
+    stopBtn.disabled = !active;
+    stopBtn.classList.toggle('active', Boolean(active));
+  }
 }
 
-const phases = ['starting', 'collecting', 'scanning', 'exporting', 'waiting', 'complete', 'stopped', 'interrupted', 'error'];
+const phases = ['starting', 'collecting', 'scanning', 'exporting', 'waiting', 'complete', 'partial', 'stale', 'stopped', 'interrupted', 'error'];
 const actions = ['run', 'scan', 'recheck', 'recheck_passing', 'collect', 'export'];
 
 function duration(seconds) {
@@ -1131,7 +2567,8 @@ function duration(seconds) {
 }
 
 function reputationStatus(row) {
-  return (row && row.reputation && row.reputation.status) || 'clean';
+  const status = row && row.reputation && row.reputation.status;
+  return ['clean', 'listed', 'unknown', 'local_denied'].includes(status) ? status : 'unknown';
 }
 
 function reputationLabel(status) {
@@ -1142,7 +2579,10 @@ function anonymityBadge(row) {
   const level = row && row.anonymity && row.anonymity.level;
   if (!level) return `<span class="anonymity anonymity-off">${esc(t('anon.off'))}</span>`;
   const label = messages.en['anon.' + level] ? t('anon.' + level) : level;
-  return `<span class="anonymity anonymity-${esc(level)}">${esc(label)}</span>`;
+  let icon = '🔒';
+  if (level === 'transparent') icon = '🔓';
+  else if (level === 'unknown') icon = '❓';
+  return `<span class="anonymity anonymity-${esc(level)}"><span class="badge-icon">${icon}</span><span>${esc(label)}</span></span>`;
 }
 
 function anonymityDetails(row) {
@@ -1155,7 +2595,17 @@ function anonymityDetails(row) {
 
 function reputationBadge(row) {
   const status = reputationStatus(row);
-  return `<span class="cleanliness cleanliness-${esc(status)}">${esc(reputationLabel(status))}</span>`;
+  let icon = '🛡️';
+  if (status === 'listed' || status === 'local_denied') icon = '🚫';
+  else if (status === 'unknown') icon = '⚠️';
+  return `<span class="cleanliness cleanliness-${esc(status)}"><span class="badge-icon">${icon}</span><span>${esc(reputationLabel(status))}</span></span>`;
+}
+
+function latencyBadge(valMs) {
+  if (valMs == null || isNaN(valMs) || valMs === '') return '<span class="cell-dim">—</span>';
+  const num = Number(valMs);
+  const cls = num < 250 ? 'lat-fast' : num <= 700 ? 'lat-neutral' : 'lat-dim';
+  return `<span class="latency-cell ${cls}"><span class="lat-dot"></span><span class="lat-val">${esc(ms(num.toFixed(0)))}</span></span>`;
 }
 
 function anonymityCounts(report) {
@@ -1165,41 +2615,466 @@ function anonymityCounts(report) {
   return t('anon.counts', {elite:fmt(counts.elite || 0), anonymous:fmt(counts.anonymous || 0), transparent:fmt(counts.transparent || 0)});
 }
 
+function makeQR(dataStr) {
+  if (!dataStr) return '';
+  const bytes = new TextEncoder().encode(dataStr);
+  // Reed-Solomon level M tables. Each item is [block count, total codewords,
+  // data codewords] for one block shape. The mobile URL is deliberately kept
+  // within versions 1..10; returning an empty QR is safer than a truncated
+  // code that a phone cannot decode.
+  const RS = [
+    [[1, 26, 16]], [[1, 44, 28]], [[1, 70, 44]], [[2, 50, 32]],
+    [[2, 67, 43]], [[4, 43, 27]], [[4, 49, 31]],
+    [[2, 60, 38], [2, 61, 39]], [[3, 58, 36], [2, 59, 37]],
+    [[4, 69, 43], [1, 70, 44]]
+  ];
+  const ALIGN = [[], [6, 18], [6, 22], [6, 26], [6, 30], [6, 34],
+                 [6, 22, 38], [6, 24, 42], [6, 26, 46], [6, 28, 50]];
+  const countBits = version => version < 10 ? 8 : 16;
+  const dataCodewords = version => RS[version - 1].reduce((sum, block) => sum + block[0] * block[2], 0);
+  let version = 0;
+  for (let candidate = 1; candidate <= RS.length; candidate++) {
+    if (4 + countBits(candidate) + bytes.length * 8 <= dataCodewords(candidate) * 8) {
+      version = candidate;
+      break;
+    }
+  }
+  if (!version) return '';
+  const size = version * 4 + 17;
+
+  const bits = [];
+  const addBits = (value, count) => {
+    for (let i = count - 1; i >= 0; i--) bits.push((value >>> i) & 1);
+  };
+  addBits(4, 4);                         // byte mode
+  addBits(bytes.length, countBits(version));
+  bytes.forEach(byte => addBits(byte, 8));
+  const capacityBits = dataCodewords(version) * 8;
+  for (let i = 0; i < 4 && bits.length < capacityBits; i++) bits.push(0);
+  while (bits.length % 8) bits.push(0);
+  let pad = 0xec;
+  while (bits.length < capacityBits) {
+    addBits(pad, 8);
+    pad = pad === 0xec ? 0x11 : 0xec;
+  }
+  const data = [];
+  for (let i = 0; i < bits.length; i += 8) {
+    let byte = 0;
+    for (let j = 0; j < 8; j++) byte = (byte << 1) | bits[i + j];
+    data.push(byte);
+  }
+
+  const exp = new Uint8Array(512);
+  const log = new Uint8Array(256);
+  let x = 1;
+  for (let i = 0; i < 255; i++) {
+    exp[i] = x;
+    exp[i + 255] = x;
+    log[x] = i;
+    x = (x << 1) ^ (x >= 128 ? 0x11d : 0);
+  }
+  const gfMul = (a, b) => (a === 0 || b === 0) ? 0 : exp[log[a] + log[b]];
+  const blocks = [];
+  let offset = 0;
+  for (const [count, total, dataCount] of RS[version - 1]) {
+    for (let i = 0; i < count; i++) {
+      const block = data.slice(offset, offset + dataCount);
+      offset += dataCount;
+      const errorLength = total - dataCount;
+      let generator = [1];
+      for (let root = 0; root < errorLength; root++) {
+        const next = Array(generator.length + 1).fill(0);
+        for (let j = 0; j < generator.length; j++) {
+          next[j] ^= gfMul(generator[j], exp[root]);
+          next[j + 1] ^= generator[j];
+        }
+        generator = next;
+      }
+      generator.reverse();
+      const work = [...block, ...Array(errorLength).fill(0)];
+      for (let i = 0; i < block.length; i++) {
+        const factor = work[i];
+        if (factor) {
+          for (let j = 0; j < generator.length; j++) {
+            work[i + j] ^= gfMul(generator[j], factor);
+          }
+        }
+      }
+      blocks.push({data: block, error: work.slice(block.length)});
+    }
+  }
+  const codewords = [];
+  const maxData = Math.max(...blocks.map(block => block.data.length));
+  const maxError = Math.max(...blocks.map(block => block.error.length));
+  for (let i = 0; i < maxData; i++) {
+    for (const block of blocks) if (i < block.data.length) codewords.push(block.data[i]);
+  }
+  for (let i = 0; i < maxError; i++) {
+    for (const block of blocks) if (i < block.error.length) codewords.push(block.error[i]);
+  }
+
+  const grid = Array.from({length: size}, () => Array(size).fill(null));
+  const isFunction = Array.from({length: size}, () => Array(size).fill(false));
+  const setFunction = (row, column, value) => {
+    grid[row][column] = Boolean(value);
+    isFunction[row][column] = true;
+  };
+  const setFinder = (row, column) => {
+    for (let dr = -1; dr <= 7; dr++) {
+      for (let dc = -1; dc <= 7; dc++) {
+        const r = row + dr, c = column + dc;
+        if (r < 0 || r >= size || c < 0 || c >= size) continue;
+        const inBox = dr >= 0 && dr <= 6 && dc >= 0 && dc <= 6;
+        const black = inBox && (dr === 0 || dr === 6 || dc === 0 || dc === 6 ||
+                               (dr >= 2 && dr <= 4 && dc >= 2 && dc <= 4));
+        setFunction(r, c, black);
+      }
+    }
+  };
+  setFinder(0, 0);
+  setFinder(0, size - 7);
+  setFinder(size - 7, 0);
+  for (const row of ALIGN[version - 1]) {
+    for (const column of ALIGN[version - 1]) {
+      if (isFunction[row][column]) continue;
+      for (let dr = -2; dr <= 2; dr++) {
+        for (let dc = -2; dc <= 2; dc++) {
+          setFunction(row + dr, column + dc, Math.max(Math.abs(dr), Math.abs(dc)) !== 1);
+        }
+      }
+    }
+  }
+  for (let i = 8; i < size - 8; i++) {
+    if (!isFunction[6][i]) setFunction(6, i, i % 2 === 0);
+    if (!isFunction[i][6]) setFunction(i, 6, i % 2 === 0);
+  }
+
+  const bch = (value, polynomial, shift) => {
+    const degree = number => {
+      let result = 0;
+      while (number) { result += 1; number >>>= 1; }
+      return result;
+    };
+    let remainder = value << shift;
+    while (degree(remainder) - degree(polynomial) >= 0) {
+      remainder ^= polynomial << (degree(remainder) - degree(polynomial));
+    }
+    return (value << shift) | remainder;
+  };
+  // Error-correction level M (00), mask pattern 0.
+  const format = bch(0, 0x537, 10) ^ 0x5412;
+  for (let i = 0; i < 15; i++) {
+    const bit = ((format >>> i) & 1) !== 0;
+    if (i < 6) setFunction(i, 8, bit);
+    else if (i < 8) setFunction(i + 1, 8, bit);
+    else setFunction(size - 15 + i, 8, bit);
+    if (i < 8) setFunction(8, size - i - 1, bit);
+    else if (i < 9) setFunction(8, 15 - i, bit);
+    else setFunction(8, 15 - i - 1, bit);
+  }
+  setFunction(size - 8, 8, true);
+  if (version >= 7) {
+    const versionBits = bch(version, 0x1f25, 12);
+    for (let i = 0; i < 18; i++) {
+      const bit = ((versionBits >>> i) & 1) !== 0;
+      setFunction(Math.floor(i / 3), i % 3 + size - 11, bit);
+      setFunction(i % 3 + size - 11, Math.floor(i / 3), bit);
+    }
+  }
+
+  let bitIndex = 0;
+  let upward = true;
+  for (let right = size - 1; right > 0; right -= 2) {
+    if (right === 6) right -= 1;
+    for (let vertical = 0; vertical < size; vertical++) {
+      const row = upward ? size - 1 - vertical : vertical;
+      for (let column = right; column >= right - 1; column--) {
+        if (isFunction[row][column]) continue;
+        let dark = bitIndex < codewords.length * 8 &&
+          ((codewords[bitIndex >> 3] >>> (7 - (bitIndex & 7))) & 1) !== 0;
+        if ((row + column) % 2 === 0) dark = !dark; // mask 000
+        grid[row][column] = dark;
+        isFunction[row][column] = true;
+        bitIndex++;
+      }
+    }
+    upward = !upward;
+  }
+
+  const quiet = 3;
+  const fullSize = size + quiet * 2;
+  let paths = '';
+  for (let row = 0; row < size; row++) {
+    for (let column = 0; column < size; column++) {
+      if (grid[row][column]) paths += `M${column + quiet},${row + quiet}h1v1h-1z `;
+    }
+  }
+  return `<svg viewBox="0 0 ${fullSize} ${fullSize}" width="160" height="160" xmlns="http://www.w3.org/2000/svg" class="qr-svg"><rect width="${fullSize}" height="${fullSize}" fill="#ffffff" rx="10"/><path d="${paths}" fill="#0f172a"/></svg>`;
+}
+
+function snapshotTime(value) {
+  let timestamp = Number(value);
+  if (!Number.isFinite(timestamp) && typeof value === 'string') timestamp = Date.parse(value) / 1000;
+  if (!Number.isFinite(timestamp)) return '—';
+  const milliseconds = timestamp > 1e12 ? timestamp : timestamp * 1000;
+  return new Date(milliseconds).toLocaleString(lang === 'ru' ? 'ru-RU' : 'en-US');
+}
+
+function snapshotView(report) {
+  const rawGeneration = String(report.generation || '').replace(/^\.generation-/, '');
+  const generation = rawGeneration ? rawGeneration.slice(0, 16) : '—';
+  const validUntil = Number(report.valid_until);
+  const expiredAt = Number.isFinite(validUntil) && validUntil > 0
+    ? (validUntil > 1e12 ? validUntil : validUntil * 1000)
+    : null;
+  const stale = report.stale === true || Boolean(expiredAt && expiredAt <= Date.now());
+  const stateName = ['complete', 'partial', 'error'].includes(report.state) ? report.state
+    : report.complete === false ? 'partial' : 'complete';
+  const reasonKey = 'results.reason.' + String(report.stop_reason || (stateName === 'partial' ? 'stopped' : stateName));
+  const reason = messages.en[reasonKey] ? t(reasonKey) : String(report.stop_reason || '—');
+  return {generation, validUntil: expiredAt, stale, state:stateName, reason};
+}
+
+function snapshotNotes(report) {
+  if (!report || !report.profile) return '';
+  const snapshot = snapshotView(report);
+  const notes = [];
+  if (snapshot.state === 'error') {
+    notes.push(t('results.snapshotError', {reason:snapshot.reason}));
+  }
+  if (snapshot.state === 'partial') {
+    notes.push(t('results.snapshotPartial', {reason:snapshot.reason, checked:fmt(report.checked), candidates:fmt(report.scope_candidates ?? report.candidates)}));
+  }
+  if (snapshot.stale) {
+    notes.push(t('results.snapshotStale', {generation:snapshot.generation, time:snapshotTime(snapshot.validUntil)}));
+  } else if (snapshot.generation !== '—') {
+    notes.push(snapshot.validUntil
+      ? t('results.snapshotFresh', {generation:snapshot.generation, time:snapshotTime(snapshot.validUntil)})
+      : t('results.snapshot', {generation:snapshot.generation}));
+  }
+  if (Number(report.selection_requested) > 0) {
+    const missing = Array.isArray(report.selection_missing) ? report.selection_missing.length : Number(report.selection_missing) || 0;
+    notes.push(t('results.selectionReport', {
+      requested:fmt(report.selection_requested), exported:fmt(report.selection_exported), missing:fmt(missing)
+    }));
+  }
+  return notes.join(' ');
+}
+
+function diagnosticNote(report, progress) {
+  if (!report || !report.profile || !['stopped', 'interrupted', 'error'].includes(progress.phase)) return '';
+  const snapshot = snapshotView(report);
+  const status = t(snapshot.state === 'error' ? 'phase.error' : 'phase.partial');
+  return t('results.diagnostic', {
+    status, reason:snapshot.reason, checked:fmt(report.checked), candidates:fmt(report.scope_candidates ?? report.candidates)
+  });
+}
+
 function renderState(value) {
   state = value;
   const progress = value.progress || {};
   const job = value.job || {};
-  setBusy(value.running);
-  $('phase').textContent = job.stopping && value.running ? t('phase.stopping') : phases.includes(progress.phase) ? t('phase.' + progress.phase) : t('phase.ready');
-  if (value.running && progress.phase === 'exporting') $('stop').disabled = true;
-  $('checked').textContent = fmt(progress.checked);
-  $('candidates').textContent = fmt(progress.candidates);
-  const percent = progress.candidates ? Math.min(100, 100 * (progress.checked || 0) / progress.candidates) : 0;
-  $('percent').textContent = percent.toFixed(1) + '%';
-  $('progress-bar').style.width = percent + '%';
-  $('speed').textContent = value.running && progress.phase === 'scanning' ? String(progress.speed ?? '—') : '—';
-  $('eta').textContent = value.running && progress.phase === 'scanning' ? duration(progress.eta_seconds) : '—';
-  $('progress-text').textContent = progress.phase === 'waiting' && progress.next_check_at ? t('progress.nextCheck', {time:new Date(progress.next_check_at * 1000).toLocaleTimeString()}) : progress.phase === 'collecting' ? t('progress.sources', {done:progress.sources_done || 0, total:progress.sources_total || 0}) : progress.candidates ? t('progress.remaining', {count:fmt(Math.max(0, progress.candidates - (progress.checked || 0)))}) : t('progress.allQueued');
-  $('job-detail').textContent = job.id ? `${t('job.summary', {action:t(actions.includes(job.action) ? 'action.' + job.action : 'action.fallback'), count:job.targets?.length || 0})}${job.request_profile ? t('job.profile', {profile:profileLabel(job.request_profile)}) : ''}${progress.phase === 'error' ? t('job.seeLog') : ''}` : t('job.idle');
-  $('log').textContent = value.log ? serverLog(value.log) : t('log.empty');
   const exportReport = value.export || {};
-  $('nav-count').textContent = fmt(progress.passed ?? exportReport.passed ?? 0);
-  $('live-passed').textContent = fmt(progress.passed ?? exportReport.passed ?? 0);
-  if (exportReport.profile) {
+  const snapshot = snapshotView(exportReport);
+  setBusy(value.running);
+  const snapshotPhase = !value.running && exportReport.profile
+    ? (snapshot.state === 'error' ? 'error' : snapshot.state === 'partial' ? 'partial' : snapshot.stale ? 'stale' : '')
+    : '';
+  const progressPhase = job.stopping && value.running ? 'stopping' : phases.includes(progress.phase) ? progress.phase : 'ready';
+  const currentPhase = snapshotPhase || progressPhase;
+  const phaseEl = $('phase');
+  if (phaseEl) {
+    phaseEl.textContent = currentPhase === 'stopping' ? t('phase.stopping') : phases.includes(currentPhase) ? t('phase.' + currentPhase) : t('phase.ready');
+    phaseEl.dataset.phase = currentPhase;
+  }
+  const isScanning = value.running && (progress.phase === 'scanning' || progress.phase === 'starting' || progress.phase === 'collecting');
+  const progBar = $('progress-bar');
+  if (progBar) progBar.classList.toggle('scanning', isScanning);
+  const monitorCard = document.querySelector('.monitor');
+  if (monitorCard) {
+    monitorCard.dataset.phase = currentPhase;
+    monitorCard.classList.toggle('is-scanning', isScanning);
+  }
+  if (value.running && progress.phase === 'exporting') {
+    const stopBtn = $('stop');
+    if (stopBtn) {
+      stopBtn.disabled = true;
+      stopBtn.classList.remove('active');
+    }
+  }
+  if ($('checked')) animateNumber($('checked'), progress.checked);
+  if ($('candidates')) $('candidates').textContent = fmt(progress.candidates);
+  const percent = progress.candidates ? Math.min(100, 100 * (progress.checked || 0) / progress.candidates) : 0;
+  if ($('percent')) $('percent').textContent = percent.toFixed(1) + '%';
+  if (progBar) progBar.style.width = percent + '%';
+
+  // Radial speed gauge
+  const radialFill = $('radial-progress-fill');
+  if (radialFill) {
+    const circumference = 314.16;
+    const offsetCirc = circumference * (1 - percent / 100);
+    radialFill.style.strokeDasharray = `${circumference}`;
+    radialFill.style.strokeDashoffset = `${offsetCirc}`;
+  }
+  const gaugePercent = $('gauge-percent');
+  if (gaugePercent) gaugePercent.textContent = percent.toFixed(1) + '%';
+  const gaugeCaption = $('gauge-caption');
+  if (gaugeCaption) gaugeCaption.textContent = currentPhase === 'ready' ? t('phase.ready') : t('phase.' + currentPhase);
+
+  if ($('speed')) $('speed').textContent = value.running && progress.phase === 'scanning' ? String(progress.speed ?? '—') : '—';
+  if ($('eta')) $('eta').textContent = value.running && progress.phase === 'scanning' ? duration(progress.eta_seconds) : '—';
+  if ($('progress-text')) $('progress-text').textContent = progress.phase === 'waiting' && progress.next_check_at ? t('progress.nextCheck', {time:new Date(progress.next_check_at * 1000).toLocaleTimeString()}) : progress.phase === 'collecting' ? t('progress.sources', {done:progress.sources_done || 0, total:progress.sources_total || 0}) : progress.candidates ? t('progress.remaining', {count:fmt(Math.max(0, progress.candidates - (progress.checked || 0)))}) : t('progress.allQueued');
+  if ($('job-detail')) $('job-detail').textContent = job.id ? `${t('job.summary', {action:t(actions.includes(job.action) ? 'action.' + job.action : 'action.fallback'), count:job.targets?.length || 0})}${job.request_profile ? t('job.profile', {profile:profileLabel(job.request_profile)}) : ''}${progress.phase === 'error' ? t('job.seeLog') : ''}` : t('job.idle');
+  const logEl = $('log');
+  if (logEl) {
+    const wasScrolledToBottom = logEl.scrollHeight - logEl.clientHeight <= logEl.scrollTop + 40;
+    const rawLog = value.log ? serverLog(value.log) : t('log.empty');
+    logEl.innerHTML = formatLogTerminal(rawLog);
+    if (value.running && wasScrolledToBottom) {
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+  }
+
+  // Live ticker updates
+  const tickerContainer = $('live-ticker-list');
+  if (tickerContainer) {
+    if (value.running && value.log) {
+      const logLines = String(value.log).split('\n').filter(l => l.trim().length > 0);
+      const testLines = logLines.filter(l => /\b(OK|PASS|SUCCESS|FAIL|ERR|ERROR)\b/i.test(l)).slice(-6);
+      if (testLines.length) {
+        tickerContainer.innerHTML = testLines.map(line => {
+          const isPass = /\b(OK|PASS|SUCCESS)\b/i.test(line);
+          const badgeClass = isPass ? 'pass' : 'fail';
+          const badgeLabel = isPass ? 'PASS' : 'FAIL';
+          return `<div class="ticker-item ${badgeClass}"><span class="ticker-badge">${badgeLabel}</span><span class="ticker-text">${esc(line)}</span></div>`;
+        }).join('');
+      }
+    } else if (!value.running && tickerContainer.children.length === 0) {
+      tickerContainer.innerHTML = `<div class="ticker-empty">${esc(t('monitor.liveStreamIdle'))}</div>`;
+    }
+  }
+
+  const passedCount = progress.passed ?? exportReport.passed ?? 0;
+  if ($('nav-count')) {
+    $('nav-count').textContent = fmt(passedCount);
+    $('nav-count').classList.toggle('has-results', passedCount > 0);
+  }
+  if ($('live-passed')) {
+    animateNumber($('live-passed'), passedCount);
+  }
+  if (exportReport.profile && $('export-note')) {
     const counts = exportReport.reputation?.counts || {};
-    $('export-note').textContent = t('results.exportReady', {exported:fmt(exportReport.exported), passed:fmt(exportReport.passed), checked:fmt(exportReport.checked), candidates:fmt(exportReport.candidates), clean:fmt(counts.clean || 0), listed:fmt((counts.listed || 0) + (counts.local_denied || 0)), unknown:fmt(counts.unknown || 0), local:(exportReport.local_filtered ? t('results.localFiltered', {count:fmt(exportReport.local_filtered)}) : '') + anonymityCounts(exportReport)});
+    const reportText = t('results.exportReady', {exported:fmt(exportReport.exported), passed:fmt(exportReport.passed), checked:fmt(exportReport.checked), candidates:fmt(exportReport.scope_candidates ?? exportReport.candidates), clean:fmt(counts.clean || 0), listed:fmt((counts.listed || 0) + (counts.local_denied || 0)), unknown:fmt(counts.unknown || 0), local:(exportReport.local_filtered ? t('results.localFiltered', {count:fmt(exportReport.local_filtered)}) : '') + anonymityCounts(exportReport)});
+    const snapshotText = snapshotNotes(exportReport);
+    const diagnosticText = diagnosticNote(value.diagnostic, progress);
+    $('export-note').textContent = reportText + (snapshotText ? ' ' + snapshotText : '') + (diagnosticText ? ' ' + diagnosticText : '');
   }
   renderBreakdown((value.export || {}).breakdown);
-  $('api-line').classList.toggle('hidden', !value.api);
-  $('gateway-line').classList.toggle('hidden', !value.gateway);
-  if (value.gateway) {
-    $('gateway-address').textContent = value.gateway.address;
-    const [gatewayHost, gatewayPort] = value.gateway.address.split(':');
-    $('telegram-gateway').href = `tg://socks?server=${encodeURIComponent(gatewayHost)}&port=${encodeURIComponent(gatewayPort)}`;
-    $('gateway-stats').textContent = t('gateway.stats', {proxies:fmt(value.gateway.proxies), connections:fmt(value.gateway.connections)});
+  if ($('api-line')) $('api-line').classList.toggle('hidden', !value.api);
+  if ($('gateway-line')) $('gateway-line').classList.toggle('hidden', !value.gateway);
+
+  // Gateway screen & Mobile Hub QR / Links
+  const gwBadge = document.querySelector('.gateway-status-badge');
+  const gwPulse = document.querySelector('.status-pulse-large');
+  const gwPill = document.querySelector('.gw-live-status-pill');
+  const isOnline = Boolean(value.gateway && value.gateway.address);
+
+  if (gwBadge) {
+    gwBadge.textContent = isOnline ? t('gateway.online') : t('gateway.offline');
+    gwBadge.classList.toggle('online', isOnline);
+    gwBadge.classList.toggle('offline', !isOnline);
   }
-  $('api-example').textContent = value.api ? `${value.api}/random?protocol=socks5&format=txt` : '';
-  document.querySelectorAll('[data-download]').forEach(node => { node.disabled = !(value.downloads || []).includes(node.dataset.download) || (value.running && progress.phase === 'exporting'); });
+  if (gwPulse) gwPulse.style.display = isOnline ? 'inline-block' : 'none';
+  if (gwPill) gwPill.classList.toggle('offline', !isOnline);
+
+  if (isOnline) {
+    ['copy-gateway', 'copy-gateway-hero'].forEach(id => { if ($(id)) $(id).disabled = false; });
+    ['telegram-gateway', 'gw-tg-link', 'mobile-tg-btn-link'].forEach(id => {
+      const link = $(id);
+      if (link) link.setAttribute('aria-disabled', 'false');
+    });
+    if ($('gateway-address')) $('gateway-address').textContent = value.gateway.address;
+    const rawAddress = String(value.gateway.address || '');
+    const separator = rawAddress.lastIndexOf(':');
+    let gatewayHost = separator > 0 ? rawAddress.slice(0, separator) : rawAddress;
+    const gatewayPort = separator > 0 ? rawAddress.slice(separator + 1) : '';
+    if (gatewayHost.startsWith('[') && gatewayHost.endsWith(']')) gatewayHost = gatewayHost.slice(1, -1);
+    let tgUrl = `tg://socks?server=${encodeURIComponent(gatewayHost)}&port=${encodeURIComponent(gatewayPort)}`;
+    if (value.gateway.mobile_ready && value.gateway.username) {
+      tgUrl += `&username=${encodeURIComponent(value.gateway.username)}&password=${encodeURIComponent(value.gateway.password || '')}`;
+    }
+    if ($('telegram-gateway')) $('telegram-gateway').href = tgUrl;
+    if ($('gateway-stats')) $('gateway-stats').innerHTML = `<span class="pool-dot"></span>${esc(t('gateway.stats', {proxies:fmt(value.gateway.proxies), connections:fmt(value.gateway.connections)}))}`;
+
+    const gwPool = $('gw-pool-size');
+    if (gwPool) animateNumber(gwPool, value.gateway.proxies || 0);
+    const gwConns = $('gw-conns-size');
+    if (gwConns) animateNumber(gwConns, value.gateway.connections || 0);
+
+    const gwTgLink = $('gw-tg-link');
+    if (gwTgLink) gwTgLink.href = tgUrl;
+    const mobileTgLink = $('mobile-tg-btn-link');
+    if (mobileTgLink) mobileTgLink.href = tgUrl;
+
+    const renderQr = node => {
+      if (!node) return;
+      if (!value.gateway.mobile_ready) {
+        node.dataset.qrUnavailable = '1';
+        delete node.dataset.qrValue;
+        node.classList.remove('has-qr');
+        node.innerHTML = `<p class="text-muted text-sm">${esc(t('gateway.mobileUnavailable'))}</p>`;
+        return;
+      }
+      delete node.dataset.qrUnavailable;
+      if (node.dataset.qrValue !== tgUrl) {
+        const svg = makeQR(tgUrl);
+        if (!svg) {
+          delete node.dataset.qrValue;
+          node.classList.remove('has-qr');
+          node.innerHTML = `<p class="text-muted text-sm">${esc(t('gateway.qrTooLong'))}</p>`;
+          return;
+        }
+        node.dataset.qrValue = tgUrl;
+        node.classList.add('has-qr');
+        node.innerHTML = svg;
+      }
+    };
+    renderQr($('gw-tg-qr'));
+    renderQr($('mobile-tg-qr-box'));
+  } else {
+    if ($('gateway-address')) $('gateway-address').textContent = '—';
+    ['copy-gateway', 'copy-gateway-hero'].forEach(id => { if ($(id)) $(id).disabled = true; });
+    ['telegram-gateway', 'gw-tg-link', 'mobile-tg-btn-link'].forEach(id => {
+      const link = $(id);
+      if (!link) return;
+      link.removeAttribute('href');
+      link.setAttribute('aria-disabled', 'true');
+    });
+    ['gw-tg-qr', 'mobile-tg-qr-box'].forEach(id => {
+      const node = $(id);
+      if (!node) return;
+      delete node.dataset.qrValue;
+      delete node.dataset.qrUnavailable;
+      node.classList.remove('has-qr');
+      node.innerHTML = `<p class="text-muted text-sm">${esc(t('gateway.offline'))}</p>`;
+    });
+    if ($('gateway-stats')) $('gateway-stats').textContent = t('gateway.offline');
+  }
+  if ($('api-example')) $('api-example').textContent = value.api ? `${value.api}/random?protocol=socks5&format=txt` : '';
+  const snapshotUnavailable = Boolean(exportReport.profile && (snapshot.stale || snapshot.state === 'error'));
+  document.querySelectorAll('[data-download]').forEach(node => { node.disabled = snapshotUnavailable || !(value.downloads || []).includes(node.dataset.download) || (value.running && progress.phase === 'exporting'); });
+  ['singbox.json', 'clash.yaml'].forEach(name => {
+    const button = $(name === 'singbox.json' ? 'btn-copy-singbox' : 'btn-copy-clash');
+    if (button) button.disabled = snapshotUnavailable || !(value.downloads || []).includes(name) || value.running;
+  });
+  if ($('copy-page')) $('copy-page').disabled = snapshotUnavailable || value.running;
+  if ($('action-copy-selected')) $('action-copy-selected').disabled = snapshotUnavailable || value.running;
+  document.querySelectorAll('[data-copy-proxy]').forEach(node => { node.disabled = snapshotUnavailable; });
+  // A stale/error snapshot cannot be rebuilt into a useful export from the UI;
+  // the user must re-check first. A partial snapshot remains explicitly labelled
+  // and can still be exported as a partial result.
+  if ($('export')) $('export').disabled = snapshotUnavailable || value.running;
+  if ($('action-export-selected')) $('action-export-selected').disabled = snapshotUnavailable || value.running;
   const report = progress.sources ? progress : value.sources || {};
   renderSources(report, value.source_urls || [], value.source_keys || [], (value.export || {}).source_quality || {});
   const finished = job.id && !value.running ? job.id : null;
@@ -1237,142 +3112,819 @@ function renderBreakdown(breakdown) {
 
 function renderSources(report, urls, keys=[], quality={}) {
   const sourceRows = report.sources || [];
-  $('sources-status').textContent = report.denylist_error ? t('report.denylistError') : (sourceRows.length ? t('report.loaded', {done:sourceRows.filter(row => row.complete).length, total:sourceRows.length}) : t('report.none'));
+  const doneCount = sourceRows.filter(row => row.complete).length;
+  const statusEl = $('sources-status');
+  if (report.denylist_error) {
+    statusEl.className = 'badge fail';
+    statusEl.textContent = t('report.denylistError');
+  } else if (sourceRows.length) {
+    statusEl.className = doneCount === sourceRows.length ? 'badge success' : 'badge subtle';
+    statusEl.textContent = t('report.loaded', {done: doneCount, total: sourceRows.length});
+  } else {
+    statusEl.className = 'badge subtle';
+    statusEl.textContent = t('report.none');
+  }
+
   $('source-rows').innerHTML = sourceRows.length ? sourceRows.map(row => {
     const label = row.source ? urls[row.source - 1] || t('report.source', {number:row.source}) : t('report.ownList');
     const stats = quality[row.source ? keys[row.source - 1] : 'local'];
-    const working = stats ? `${fmt(stats.passed)} / ${fmt(stats.checked)}` : '—';
-    return `<tr><td title="${esc(label)}" style="max-width:440px;overflow:hidden;text-overflow:ellipsis">${esc(label)}</td><td>${fmt(row.rows)}</td><td>${fmt(row.invalid)}</td><td>${fmt(row.blocked || 0)}</td><td class="${row.complete ? '' : 'status-error'}">${esc(row.complete ? (row.rows === 0 ? t('report.emptyList') : row.rows === row.invalid ? t('report.noValid') : t('report.done')) : row.error || t('report.incomplete'))}</td><td>${esc(working)}</td></tr>`;
+    const working = stats ? `<span class="text-teal font-semibold">${fmt(stats.passed)}</span> <span class="text-muted">/ ${fmt(stats.checked)}</span>` : '—';
+
+    let statusBadge = '';
+    if (row.complete) {
+      if (row.rows === 0) {
+        statusBadge = `<span class="badge status-badge subtle">${esc(t('report.statusEmpty'))}</span>`;
+      } else if (row.rows === row.invalid) {
+        statusBadge = `<span class="badge status-badge warn"><span class="badge-icon">!</span> ${esc(t('report.statusNoValid'))}</span>`;
+      } else if (row.blocked && row.blocked >= row.rows) {
+        statusBadge = `<span class="badge status-badge warn"><span class="badge-icon">⊘</span> ${esc(t('report.statusBlocked'))}</span>`;
+      } else {
+        statusBadge = `<span class="badge status-badge pass"><span class="badge-icon">✓</span> ${esc(t('report.statusDone'))}</span>`;
+      }
+    } else {
+      const errText = row.error || t('report.statusError');
+      statusBadge = `<span class="badge status-badge fail" title="${esc(row.error || '')}"><span class="badge-icon">✕</span> ${esc(errText.length > 20 ? errText.slice(0, 19) + '…' : errText)}</span>`;
+    }
+
+    const blockedBadge = (row.blocked && row.blocked > 0)
+      ? `<span class="badge status-badge warn">${fmt(row.blocked)}</span>`
+      : `<span>0</span>`;
+
+    const rejectedVal = row.invalid > 0
+      ? `<span class="text-muted-warn">${fmt(row.invalid)}</span>`
+      : `${fmt(0)}`;
+
+    return `<tr>
+      <td title="${esc(label)}" class="source-url-cell">${esc(label)}</td>
+      <td>${fmt(row.rows)}</td>
+      <td>${rejectedVal}</td>
+      <td>${blockedBadge}</td>
+      <td>${statusBadge}</td>
+      <td>${working}</td>
+    </tr>`;
   }).join('') : `<tr><td colspan="6" class="empty">${esc(t('report.empty'))}</td></tr>`;
 }
 
 async function poll() {
   if (polling) return;
   polling = true;
-  try { renderState(await api('/api/state')); }
-  catch { $('phase').textContent = t('phase.offline'); }
+  try {
+    const value = await api('/api/state');
+    const gwBadge = document.querySelector('.gateway-status-badge');
+    const gwPulse = document.querySelector('.status-pulse-large');
+    const isOnline = Boolean(value.gateway && value.gateway.address);
+
+    if (gwBadge) {
+      gwBadge.textContent = isOnline ? t('gateway.online') : t('gateway.offline');
+      gwBadge.classList.toggle('online', isOnline);
+      gwBadge.classList.toggle('offline', !isOnline);
+    }
+    if (gwPulse) gwPulse.style.display = isOnline ? 'inline-block' : 'none';
+
+    renderState(value);
+  }
+  catch {
+    const gwBadge = document.querySelector('.gateway-status-badge');
+    const gwPulse = document.querySelector('.status-pulse-large');
+    if (gwBadge) {
+      gwBadge.textContent = t('gateway.offline');
+      gwBadge.classList.toggle('online', false);
+      gwBadge.classList.toggle('offline', true);
+    }
+    if (gwPulse) gwPulse.style.display = 'none';
+
+    const phaseEl = $('phase');
+    if (phaseEl) {
+      phaseEl.textContent = t('phase.offline');
+      phaseEl.dataset.phase = 'offline';
+    }
+    const monitorCard = document.querySelector('.monitor');
+    if (monitorCard) monitorCard.dataset.phase = 'offline';
+  }
   finally { polling = false; }
+}
+
+const selectedProxies = new Set();
+
+function updateSelectionUI() {
+  const bar = $('selection-action-bar');
+  const countBadge = $('selection-count');
+  const selectAll = $('select-all-proxies');
+  const count = selectedProxies.size;
+
+  if (bar) {
+    const isVisible = count > 0;
+    bar.classList.toggle('hidden', !isVisible);
+    bar.classList.toggle('active', isVisible);
+    bar.setAttribute('aria-hidden', String(!isVisible));
+  }
+  if (countBadge) countBadge.textContent = t('results.selectedCount', {count: fmt(count)});
+
+  const checkboxes = document.querySelectorAll('.proxy-select-box');
+  if (checkboxes.length && selectAll) {
+    const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+    const someChecked = Array.from(checkboxes).some(cb => cb.checked);
+    selectAll.checked = allChecked;
+    selectAll.indeterminate = someChecked && !allChecked;
+  }
+}
+
+function renderCountryDistribution(rows, breakdown) {
+  const bar = $('country-distribution-bar');
+  const stats = $('country-bar-stats');
+  if (!bar || !stats) return;
+
+  const counts = {};
+  let total = 0;
+  if (breakdown && breakdown.countries && Object.keys(breakdown.countries).length) {
+    for (const [c, cnt] of Object.entries(breakdown.countries)) {
+      counts[c] = cnt;
+      total += cnt;
+    }
+  } else if (rows && rows.length) {
+    for (const r of rows) {
+      const c = r.country || '??';
+      counts[c] = (counts[c] || 0) + 1;
+      total++;
+    }
+  }
+
+  if (total === 0) {
+    bar.innerHTML = '<div class="country-bar-seg empty" style="width:100%"></div>';
+    stats.textContent = '';
+    return;
+  }
+
+  const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  const colors = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4', '#64748b'];
+
+  bar.innerHTML = sorted.slice(0, 10).map(([c, cnt], i) => {
+    const pct = Math.max(2, (cnt / total * 100)).toFixed(1);
+    const color = colors[i % colors.length];
+    return `<div class="country-bar-seg" style="width:${pct}%;background:${color}" title="${esc(c)}: ${fmt(cnt)} (${(cnt/total*100).toFixed(1)}%)"></div>`;
+  }).join('');
+
+  stats.innerHTML = sorted.slice(0, 5).map(([c, cnt]) => {
+    const flag = getCountryFlag(c);
+    const pct = (cnt / total * 100).toFixed(0);
+    return `<span class="country-stat-item">${flag} <b>${esc(c)}</b> <em>${pct}%</em></span>`;
+  }).join(' ');
 }
 
 function renderResults(data) {
   const page = data ? data.rows : [];
   const start = data ? data.offset : 0;
   const total = data ? data.total : 0;
-  $('result-context').textContent = data && data.profile ? t('results.context', {targets:data.targets.map(target => target.name ? `${target.name} (${target.url})` : target.url).join(' + '), profile:profileLabel(data.request_profile || 'workbench')}) : t('results.empty');
-  $('result-total').textContent = t('results.total', {count:fmt(total)});
-  $('page-number').textContent = `${fmt(Math.floor(start / 50) + 1)} / ${fmt(Math.max(1, Math.ceil(total / 50)))}`;
-  $('result-rows').innerHTML = page.length ? page.map((row, index) => `<tr><td>${fmt(start + index + 1)}</td><td>${esc(row.proxy)}</td><td><span class="score">${Number(row.score).toFixed(1)}</span></td><td>${esc(ms(Number(row.latency_ms).toFixed(0)))}</td><td>${esc(ms(Number(row.jitter_ms).toFixed(0)))}</td><td>${row.speed && row.speed.mbps != null ? esc(Number(row.speed.mbps).toFixed(1)) : '—'}</td><td>${(Number(row.min_target_reliability) * 100).toFixed(0)}%</td><td>${row.history ? esc(`${fmt(row.history.passes)}/${fmt(row.history.checks)}`) : '1/1'}</td><td>${reputationBadge(row)}</td><td>${anonymityBadge(row)}</td><td class="country" title="${esc(row.anonymity && row.anonymity.exit_ip ? t('results.exitIp', {ip:row.anonymity.exit_ip}) : '')}">${esc(countryLabel(row))}</td><td class="provider" title="${esc(row.provider ? `AS${row.provider.asn} ${row.provider.org}` : '')}">${providerCell(row)}</td><td><button class="text-link" data-details="${index}">${esc(t('results.details'))}</button></td></tr>`).join('') : `<tr><td colspan="13" class="empty">${esc(t(data ? 'results.noneMatching' : 'results.noneYet'))}</td></tr>`;
+  if ($('result-context')) $('result-context').textContent = data && data.profile ? t('results.context', {targets:data.targets.map(target => target.name ? `${target.name} (${target.url})` : target.url).join(' + '), profile:profileLabel(data.request_profile || 'workbench')}) : t('results.empty');
+  if ($('result-total')) $('result-total').textContent = t('results.total', {count:fmt(total)});
+  const curPage = Math.floor(start / 50) + 1;
+  const totalPages = Math.max(1, Math.ceil(total / 50));
+  if ($('page-number')) $('page-number').textContent = t('results.pageStatus', {page:fmt(curPage), pages:fmt(totalPages), total:fmt(total)});
+  const copyTitle = esc(t('results.copyProxy') || 'Copy proxy address');
+
+  // Country distribution bar
+  renderCountryDistribution(page, (state.export || {}).breakdown);
+
+  const rowsContainer = $('result-rows');
+  if (!rowsContainer) return;
+
+  rowsContainer.innerHTML = page.length ? page.map((row, index) => {
+    const scoreVal = Number(row.score);
+    const scoreClass = scoreVal >= 75 ? 'high' : scoreVal >= 45 ? 'med' : 'low';
+    const rawProxy = String(row.proxy || '');
+    let proto = (row.protocol || '').toLowerCase();
+    let addrText = rawProxy;
+    if (rawProxy.includes('://')) {
+      const parts = rawProxy.split('://');
+      if (!proto) proto = parts[0].toLowerCase();
+      addrText = parts[1];
+    } else if (!proto) {
+      proto = 'http';
+    }
+    const protoBadge = `<span class="proto-tag proto-${esc(proto)}">${esc(proto.toUpperCase())}</span>`;
+    const proxyCell = `<div class="proxy-cell">${protoBadge}<span class="proxy-text">${esc(addrText)}</span><button class="copy-proxy-btn" data-copy-proxy="${esc(rawProxy)}" title="${copyTitle}" aria-label="${copyTitle}"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg></button></div>`;
+    const detailsBtn = `<button class="button chip details-btn" data-details="${index}"><span class="details-icon">↗</span> <span>${esc(t('results.details'))}</span></button>`;
+    const isChecked = selectedProxies.has(row.proxy) ? 'checked' : '';
+    const flag = getCountryFlag(row.country);
+
+    const isSocks5 = row.proxy.startsWith('socks5://');
+    let tgBtn = '';
+    if (isSocks5) {
+      const clean = row.proxy.replace('socks5://', '');
+      const [h, p] = clean.split(':');
+      tgBtn = `<a href="tg://socks?server=${encodeURIComponent(h)}&port=${encodeURIComponent(p || '1080')}" class="button chip row-tg-btn" title="Telegram" target="_blank">TG</a>`;
+    }
+
+    const testBtn = `<button type="button" class="button chip quick-test-btn" data-test-proxy="${esc(row.proxy)}" title="${esc(t('action.test') || 'Test')}">⚡</button>`;
+
+    return `<tr>
+      <td class="td-check"><input type="checkbox" class="proxy-select-box" data-proxy="${esc(row.proxy)}" aria-label="${esc(t('results.selectProxy', {proxy:row.proxy}))}" ${isChecked}></td>
+      <td class="td-num">${fmt(start + index + 1)}</td>
+      <td>${proxyCell}</td>
+      <td><span class="score ${scoreClass}">${scoreVal.toFixed(1)}</span></td>
+      <td>${latencyBadge(row.latency_ms)}</td>
+      <td>${latencyBadge(row.jitter_ms)}</td>
+      <td>${row.speed && row.speed.mbps != null ? esc(Number(row.speed.mbps).toFixed(1)) : '—'}</td>
+      <td>${(Number(row.min_target_reliability) * 100).toFixed(0)}%</td>
+      <td>${row.history ? esc(`${fmt(row.history.passes)}/${fmt(row.history.checks)}`) : '1/1'}</td>
+      <td>${reputationBadge(row)}</td>
+      <td>${anonymityBadge(row)}</td>
+      <td class="country" title="${esc(row.anonymity && row.anonymity.exit_ip ? t('results.exitIp', {ip:row.anonymity.exit_ip}) : '')}"><span class="country-flag">${flag}</span> ${esc(countryLabel(row))}</td>
+      <td class="provider" title="${esc(row.provider ? `AS${row.provider.asn} ${row.provider.org}` : '')}">${providerCell(row)}</td>
+      <td class="td-actions">
+        <div class="row-actions-group">
+          ${testBtn}
+          ${tgBtn}
+          ${detailsBtn}
+        </div>
+      </td>
+    </tr>`;
+  }).join('') : `<tr><td colspan="14" class="empty">${esc(t(data ? 'results.noneMatching' : 'results.noneYet'))}</td></tr>`;
+
   $('result-rows').querySelectorAll('[data-details]').forEach(node => node.onclick = () => details(page[Number(node.dataset.details)]));
+
+  // Selection checkboxes
+  $('result-rows').querySelectorAll('.proxy-select-box').forEach(cb => {
+    cb.onchange = e => {
+      const p = e.target.dataset.proxy;
+      if (e.target.checked) selectedProxies.add(p); else selectedProxies.delete(p);
+      updateSelectionUI();
+    };
+  });
+
+  // Inline Quick Test handler
+  $('result-rows').querySelectorAll('.quick-test-btn').forEach(btn => {
+    btn.onclick = async e => {
+      e.stopPropagation();
+      const proxy = btn.dataset.testProxy;
+      btn.disabled = true;
+      btn.innerHTML = '⏳';
+      try {
+        const res = await api('/api/test-proxy', {
+          proxy,
+          min_success: $('result-min') ? Number($('result-min').value) : 2/3
+        });
+        if (res.ok) {
+          btn.innerHTML = `✓ ${Math.round(res.latency_ms)}ms`;
+          btn.className = 'button chip pass test-badge';
+          toast(`${proxy} · ${Math.round(res.latency_ms)}ms · OK`);
+        } else {
+          btn.innerHTML = '✕ Err';
+          btn.className = 'button chip fail test-badge';
+          toast(`${proxy} · ${res.error || 'Failed'}`, true);
+        }
+      } catch (err) {
+        btn.innerHTML = '✕';
+        toast(err.message, true);
+      } finally {
+        setTimeout(() => {
+          btn.disabled = false;
+          if (!btn.classList.contains('pass') && !btn.classList.contains('fail')) {
+            btn.innerHTML = '⚡';
+          }
+        }, 5000);
+      }
+    };
+  });
+
+  updateSelectionUI();
+
+  if (!$('result-rows')._copyDelegated) {
+    $('result-rows')._copyDelegated = true;
+    $('result-rows').addEventListener('click', async event => {
+      const btn = event.target.closest('[data-copy-proxy]');
+      if (!btn) return;
+      event.stopPropagation();
+      if (state.export && (state.export.stale || state.export.state === 'error')) {
+        toast(t('phase.stale'), true);
+        return;
+      }
+      const proxy = btn.dataset.copyProxy;
+      try {
+        await navigator.clipboard.writeText(proxy);
+        markCopied(btn, '✓');
+        toast(proxy + ' · ' + (t('results.copied') || 'Скопировано!'));
+      } catch {
+        toast(t('toast.copyFailed'), true);
+      }
+    });
+  }
 }
 
+let pendingLoadResults = false;
+
 async function loadResults() {
-  if (resultBusy) return;
+  if (resultBusy) {
+    pendingLoadResults = true;
+    return;
+  }
   resultBusy = true;
-  $('refresh-results').disabled = true;
+  pendingLoadResults = false;
+  const refreshBtn = $('refresh-results');
+  if (refreshBtn) refreshBtn.disabled = true;
   try {
-    const query = new URLSearchParams({sort:$('result-sort').value, min_success:$('result-min').value, min_anonymity:$('result-anon').value, protocol:$('result-protocol').value, max_latency:Number($('result-max-latency').value) || 0, country:$('result-country').value.trim(), hosting:$('result-hosting').value, q:$('result-search').value.trim(), offset});
+    const query = new URLSearchParams({
+      sort: $('result-sort') ? $('result-sort').value : 'recommended',
+      min_success: $('result-min') ? $('result-min').value : '1',
+      min_anonymity: $('result-anon') ? $('result-anon').value : 'any',
+      quick: activeQuickFilter(),
+      protocol: $('result-protocol') ? $('result-protocol').value : 'all',
+      max_latency: Number($('result-max-latency') ? $('result-max-latency').value : 0) || 0,
+      country: $('result-country') ? $('result-country').value.trim() : '',
+      hosting: resultHostingFilter(),
+      q: $('result-search') ? $('result-search').value.trim() : '',
+      offset
+    });
     const data = await api('/api/results?' + query);
-    resultTargets = data.targets;
+    resultTargets = data.targets || [];
     resultData = {...data, offset};
     renderResults(resultData);
-    $('prev').disabled = offset === 0;
-    $('next').disabled = offset + 50 >= data.total;
+    if ($('prev')) $('prev').disabled = offset === 0;
+    if ($('next')) $('next').disabled = offset + 50 >= (data.total || 0);
   } catch (error) {
     toast(error.message, true);
   } finally {
     resultBusy = false;
-    $('refresh-results').disabled = false;
+    if (refreshBtn) refreshBtn.disabled = false;
+    if (pendingLoadResults) {
+      pendingLoadResults = false;
+      loadResults();
+    }
   }
 }
 
 function renderDetails(row) {
-  $('details-title').textContent = row.proxy;
-  const verdict = row.reputation || {status:'clean', dnsbl:[]};
-  const dnsbl = (verdict.dnsbl || []).map(item => `${esc(item.zone)}: ${esc(t(item.status === 'listed' ? 'dnsbl.listed' : item.status === 'clear' ? 'dnsbl.clear' : 'dnsbl.noAnswer'))}`).join(' · ') || esc(t('dnsbl.notChecked'));
-  const head = ['col.attempt', 'col.response', 'col.time', 'col.bytes', 'col.result'].map(key => `<th>${esc(t(key))}</th>`).join('');
-  $('details-body').innerHTML = `<div class="detail-reputation"><strong>${esc(t('details.cleanliness'))}</strong> ${esc(reputationLabel(verdict.status))} · <strong>DNSBL:</strong> ${dnsbl}${verdict.local_rule ? esc(t('details.localRule')) + esc(verdict.local_rule) : ''}${anonymityDetails(row)}${row.aborted ? ' · ' + esc(t('details.aborted')) : ''}</div>` + resultTargets.map((target, index) => `<h3>${esc(target.name || t('details.service', {number:index + 1}))} · ${esc(target.url)}</h3><div class="table-wrap"><table><thead><tr>${head}</tr></thead><tbody>${(row.samples || []).filter(sample => sample.target === index).map(sample => `<tr><td>${esc(sample.attempt)}</td><td>${esc(sample.status ?? '—')}</td><td>${esc(ms(sample.ms))}</td><td>${fmt(sample.bytes)}</td><td class="${sample.ok ? '' : 'status-error'}">${esc(sample.ok ? t('details.success') : sample.error)}</td></tr>`).join('')}</tbody></table></div>`).join('');
+  const titleEl = $('details-title');
+  if (titleEl) titleEl.textContent = row.proxy;
+  const verdict = row.reputation && typeof row.reputation === 'object' ? row.reputation : {};
+  const repStatus = reputationStatus(row);
+  const dnsblItems = Array.isArray(verdict.dnsbl) ? verdict.dnsbl : [];
+
+  const dnsblBadges = dnsblItems.length ? dnsblItems.map(item => {
+    const isListed = item.status === 'listed';
+    const isClear = item.status === 'clear';
+    const cls = isListed ? 'dnsbl-pill listed' : isClear ? 'dnsbl-pill clear' : 'dnsbl-pill unk';
+    const label = t(isListed ? 'dnsbl.listed' : isClear ? 'dnsbl.clear' : 'dnsbl.noAnswer');
+    return `<span class="${cls}"><span class="dnsbl-zone">${esc(item.zone)}</span> <span class="dnsbl-status">${esc(label)}</span></span>`;
+  }).join(' ') : `<span class="detail-val-dim">${esc(t('dnsbl.notChecked'))}</span>`;
+
+  let html = `<div class="detail-reputation-card">
+    <div class="reputation-card-grid">
+      <div class="rep-stat-col">
+        <span class="rep-stat-label">${esc(t('details.cleanliness'))}</span>
+        <div class="rep-stat-val">${reputationBadge(row)}</div>
+      </div>
+      <div class="rep-stat-col">
+        <span class="rep-stat-label">DNSBL / Denylist</span>
+        <div class="dnsbl-pill-group">${dnsblBadges}</div>
+      </div>
+      ${verdict.local_rule ? `<div class="rep-stat-col"><span class="rep-stat-label">${esc(t('details.localRule'))}</span><code class="local-rule-code">${esc(verdict.local_rule)}</code></div>` : ''}
+      <div class="rep-stat-col">
+        <span class="rep-stat-label">${esc(t('col.anonymity'))}</span>
+        <div class="rep-stat-val">${anonymityBadge(row)}${row.anonymity && row.anonymity.exit_ip ? ` <span class="exit-ip-badge">IP: ${esc(row.anonymity.exit_ip)}</span>` : ''}</div>
+      </div>
+    </div>
+    ${row.aborted ? `<div class="detail-aborted-banner">${esc(t('details.aborted'))}</div>` : ''}
+  </div>`;
+
+  const samples = row.samples || [];
+  html += resultTargets.map((target, index) => {
+    const targetSamples = samples.filter(sample => sample.target === index);
+    const passedCount = targetSamples.filter(s => s.ok).length;
+    const totalCount = targetSamples.length;
+    const targetPassedClass = totalCount > 0 && passedCount === totalCount ? 'pass-all' : passedCount > 0 ? 'pass-part' : 'pass-none';
+
+    const cardsHtml = targetSamples.map(sample => {
+      let codeClass = 'code-err';
+      let codeLabel = esc(sample.error || 'Error');
+      const code = sample.status;
+      if (code >= 200 && code < 300) {
+        codeClass = 'code-2xx';
+        codeLabel = 'OK';
+      } else if (code >= 300 && code < 400) {
+        codeClass = 'code-3xx';
+        codeLabel = 'Redirect';
+      } else if (code >= 400 && code < 500) {
+        codeClass = 'code-4xx';
+        codeLabel = 'Client Err';
+      } else if (code >= 500) {
+        codeClass = 'code-5xx';
+        codeLabel = 'Server Err';
+      } else if (!code) {
+        const isTimeout = String(sample.error || '').toLowerCase().includes('timeout');
+        codeClass = isTimeout ? 'code-timeout' : 'code-err';
+        codeLabel = isTimeout ? 'Timeout' : esc(sample.error || 'Error');
+      }
+
+      const latencyClass = sample.ms < 800 ? 'stat-fast' : sample.ms < 2000 ? 'stat-med' : 'stat-slow';
+
+      return `<div class="attempt-card ${sample.ok ? 'attempt-ok' : 'attempt-fail'}">
+        <div class="attempt-card-header">
+          <span class="attempt-title">${esc(t('details.attemptNum', {number: sample.attempt}))}</span>
+          <span class="badge attempt-verdict ${sample.ok ? 'pass' : 'fail'}">${sample.ok ? '✓ ' + esc(t('details.success')) : '✕ ' + esc(sample.error || 'Fail')}</span>
+        </div>
+        <div class="status-code-pill ${codeClass}">
+          <span class="status-code-num">${code ?? 'ERR'}</span>
+          <span class="status-code-label">${codeLabel}</span>
+        </div>
+        <div class="attempt-metrics">
+          <div class="attempt-metric">
+            <span class="metric-label">${esc(t('details.time'))}</span>
+            <span class="metric-value ${latencyClass}">${esc(ms(sample.ms))}</span>
+          </div>
+          <div class="attempt-metric">
+            <span class="metric-label">${esc(t('details.bytes'))}</span>
+            <span class="metric-value">${fmt(sample.bytes)} B</span>
+          </div>
+        </div>
+        ${!sample.ok && sample.error ? `<div class="attempt-error-detail" title="${esc(sample.error)}">${esc(sample.error)}</div>` : ''}
+      </div>`;
+    }).join('');
+
+    return `<div class="target-detail-section">
+      <div class="target-detail-header">
+        <div class="target-title-group">
+          <span class="target-num-badge">${index + 1}</span>
+          <div class="target-title-texts">
+            <h3 class="target-name">${esc(target.name || t('details.targetService', {number:index + 1}))}</h3>
+            <span class="target-url" title="${esc(target.url)}">${esc(target.url)}</span>
+          </div>
+        </div>
+        <span class="badge target-ratio-badge ${targetPassedClass}">${esc(t('details.passedRatio', {passed: fmt(passedCount), total: fmt(totalCount)}))}</span>
+      </div>
+      <div class="attempt-grid">${cardsHtml || `<div class="no-attempts-hint">${esc(t('report.empty'))}</div>`}</div>
+    </div>`;
+  }).join('');
+
+  const bodyEl = $('details-body');
+  if (bodyEl) bodyEl.innerHTML = html;
 }
 
 async function details(summary) {
+  if (!summary || !summary.proxy) return;
   try {
     const row = await api('/api/result-detail?proxy=' + encodeURIComponent(summary.proxy));
     detailRow = row;
     renderDetails(row);
-    $('details-dialog').showModal();
+    const dlg = $('details-dialog');
+    if (dlg) {
+      if (dlg.open && typeof dlg.close === 'function') {
+        dlg.close();
+      }
+      if (typeof dlg.showModal === 'function') {
+        dlg.showModal();
+      }
+    }
   } catch (error) {
     toast(error.message, true);
   }
 }
 
-$('close-details').onclick = () => $('details-dialog').close();
-$('add-target').onclick = () => addTarget();
-$('save-settings').onclick = save;
-$('save-sources').onclick = save;
-$('start').onclick = () => start('run');
-$('resume').onclick = () => start('scan');
-$('recheck').onclick = () => start('recheck');
-$('recheck-passing').onclick = () => start('recheck_passing');
-$('collect').onclick = () => start('collect');
-$('export').onclick = () => start('export');
-$('stop').onclick = async () => { try { $('stop').disabled = true; await api('/api/stop', {}); toast(t('toast.stopping')); await poll(); } catch (error) { toast(error.message, true); } };
-$('clear-data').onclick = async () => { if (!confirm(t('confirm.clear'))) return; try { const result = await api('/api/clear-data', {}); toast(t('toast.cleared', {count:result.removed.length})); await poll(); } catch (error) { toast(error.message, true); } };
-$('refresh-results').onclick = () => { offset = 0; loadResults(); };
-['result-sort', 'result-min', 'result-anon', 'result-protocol', 'result-max-latency', 'result-hosting'].forEach(id => $(id).onchange = () => { offset = 0; loadResults(); });
+const detailsDialog = $('details-dialog');
+const closeDetailsBtn = $('close-details');
+if (closeDetailsBtn) {
+  closeDetailsBtn.onclick = (e) => {
+    if (e) e.preventDefault();
+    if (detailsDialog && typeof detailsDialog.close === 'function') {
+      detailsDialog.close();
+    }
+  };
+}
+
+if (detailsDialog) {
+  detailsDialog.addEventListener('click', event => {
+    if (event.target === detailsDialog) {
+      const rect = detailsDialog.getBoundingClientRect();
+      const isInDialog = (
+        rect.top <= event.clientY &&
+        event.clientY <= rect.bottom &&
+        rect.left <= event.clientX &&
+        event.clientX <= rect.right
+      );
+      if (!isInDialog && typeof detailsDialog.close === 'function') {
+        detailsDialog.close();
+      }
+    }
+  });
+
+  window.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && detailsDialog.open && typeof detailsDialog.close === 'function') {
+      detailsDialog.close();
+    }
+  });
+
+  detailsDialog.addEventListener('close', () => {
+    detailsDialog.removeAttribute('open');
+  });
+}
+
+if ($('add-target')) $('add-target').onclick = () => addTarget();
+if ($('save-settings')) $('save-settings').onclick = save;
+if ($('save-sources')) $('save-sources').onclick = save;
+if ($('start')) $('start').onclick = () => start('run');
+if ($('resume')) $('resume').onclick = () => start('scan');
+if ($('recheck')) $('recheck').onclick = () => start('recheck');
+if ($('recheck-passing')) $('recheck-passing').onclick = () => start('recheck_passing');
+if ($('collect')) $('collect').onclick = () => start('collect');
+if ($('export')) $('export').onclick = () => start('export');
+if ($('stop')) {
+  $('stop').onclick = async () => {
+    try {
+      $('stop').disabled = true;
+      await api('/api/stop', {});
+      toast(t('toast.stopping'));
+      await poll();
+    } catch (error) {
+      toast(error.message, true);
+    }
+  };
+}
+
+async function clearLocalData() {
+  if (!confirm(t('confirm.clear'))) return;
+  try {
+    const result = await api('/api/clear-data', {});
+    toast(t('toast.cleared', {count: (result && result.removed) ? result.removed.length : 0}));
+    await poll();
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+if ($('clear-data')) $('clear-data').onclick = clearLocalData;
+document.querySelectorAll('[data-action="clear-data"]').forEach(button => { button.onclick = clearLocalData; });
+
+let isSyncingFilters = false;
+
+function syncScanToResults(sourceId) {
+  if (isSyncingFilters) return;
+  isSyncingFilters = true;
+  try {
+    if (sourceId === 'protocol' || !sourceId) {
+      if ($('protocol') && $('result-protocol')) $('result-protocol').value = $('protocol').value;
+    }
+    if (sourceId === 'min_anonymity' || !sourceId) {
+      if ($('min_anonymity') && $('result-anon')) $('result-anon').value = $('min_anonymity').value;
+    }
+    if (sourceId === 'max_latency' || !sourceId) {
+      if ($('max_latency') && $('result-max-latency')) $('result-max-latency').value = $('max_latency').value;
+    }
+    if (sourceId === 'countries' || !sourceId) {
+      if ($('countries') && $('result-country')) {
+        $('result-country').value = $('countries').value;
+        if (typeof countriesComboboxInstance !== 'undefined' && countriesComboboxInstance) {
+          countriesComboboxInstance.syncFromInput();
+        }
+      }
+    }
+    if (sourceId === 'top' || !sourceId) {
+      if ($('top') && $('result-top')) $('result-top').value = $('top').value;
+    }
+    if (sourceId === 'min_success' || !sourceId) {
+      if ($('min_success') && $('result-min')) {
+        const val = $('min_success').value;
+        if (![...$('result-min').options].some(o => o.value === val)) {
+          $('result-min').add(new Option(`${Math.round(Number(val) * 100)}%`, val));
+        }
+        $('result-min').value = val;
+      }
+    }
+    if (sourceId === 'exclude_hosting' || !sourceId) {
+      if ($('exclude_hosting') && $('result-hosting')) {
+        $('result-hosting').value = $('exclude_hosting').checked ? 'exclude' : 'keep';
+      }
+    }
+    if (sourceId === 'sort' || !sourceId) {
+      if ($('sort') && $('result-sort')) $('result-sort').value = $('sort').value;
+    }
+  } finally {
+    isSyncingFilters = false;
+  }
+}
+
+if ($('refresh-results')) $('refresh-results').onclick = () => { offset = 0; loadResults(); };
+
+// Results controls are view/export filters only; they never mutate the next scan.
+['result-sort', 'result-min', 'result-anon', 'result-protocol', 'result-max-latency', 'result-hosting', 'result-top'].forEach(id => {
+  const el = $(id);
+  if (el) el.onchange = () => {
+    offset = 0;
+    loadResults();
+  };
+});
+
+// Scan tab filters: sync to Results
+['protocol', 'min_anonymity', 'max_latency', 'top', 'min_success', 'sort'].forEach(id => {
+  const el = $(id);
+  if (el) el.onchange = () => {
+    syncScanToResults(id);
+    if (currentTab === 'results') { offset = 0; loadResults(); }
+  };
+});
+if ($('exclude_hosting')) {
+  $('exclude_hosting').onchange = () => {
+    syncScanToResults('exclude_hosting');
+    if (currentTab === 'results') { offset = 0; loadResults(); }
+  };
+}
+if ($('countries')) {
+  $('countries').oninput = () => {
+    syncScanToResults('countries');
+    if (currentTab === 'results') {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => { offset = 0; loadResults(); }, 150);
+    }
+  };
+}
+
 let searchTimer;
-$('result-search').oninput = () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => { offset = 0; loadResults(); }, 300); };
-$('result-country').oninput = $('result-search').oninput;
+if ($('result-search')) {
+  $('result-search').oninput = () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => { offset = 0; loadResults(); }, 150);
+  };
+}
+if ($('result-country')) {
+  $('result-country').oninput = () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => { offset = 0; loadResults(); }, 150);
+  };
+}
 
 const presets = {
   quick: {attempts:1, timeout:5, connect_timeout:2, workers:256, prefilter:1024, fail_fast:true},
   balanced: {attempts:3, timeout:8, connect_timeout:4, workers:128, prefilter:512, fail_fast:true},
   thorough: {attempts:5, timeout:12, connect_timeout:6, prefilter:256, workers:128, fail_fast:true}
 };
-document.querySelectorAll('[data-preset]').forEach(node => node.onclick = () => {
-  const preset = presets[node.dataset.preset];
-  for (const [key, value] of Object.entries(preset)) {
-    if (typeof value === 'boolean') $(key).checked = value; else $(key).value = value;
+
+function markCopied(button, html) {
+  if (!button) return;
+  button.classList.add('copied');
+  if (!button.dataset.origHtml) button.dataset.origHtml = button.innerHTML;
+
+  const copiedLabel = t('results.copied') || (lang === 'ru' ? 'Скопировано!' : 'Copied!');
+  if (html) {
+    button.innerHTML = html;
+  } else {
+    const textSpan = button.querySelector('.btn-text');
+    const iconSpan = button.querySelector('.btn-icon');
+    if (textSpan) {
+      textSpan.textContent = '✓ ' + copiedLabel;
+      if (iconSpan) iconSpan.textContent = '✓';
+    } else {
+      button.innerHTML = `<span class="btn-icon">✓</span> <span class="btn-text">${esc('✓ ' + copiedLabel)}</span>`;
+    }
   }
-  toast(t('preset.applied'));
+
+  if (button._copyTimeout) clearTimeout(button._copyTimeout);
+  button._copyTimeout = setTimeout(() => {
+    button.classList.remove('copied');
+    if (button.dataset.origHtml) {
+      button.innerHTML = button.dataset.origHtml;
+      delete button.dataset.origHtml;
+    }
+    delete button._copyTimeout;
+  }, 1500);
+}
+
+function updateSegmentedGlider() {
+  const control = document.querySelector('.segmented-control');
+  if (!control) return;
+  const active = control.querySelector('.segmented-btn.active');
+  const glider = control.querySelector('.segmented-glider');
+  if (!active || !glider) return;
+  const cRect = control.getBoundingClientRect();
+  const aRect = active.getBoundingClientRect();
+  if (aRect.width === 0) return;
+  const left = aRect.left - cRect.left;
+  glider.style.width = `${aRect.width}px`;
+  glider.style.transform = `translateX(${left}px)`;
+  glider.style.opacity = '1';
+}
+
+function updateLineCounts() {
+  const countLines = val => (val || '').split('\n').map(s => s.trim()).filter(s => s.length > 0 && !s.startsWith('#')).length;
+  const pluralLines = c => {
+    if (lang === 'ru') {
+      const mod10 = c % 10;
+      const mod100 = c % 100;
+      if (mod100 >= 11 && mod100 <= 19) return `${c} строк`;
+      if (mod10 === 1) return `${c} строка`;
+      if (mod10 >= 2 && mod10 <= 4) return `${c} строки`;
+      return `${c} строк`;
+    }
+    return c === 1 ? '1 line' : `${c} lines`;
+  };
+  const dZones = $('dnsbl-zones');
+  const dCount = $('dnsbl-lines-count');
+  if (dZones && dCount) {
+    const c = countLines(dZones.value);
+    dCount.textContent = pluralLines(c);
+    dCount.classList.toggle('has-lines', c > 0);
+  }
+  const deny = $('denylist');
+  const denyCount = $('denylist-lines-count');
+  if (deny && denyCount) {
+    const c = countLines(deny.value);
+    denyCount.textContent = pluralLines(c);
+    denyCount.classList.toggle('has-lines', c > 0);
+  }
+}
+
+if ($('dnsbl-zones')) $('dnsbl-zones').addEventListener('input', updateLineCounts);
+if ($('denylist')) $('denylist').addEventListener('input', updateLineCounts);
+window.addEventListener('resize', updateSegmentedGlider);
+
+document.querySelectorAll('[data-preset]').forEach(node => {
+  if (!node) return;
+  node.onclick = () => {
+    const preset = presets[node.dataset.preset];
+    if (!preset) return;
+    for (const [key, value] of Object.entries(preset)) {
+      const el = $(key);
+      if (!el) continue;
+      if (typeof value === 'boolean') el.checked = value; else el.value = value;
+    }
+    document.querySelectorAll('[data-preset]').forEach(b => b.classList.remove('active'));
+    node.classList.add('active');
+    updateSegmentedGlider();
+    syncAllPresetChips();
+    toast(t('preset.applied'));
+  };
 });
 
+let lastGeoStatus = null;
 function renderGeo(status) {
-  $('geo-status').textContent = status.available ? t('geo.ready', {count:fmt(status.ranges)}) + (status.providers ? t('geo.providers', {count:fmt(status.provider_ranges)}) : '') : t('geo.missing');
+  lastGeoStatus = status;
+  const statusEl = $('geo-status');
+  if (!statusEl) return;
+  if (status && status.available) {
+    statusEl.className = 'badge success geo-ready-badge';
+    statusEl.innerHTML = `<span class="status-dot green"></span> ` + esc(t('geo.ready', {count:fmt(status.ranges)}) + (status.providers ? t('geo.providers', {count:fmt(status.provider_ranges)}) : ''));
+  } else {
+    statusEl.className = 'badge subtle';
+    statusEl.innerHTML = `<span class="status-dot gray"></span> ` + esc(t('geo.missing'));
+  }
 }
 async function loadGeo() {
   try { renderGeo(await api('/api/geoip')); } catch {}
 }
-$('geo-update').onclick = async () => {
-  $('geo-update').disabled = true;
-  toast(t('geo.downloading'));
+if ($('geo-update')) {
+  $('geo-update').onclick = async () => {
+    const btn = $('geo-update');
+    const spinner = btn.querySelector('.btn-spinner');
+    const label = btn.querySelector('.btn-label') || btn;
+    btn.disabled = true;
+    if (spinner) spinner.classList.remove('hidden');
+    label.textContent = t('geo.downloading');
+    toast(t('geo.downloading'));
+    try {
+      renderGeo(await api('/api/geoip/update', {}));
+      toast(t('geo.updated'));
+      if (currentTab === 'results') loadResults();
+    } catch (error) {
+      toast(error.message, true);
+    } finally {
+      btn.disabled = false;
+      if (spinner) spinner.classList.add('hidden');
+      label.textContent = t('geo.download');
+    }
+  };
+}
+loadGeo();
+if ($('copy-page')) {
+  $('copy-page').onclick = async () => {
+    const proxies = ((resultData && resultData.rows) || []).map(row => row.proxy);
+    if (!proxies.length) { toast(t('toast.copyEmpty'), true); return; }
+    try {
+      await navigator.clipboard.writeText(proxies.join('\n') + '\n');
+      markCopied($('copy-page'), '<span class="btn-icon">✓</span> <span>' + esc(t('results.copied') || 'Скопировано!') + '</span>');
+      toast(t('toast.copied', {count:fmt(proxies.length)}));
+    } catch {
+      toast(t('toast.copyFailed'), true);
+    }
+  };
+}
+async function exportSettingsFile(event) {
+  const button = event && event.currentTarget;
+  if (button) button.disabled = true;
   try {
-    renderGeo(await api('/api/geoip/update', {}));
-    toast(t('geo.updated'));
-    if (currentTab === 'results') loadResults();
+    // The server validates the complete form before creating a backup, so a
+    // credential pasted into the textarea can never be serialized client-side.
+    const safeSettings = await api('/api/settings/export', getSettings());
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(new Blob([JSON.stringify(safeSettings, null, 2)], {type:'application/json'}));
+    link.download = 'proxy-workbench-settings.json';
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(link.href), 1000);
   } catch (error) {
     toast(error.message, true);
   } finally {
-    $('geo-update').disabled = false;
+    if (button) button.disabled = false;
   }
-};
-loadGeo();
-$('copy-page').onclick = async () => {
-  const proxies = ((resultData && resultData.rows) || []).map(row => row.proxy);
-  if (!proxies.length) { toast(t('toast.copyEmpty'), true); return; }
-  try {
-    await navigator.clipboard.writeText(proxies.join('\n') + '\n');
-    toast(t('toast.copied', {count:fmt(proxies.length)}));
-  } catch {
-    toast(t('toast.copyFailed'), true);
-  }
-};
-$('export-settings').onclick = () => {
-  const link = document.createElement('a');
-  link.href = URL.createObjectURL(new Blob([JSON.stringify(getSettings(), null, 2)], {type:'application/json'}));
-  link.download = 'proxy-workbench-settings.json';
-  link.click();
-  setTimeout(() => URL.revokeObjectURL(link.href), 1000);
-};
-$('import-settings').onchange = async event => {
+}
+document.querySelectorAll('[data-action="export-settings"]').forEach(button => { button.onclick = exportSettingsFile; });
+
+async function importSettingsFile(event) {
   const file = event.target.files[0];
   event.target.value = '';
   if (!file) return;
@@ -1385,47 +3937,175 @@ $('import-settings').onchange = async event => {
   } catch (error) {
     toast(error.message, true);
   }
-};
-$('copy-gateway').onclick = async () => {
+}
+document.querySelectorAll('[data-action="import-settings"]').forEach(input => { input.onchange = importSettingsFile; });
+async function copyGatewayAddress(button) {
+  if (!state.gateway || !state.gateway.address) {
+    toast(t('gateway.offline'), true);
+    return;
+  }
+  const addr = state.gateway.copy_address || state.gateway.address;
   try {
-    await navigator.clipboard.writeText($('gateway-address').textContent);
+    await navigator.clipboard.writeText(addr);
+    markCopied(button, '<span class="btn-icon">✓</span> <span class="btn-text">' + esc(t('results.copied')) + '</span>');
     toast(t('toast.gatewayCopied'));
   } catch {
     toast(t('toast.copyFailed'), true);
   }
-};
-$('copy-api').onclick = async () => {
-  try {
-    await navigator.clipboard.writeText($('api-example').textContent);
-    toast(t('toast.apiCopied'));
-  } catch {
-    toast(t('toast.copyFailed'), true);
+}
+if ($('copy-gateway')) $('copy-gateway').onclick = event => copyGatewayAddress(event.currentTarget);
+if ($('copy-gateway-hero')) $('copy-gateway-hero').onclick = event => copyGatewayAddress(event.currentTarget);
+if ($('copy-api')) {
+  $('copy-api').onclick = async () => {
+    const apiText = $('api-example') ? $('api-example').textContent : '';
+    try {
+      await navigator.clipboard.writeText(apiText);
+      markCopied($('copy-api'), '<span class="btn-icon">✓</span> <span class="btn-text">' + esc(t('results.copied') || 'Скопировано!') + '</span>');
+      toast(t('toast.apiCopied'));
+    } catch {
+      toast(t('toast.copyFailed'), true);
+    }
+  };
+}
+
+if ($('prev')) $('prev').onclick = () => { offset = Math.max(0, offset - 50); loadResults(); };
+if ($('next')) $('next').onclick = () => { offset += 50; loadResults(); };
+function bindCodeEditor(textareaId, gutterId, counterId) {
+  const textarea = $(textareaId);
+  const gutter = $(gutterId);
+  const counter = $(counterId);
+  if (!textarea || !gutter) return () => {};
+
+  function update() {
+    const text = textarea.value || '';
+    const lines = text.length ? text.split('\n').length : 0;
+    if (counter) counter.textContent = `${fmt(lines)} ${t('sources.lines')}`;
+    const count = Math.max(1, lines);
+    gutter.innerHTML = Array.from({length: count}, (_, i) => i + 1).join('<br>');
   }
-};
-$('prev').onclick = () => { offset = Math.max(0, offset - 50); loadResults(); };
-$('next').onclick = () => { offset += 50; loadResults(); };
-$('sources').oninput = updateSourceCount;
-$('use_sources').onchange = updateSourceCount;
-$('request-profile').onchange = updateIdentity;
-$('dnsbl-enabled').onchange = updateIdentity;
+
+  textarea.addEventListener('input', update);
+  textarea.addEventListener('scroll', () => {
+    gutter.scrollTop = textarea.scrollTop;
+  });
+  gutter.addEventListener('wheel', e => {
+    textarea.scrollTop += e.deltaY;
+  }, { passive: true });
+
+  return update;
+}
+
+const updateSourcesLines = bindCodeEditor('sources', 'sources-gutter', 'sources-line-count');
+const updateProxiesLines = bindCodeEditor('proxies', 'proxies-gutter', 'proxies-line-count');
+
+function updateCodeEditors() {
+  if (updateSourcesLines) updateSourcesLines();
+  if (updateProxiesLines) updateProxiesLines();
+}
+
+if ($('sources')) $('sources').oninput = () => { updateSourceCount(); updateCodeEditors(); };
+if ($('use_sources')) $('use_sources').onchange = () => { updateSourceCount(); updateCodeEditors(); };
+if ($('proxies')) $('proxies').oninput = updateCodeEditors;
+if ($('request-profile')) $('request-profile').onchange = updateIdentity;
+if ($('dnsbl-enabled')) $('dnsbl-enabled').onchange = updateIdentity;
+
 async function sourceAction(path, button, message) {
-  button.disabled = true;
+  if (button) button.disabled = true;
   try {
     const value = await api(path, getSettings());
     settings = value.settings;
-    $('sources').value = settings.sources.join('\n');
+    if ($('sources')) $('sources').value = (settings.sources || []).join('\n');
     updateSourceCount();
+    updateCodeEditors();
     toast(message(value));
   } catch (error) {
     toast(error.message, true);
   } finally {
-    button.disabled = false;
+    if (button) button.disabled = false;
   }
 }
-$('prune-sources').onclick = () => sourceAction('/api/sources/prune', $('prune-sources'), value => value.removed.length ? t('toast.pruned', {count:fmt(value.removed.length)}) : t('toast.prunedNone'));
-$('update-sources').onclick = () => sourceAction('/api/sources/update', $('update-sources'), value => value.added.length ? t('toast.sourcesAdded', {count:fmt(value.added.length)}) : t('toast.sourcesCurrent'));
-$('reset-sources').onclick = async () => { try { const value = await api('/api/defaults'); $('sources').value = value.sources.join('\n'); updateSourceCount(); toast(t('toast.sourcesReset')); } catch (error) { toast(error.message, true); } };
-$('import-file').onchange = async event => { const file = event.target.files[0]; if (!file) return; if (file.size > 20_000_000) { toast(t('error.fileTooLarge'), true); return; } $('proxies').value = await file.text(); toast(t('toast.listLoaded')); };
+
+if ($('prune-sources')) $('prune-sources').onclick = () => sourceAction('/api/sources/prune', $('prune-sources'), value => value.removed.length ? t('toast.pruned', {count:fmt(value.removed.length)}) : t('toast.prunedNone'));
+if ($('update-sources')) $('update-sources').onclick = () => sourceAction('/api/sources/update', $('update-sources'), value => value.added.length ? t('toast.sourcesAdded', {count:fmt(value.added.length)}) : t('toast.sourcesCurrent'));
+if ($('reset-sources')) {
+  $('reset-sources').onclick = async () => {
+    try {
+      const value = await api('/api/defaults');
+      if ($('sources')) $('sources').value = (value.sources || []).join('\n');
+      updateSourceCount();
+      updateCodeEditors();
+      toast(t('toast.sourcesReset'));
+    } catch (error) {
+      toast(error.message, true);
+    }
+  };
+}
+
+if ($('import-file')) {
+  $('import-file').onchange = async event => {
+    const file = event.target.files && event.target.files[0];
+    if (!file) return;
+    if (file.size > 20_000_000) { toast(t('error.fileTooLarge'), true); return; }
+    const text = await file.text();
+    if ($('proxies')) $('proxies').value = text;
+    updateCodeEditors();
+    const lineCount = text.split('\n').filter(l => l.trim()).length;
+    toast(t('toast.listLoaded') + ` (${fmt(lineCount)})`);
+    const dropZone = document.querySelector('.file-drop');
+    if (dropZone) {
+      dropZone.classList.add('file-loaded');
+      setTimeout(() => dropZone.classList.remove('file-loaded'), 1200);
+    }
+    event.target.value = '';
+  };
+}
+
+// Global safeguards: prevent browser from navigating/opening file when dragged anywhere on window
+window.addEventListener('dragover', e => { e.preventDefault(); }, false);
+window.addEventListener('drop', e => { e.preventDefault(); }, false);
+
+const dropZone = document.querySelector('.file-drop');
+if (dropZone) {
+  let dragCounter = 0;
+  dropZone.addEventListener('dragenter', e => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter++;
+    dropZone.classList.add('drag-over');
+  });
+  dropZone.addEventListener('dragover', e => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+    dropZone.classList.add('drag-over');
+  });
+  dropZone.addEventListener('dragleave', e => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter--;
+    if (dragCounter <= 0) {
+      dragCounter = 0;
+      dropZone.classList.remove('drag-over');
+    }
+  });
+  dropZone.addEventListener('drop', async e => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounter = 0;
+    dropZone.classList.remove('drag-over');
+    const file = e.dataTransfer && e.dataTransfer.files[0];
+    if (!file) return;
+    if (file.size > 20_000_000) { toast(t('error.fileTooLarge'), true); return; }
+    const text = await file.text();
+    $('proxies').value = text;
+    updateCodeEditors();
+    const lineCount = text.split('\n').filter(l => l.trim()).length;
+    toast(t('toast.listLoaded') + ` (${fmt(lineCount)})`);
+    dropZone.classList.add('file-loaded');
+    setTimeout(() => dropZone.classList.remove('file-loaded'), 1200);
+  });
+}
+
 async function downloadFile(name, node) {
   try {
     node.disabled = true;
@@ -1454,31 +4134,334 @@ document.querySelectorAll('[data-download]').forEach(node => node.onclick = () =
 
 function renderTheme() {
   const dark = document.documentElement.dataset.theme === 'dark';
-  $('theme-toggle').textContent = dark ? t('theme.light') : t('theme.dark');
-  $('theme-toggle').setAttribute('aria-label', dark ? t('theme.toLight') : t('theme.toDark'));
+  const themeBtn = $('theme-toggle');
+  if (themeBtn) {
+    themeBtn.textContent = dark ? t('theme.light') : t('theme.dark');
+    themeBtn.setAttribute('aria-label', dark ? t('theme.toLight') : t('theme.toDark'));
+  }
 }
-$('theme-toggle').onclick = () => { const theme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; document.documentElement.dataset.theme = theme; try { localStorage.setItem('proxy-workbench-theme', theme); } catch {} renderTheme(); };
+const themeBtn = $('theme-toggle');
+if (themeBtn) {
+  themeBtn.onclick = () => {
+    const theme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+    document.documentElement.dataset.theme = theme;
+    try { localStorage.setItem('proxy-workbench-theme', theme); } catch {}
+    renderTheme();
+  };
+}
 
 function renderLang() {
   document.documentElement.lang = lang;
   applyI18n();
-  $('lang-toggle').textContent = t('lang.button');
-  $('lang-toggle').setAttribute('aria-label', t('lang.label'));
-  $('lang-toggle').title = t('lang.label');
-  $('page-label').textContent = t('nav.' + currentTab);
+  const langBtn = $('lang-toggle');
+  if (langBtn) {
+    langBtn.textContent = t('lang.button');
+    langBtn.setAttribute('aria-label', t('lang.label'));
+    langBtn.title = t('lang.label');
+  }
+  const sidebarLabel = $('sidebar-lang-label');
+  if (sidebarLabel) {
+    sidebarLabel.textContent = t('lang.currentName');
+  }
+  const pageLabel = $('page-label');
+  if (pageLabel) {
+    pageLabel.textContent = t('nav.' + currentTab) || currentTab;
+  }
   renderTheme();
   updateIdentity();
   updateSourceCount();
-  renderState(state);
-  renderResults(resultData);
-  if (detailRow && $('details-dialog').open) renderDetails(detailRow);
+  updateCodeEditors();
 }
-$('lang-toggle').onclick = () => { lang = lang === 'ru' ? 'en' : 'ru'; try { localStorage.setItem(LANG_KEY, lang); } catch {} renderLang(); };
-renderLang();
+function setupEnhancedListeners() {
+  // Select All Proxies
+  const selectAll = $('select-all-proxies');
+  if (selectAll) {
+    selectAll.onchange = e => {
+      const isChecked = e.target.checked;
+      document.querySelectorAll('.proxy-select-box').forEach(cb => {
+        cb.checked = isChecked;
+        const p = cb.dataset.proxy;
+        if (isChecked) selectedProxies.add(p); else selectedProxies.delete(p);
+      });
+      updateSelectionUI();
+    };
+  }
+
+  // Floating Selection Bar Actions
+  const btnCopySel = $('action-copy-selected');
+  if (btnCopySel) {
+    btnCopySel.onclick = async () => {
+      if (!selectedProxies.size) return;
+      try {
+        await navigator.clipboard.writeText(Array.from(selectedProxies).join('\n') + '\n');
+        markCopied(btnCopySel, '<span class="btn-icon">✓</span> <span>' + esc(t('results.copied') || 'Copied!') + '</span>');
+        toast(t('toast.copied', {count: fmt(selectedProxies.size)}));
+      } catch {
+        toast(t('toast.copyFailed'), true);
+      }
+    };
+  }
+
+  const btnExportSel = $('action-export-selected');
+  if (btnExportSel) {
+    btnExportSel.onclick = () => {
+      if (!selectedProxies.size || state.running) return;
+      start('export', Array.from(selectedProxies));
+    };
+  }
+
+  const btnBanSel = $('action-ban-selected');
+  if (btnBanSel) {
+    btnBanSel.onclick = async () => {
+      if (!selectedProxies.size) return;
+      if (!confirm(t('confirm.denylist', {count:fmt(selectedProxies.size)}))) return;
+      btnBanSel.disabled = true;
+      try {
+        const res = await api('/api/denylist/add', {proxies:Array.from(selectedProxies)});
+        const added = Array.isArray(res.added) ? res.added : [];
+        toast(t('toast.banned', {count:fmt(res.count ?? added.length)}));
+        selectedProxies.clear();
+        updateSelectionUI();
+        if ($('denylist') && added.length) {
+          const cur = $('denylist').value.trim();
+          $('denylist').value = cur ? cur + '\n' + added.join('\n') : added.join('\n');
+          updateLineCounts();
+        }
+        loadResults();
+      } catch (err) {
+        toast(err.message, true);
+      } finally {
+        btnBanSel.disabled = false;
+      }
+    };
+  }
+
+  const btnClearSel = $('action-clear-selection');
+  if (btnClearSel) {
+    btnClearSel.onclick = () => {
+      selectedProxies.clear();
+      document.querySelectorAll('.proxy-select-box').forEach(cb => cb.checked = false);
+      if ($('select-all-proxies')) $('select-all-proxies').checked = false;
+      updateSelectionUI();
+    };
+  }
+
+  // Filter Chips in Results
+  document.querySelectorAll('#results-filter-chips .filter-chip').forEach(chip => {
+    if (!chip) return;
+    chip.onclick = () => {
+      document.querySelectorAll('#results-filter-chips .filter-chip').forEach(c => c.classList.remove('active'));
+      chip.classList.add('active');
+      const f = chip.dataset.filter;
+      if (f === 'all') {
+        if ($('result-protocol')) $('result-protocol').value = 'all';
+        if ($('result-anon')) $('result-anon').value = 'any';
+        if ($('result-max-latency')) $('result-max-latency').value = 0;
+        if ($('result-sort')) $('result-sort').value = 'recommended';
+      } else if (f === 'fast') {
+        if ($('result-max-latency')) $('result-max-latency').value = 300;
+        if ($('result-sort')) $('result-sort').value = 'speed';
+      } else if (f === 'socks5') {
+        if ($('result-protocol')) $('result-protocol').value = 'socks5';
+      } else if (f === 'http') {
+        if ($('result-protocol')) $('result-protocol').value = 'all';
+      } else if (f === 'elite') {
+        if ($('result-anon')) $('result-anon').value = 'elite';
+      } else if (f === 'clean') {
+        if ($('result-sort')) $('result-sort').value = 'quality';
+      } else if (f === 'speed') {
+        if ($('result-sort')) $('result-sort').value = 'bandwidth';
+      }
+      offset = 0;
+      loadResults();
+    };
+  });
+
+  function setScenarioTargets(targets) {
+    const container = $('targets');
+    if (!container) return;
+    container.replaceChildren();
+    targets.forEach(addTarget);
+  }
+
+  // Quick Scenarios in Scan tab
+  function highlightChangedInputs(inputs) {
+    inputs.forEach(el => {
+      if (!el) return;
+      el.classList.remove('field-changed-highlight');
+      void el.offsetWidth;
+      el.classList.add('field-changed-highlight');
+      setTimeout(() => {
+        if (el) el.classList.remove('field-changed-highlight');
+      }, 1500);
+    });
+  }
+
+  document.querySelectorAll('.scenario-card').forEach(card => {
+    card.onclick = () => {
+      document.querySelectorAll('.scenario-card').forEach(c => c.classList.remove('active'));
+      card.classList.add('active');
+      const s = card.dataset.scenario;
+      const changed = [];
+
+      const setVal = (id, val) => {
+        const el = $(id);
+        if (el && String(el.value) !== String(val)) {
+          el.value = val;
+          changed.push(el);
+        }
+      };
+      const setChecked = (id, val) => {
+        const el = $(id);
+        if (el && el.checked !== Boolean(val)) {
+          el.checked = Boolean(val);
+          changed.push(el);
+        }
+      };
+
+      let scenarioName = 'Telegram';
+      if (s === 'telegram') {
+        scenarioName = 'Telegram';
+        setScenarioTargets([{name: 'Telegram', url: 'https://telegram.org/', method: 'GET', statuses: [200], contains: null, sha256: null, headers: {}}]);
+        setVal('protocol', 'socks5');
+        setVal('connect_timeout', 3);
+        setVal('timeout', 6);
+        setVal('speedtest-url', '');
+        setVal('request-profile', 'workbench');
+      } else if (s === 'youtube') {
+        scenarioName = 'YouTube 4K';
+        setScenarioTargets([{name: 'YouTube', url: 'https://www.youtube.com/', method: 'GET', statuses: [200], contains: null, sha256: null, headers: {}}]);
+        setVal('protocol', 'all');
+        setVal('connect_timeout', 4);
+        setVal('timeout', 10);
+        setVal('speedtest-url', 'https://speed.cloudflare.com/__down?bytes=5000000');
+        setVal('request-profile', 'workbench');
+      } else if (s === 'anon') {
+        scenarioName = 'Elite Privacy';
+        setVal('judge-url', 'http://azenv.net/');
+        setVal('dnsbl-zones', 'zen.spamhaus.org\nbl.spamcop.net');
+        setVal('protocol', 'socks5');
+        setChecked('dnsbl-enabled', true);
+        setChecked('strict-clean', true);
+        setVal('min_anonymity', 'elite');
+        setVal('request-profile', 'workbench');
+      } else if (s === 'scrape') {
+        scenarioName = 'Scraping';
+        setVal('workers', 256);
+        setVal('connect_timeout', 2);
+        setVal('timeout', 5);
+        setVal('prefilter', 1024);
+        setVal('watch', 60);
+        setVal('request-profile', 'minimal');
+      } else if (s === 'custom') {
+        scenarioName = 'Custom Pro';
+      }
+
+      highlightChangedInputs(changed);
+      syncScanToResults();
+      syncAllPresetChips();
+      updateIdentity();
+
+      const toastMsg = s === 'custom'
+        ? t('scenario.customUnchanged')
+        : (lang === 'ru' ? `Применен сценарий: ${scenarioName}` : `Applied scenario: ${scenarioName}`);
+      toast(toastMsg);
+    };
+    card.setAttribute('role', 'button');
+    card.tabIndex = 0;
+    card.onkeydown = event => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        card.click();
+      }
+    };
+  });
+
+  document.querySelectorAll('[data-copy-text]').forEach(button => {
+    if (!button) return;
+    button.onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(button.dataset.copyText || '');
+        markCopied(button);
+        toast(t('toast.copied', {count:fmt(1)}));
+      } catch {
+        toast(t('toast.copyFailed'), true);
+      }
+    };
+  });
+
+  // Gateway screen tabs
+  document.querySelectorAll('.gw-tab-btn').forEach(btn => {
+    if (!btn) return;
+    btn.onclick = () => {
+      document.querySelectorAll('.gw-tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.gw-tab-content').forEach(c => c.classList.remove('active'));
+      btn.classList.add('active');
+      const tab = btn.dataset.gwTab;
+      const target = $('gw-tab-' + tab);
+      if (target) target.classList.add('active');
+    };
+  });
+
+  // Mobile Hub config copy
+  async function copyConfigDownload(filename, button) {
+    try {
+      const res = await fetch('/api/download/' + filename, {headers: {'X-Workbench-Token': token}});
+      if (res.ok) {
+        const text = await res.text();
+        await navigator.clipboard.writeText(text);
+        if (button) markCopied(button);
+        toast(t('toast.copied', {count: 1}));
+        return;
+      }
+    } catch {}
+    toast(t('error.fileNotReady'), true);
+  }
+
+  if ($('btn-copy-singbox')) $('btn-copy-singbox').onclick = () => copyConfigDownload('singbox.json', $('btn-copy-singbox'));
+  if ($('btn-copy-clash')) $('btn-copy-clash').onclick = () => copyConfigDownload('clash.yaml', $('btn-copy-clash'));
+  document.querySelectorAll('[data-copy-config]').forEach(node => {
+    node.onclick = () => copyConfigDownload(node.dataset.copyConfig, node);
+  });
+
+  // Re-bind tabs & go buttons in case DOM was refreshed
+  document.querySelectorAll('[data-tab]').forEach(node => {
+    node.onclick = () => showTab(node.dataset.tab);
+  });
+  document.querySelectorAll('[data-go]').forEach(node => {
+    node.onclick = () => showTab(node.dataset.go);
+  });
+}
+
+const langBtn = $('lang-toggle');
+if (langBtn) {
+  langBtn.onclick = () => {
+    lang = lang === 'ru' ? 'en' : 'ru';
+    try { localStorage.setItem(LANG_KEY, lang); } catch {}
+    renderLang();
+  };
+}
+const sidebarLangBtn = $('sidebar-lang-toggle');
+if (sidebarLangBtn && langBtn) sidebarLangBtn.onclick = langBtn.onclick;
+
+try { setupCountryComboboxes(); } catch (e) { console.error(e); }
+try { setupFieldPresetChips(); } catch (e) { console.error(e); }
+try { setupEnhancedListeners(); } catch (e) { console.error(e); }
+
+try { renderLang(); } catch (e) { console.error(e); }
+requestAnimationFrame(updateSegmentedGlider);
+setTimeout(updateSegmentedGlider, 100);
+
+const initToast = $('toast');
+if (initToast) {
+  initToast.hidden = true;
+  initToast.textContent = '';
+}
 
 (async () => {
   try {
-    fill(await api('/api/settings'));
+    const initialSettings = await api('/api/settings');
+    fill(initialSettings);
     await poll();
     setInterval(poll, 2000);
   } catch (error) {

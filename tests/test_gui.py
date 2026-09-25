@@ -9,6 +9,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 
 import httpx
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -68,6 +69,96 @@ class GuiTests(unittest.TestCase):
         settings['targets'][0]['headers'] = ['wrong']
         self.assertEqual(self.client.post('/api/settings', json=settings).status_code, 400)
 
+    def test_hosting_labels_are_canonicalized_for_results_and_export(self):
+        self.assertEqual(gui.normalize_hosting_filter('keep'), '')
+        self.assertEqual(gui.normalize_hosting_filter('exclude'), 'hide')
+        self.assertEqual(gui.normalize_hosting_filter('any'), '')
+        with self.assertRaises(ValueError):
+            gui.normalize_hosting_filter('maybe')
+
+    def test_quick_filters_apply_real_clean_speed_and_http_conditions(self):
+        db = p.open_db(self.home / 'proxies.sqlite3')
+        cfg = dict(targets=[dict(url='http://service.invalid/')])
+        db.execute('INSERT INTO profiles VALUES (?,?)', ('fixture', json.dumps(cfg)))
+        fixtures = [
+            ('http://11.0.0.1:80', 'clean', 10),
+            ('https://11.0.0.2:443', 'unknown', 20),
+            ('socks5://11.0.0.3:1080', 'clean', None),
+        ]
+        for proxy, status, mbps in fixtures:
+            row = p.summarize(proxy, [dict(ok=True, ms=4, target=0, attempt=1)], cfg)
+            row['reputation'] = {'status': status, 'dnsbl': []}
+            if mbps is not None:
+                row['speed'] = {'mbps': mbps}
+            db.execute('INSERT INTO candidates VALUES (?)', (proxy,))
+            db.execute('INSERT INTO results VALUES (?,?,?)', ('fixture', proxy, json.dumps(row)))
+        db.commit()
+        db.close()
+        (self.home / 'last-profile.txt').write_text('fixture', encoding='utf-8')
+        def query(quick):
+            response = self.client.get('/api/results?min_success=1&quick=' + quick)
+            self.assertEqual(response.status_code, 200, response.text)
+            return [row['proxy'] for row in response.json()['rows']]
+        self.assertEqual(query('clean'), ['http://11.0.0.1:80', 'socks5://11.0.0.3:1080'])
+        self.assertEqual(query('speed'), ['http://11.0.0.1:80', 'https://11.0.0.2:443'])
+        self.assertEqual(query('http'), ['http://11.0.0.1:80', 'https://11.0.0.2:443'])
+        self.assertEqual(self.client.get('/api/results?hosting=exclude').status_code, 200)
+
+    def test_quick_test_uses_the_active_profile_targets(self):
+        db = p.open_db(self.home / 'proxies.sqlite3')
+        cfg = dict(attempts=1, timeout=2, max_bytes=1024, request_profile='workbench',
+                   targets=[dict(name='one', url='http://one.invalid/', method='GET', statuses=[200],
+                                 headers={}, contains=None, sha256=None),
+                            dict(name='two', url='http://two.invalid/', method='GET', statuses=[200],
+                                 headers={}, contains=None, sha256=None)])
+        db.execute('INSERT INTO profiles VALUES (?,?)', ('fixture', json.dumps(cfg)))
+        db.commit(); db.close()
+        (self.home / 'last-profile.txt').write_text('fixture', encoding='utf-8')
+        captured = {}
+        async def fake_check(proxy, config, rate):
+            captured['proxy'] = proxy
+            captured['targets'] = [target['url'] for target in config['targets']]
+            return dict(proxy=proxy, reliability=1, min_target_reliability=1, latency_ms=4,
+                        jitter_ms=0, successes=2, requests=2, checked_at=time.time(), samples=[])
+        with mock.patch.object(p, 'check_proxy', fake_check):
+            result = self.server.app.test_proxy({'proxy': 'http://11.0.0.1:80', 'min_success': 1})
+        self.assertTrue(result['ok'])
+        self.assertEqual(captured['targets'], ['http://one.invalid/', 'http://two.invalid/'])
+        self.assertNotIn('google.com', json.dumps(captured))
+
+    def test_settings_export_validates_without_writing_credentials(self):
+        payload = gui.defaults()
+        payload['proxies'] = 'http://user:password@11.0.0.1:80\n'
+        response = self.client.post('/api/settings/export', json=payload)
+        self.assertEqual(response.status_code, 400, response.text)
+        self.assertFalse((self.home / 'gui-settings.json').exists())
+        response = self.client.post('/api/settings/export', json=gui.defaults())
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertFalse((self.home / 'gui-settings.json').exists())
+
+        with self.assertRaises(ValueError):
+            self.server.app.save(dict(gui.defaults(), proxies='http://user:password@11.0.0.1:80\n'))
+        self.assertFalse((self.home / 'gui-settings.json').exists())
+
+    def test_results_follow_stale_coherent_generation(self):
+        db = p.open_db(self.home / 'proxies.sqlite3')
+        cfg = dict(targets=[dict(url='http://service.invalid/')])
+        proxy = 'http://11.0.0.1:80'
+        row = p.summarize(proxy, [dict(ok=True, target=0, attempt=1, ms=1, status=200,
+                                          error=None, bytes=1)], cfg)
+        row['checked_at'] = time.time()
+        row['valid_until'] = time.time() - 1
+        db.execute('INSERT INTO profiles VALUES (?,?)', ('fixture', json.dumps(cfg)))
+        db.execute('INSERT INTO candidates VALUES (?)', (proxy,))
+        db.execute('INSERT INTO results VALUES (?,?,?)', ('fixture', proxy, json.dumps(row)))
+        db.commit()
+        p.export(db, 'fixture', self.home / 'exports', min_success=1)
+        db.close()
+        (self.home / 'last-profile.txt').write_text('fixture', encoding='utf-8')
+        response = self.client.get('/api/results?min_success=1')
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()['total'], 0)
+
     def test_existing_denylist_is_preserved_when_settings_omits_it(self):
         (self.home/'denylist.txt').write_text('11.8.0.0/24\n')
         payload = gui.defaults()
@@ -75,7 +166,93 @@ class GuiTests(unittest.TestCase):
         saved = self.server.app.save(payload)
         self.assertIn('11.8.0.0/24', saved['denylist'])
         self.assertIn('11.8.0.0/24', (self.home/'denylist.txt').read_text(encoding='utf-8'))
-        self.assertEqual(gui.public_source('https://example.org/list?token=secret'), 'https://example.org/')
+        self.assertEqual(gui.public_source('https://example.org/list?token=secret', keyed=False), 'https://example.org/')
+
+    def test_denylist_http_contract_is_normalized_and_atomic(self):
+        response = self.client.post('/api/denylist/add', json={'proxies': ['11.0.0.1:80', 'http://11.0.0.1:80']})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json(), {'added': ['http://11.0.0.1:80'], 'count': 1})
+        before = (self.home / 'denylist.txt').read_text(encoding='utf-8')
+        class Busy:
+            def poll(self): return None
+        self.server.app.process = Busy()
+        busy = self.client.post('/api/denylist/add', json={'proxies': ['11.0.0.3:80']})
+        self.server.app.process = None
+        self.assertEqual(busy.status_code, 400)
+        for payload in ({'proxies': ['http://user:pass@11.0.0.2:80']}, {'proxies': []}, {'entries': ['11.0.0.3:80']}):
+            self.assertEqual(self.client.post('/api/denylist/add', json=payload).status_code, 400, payload)
+        self.assertEqual((self.home / 'denylist.txt').read_text(encoding='utf-8'), before)
+
+    def test_selected_export_validation_happens_before_settings_or_worker(self):
+        db = p.open_db(self.home/'proxies.sqlite3')
+        db.execute('INSERT INTO profiles VALUES (?,?)', ('fixture', json.dumps(dict(targets=[dict(url='https://one.invalid/')]))))
+        db.commit(); db.close()
+        (self.home/'last-profile.txt').write_text('fixture')
+        saved = gui.defaults(); saved.update(top=7, sort='speed')
+        self.server.app.save(saved)
+        before = (self.home/'gui-settings.json').read_bytes()
+        invalid = [
+            {'action':'export', 'settings':saved, 'selection':[]},
+            {'action':'export', 'settings':saved, 'selection':['proxy.example:80']},
+            {'action':'export', 'settings':saved, 'selection':['http://user:pass@11.0.0.1:80']},
+            {'action':'export', 'settings':saved, 'selection':['11.0.0.1:80'] * 1001},
+            {'action':'export', 'settings':saved, 'selection':['11.0.0.1:80'], 'hosting':'maybe'},
+            {'action':'scan', 'settings':saved, 'selection':['11.0.0.1:80']},
+        ]
+        with mock.patch.object(gui.subprocess, 'Popen') as popen:
+            for payload in invalid:
+                response = self.client.post('/api/start', json=payload)
+                self.assertEqual(response.status_code, 400, (payload, response.text))
+            (self.home/'last-profile.txt').write_text('missing-profile')
+            missing = self.client.post('/api/start', json={'action':'export', 'settings':saved, 'selection':['11.0.0.1:80']})
+            self.assertEqual(missing.status_code, 400)
+            popen.assert_not_called()
+        self.assertEqual((self.home/'gui-settings.json').read_bytes(), before)
+        self.assertFalse((self.home/'gui-selection.json').exists())
+
+    def test_selected_export_is_normalized_transient_and_passed_to_worker(self):
+        db = p.open_db(self.home/'proxies.sqlite3')
+        db.execute('INSERT INTO profiles VALUES (?,?)', ('fixture', json.dumps(dict(targets=[dict(url='https://one.invalid/')]))))
+        db.commit(); db.close()
+        (self.home/'last-profile.txt').write_text('fixture')
+        saved = gui.defaults(); saved.update(top=7, sort='speed')
+        self.server.app.save(saved)
+        before = (self.home/'gui-settings.json').read_bytes()
+        release = threading.Event()
+
+        class Process:
+            def poll(self):
+                return 0 if release.is_set() else None
+
+            def wait(self, timeout=None):
+                release.wait(10 if timeout is None else timeout)
+                return 0
+
+        process = Process()
+        payload = dict(action='export', settings=dict(saved, top=1), q='11.0.0', hosting='hide', quick='speed',
+                       selection=['11.0.0.1:80', 'http://11.0.0.1:80', 'socks5://11.0.0.2:1080'])
+        try:
+            with mock.patch.object(gui.subprocess, 'Popen', return_value=process) as popen:
+                response = self.client.post('/api/start', json=payload)
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertEqual(response.json()['selection_requested'], 2)
+                command = popen.call_args.args[0]
+                option = lambda name: command[command.index(name) + 1]
+                self.assertEqual(Path(option('--selection-file')).resolve(), (self.home/'gui-selection.json').resolve())
+                self.assertEqual(option('--export-query'), '11.0.0')
+                self.assertEqual(option('--export-hosting'), 'hide')
+                self.assertEqual(option('--export-quick'), 'speed')
+                self.assertIn('--no-hosting', command)
+                self.assertEqual(option('--top'), '0')
+                self.assertEqual(json.loads((self.home/'gui-selection.json').read_text(encoding='utf-8')),
+                                 ['http://11.0.0.1:80', 'socks5://11.0.0.2:1080'])
+                self.assertEqual((self.home/'gui-settings.json').read_bytes(), before)
+        finally:
+            release.set()
+        state = self.await_job()
+        self.assertEqual(state['job']['exit_code'], 0)
+        self.assertFalse((self.home/'gui-selection.json').exists())
+        self.assertEqual((self.home/'gui-settings.json').read_bytes(), before)
 
     def test_collect_job_dedup_and_empty_profile_scan(self):
         settings = gui.defaults()
@@ -97,6 +274,15 @@ class GuiTests(unittest.TestCase):
         self.assertEqual(result['progress']['phase'], 'complete')
         self.assertEqual(result['export']['checked'], 0)
         self.assertEqual(self.client.get('/api/download/proxies.txt').status_code, 200)
+
+        # A coherent but expired generation is not downloadable through the
+        # local GUI endpoint, even when the immutable files still exist.
+        status_path = p.export_file(self.home/'exports', 'status.json')
+        status = json.loads(status_path.read_text(encoding='utf-8'))
+        status['valid_until'] = time.time() - 1
+        p.atomic(status_path, json.dumps(status))
+        self.assertEqual(self.client.get('/api/state').json()['downloads'], [])
+        self.assertEqual(self.client.get('/api/download/proxies.txt').status_code, 410)
 
     def test_results_require_every_service_and_export_matches_sort(self):
         db = p.open_db(self.home/'proxies.sqlite3')
@@ -223,10 +409,59 @@ class GuiTests(unittest.TestCase):
             result=self.await_job()
             self.assertEqual(result['job']['exit_code'],130,result['log'])
             self.assertEqual(result['progress']['phase'],'stopped')
-            self.assertLess(result['export']['checked'],2)
+            # A stopped recheck never replaces the last coherent current export.
+            self.assertEqual(result['export']['checked'], 2)
+            self.assertEqual(result['diagnostic']['state'], 'partial')
+            self.assertEqual(result['diagnostic']['stop_reason'], 'stopped')
+            self.assertLess(result['diagnostic']['checked'], 2)
         finally:
             for server in servers:
                 server.shutdown();server.server_close()
+
+    def test_cancelled_new_profile_keeps_previous_active_profile(self):
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        class Proxy(BaseHTTPRequestHandler):
+            def log_message(self,*args): pass
+            def do_GET(self):
+                if self.server.slow:
+                    time.sleep(2)
+                body=b'healthy'
+                try:
+                    self.send_response(200); self.send_header('Content-Length',str(len(body))); self.end_headers()
+                    self.wfile.write(body)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+        server=ThreadingHTTPServer(('127.0.0.1',0),Proxy)
+        server.slow=False
+        threading.Thread(target=server.serve_forever,daemon=True).start()
+        try:
+            db=p.open_db(self.home/'proxies.sqlite3')
+            proxy=f'http://127.0.0.1:{server.server_port}'
+            db.execute('INSERT INTO candidates VALUES (?)',(proxy,))
+            db.commit(); db.close()
+            settings=gui.defaults()
+            settings.update(targets=[dict(url='http://service.invalid/one',contains='healthy',statuses=[200])],
+                            workers=1,rate=0,timeout=5,min_success=1)
+            self.client.post('/api/start',json=dict(action='scan',settings=settings)).raise_for_status()
+            first=self.await_job()
+            self.assertEqual(first['job']['exit_code'],0,first['log'])
+            previous_profile=(self.home/'last-profile.txt').read_text(encoding='utf-8').strip()
+
+            settings['targets'][0]['url']='http://service.invalid/new'
+            server.slow=True
+            self.client.post('/api/start',json=dict(action='scan',settings=settings)).raise_for_status()
+            deadline=time.monotonic()+5
+            while time.monotonic()<deadline:
+                if self.client.get('/api/state').json()['progress'].get('phase')=='scanning':
+                    break
+                time.sleep(.03)
+            self.client.post('/api/stop',json={}).raise_for_status()
+            cancelled=self.await_job()
+            self.assertEqual(cancelled['job']['exit_code'],130,cancelled['log'])
+            self.assertEqual((self.home/'last-profile.txt').read_text(encoding='utf-8').strip(), previous_profile)
+            self.assertEqual(cancelled['export']['profile'], previous_profile)
+        finally:
+            server.shutdown(); server.server_close()
 
     def test_keep_fresh_schedule_waits_and_stops(self):
         from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -293,6 +528,58 @@ class TranslationTests(unittest.TestCase):
         used = set(re.findall(r'data-i18n(?:-[a-z-]+)?="([^"]+)"', page))
         used |= set(re.findall(r"(?:\bt\(|text\(|attr\('[a-z-]+', )'([a-zA-Z]+\.[\w.]+)'", script))
         self.assertFalse(used - english.keys())
+    def test_scenarios_set_their_defining_workflow_fields(self):
+        ui = Path(__file__).resolve().parents[1]/'proxy_workbench'/'ui'
+        script = (ui/'app.js').read_text(encoding='utf-8')
+        self.assertIn('function setScenarioTargets', script)
+        self.assertIn("url: 'https://telegram.org/'", script)
+        self.assertIn("url: 'https://www.youtube.com/'", script)
+        self.assertIn("setVal('judge-url', 'http://azenv.net/')", script)
+        self.assertIn("setVal('dnsbl-zones', 'zen.spamhaus.org", script)
+        self.assertIn("t('scenario.customUnchanged')", script)
+
+    def test_download_and_offline_gateway_controls_have_real_targets(self):
+        ui = Path(__file__).resolve().parents[1]/'proxy_workbench'/'ui'
+        page = (ui/'index.html').read_text(encoding='utf-8')
+        script = (ui/'app.js').read_text(encoding='utf-8')
+        self.assertIn('data-download="proxies.txt"', page)
+        self.assertNotIn('data-download="ranked.txt"', page)
+        self.assertIn('id="copy-gateway" disabled', page)
+        self.assertIn('id="copy-gateway-hero" title="Copy endpoint" disabled', page)
+        self.assertNotIn('id="gw-tg-link" href=', page)
+        self.assertNotIn('id="mobile-tg-btn-link" href=', page)
+        self.assertIn("if (!state.gateway || !state.gateway.address)", script)
+        self.assertIn("} else {\n    if ($('gateway-address'))", script)
+
+    def test_result_filters_do_not_sync_back_into_scan_settings(self):
+        ui = Path(__file__).resolve().parents[1]/'proxy_workbench'/'ui'
+        script = (ui/'app.js').read_text(encoding='utf-8')
+        self.assertNotIn('syncResultsToScan', script)
+        self.assertIn('Results controls are view/export filters only', script)
+
+        ui = Path(__file__).resolve().parents[1]/'proxy_workbench'/'ui'
+        script = (ui/'app.js').read_text(encoding='utf-8')
+        page = (ui/'index.html').read_text(encoding='utf-8')
+        identifiers = re.findall(r'\bid="([^"]+)"', page)
+        self.assertEqual(len(identifiers), len(set(identifiers)))
+        self.assertNotIn('selected-proxies.txt', script)
+        self.assertNotIn('{entries: Array.from(selectedProxies)}', script)
+        self.assertIn('request.selection = selection', script)
+        self.assertIn("api('/api/denylist/add', {proxies:Array.from(selectedProxies)})", script)
+        self.assertIn("t('confirm.denylist'", script)
+        self.assertIn("snapshotNotes(exportReport)", script)
+        self.assertEqual(script.count('function getCountryFlag('), 1)
+        for action in ('export-settings', 'import-settings', 'clear-data'):
+            self.assertEqual(page.count(f'data-action="{action}"'), 1)
+            self.assertIn(f"document.querySelectorAll('[data-action=\"{action}\"]')", script)
+        self.assertIn('data-i18n-aria-label="results.selectedRegion"', page)
+        self.assertIn('data-i18n-aria-label="results.selectAll"', page)
+        self.assertIn("node.onkeydown", script)
+        self.assertIn("card.onkeydown", script)
+        self.assertIn("row.setAttribute('role', 'option')", script)
+        self.assertIn("copyGatewayAddress(event.currentTarget)", script)
+        self.assertIn("document.querySelectorAll('[data-copy-proxy]')", script)
+        self.assertIn("button.dataset.copyText", script)
 
 
 if __name__=='__main__':

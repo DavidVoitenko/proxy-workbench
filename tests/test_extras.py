@@ -108,7 +108,10 @@ class SingboxTests(unittest.TestCase):
         self.assertEqual((first['type'], first['version'], first['server_port']), ('socks', '4', 4145))
         self.assertEqual(second['type'], 'http')
         self.assertEqual(config['route']['final'], 'auto')
-        self.assertEqual(json.loads(formats.singbox([]))['outbounds'][0]['type'], 'direct')
+        empty = json.loads(formats.singbox([]))
+        self.assertEqual(empty['outbounds'][0]['type'], 'block')
+        self.assertEqual(empty['route']['final'], 'blocked')
+        self.assertNotIn('direct', json.dumps(empty))
 
 
 if __name__ == '__main__':

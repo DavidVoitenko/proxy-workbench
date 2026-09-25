@@ -249,7 +249,10 @@ async def check_dnsbl(address, zones, timeout, resolver=None):
 async def screen_proxy(proxy, policy, denylist, resolver=None):
     denylist = denylist or Denylist.empty()
     verdict = {
-        "status": "clean",
+        # A clean verdict means an actual DNSBL check succeeded.  With DNSBL
+        # disabled, the local denylist alone cannot prove a remote address is
+        # clean, so the honest result is unknown.
+        "status": "clean" if policy.get("dnsbl_enabled") else "unknown",
         "checked_at": time.time(),
         "policy_digest": policy.get("digest"),
         "local_rule": None,
@@ -267,7 +270,7 @@ async def screen_proxy(proxy, policy, denylist, resolver=None):
         return verdict
     zones = policy.get("dnsbl_zones", [])
     if not zones:
-        verdict["error"] = "NO_DNSBL_ZONES"
+        verdict.update(status="unknown", error="NO_DNSBL_ZONES")
         return verdict
     try:
         address = ipaddress.ip_address(urlsplit(proxy).hostname)
