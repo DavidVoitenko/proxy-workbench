@@ -82,6 +82,7 @@ const messages = {
     'sidebar.data': 'Data and results are stored<br>in the local data folder.',
     'common.saveSettings': 'Save settings',
     'common.close': 'Close',
+    'common.delete': 'Delete',
     'scan.eyebrow': 'FIND. CHECK. SAVE.',
     'scan.title': 'Proxies for your tasks',
     'scan.lead': 'One or more services. The result is proxies that work with every one of them.',
@@ -97,8 +98,8 @@ const messages = {
     'check.timeoutHint': 'Limit for a single request',
     'check.threshold': 'Success threshold',
     'check.thresholdHint': 'Applied to each service separately',
-    'threshold.twoThirds': 'At least ⅔ of attempts',
-    'threshold.all': 'All attempts (strict)',
+    'threshold.twoThirds': 'At least 2/3 of attempts',
+    'threshold.all': 'All attempts (100% strict)',
     'threshold.one': 'At least 1 per service',
     'check.advanced': 'Performance and response size',
     'check.workers': 'Parallel checks',
@@ -162,7 +163,7 @@ const messages = {
     'phase.exporting': 'Saving',
     'phase.waiting': 'Waiting for the next re-check',
     'progress.nextCheck': 'Next re-check of working proxies at {time}',
-    'watch.label': 'Keep fresh: re-check every, min',
+    'watch.label': 'Keep fresh: re-check every',
     'watch.hint': '0 — off. Otherwise, after the check the app keeps running and re-checks the working proxies on this schedule, so exports, the API and the rotating proxy stay fresh.',
     'phase.complete': 'Complete',
     'phase.partial': 'Partial snapshot',
@@ -242,7 +243,16 @@ const messages = {
     'col.cleanliness': 'Cleanliness',
     'col.anonymity': 'Anonymity',
     'monitor.recheckPassing': 'Re-check only matching proxies (fast)',
-    'sort.uptime': 'Uptime: passed most re-checks first',
+    'monitor.recheckPassingShort': 'Matching',
+    'monitor.recheckShort': 'Database',
+    'monitor.recheckPassingTitle': 'Re-check only matching proxies that passed thresholds',
+    'monitor.recheckTitle': 'Re-check all database addresses with current settings',
+    'sort.recommended': 'Recommended (quality + uptime)',
+    'sort.quality': 'Quality (speed + response)',
+    'sort.speed': 'Speed (fastest ping)',
+    'sort.stability': 'Stability (lowest jitter)',
+    'sort.uptime': 'Uptime (most verified)',
+    'sort.bandwidth': 'Bandwidth (Mbit/s)',
     'results.byUptime': 'By uptime',
     'col.uptime': 'Uptime',
     'col.uptimeHint': 'Passed re-checks / all checks',
@@ -251,7 +261,7 @@ const messages = {
     'col.country': 'Country',
     'preset.label': 'Preset:',
     'preset.quick': '⚡ Quick',
-    'preset.balanced': '⚖ Balanced',
+    'preset.balanced': '⚖️ Balanced',
     'preset.thorough': '🔬 Thorough',
     'preset.hint': 'Quick: 1 attempt, short timeouts, more workers. Thorough: 5 attempts, patient timeouts.',
     'preset.applied': 'Preset applied. Save or start a scan to use it.',
@@ -282,6 +292,10 @@ const messages = {
     'provider.exclude': 'Skip hosting providers and data centres (needs the provider database)',
     'provider.hosting': 'hosting',
     'col.provider': 'Provider',
+    'col.age': 'Age',
+    'col.check': 'Select',
+    'col.num': '#',
+    'col.actions': 'Actions',
     'geo.hint': 'Needed for country filters, the Country and Provider columns and hiding hosting providers. The free DB-IP Country Lite and ASN Lite files are downloaded once into the local data folder; lookups then work offline. Geonode sources already include countries.',
     'geo.download': 'Download / update',
     'geo.downloading': 'Downloading the country database…',
@@ -511,13 +525,13 @@ const messages = {
     'nav.mobile': 'Mobile & Clients',
     'scenario.title': 'One-Click Quick Scenarios',
     'scenario.subtitle': 'Preconfigured smart templates for popular workflows',
-    'scenario.telegram': 'Telegram (TCP)',
-    'scenario.telegramDesc': 'SOCKS5 TCP proxies for messaging; calls and UDP need a separate tunnel',
-    'scenario.youtube': 'YouTube & 4K Video',
-    'scenario.youtubeDesc': 'Bandwidth testing in Mbit/s with high throughput for 4K streaming',
-    'scenario.anon': 'Elite Privacy',
+    'scenario.telegram': 'Telegram web page',
+    'scenario.telegramDesc': 'Checks the public web page through the proxy; calls and the app protocol are not measured',
+    'scenario.youtube': 'YouTube page + speed',
+    'scenario.youtubeDesc': 'Page answer plus a separate download sample in Mbit/s; not a video quality guarantee',
+    'scenario.anon': 'Anonymity screening',
     'scenario.anonDesc': 'Judge verified anonymity with strict DNSBL blacklist filtering',
-    'scenario.scrape': 'Fast Scraping',
+    'scenario.scrape': 'High-throughput sweep',
     'scenario.scrapeDesc': '256 threads, 2s connect timeout, quick prefiltering for big lists',
     'scenario.custom': 'Custom Pro',
     'scenario.customDesc': 'Manual control over all check, identity and export parameters',
@@ -525,6 +539,69 @@ const messages = {
     'scenario.customUnchanged': 'Custom settings unchanged; adjust the fields manually.',
     'monitor.liveStream': 'Live Inspection Stream',
     'monitor.liveStreamIdle': 'Checked proxies appear here in real time with ping and status.',
+    'monitor.liveStreamSource': 'Real measurement events, one per finished check',
+    'monitor.job': 'Job',
+    'code.title': 'Code',
+    'view.label': 'View',
+    'view.fresh': 'Fresh',
+    'view.stale': 'Expired',
+    'view.failed': 'Failed',
+    'view.unknown': 'Unknown time',
+    'view.all': 'All rows',
+    'results.views': 'Saved views',
+    'results.viewSave': 'Save view',
+    'results.viewName': 'View name',
+    'results.viewApplied': 'View applied: {name}',
+    'results.viewSaved': 'View saved: {name}',
+    'results.viewDeleted': 'View deleted',
+    'results.scope': 'Bulk scope',
+    'scope.page': 'This page',
+    'scope.selected': 'Selected',
+    'scope.allMatching': 'All matching',
+    'results.columns': 'Columns',
+    'results.columnsSaved': 'Columns saved',
+    'results.matrix': 'Targets matrix',
+    'results.matrixHint': 'One row per proxy, one column per checked service.',
+    'results.matrixClose': 'Close matrix',
+    'results.tag': 'Tag',
+    'results.untag': 'Remove tag',
+    'results.note': 'Note',
+    'results.favorite': 'Favourite',
+    'results.unfavorite': 'Unfavourite',
+    'results.exclude': 'Exclude from my list',
+    'results.include': 'Return to my list',
+    'results.bulkRecheck': 'Re-check',
+    'results.bulkRecheckHint': 'Full re-check: the stored row and its freshness are updated.',
+    'results.bulkDone': '{op}: {count} rows',
+    'results.undo': 'Undo',
+    'results.undone': 'Undone: {summary}',
+    'results.nothingUndo': 'Nothing to undo',
+    'results.history': 'Recent actions',
+    'results.freshness': 'Freshness',
+    'results.tagInput': 'Tag name',
+    'results.noteInput': 'Note text',
+    'results.selectionScopeHint': 'A selection belongs to the current scope. Changing filters or the generation clears it.',
+    'results.selectionCleared': 'Selection cleared: the scope changed',
+    'results.snapshotBroken': 'The published snapshot cannot be read; the table stays empty instead of showing unrelated rows.',
+    'quick.title': 'Quick test',
+    'quick.volume': 'Volume: {targets} services x {attempts} attempts, at most {requests} requests, {seconds}s total',
+    'quick.skipped': 'Not measured: reputation, anonymity, speed',
+    'quick.recheckFull': 'Full re-check',
+    'quick.storedNo': 'The stored row is not changed by this test',
+    'connect.title': 'Connection path',
+    'connect.pool': '1. Pool',
+    'connect.client': '2. App or browser',
+    'connect.fields': '3. Fields',
+    'connect.route': '4. Route control',
+    'connect.disconnect': '5. Disconnect',
+    'connect.generation': 'Snapshot',
+    'connect.routeText': 'Every new TCP connection rotates to the next working proxy. UDP is not supported.',
+    'connect.disconnectText': 'Remove the proxy settings in your app, or stop the rotating proxy here.',
+    'connect.stopGateway': 'Stop rotating proxy',
+    'connect.gatewayStopped': 'Rotating proxy stopped',
+    'connect.lanOptIn': 'LAN mode is off: the rotating proxy listens on this computer only.',
+    'connect.probeNote': 'The live feed and the quick test are Workbench probes, not your client traffic.',
+    'toast.scopeChanged': 'The scope changed; the action was not applied',
     'monitor.gaugeTitle': 'OVERALL PROGRESS',
     'monitor.proxiesFound': 'Matching proxies',
     'filter.all': 'All Alive',
@@ -578,6 +655,25 @@ const messages = {
     'mobile.guideTitle': 'How to setup on Mobile',
     'mobile.guideIos': '1. Install a supported client. 2. Import the fail-closed config or authenticated LAN QR. 3. Enable TUN mode after reviewing its rules.',
     'mobile.guideAndroid': '1. Install a supported client. 2. Add the config or authenticated LAN QR. 3. Connect; UDP applications need a different tunnel.',
+    'tb.order': 'Order:',
+    'tb.proto': 'Proto:',
+    'tb.anon': 'Anon:',
+    'tb.min': 'Success:',
+    'tb.latency': 'Max latency:',
+    'tb.top': 'Top:',
+    'tb.hosting': 'Hosting:',
+    'tb.copyPage': 'Copy page',
+    'gateway.poolSize': 'Proxies in pool',
+    'gateway.activeConns': 'Active sessions',
+    'gateway.lanModeTitle': 'LAN Mode Inactive',
+    'gateway.mobileUnavailableShort': 'Run GUI with --gateway-host 0.0.0.0 to enable mobile QR',
+    'mobile.guideLead': 'Step-by-step instructions for popular mobile proxy clients',
+    'mobile.ios1': 'Install sing-box or Shadowrocket from the App Store',
+    'mobile.ios2': 'Import downloaded config file or scan LAN QR code',
+    'mobile.ios3': 'Review routing rules and enable TUN VPN mode',
+    'mobile.android1': 'Install sing-box or Hiddify from Google Play',
+    'mobile.android2': 'Add profile via imported file or scan LAN QR code',
+    'mobile.android3': 'Tap Connect to route traffic through the proxy pool',
     'toast.banned': 'Added {count} proxies to local denylist.',
     'toast.tested': 'Proxy test completed.',
     'region.top': '⭐ Top 5',
@@ -652,6 +748,7 @@ const messages = {
     'sidebar.data': 'Данные и результаты хранятся<br>в локальной папке data.',
     'common.saveSettings': 'Сохранить настройки',
     'common.close': 'Закрыть',
+    'common.delete': 'Удалить',
     'scan.eyebrow': 'НАЙТИ. ПРОВЕРИТЬ. СОХРАНИТЬ.',
     'scan.title': 'Прокси под ваши задачи',
     'scan.lead': 'Один или несколько сервисов. В результате — прокси, работающие с каждым.',
@@ -667,8 +764,8 @@ const messages = {
     'check.timeoutHint': 'Лимит одного запроса',
     'check.threshold': 'Порог успешности',
     'check.thresholdHint': 'Отдельно для каждого сервиса',
-    'threshold.twoThirds': 'Не менее ⅔ попыток',
-    'threshold.all': 'Все попытки (строго)',
+    'threshold.twoThirds': 'Не менее 2/3 попыток',
+    'threshold.all': 'Все попытки (100% строго)',
     'threshold.one': 'Хотя бы 1 на сервис',
     'check.advanced': 'Производительность и размер ответа',
     'check.workers': 'Параллельных проверок',
@@ -732,7 +829,7 @@ const messages = {
     'phase.exporting': 'Сохранение',
     'phase.waiting': 'Ждём следующую перепроверку',
     'progress.nextCheck': 'Следующая перепроверка рабочих прокси в {time}',
-    'watch.label': 'Держать свежим: перепроверять каждые, мин',
+    'watch.label': 'Держать свежим: каждые',
     'watch.hint': '0 — выключено. Иначе после проверки приложение продолжает работать и перепроверяет рабочие прокси по этому расписанию, чтобы экспорт, API и ротирующий прокси оставались свежими.',
     'phase.complete': 'Завершено',
     'phase.partial': 'Частичный снимок',
@@ -812,7 +909,16 @@ const messages = {
     'col.cleanliness': 'Чистота',
     'col.anonymity': 'Анонимность',
     'monitor.recheckPassing': 'Перепроверить только подходящие (быстро)',
-    'sort.uptime': 'Живучесть: чаще проходили перепроверки',
+    'monitor.recheckPassingShort': 'Подходящие',
+    'monitor.recheckShort': 'Всю базу',
+    'monitor.recheckPassingTitle': 'Перепроверить только адреса, прошедшие отбор',
+    'monitor.recheckTitle': 'Перепроверить всю базу заново',
+    'sort.recommended': 'Рекомендуемые (качество + аптайм)',
+    'sort.quality': 'Качество (скорость + отклик)',
+    'sort.speed': 'Скорость (минимальный пинг)',
+    'sort.stability': 'Стабильность (мин. разброс)',
+    'sort.uptime': 'Живучесть (проверенные)',
+    'sort.bandwidth': 'Пропускная способность (Mbit/s)',
     'results.byUptime': 'По живучести',
     'col.uptime': 'Живучесть',
     'col.uptimeHint': 'Пройдено перепроверок / всего проверок',
@@ -821,7 +927,7 @@ const messages = {
     'col.country': 'Страна',
     'preset.label': 'Пресет:',
     'preset.quick': '⚡ Быстро',
-    'preset.balanced': '⚖ Баланс',
+    'preset.balanced': '⚖️ Баланс',
     'preset.thorough': '🔬 Тщательно',
     'preset.hint': 'Быстро: 1 попытка, короткие таймауты, больше воркеров. Тщательно: 5 попыток, терпеливые таймауты.',
     'preset.applied': 'Пресет применён. Сохраните настройки или запустите проверку.',
@@ -852,6 +958,10 @@ const messages = {
     'provider.exclude': 'Пропускать хостинг-провайдеров и дата-центры (нужна база провайдеров)',
     'provider.hosting': 'хостинг',
     'col.provider': 'Провайдер',
+    'col.age': 'Возраст',
+    'col.check': 'Выбор',
+    'col.num': '№',
+    'col.actions': 'Действия',
     'geo.hint': 'Нужна для фильтра по странам, колонок «Страна» и «Провайдер» и скрытия хостинг-провайдеров. Бесплатные файлы DB-IP Country Lite и ASN Lite скачиваются один раз в локальную папку data, дальше поиск работает офлайн. Источники Geonode уже содержат страну.',
     'geo.download': 'Скачать / обновить',
     'geo.downloading': 'Скачиваем базу стран…',
@@ -1081,13 +1191,13 @@ const messages = {
     'nav.mobile': 'Мобильные клиенты',
     'scenario.title': 'Умные экспресс-сценарии',
     'scenario.subtitle': 'Готовые смарт-шаблоны под популярные задачи',
-    'scenario.telegram': 'Telegram (TCP)',
-    'scenario.telegramDesc': 'SOCKS5 TCP-прокси для сообщений; звонки и UDP требуют отдельного туннеля',
-    'scenario.youtube': 'YouTube и видео',
-    'scenario.youtubeDesc': 'Замер реальной скорости в Mbit/s для стабильного 1080p/4K видео',
-    'scenario.anon': 'Elite Приватность',
+    'scenario.telegram': 'Telegram: веб-страница',
+    'scenario.telegramDesc': 'Проверяет публичную веб-страницу через прокси; звонки и протокол приложения не измеряются',
+    'scenario.youtube': 'YouTube: страница и скорость',
+    'scenario.youtubeDesc': 'Ответ страницы и отдельный замер скорости в Mbit/s; это не гарантия качества видео',
+    'scenario.anon': 'Отбор по анонимности',
     'scenario.anonDesc': 'Проверка скрытности через Judge и жесткая фильтрация по черным спискам',
-    'scenario.scrape': 'Турбо-сбор',
+    'scenario.scrape': 'Массовый обход',
     'scenario.scrapeDesc': '256 потоков, 2с таймаут, мгновенный отсев для десятков тысяч адресов',
     'scenario.custom': 'Экспертный',
     'scenario.customDesc': 'Полный ручной контроль всех сетевых параметров и фильтров',
@@ -1095,6 +1205,69 @@ const messages = {
     'scenario.customUnchanged': 'Пользовательские настройки не изменены; измените поля вручную.',
     'monitor.liveStream': 'Живая лента проверок',
     'monitor.liveStreamIdle': 'Проверяемые адреса отображаются здесь с пингом и статусом.',
+    'monitor.liveStreamSource': 'Реальные события измерений: одно на завершённую проверку',
+    'monitor.job': 'Задание',
+    'code.title': 'Код',
+    'view.label': 'Представление',
+    'view.fresh': 'Свежие',
+    'view.stale': 'Истёкшие',
+    'view.failed': 'Ошибки',
+    'view.unknown': 'Время неизвестно',
+    'view.all': 'Все строки',
+    'results.views': 'Сохранённые представления',
+    'results.viewSave': 'Сохранить представление',
+    'results.viewName': 'Название представления',
+    'results.viewApplied': 'Применено представление: {name}',
+    'results.viewSaved': 'Представление сохранено: {name}',
+    'results.viewDeleted': 'Представление удалено',
+    'results.scope': 'Область массовых операций',
+    'scope.page': 'Текущая страница',
+    'scope.selected': 'Выделенное',
+    'scope.allMatching': 'Все подходящие',
+    'results.columns': 'Колонки',
+    'results.columnsSaved': 'Колонки сохранены',
+    'results.matrix': 'Матрица целей',
+    'results.matrixHint': 'Строка — прокси, столбец — проверенный сервис.',
+    'results.matrixClose': 'Закрыть матрицу',
+    'results.tag': 'Тег',
+    'results.untag': 'Снять тег',
+    'results.note': 'Заметка',
+    'results.favorite': 'В избранное',
+    'results.unfavorite': 'Убрать из избранного',
+    'results.exclude': 'Исключить из моего списка',
+    'results.include': 'Вернуть в мой список',
+    'results.bulkRecheck': 'Перепроверить',
+    'results.bulkRecheckHint': 'Полная перепроверка: строка результата и её свежесть обновятся.',
+    'results.bulkDone': '{op}: строк — {count}',
+    'results.undo': 'Отменить',
+    'results.undone': 'Отменено: {summary}',
+    'results.nothingUndo': 'Отменять нечего',
+    'results.history': 'Последние действия',
+    'results.freshness': 'Свежесть',
+    'results.tagInput': 'Название тега',
+    'results.noteInput': 'Текст заметки',
+    'results.selectionScopeHint': 'Выделение относится к текущей области. Смена фильтров или поколения очищает его.',
+    'results.selectionCleared': 'Выделение очищено: область изменилась',
+    'results.snapshotBroken': 'Опубликованный снимок не читается; таблица остаётся пустой, а не показывает посторонние строки.',
+    'quick.title': 'Быстрый тест',
+    'quick.volume': 'Объём: {targets} сервисов x {attempts} попыток, не более {requests} запросов, {seconds} с суммарно',
+    'quick.skipped': 'Не измеряется: репутация, анонимность, скорость',
+    'quick.recheckFull': 'Полная перепроверка',
+    'quick.storedNo': 'Сохранённая строка этим тестом не меняется',
+    'connect.title': 'Путь подключения',
+    'connect.pool': '1. Пул',
+    'connect.client': '2. Приложение или браузер',
+    'connect.fields': '3. Поля',
+    'connect.route': '4. Контроль маршрута',
+    'connect.disconnect': '5. Отключение',
+    'connect.generation': 'Снимок',
+    'connect.routeText': 'Каждое новое TCP-соединение ротируется на следующий рабочий прокси. UDP не поддерживается.',
+    'connect.disconnectText': 'Уберите настройки прокси в приложении или остановите ротирующий прокси здесь.',
+    'connect.stopGateway': 'Остановить ротирующий прокси',
+    'connect.gatewayStopped': 'Ротирующий прокси остановлен',
+    'connect.lanOptIn': 'Режим LAN выключен: ротирующий прокси слушает только этот компьютер.',
+    'connect.probeNote': 'Лента и быстрый тест — это пробы Workbench, а не трафик вашего клиента.',
+    'toast.scopeChanged': 'Область изменилась, действие не выполнено',
     'monitor.gaugeTitle': 'ОБЩИЙ ПРОГРЕСС',
     'monitor.proxiesFound': 'Подходящих прокси',
     'filter.all': 'Все живые',
@@ -1148,6 +1321,25 @@ const messages = {
     'mobile.guideTitle': 'Инструкция по настройке',
     'mobile.guideIos': '1. Установите поддерживаемый клиент. 2. Импортируйте безопасный конфиг или QR защищённого LAN. 3. Проверьте правила и включите TUN.',
     'mobile.guideAndroid': '1. Установите поддерживаемый клиент. 2. Добавьте конфиг или QR защищённого LAN. 3. Подключитесь; для UDP нужен другой туннель.',
+    'tb.order': 'Порядок:',
+    'tb.proto': 'Протокол:',
+    'tb.anon': 'Анонимность:',
+    'tb.min': 'Успех:',
+    'tb.latency': 'Макс. пинг:',
+    'tb.top': 'Топ:',
+    'tb.hosting': 'Хостинг:',
+    'tb.copyPage': 'Скопировать страницу',
+    'gateway.poolSize': 'Прокси в пуле',
+    'gateway.activeConns': 'Активных сессий',
+    'gateway.lanModeTitle': 'Режим LAN не активен',
+    'gateway.mobileUnavailableShort': 'Запустите GUI с --gateway-host 0.0.0.0 для QR',
+    'mobile.guideLead': 'Пошаговая инструкция для популярных мобильных клиентов',
+    'mobile.ios1': 'Установите sing-box или Shadowrocket из App Store',
+    'mobile.ios2': 'Импортируйте скачанный конфиг или отсканируйте LAN QR-код',
+    'mobile.ios3': 'Проверьте правила маршрутизации и включите режим TUN',
+    'mobile.android1': 'Установите sing-box или Hiddify из Google Play',
+    'mobile.android2': 'Добавьте профиль через файл конфига или LAN QR-код',
+    'mobile.android3': 'Нажмите «Подключить» для маршрутизации трафика',
     'toast.banned': 'Добавлено {count} прокси в локальный черный список.',
     'toast.tested': 'Проверка прокси завершена.',
     'region.top': '⭐ Топ-5',
@@ -1482,6 +1674,71 @@ const TARGET_PRESETS = [
   {name:'Cloudflare', url:'https://www.cloudflare.com/cdn-cgi/trace', statuses:[200], contains:'ip='}
 ];
 
+function isTargetMatchingPreset(targetNode, preset) {
+  if (!targetNode || !preset) return false;
+  const nameInput = targetNode.querySelector('[data-field="name"]');
+  const urlInput = targetNode.querySelector('[data-field="url"]');
+  const name = nameInput ? nameInput.value.trim().toLowerCase() : '';
+  const url = urlInput ? urlInput.value.trim().toLowerCase() : '';
+  const presetName = preset.name.toLowerCase();
+  const cleanPresetUrl = preset.url.replace(/^https?:\/\//i, '').toLowerCase();
+
+  if (name && (name === presetName || name.includes(presetName) || presetName.includes(name))) return true;
+  if (url && (url === cleanPresetUrl || url === preset.url.toLowerCase())) return true;
+  if (targetNode.dataset.presetName && targetNode.dataset.presetName.toLowerCase() === presetName) return true;
+  return false;
+}
+
+function findTargetNodeForPreset(preset) {
+  const container = $('targets');
+  if (!container) return null;
+  for (const child of container.children) {
+    if (isTargetMatchingPreset(child, preset)) {
+      return child;
+    }
+  }
+  return null;
+}
+
+function syncQuickServiceChips() {
+  const chipsContainer = $('quick-services-chips');
+  if (!chipsContainer) return;
+
+  TARGET_PRESETS.forEach(preset => {
+    const btn = chipsContainer.querySelector(`[data-preset-name="${preset.name}"]`);
+    if (!btn) return;
+    const existingNode = findTargetNodeForPreset(preset);
+    const isActive = Boolean(existingNode);
+    btn.classList.toggle('active', isActive);
+    btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+    const iconSpan = btn.querySelector('.service-chip-icon');
+    if (iconSpan) {
+      iconSpan.textContent = isActive ? '✓' : '＋';
+    }
+  });
+}
+
+function togglePresetTarget(preset) {
+  const existingNode = findTargetNodeForPreset(preset);
+  if (existingNode) {
+    const container = $('targets');
+    if (container && container.children.length <= 1) {
+      toast(t('error.needTarget') || (lang === 'ru' ? 'Нужен хотя бы один сервис' : 'At least one service is required'), true);
+      return;
+    }
+    existingNode.classList.add('removing');
+    setTimeout(() => {
+      if (existingNode.parentNode) existingNode.remove();
+      syncQuickServiceChips();
+      toast(lang === 'ru' ? `Отключен сервис: ${preset.name}` : `Disabled service: ${preset.name}`);
+    }, 150);
+  } else {
+    addTarget({...preset, headers:{}, method:'GET'});
+    syncQuickServiceChips();
+    toast(lang === 'ru' ? `Включен сервис: ${preset.name}` : `Enabled service: ${preset.name}`);
+  }
+}
+
 function fillPresets() {
   const select = $('target-preset');
   if (select) {
@@ -1497,10 +1754,21 @@ function fillPresets() {
       const preset = TARGET_PRESETS[Number(select.value)];
       select.value = '';
       if (!preset) return;
-      addTarget({...preset, headers:{}, method:'GET'});
-      toast(t('presets.added', {name:preset.name}));
+      togglePresetTarget(preset);
     };
   }
+
+  const TARGET_ICONS = {
+    'Google': '🔍',
+    'YouTube': '🎬',
+    'Telegram': '✈️',
+    'Discord': '💬',
+    'Instagram': '📷',
+    'OpenAI API': '🤖',
+    'GitHub': '🐙',
+    'Wikipedia': '📖',
+    'Cloudflare': '☁️'
+  };
 
   const chipsContainer = $('quick-services-chips');
   if (chipsContainer) {
@@ -1509,13 +1777,16 @@ function fillPresets() {
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'quick-service-chip';
-      btn.innerHTML = `<span class="service-chip-plus">＋</span> ${esc(preset.name)}`;
-      btn.onclick = () => {
-        addTarget({...preset, headers:{}, method:'GET'});
-        toast(t('presets.added', {name:preset.name}));
+      btn.dataset.presetName = preset.name;
+      const sEmoji = TARGET_ICONS[preset.name] || '🌐';
+      btn.innerHTML = `<span class="service-chip-icon">＋</span> <span class="service-chip-emoji">${sEmoji}</span> <span class="service-chip-name">${esc(preset.name)}</span>`;
+      btn.onclick = (e) => {
+        e.preventDefault();
+        togglePresetTarget(preset);
       };
       chipsContainer.appendChild(btn);
     });
+    syncQuickServiceChips();
   }
 }
 fillPresets();
@@ -2223,37 +2494,35 @@ function addTarget(target={}) {
 
   node.innerHTML = `
     <div class="target-main-row">
-      <span class="target-icon">${sIcon}</span>
-      <input data-field="name" class="target-name-input" ${attr('aria-label', 'target.name')} ${attr('placeholder', 'target.name')} value="${esc(target.name || t('target.defaultName'))}">
+      <span class="target-icon" title="${esc(target.name || 'Service')}">${sIcon}</span>
+      <input data-field="name" class="target-name-input" ${attr('aria-label', 'target.name')} ${attr('placeholder', 'target.name')} value="${esc(target.name || t('target.defaultName'))}" title="${esc(t('target.name'))}">
       
-      <div class="target-url-compact-wrap clean-url-wrap">
-        <div class="target-proto-pill">
-          <select data-field="protocol" class="target-proto-select" title="Protocol">
-            <option value="https://"${proto === 'https://' ? ' selected' : ''}>HTTPS</option>
-            <option value="http://"${proto === 'http://' ? ' selected' : ''}>HTTP</option>
-          </select>
-          <svg class="proto-chevron" width="7" height="7" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
-        </div>
-        <input data-field="url" class="mono-input clean-url-input" type="text" placeholder="domain.com/path" value="${esc(cleanUrl)}">
+      <div class="target-url-group">
+        <select data-field="protocol" class="target-proto-select" title="Protocol">
+          <option value="https://"${proto === 'https://' ? ' selected' : ''}>https://</option>
+          <option value="http://"${proto === 'http://' ? ' selected' : ''}>http://</option>
+        </select>
+        <input data-field="url" class="mono-input target-url-input" type="text" placeholder="domain.com/path" value="${esc(cleanUrl)}">
       </div>
 
-      <div class="target-col-method">
-        <select data-field="method" class="target-method-select" title="${esc(t('target.method'))}">
+      <div class="target-col-method" title="${esc(t('target.method'))}">
+        <select data-field="method" class="target-method-select">
           <option value="GET"${initialMethod === 'GET' ? ' selected' : ''}>GET</option>
           <option value="HEAD"${initialMethod === 'HEAD' ? ' selected' : ''}>HEAD</option>
         </select>
       </div>
 
       <div class="target-col-status" title="${esc(t('target.statuses'))}">
-        <input data-field="statuses" class="mono-input target-status-input" ${attr('placeholder', 'target.statusesPlaceholder')} value="${esc(target.statuses ? (target.statuses.length === 100 && target.statuses[0] === 200 ? '200' : target.statuses.join(', ')) : '200')}">
+        <span class="target-status-label">HTTP</span>
+        <input data-field="statuses" type="text" class="mono-input target-status-input" ${attr('placeholder', 'target.statusesPlaceholder')} value="${esc(target.statuses ? (target.statuses.length === 100 && target.statuses[0] === 200 ? '200' : target.statuses.join(', ')) : '200')}">
       </div>
 
       <div class="target-col-actions">
         <button type="button" class="target-btn-advanced" data-toggle-advanced title="${esc(t('target.advanced'))}">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
         </button>
         <button type="button" data-remove class="target-remove-btn" ${attr('title', 'target.remove')} ${attr('aria-label', 'target.remove')}>
-          <svg class="target-remove-icon icon-trash" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <svg class="target-remove-icon icon-trash" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="3 6 5 6 21 6"></polyline>
             <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
             <line x1="10" y1="11" x2="10" y2="17"></line>
@@ -2280,6 +2549,9 @@ function addTarget(target={}) {
       </div>
     </div>`;
 
+  node.dataset.presetName = target.name || '';
+  node.dataset.targetUrl = target.url || '';
+
   const advBtn = node.querySelector('[data-toggle-advanced]');
   const drawer = node.querySelector('.target-advanced-drawer');
   if (advBtn && drawer) {
@@ -2287,9 +2559,10 @@ function addTarget(target={}) {
       drawer.classList.toggle('hidden');
       advBtn.classList.toggle('active', !drawer.classList.contains('hidden'));
     };
-    if (target.contains || target.sha256 || (target.headers && Object.keys(target.headers).length)) {
-      drawer.classList.remove('hidden');
-      advBtn.classList.add('active');
+    // Keep target card compact by default!
+    const hasCustomRules = Boolean(target.sha256 || (target.headers && Object.keys(target.headers).length));
+    if (hasCustomRules) {
+      advBtn.classList.add('has-rules');
     }
   }
 
@@ -2306,6 +2579,14 @@ function addTarget(target={}) {
         if (protoSelect) protoSelect.value = 'http://';
         urlInput.value = v.replace(/^http:\/\//i, '');
       }
+      syncQuickServiceChips();
+    };
+  }
+
+  const nameInput = node.querySelector('[data-field="name"]');
+  if (nameInput) {
+    nameInput.oninput = () => {
+      syncQuickServiceChips();
     };
   }
 
@@ -2321,10 +2602,12 @@ function addTarget(target={}) {
       node.classList.add('removing');
       setTimeout(() => {
         if (node.parentNode) node.remove();
-      }, 180);
+        syncQuickServiceChips();
+      }, 150);
     };
   }
   targetsContainer.appendChild(node);
+  syncQuickServiceChips();
 }
 
 function statuses(raw) {
@@ -2413,9 +2696,13 @@ function updateIdentity() {
   if (profSummary) profSummary.textContent = known ? t('profile.' + profile) : t('profile.fallback');
   const profDesc = $('profile-description');
   if (profDesc) profDesc.textContent = known ? t('profileDesc.' + profile, {version:PRODUCT_VERSION}) : t('profileDesc.fallback');
+  const dnsblPane = $('clean-pane-dnsbl');
   const dnsblFields = $('dnsbl-fields');
   const dnsblEnabled = $('dnsbl-enabled');
-  if (dnsblFields && dnsblEnabled) dnsblFields.classList.toggle('hidden', !dnsblEnabled.checked);
+  if (dnsblEnabled) {
+    if (dnsblPane) dnsblPane.classList.toggle('dnsbl-disabled', !dnsblEnabled.checked);
+    if (dnsblFields) dnsblFields.classList.toggle('dnsbl-disabled', !dnsblEnabled.checked);
+  }
 }
 
 function fill(value) {
@@ -2490,9 +2777,14 @@ function updateSourceCount() {
 }
 
 async function save() {
+  const saveBtn = $('save-settings');
   try {
     settings = await api('/api/settings', getSettings());
     toast(t('toast.saved'));
+    if (saveBtn) {
+      saveBtn.classList.add('saved');
+      setTimeout(() => saveBtn.classList.remove('saved'), 1600);
+    }
     updateIdentity();
     updateSourceCount();
     syncResultControls();
@@ -2599,6 +2891,11 @@ function reputationBadge(row) {
   if (status === 'listed' || status === 'local_denied') icon = '🚫';
   else if (status === 'unknown') icon = '⚠️';
   return `<span class="cleanliness cleanliness-${esc(status)}"><span class="badge-icon">${icon}</span><span>${esc(reputationLabel(status))}</span></span>`;
+}
+
+function ageCell(row) {
+  if (row.age_seconds === null || row.age_seconds === undefined) return '—';
+  return duration(Number(row.age_seconds));
 }
 
 function latencyBadge(valMs) {
@@ -2820,6 +3117,108 @@ function snapshotTime(value) {
   return new Date(milliseconds).toLocaleString(lang === 'ru' ? 'ru-RU' : 'en-US');
 }
 
+// ---------------------------------------------------------------------------
+// Live feed: real measurement events (defect 25, R17)
+// ---------------------------------------------------------------------------
+// The previous implementation searched the aggregated scan log for
+// OK/PASS/FAIL.  That text is a progress summary: it does not say which proxy
+// was measured, with which latency, and a line can contain "OK" for unrelated
+// reasons.  The feed below shows one event per finished measurement, read
+// from the measurement store through /api/events.
+const LIVE_FEED_LIMIT = 40;
+const liveFeed = {cursor: '', items: [], busy: false, lastKey: ''};
+
+const CODE_TEXT = {
+  'OK': {en: 'measured', ru: 'измерено'},
+  'E_STATE_MEASUREMENT_FAILED': {en: 'measurement failed', ru: 'измерение неуспешно'},
+  'E_STATE_NO_OBSERVATION': {en: 'no measurement', ru: 'нет измерения'},
+  'E_TIME_TTL_EXPIRED': {en: 'evidence expired', ru: 'доказательство истекло'},
+  'E_TIME_UNKNOWN': {en: 'check time unknown', ru: 'время проверки неизвестно'},
+  'E_TIME_FUTURE': {en: 'check time in the future', ru: 'время проверки из будущего'},
+  'UNREACHABLE': {en: 'unreachable', ru: 'недоступен'},
+  'DNS_TIMEOUT': {en: 'DNS timeout', ru: 'таймаут DNS'},
+  'DNS_ERROR': {en: 'DNS error', ru: 'ошибка DNS'},
+  'HTTP_3XX': {en: 'redirect', ru: 'перенаправление'},
+  'HTTP_4XX': {en: '4xx answer', ru: 'ответ 4xx'},
+  'HTTP_5XX': {en: '5xx answer', ru: 'ответ 5xx'},
+  'CONTENT_MISMATCH': {en: 'unexpected content', ru: 'неожиданное содержимое'},
+  'CHECK_FAILED': {en: 'check failed', ru: 'проверка не пройдена'}
+};
+
+function codeLabel(code) {
+  const entry = CODE_TEXT[String(code || '')];
+  // The machine code stays visible next to the text: a missing translation
+  // must never hide the code itself.
+  return entry ? (lang === 'ru' ? entry.ru : entry.en) : String(code || '\u2014');
+}
+
+function eventTone(event) {
+  if (event.type === 'job.state') return 'state';
+  return event.code === 'OK' ? 'pass' : 'fail';
+}
+
+function eventLine(event) {
+  const data = event.data || {};
+  if (event.type === 'job.state') {
+    const state = String(data.state || '');
+    return `${t('monitor.job')} \u00b7 ${state}` + (data.exit_code !== undefined ? ` (${data.exit_code})` : '');
+  }
+  const proxy = String(data.proxy || event.item_id || '');
+  const latency = data.latency_ms !== null && data.latency_ms !== undefined ? ` \u00b7 ${latencyBadge(data.latency_ms)}` : '';
+  const reliability = typeof data.reliability === 'number' ? ` \u00b7 ${Math.round(data.reliability * 100)}%` : '';
+  return `${proxy}${latency}${reliability}`;
+}
+
+async function pollEvents() {
+  if (liveFeed.busy) return;
+  liveFeed.busy = true;
+  try {
+    const query = new URLSearchParams({after: liveFeed.cursor, limit: '80'});
+    const data = await api('/api/events?' + query);
+    if (!data || !Array.isArray(data.events)) return;
+    if (data.cursor) liveFeed.cursor = data.cursor;
+    for (const event of data.events) {
+      const key = event.stream + ':' + event.seq;
+      if (key === liveFeed.lastKey) continue;
+      liveFeed.lastKey = key;
+      liveFeed.items.push(event);
+    }
+    if (liveFeed.items.length > LIVE_FEED_LIMIT) {
+      liveFeed.items = liveFeed.items.slice(-LIVE_FEED_LIMIT);
+    }
+    renderLiveFeedItems();
+  } catch {
+    // A missing event stream must not break the page; the feed keeps the last
+    // events it already had.
+  } finally {
+    liveFeed.busy = false;
+  }
+}
+
+function renderLiveFeedItems() {
+  const container = $('live-ticker-list');
+  if (!container) return;
+  if (!liveFeed.items.length) {
+    container.innerHTML = `<div class="ticker-empty">${esc(t('monitor.liveStreamIdle'))}</div>`;
+    return;
+  }
+  container.innerHTML = liveFeed.items.map(event => {
+    const tone = eventTone(event);
+    const badge = tone === 'state' ? 'STATE' : (event.code === 'OK' ? 'OK' : 'FAIL');
+    return `<div class="ticker-item ${tone}" data-code="${esc(event.code || '')}" title="${esc(t('code.title') + ': ' + (event.code || ''))}">` +
+      `<span class="ticker-badge">${esc(badge)}</span>` +
+      `<span class="ticker-text">${eventLine(event)}</span>` +
+      `<span class="ticker-code">${esc(codeLabel(event.code))}</span></div>`;
+  }).join('');
+}
+
+function renderLiveFeed(value) {
+  const source = $('live-feed-source');
+  if (source) source.textContent = t('monitor.liveStreamSource');
+  pollEvents();
+  renderLiveFeedItems();
+}
+
 function snapshotView(report) {
   const rawGeneration = String(report.generation || '').replace(/^\.generation-/, '');
   const generation = rawGeneration ? rawGeneration.slice(0, 16) : '—';
@@ -2919,7 +3318,17 @@ function renderState(value) {
   const gaugePercent = $('gauge-percent');
   if (gaugePercent) gaugePercent.textContent = percent.toFixed(1) + '%';
   const gaugeCaption = $('gauge-caption');
-  if (gaugeCaption) gaugeCaption.textContent = currentPhase === 'ready' ? t('phase.ready') : t('phase.' + currentPhase);
+  if (gaugeCaption) {
+    const pText = currentPhase === 'ready' ? t('phase.ready') : (t('phase.' + currentPhase) || currentPhase);
+    gaugeCaption.textContent = pText.toUpperCase();
+  }
+
+  const tickerBadge = $('ticker-status-badge');
+  if (tickerBadge) {
+    const isLive = value.running && ['scanning', 'collecting'].includes(currentPhase);
+    tickerBadge.textContent = isLive ? 'LIVE' : (currentPhase === 'ready' ? 'READY' : (t('phase.' + currentPhase) || currentPhase).toUpperCase());
+    tickerBadge.classList.toggle('live', isLive);
+  }
 
   if ($('speed')) $('speed').textContent = value.running && progress.phase === 'scanning' ? String(progress.speed ?? '—') : '—';
   if ($('eta')) $('eta').textContent = value.running && progress.phase === 'scanning' ? duration(progress.eta_seconds) : '—';
@@ -2935,24 +3344,10 @@ function renderState(value) {
     }
   }
 
-  // Live ticker updates
-  const tickerContainer = $('live-ticker-list');
-  if (tickerContainer) {
-    if (value.running && value.log) {
-      const logLines = String(value.log).split('\n').filter(l => l.trim().length > 0);
-      const testLines = logLines.filter(l => /\b(OK|PASS|SUCCESS|FAIL|ERR|ERROR)\b/i.test(l)).slice(-6);
-      if (testLines.length) {
-        tickerContainer.innerHTML = testLines.map(line => {
-          const isPass = /\b(OK|PASS|SUCCESS)\b/i.test(line);
-          const badgeClass = isPass ? 'pass' : 'fail';
-          const badgeLabel = isPass ? 'PASS' : 'FAIL';
-          return `<div class="ticker-item ${badgeClass}"><span class="ticker-badge">${badgeLabel}</span><span class="ticker-text">${esc(line)}</span></div>`;
-        }).join('');
-      }
-    } else if (!value.running && tickerContainer.children.length === 0) {
-      tickerContainer.innerHTML = `<div class="ticker-empty">${esc(t('monitor.liveStreamIdle'))}</div>`;
-    }
-  }
+  // Live ticker: real measurement events, never a regex over the log.
+  // The log is an aggregate progress text; a line that happens to contain
+  // "OK" says nothing about which proxy was measured (defect 25, R17).
+  renderLiveFeed(value);
 
   const passedCount = progress.passed ?? exportReport.passed ?? 0;
   if ($('nav-count')) {
@@ -2970,6 +3365,8 @@ function renderState(value) {
     $('export-note').textContent = reportText + (snapshotText ? ' ' + snapshotText : '') + (diagnosticText ? ' ' + diagnosticText : '');
   }
   renderBreakdown((value.export || {}).breakdown);
+  renderConnectPath(value);
+  if (Array.isArray(value.views)) renderSavedViews(value.views);
   if ($('api-line')) $('api-line').classList.toggle('hidden', !value.api);
   if ($('gateway-line')) $('gateway-line').classList.toggle('hidden', !value.gateway);
 
@@ -3022,7 +3419,13 @@ function renderState(value) {
         node.dataset.qrUnavailable = '1';
         delete node.dataset.qrValue;
         node.classList.remove('has-qr');
-        node.innerHTML = `<p class="text-muted text-sm">${esc(t('gateway.mobileUnavailable'))}</p>`;
+        node.innerHTML = `
+          <div class="qr-placeholder-wrap" title="${esc(t('gateway.mobileUnavailable'))}">
+            <div class="qr-placeholder-icon">📱</div>
+            <div class="qr-placeholder-title">${esc(t('gateway.lanModeTitle'))}</div>
+            <div class="qr-placeholder-desc">${esc(t('gateway.mobileUnavailableShort'))}</div>
+          </div>
+        `;
         return;
       }
       delete node.dataset.qrUnavailable;
@@ -3056,7 +3459,12 @@ function renderState(value) {
       delete node.dataset.qrValue;
       delete node.dataset.qrUnavailable;
       node.classList.remove('has-qr');
-      node.innerHTML = `<p class="text-muted text-sm">${esc(t('gateway.offline'))}</p>`;
+      node.innerHTML = `
+        <div class="qr-placeholder-wrap">
+          <div class="qr-placeholder-icon">⚡</div>
+          <div class="qr-placeholder-title">${esc(t('gateway.offline'))}</div>
+        </div>
+      `;
     });
     if ($('gateway-stats')) $('gateway-stats').textContent = t('gateway.offline');
   }
@@ -3249,11 +3657,14 @@ function renderCountryDistribution(rows, breakdown) {
     }
   }
 
+  const card = $('country-distribution-card');
   if (total === 0) {
+    if (card) card.classList.add('hidden');
     bar.innerHTML = '<div class="country-bar-seg empty" style="width:100%"></div>';
     stats.textContent = '';
     return;
   }
+  if (card) card.classList.remove('hidden');
 
   const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
   const colors = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4', '#64748b'];
@@ -3316,30 +3727,33 @@ function renderResults(data) {
     }
 
     const testBtn = `<button type="button" class="button chip quick-test-btn" data-test-proxy="${esc(row.proxy)}" title="${esc(t('action.test') || 'Test')}">⚡</button>`;
+    const favBtn = `<button type="button" class="button chip fav-btn${row.favorite ? ' is-favorite' : ''}" data-favorite="${esc(row.proxy)}" title="${esc(t('results.favorite'))}" aria-pressed="${row.favorite ? 'true' : 'false'}">★</button>`;
 
     return `<tr>
-      <td class="td-check"><input type="checkbox" class="proxy-select-box" data-proxy="${esc(row.proxy)}" aria-label="${esc(t('results.selectProxy', {proxy:row.proxy}))}" ${isChecked}></td>
-      <td class="td-num">${fmt(start + index + 1)}</td>
-      <td>${proxyCell}</td>
-      <td><span class="score ${scoreClass}">${scoreVal.toFixed(1)}</span></td>
-      <td>${latencyBadge(row.latency_ms)}</td>
-      <td>${latencyBadge(row.jitter_ms)}</td>
-      <td>${row.speed && row.speed.mbps != null ? esc(Number(row.speed.mbps).toFixed(1)) : '—'}</td>
-      <td>${(Number(row.min_target_reliability) * 100).toFixed(0)}%</td>
-      <td>${row.history ? esc(`${fmt(row.history.passes)}/${fmt(row.history.checks)}`) : '1/1'}</td>
-      <td>${reputationBadge(row)}</td>
-      <td>${anonymityBadge(row)}</td>
-      <td class="country" title="${esc(row.anonymity && row.anonymity.exit_ip ? t('results.exitIp', {ip:row.anonymity.exit_ip}) : '')}"><span class="country-flag">${flag}</span> ${esc(countryLabel(row))}</td>
-      <td class="provider" title="${esc(row.provider ? `AS${row.provider.asn} ${row.provider.org}` : '')}">${providerCell(row)}</td>
-      <td class="td-actions">
+      <td class="td-check" data-col="col-check"><input type="checkbox" class="proxy-select-box" data-proxy="${esc(row.proxy)}" aria-label="${esc(t('results.selectProxy', {proxy:row.proxy}))}" ${isChecked}></td>
+      <td class="td-num" data-col="col-num">${fmt(start + index + 1)}</td>
+      <td data-col="col-proxy">${proxyCell}${renderRowMarks(row)}</td>
+      <td data-col="col-score"><span class="score ${scoreClass}">${scoreVal.toFixed(1)}</span>${renderFreshnessBadge(row)}</td>
+      <td data-col="col-latency">${latencyBadge(row.latency_ms)}</td>
+      <td data-col="col-jitter">${latencyBadge(row.jitter_ms)}</td>
+      <td data-col="col-speed">${row.speed && row.speed.mbps != null ? esc(Number(row.speed.mbps).toFixed(1)) : '—'}</td>
+      <td data-col="col-success">${(Number(row.min_target_reliability) * 100).toFixed(0)}%</td>
+      <td data-col="col-uptime">${row.history ? esc(`${fmt(row.history.passes)}/${fmt(row.history.checks)}`) : '1/1'}</td>
+      <td data-col="col-cleanliness">${reputationBadge(row)}</td>
+      <td data-col="col-anonymity">${anonymityBadge(row)}</td>
+      <td class="country" data-col="col-country" title="${esc(row.anonymity && row.anonymity.exit_ip ? t('results.exitIp', {ip:row.anonymity.exit_ip}) : '')}"><span class="country-flag">${flag}</span> ${esc(countryLabel(row))}</td>
+      <td class="provider" data-col="col-provider" title="${esc(row.provider ? `AS${row.provider.asn} ${row.provider.org}` : '')}">${providerCell(row)}</td>
+      <td class="td-age" data-col="col-age">${ageCell(row)}</td>
+      <td class="td-actions" data-col="col-actions">
         <div class="row-actions-group">
+          ${favBtn}
           ${testBtn}
           ${tgBtn}
           ${detailsBtn}
         </div>
       </td>
     </tr>`;
-  }).join('') : `<tr><td colspan="14" class="empty">${esc(t(data ? 'results.noneMatching' : 'results.noneYet'))}</td></tr>`;
+  }).join('') : `<tr><td colspan="15" class="empty">${esc(t(data ? 'results.noneMatching' : 'results.noneYet'))}</td></tr>`;
 
   $('result-rows').querySelectorAll('[data-details]').forEach(node => node.onclick = () => details(page[Number(node.dataset.details)]));
 
@@ -3349,6 +3763,23 @@ function renderResults(data) {
       const p = e.target.dataset.proxy;
       if (e.target.checked) selectedProxies.add(p); else selectedProxies.delete(p);
       updateSelectionUI();
+    };
+  });
+
+  // Favourite toggle: a marker on the row, never a way to skip freshness.
+  $('result-rows').querySelectorAll('.fav-btn').forEach(btn => {
+    btn.onclick = async event => {
+      event.stopPropagation();
+      const proxy = btn.dataset.favorite;
+      const was = btn.classList.contains('is-favorite');
+      btn.classList.toggle('is-favorite', !was);
+      btn.setAttribute('aria-pressed', String(!was));
+      try {
+        await api('/api/results/bulk', {op: was ? 'unfavorite' : 'favorite', scope: 'selected', proxies: [proxy]});
+      } catch (err) {
+        btn.classList.toggle('is-favorite', was);
+        toast(err.message, true);
+      }
     };
   });
 
@@ -3364,14 +3795,17 @@ function renderResults(data) {
           proxy,
           min_success: $('result-min') ? Number($('result-min').value) : 2/3
         });
+        const volume = res.scope ? t('quick.volume', {targets: res.scope.targets ?? 0, attempts: res.scope.attempts ?? 0,
+          requests: res.scope.planned_requests ?? 0, seconds: Math.round(res.scope.whole_deadline_s || 0)}) : '';
+        const detail = [volume, res.scope ? t('quick.skipped') : '', res.scope ? t('quick.storedNo') : ''].filter(Boolean).join(' · ');
         if (res.ok) {
           btn.innerHTML = `✓ ${Math.round(res.latency_ms)}ms`;
           btn.className = 'button chip pass test-badge';
-          toast(`${proxy} · ${Math.round(res.latency_ms)}ms · OK`);
+          toast(`${proxy} · ${Math.round(res.latency_ms)}ms · ${detail}`);
         } else {
           btn.innerHTML = '✕ Err';
           btn.className = 'button chip fail test-badge';
-          toast(`${proxy} · ${res.error || 'Failed'}`, true);
+          toast(`${proxy} · ${res.error || 'Failed'} · ${detail}`, true);
         }
       } catch (err) {
         btn.innerHTML = '✕';
@@ -3423,21 +3857,15 @@ async function loadResults() {
   const refreshBtn = $('refresh-results');
   if (refreshBtn) refreshBtn.disabled = true;
   try {
-    const query = new URLSearchParams({
-      sort: $('result-sort') ? $('result-sort').value : 'recommended',
-      min_success: $('result-min') ? $('result-min').value : '1',
-      min_anonymity: $('result-anon') ? $('result-anon').value : 'any',
-      quick: activeQuickFilter(),
-      protocol: $('result-protocol') ? $('result-protocol').value : 'all',
-      max_latency: Number($('result-max-latency') ? $('result-max-latency').value : 0) || 0,
-      country: $('result-country') ? $('result-country').value.trim() : '',
-      hosting: resultHostingFilter(),
-      q: $('result-search') ? $('result-search').value.trim() : '',
-      offset
-    });
-    const data = await api('/api/results?' + query);
+    const params = resultQuery();
+    params.offset = offset;
+    const data = await api('/api/results?' + new URLSearchParams(params));
     resultTargets = data.targets || [];
     resultData = {...data, offset};
+    resultState.digest = data.scope_digest || '';
+    syncSelectionScope(resultState.digest);
+    renderViewTabs(data);
+    applyColumns(resultState.columns);
     renderResults(resultData);
     if ($('prev')) $('prev').disabled = offset === 0;
     if ($('next')) $('next').disabled = offset + 50 >= (data.total || 0);
@@ -4106,31 +4534,457 @@ if (dropZone) {
   });
 }
 
+// Defect 21 / R15.  Three separate problems, three separate rules:
+//  1. showSaveFilePicker() only works while a user activation is still live,
+//     so it must be the first thing the click handler does, before any await.
+//  2. pipeTo() closes the destination by default; adding writable.close()
+//     afterwards closes the same stream twice and Chromium reports a failure
+//     for a download that actually succeeded.
+//  3. Cancelling the picker is a normal user decision, not an error, and a
+//     browser without the picker still needs a working fallback.
+function isPickerCancel(error) {
+  return Boolean(error) && (error.name === 'AbortError' || error.name === 'NotAllowedError');
+}
+
+function writableOf(handle) {
+  // Only a real WritableStream can be the destination of pipeTo(); anything
+  // else is handed to the blob fallback instead of half-writing a file.
+  if (handle && typeof handle.createWritable === 'function' && typeof WritableStream !== 'undefined') {
+    return handle.createWritable();
+  }
+  return null;
+}
+
+async function saveAsFallback(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = name;
+  anchor.rel = 'noopener';
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
 async function downloadFile(name, node) {
-  try {
+  // The activation is consumed here, synchronously, before the first await.
+  let picker = null;
+  if (window.showSaveFilePicker) {
+    try {
+      picker = window.showSaveFilePicker({suggestedName: name});
+    } catch (error) {
+      if (isPickerCancel(error)) return;
+      picker = null;
+    }
+  }
+  const previous = node ? node.textContent : null;
+  if (node) {
     node.disabled = true;
+    node.dataset.downloadBusy = '1';
+  }
+  try {
     const response = await fetch('/api/download/' + name, {headers:{'X-Workbench-Token':token}});
     if (!response.ok) throw new Error(t('error.fileNotReady'));
-    if (window.showSaveFilePicker && response.body) {
-      const handle = await window.showSaveFilePicker({suggestedName:name});
-      const writable = await handle.createWritable();
-      await response.body.pipeTo(writable);
-      await writable.close();
-    } else {
-      const url = URL.createObjectURL(await response.blob());
-      const anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.download = name;
-      anchor.click();
-      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    if (picker) {
+      let handle;
+      try {
+        handle = await picker;
+      } catch (error) {
+        if (isPickerCancel(error)) return;   // the user chose a different path
+        picker = null;
+      }
+      if (handle) {
+        const writable = await writableOf(handle);
+        if (writable) {
+          await response.body.pipeTo(writable, {preventClose: true});
+          await writable.close();             // exactly one close, ours
+          return;
+        }
+      }
     }
+    await saveAsFallback(await response.blob(), name);
   } catch (error) {
+    if (isPickerCancel(error)) return;
     toast(error.message, true);
   } finally {
-    node.disabled = false;
+    if (node) {
+      node.disabled = false;
+      delete node.dataset.downloadBusy;
+      if (previous !== null) node.textContent = previous;
+    }
   }
 }
 document.querySelectorAll('[data-download]').forEach(node => node.onclick = () => downloadFile(node.dataset.download, node));
+
+// ---------------------------------------------------------------------------
+// Result list: views, scopes, bulk actions, tags, saved views, matrix (F19)
+// ---------------------------------------------------------------------------
+const COLUMN_LABELS = {
+  check: 'col.check', num: 'col.num', proxy: 'col.proxy', score: 'col.quality', latency: 'col.latency',
+  jitter: 'col.jitter', speed: 'col.mbps', success: 'col.success', uptime: 'col.uptime',
+  cleanliness: 'col.cleanliness', anonymity: 'col.anonymity', country: 'col.country',
+  provider: 'col.provider', age: 'col.age', actions: 'col.actions'
+};
+const COLUMNS_KEY = 'proxy-workbench-columns';
+const resultState = {view: 'fresh', scope: 'page', digest: '', columns: null, views: [], selectionScope: ''};
+
+function resultQuery() {
+  return {
+    sort: $('result-sort') ? $('result-sort').value : 'recommended',
+    min_success: $('result-min') ? $('result-min').value : '1',
+    min_anonymity: $('result-anon') ? $('result-anon').value : 'any',
+    quick: activeQuickFilter(),
+    protocol: $('result-protocol') ? $('result-protocol').value : 'all',
+    max_latency: Number($('result-max-latency') ? $('result-max-latency').value : 0) || 0,
+    country: $('result-country') ? $('result-country').value.trim() : '',
+    hosting: resultHostingFilter(),
+    q: $('result-search') ? $('result-search').value.trim() : '',
+    view: resultState.view,
+    offset
+  };
+}
+
+function rememberColumns(list) {
+  resultState.columns = list;
+  try { localStorage.setItem(COLUMNS_KEY, JSON.stringify(list)); } catch {}
+  try { localStorage.setItem('proxy-workbench-columns', JSON.stringify(list)); } catch {}
+}
+
+function loadColumns() {
+  let stored = null;
+  try { stored = JSON.parse(localStorage.getItem(COLUMNS_KEY) || 'null'); } catch {}
+  resultState.columns = Array.isArray(stored) && stored.length ? stored : null;
+  if (!resultState.columns) {
+    const server = (state && state.all_columns) ? state.all_columns : [];
+    resultState.columns = server.length ? compactColumns(server) : null;
+  }
+}
+
+// The compact set is the default of the user's table: quality, latency,
+// success, cleanliness and country, everything else is one click away.
+function compactColumns(allColumns) {
+  const compact = ['check', 'num', 'proxy', 'score', 'latency', 'success', 'cleanliness', 'country', 'actions'];
+  return allColumns.filter(name => compact.includes(name));
+}
+
+function applyColumns(list) {
+  const all = (state && state.all_columns && state.all_columns.length) ? state.all_columns : Object.keys(COLUMN_LABELS);
+  const active = new Set((list && list.length) ? list : compactColumns(all));
+  all.forEach(name => {
+    const key = 'col-' + name;
+    document.querySelectorAll(`#result-table [data-col="${key}"]`).forEach(node => {
+      node.classList.toggle('col-off', !active.has(name));
+    });
+  });
+  document.querySelectorAll('#columns-menu [data-column]').forEach(node => {
+    node.checked = active.has(node.dataset.column);
+  });
+  rememberColumns(Array.from(active));
+}
+
+function renderColumnsMenu() {
+  const menu = $('columns-menu');
+  if (!menu) return;
+  const all = (state && state.all_columns && state.all_columns.length) ? state.all_columns : Object.keys(COLUMN_LABELS);
+  menu.innerHTML = all.map(name => `<label class="column-option"><input type="checkbox" data-column="${esc(name)}"> <span>${esc(t(COLUMN_LABELS[name] || name))}</span></label>`).join('');
+  menu.querySelectorAll('input[data-column]').forEach(box => {
+    box.onchange = () => {
+      const chosen = Array.from(menu.querySelectorAll('input[data-column]:checked')).map(node => node.dataset.column);
+      applyColumns(chosen);
+      toast(t('results.columnsSaved'));
+    };
+  });
+}
+
+function renderViewTabs(data) {
+  const counts = (data && data.counts) || {};
+  document.querySelectorAll('#results-view-tabs [data-view]').forEach(button => {
+    const view = button.dataset.view;
+    const badge = button.querySelector('.view-count');
+    if (badge) badge.textContent = fmt(counts[view] !== undefined ? counts[view] : 0);
+    button.classList.toggle('active', view === resultState.view);
+    button.setAttribute('aria-pressed', view === resultState.view ? 'true' : 'false');
+  });
+  const hint = $('results-view-hint');
+  if (hint) {
+    hint.textContent = (data && data.snapshot_state === 'broken') ? t('results.snapshotBroken') : t('results.selectionScopeHint');
+    hint.classList.toggle('warn', Boolean(data && data.snapshot_state === 'broken'));
+  }
+}
+
+function renderFreshnessBadge(row) {
+  const fresh = String(row.freshness || 'fresh');
+  const label = t('view.' + (fresh === 'rejected' ? 'failed' : fresh)) || fresh;
+  return `<span class="freshness-badge freshness-${esc(fresh)}" title="${esc(t('code.title') + ': ' + (row.admission_reason || 'OK'))}">${esc(label)}</span>`;
+}
+
+function renderRowMarks(row) {
+  const bits = [];
+  if (row.favorite) bits.push('<span class="row-mark mark-favorite" title="★">★</span>');
+  const tags = Array.isArray(row.tags) ? row.tags : [];
+  if (tags.length) bits.push(`<span class="row-mark mark-tags">${esc(tags.join(', '))}</span>`);
+  if (row.note) bits.push(`<span class="row-mark mark-note" title="${esc(String(row.note))}">✎</span>`);
+  return bits.join('');
+}
+
+async function bulkAction(op, extra={}) {
+  const query = resultQuery();
+  const scope = extra.scope || resultState.scope;
+  const body = {op, scope, query};
+  if (scope === 'selected') body.proxies = Array.from(selectedProxies);
+  // The digest makes a stale selection or a changed filter visible instead of
+  // silently moving the action to another scope.
+  if (resultState.digest) body.scope_digest = resultState.digest;
+  if (op === 'tag' || op === 'untag') body.tag = (extra.tag !== undefined ? extra.tag : ($('bulk-tag-input') || {}).value || '').trim();
+  if (op === 'note') body.note = (extra.note !== undefined ? extra.note : ($('bulk-note-input') || {}).value || '').trim();
+  if (op === 'export' || op === 'recheck') body.settings = await currentSettingsPayload();
+  if (!body.proxies && scope === 'selected' && !selectedProxies.size) {
+    toast(t('results.scope') + ': ' + t('scope.selected'), true);
+    return;
+  }
+  try {
+    const res = await api('/api/results/bulk', body);
+    if (op === 'copy') {
+      await navigator.clipboard.writeText(res.text || '');
+      toast(t('toast.copied', {count: fmt(res.count || 0)}));
+    } else {
+      toast(t('results.bulkDone', {op: op, count: fmt(res.count || 0)}));
+    }
+    if (res.history) pushHistory(res.history);
+    if (op === 'tag' || op === 'untag' || op === 'note' || op === 'favorite' || op === 'unfavorite') {
+      const input = op === 'tag' ? $('bulk-tag-input') : (op === 'note' ? $('bulk-note-input') : null);
+      if (input) input.value = '';
+    }
+    loadResults();
+  } catch (error) {
+    toast(error.message || t('toast.scopeChanged'), true);
+  }
+}
+
+async function currentSettingsPayload() {
+  try {
+    return await api('/api/settings');
+  } catch {
+    return undefined;
+  }
+}
+
+function pushHistory(entry) {
+  const list = $('history-list');
+  if (!list || !entry) return;
+  const items = [entry, ...Array.from(list.querySelectorAll('[data-history-id]'))
+    .map(node => ({id: node.dataset.historyId, summary: node.dataset.historySummary, recoverable: node.dataset.historyRecoverable === '1'}))]
+    .slice(0, 8);
+  list.innerHTML = items.map(item => `<div class="history-item" data-history-id="${esc(item.id)}" data-history-summary="${esc(item.summary || '')}" data-history-recoverable="${item.recoverable ? '1' : '0'}"><span>${esc(item.summary || item.id)}</span>${item.recoverable ? `<button type="button" class="button text chip history-undo" data-undo="${esc(item.id)}">${esc(t('results.undo'))}</button>` : ''}</div>`).join('');
+  list.querySelectorAll('[data-undo]').forEach(button => {
+    button.onclick = async () => {
+      try {
+        const res = await api('/api/history/undo', {id: button.dataset.undo});
+        toast(t('results.undone', {summary: res.summary || ''}));
+        loadResults();
+        pushHistory({id: res.undone, summary: t('results.undone', {summary: res.summary || ''}), recoverable: false});
+      } catch (error) {
+        toast(error.message || t('results.nothingUndo'), true);
+      }
+    };
+  });
+  const badge = $('history-undo-last');
+  if (badge) badge.disabled = !items.some(item => item.recoverable);
+}
+
+async function loadMatrix() {
+  const panel = $('matrix-panel');
+  if (!panel) return;
+  try {
+    const data = await api('/api/results/matrix?' + new URLSearchParams(resultQuery()));
+    renderMatrix(data);
+    panel.classList.remove('hidden');
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+
+function renderMatrix(data) {
+  const body = $('matrix-body');
+  if (!body) return;
+  const targets = (data && data.targets) || [];
+  const rows = (data && data.rows) || [];
+  if (!targets.length || !rows.length) {
+    body.innerHTML = `<div class="matrix-empty">${esc(t('results.noneMatching'))}</div>`;
+    return;
+  }
+  const head = `<tr><th>${esc(t('col.proxy'))}</th>${targets.map(target => `<th title="${esc(target.url)}">${esc(target.name || target.url)}</th>`).join('')}<th>${esc(t('col.success'))}</th></tr>`;
+  const bodyRows = rows.map(row => {
+    const byTarget = {};
+    (row.cells || []).forEach(cell => { byTarget[cell.target] = cell; });
+    const cells = targets.map((_, index) => {
+      const cell = byTarget[index];
+      if (!cell) return '<td class="matrix-cell unknown">—</td>';
+      const tone = cell.ok ? 'ok' : (cell.error ? 'fail' : 'pending');
+      const title = cell.error ? String(cell.error) : (cell.ms !== undefined && cell.ms !== null ? `${cell.ms} ms` : '');
+      return `<td class="matrix-cell ${tone}" title="${esc(title)}">${cell.ok ? '✓' : (cell.error ? '✕' : '·')}</td>`;
+    }).join('');
+    const reliability = typeof row.reliability === 'number' ? Math.round(row.reliability * 100) + '%' : '—';
+    return `<tr><td class="matrix-proxy">${esc(row.proxy)}</td>${cells}<td>${esc(reliability)}</td></tr>`;
+  }).join('');
+  body.innerHTML = `<table class="matrix-table"><thead>${head}</thead><tbody>${bodyRows}</tbody></table>`;
+  const note = $('matrix-note');
+  if (note) note.textContent = `${t('results.matrix')} · ${data.generation || '—'}`;
+}
+
+function syncSelectionScope(digest) {
+  if (!resultState.selectionScope) { resultState.selectionScope = digest; return; }
+  if (resultState.selectionScope !== digest && selectedProxies.size) {
+    // F19: a selection never silently moves to another scope.
+    selectedProxies.clear();
+    document.querySelectorAll('.proxy-select-box').forEach(cb => { cb.checked = false; });
+    if ($('select-all-proxies')) $('select-all-proxies').checked = false;
+    updateSelectionUI();
+    toast(t('results.selectionCleared'));
+  }
+  resultState.selectionScope = digest;
+}
+
+function applySavedView(view) {
+  if (!view) return;
+  const query = view.query || {};
+  const map = {sort: 'result-sort', min_success: 'result-min', min_anonymity: 'result-anon', protocol: 'result-protocol',
+    max_latency: 'result-max-latency', country: 'result-country', hosting: 'result-hosting', q: 'result-search'};
+  for (const [key, id] of Object.entries(map)) {
+    const node = $(id);
+    if (node && query[key] !== undefined) node.value = String(query[key]);
+  }
+  if (query.view) resultState.view = query.view;
+  if (Array.isArray(view.columns) && view.columns.length) applyColumns(view.columns);
+  offset = 0;
+  loadResults();
+  toast(t('results.viewApplied', {name: view.name}));
+}
+
+function renderSavedViews(views) {
+  const select = $('saved-views');
+  if (!select) return;
+  const current = select.value;
+  resultState.views = Array.isArray(views) ? views : [];
+  select.innerHTML = `<option value="">${esc(t('results.views'))}</option>` +
+    resultState.views.map(view => `<option value="${esc(view.id)}">${esc(view.name)}</option>`).join('');
+  if (current) select.value = current;
+}
+
+// ---------------------------------------------------------------------------
+// Connection path (F17)
+// ---------------------------------------------------------------------------
+function renderConnectPath(value) {
+  const gateway = value && value.gateway;
+  const binding = (gateway && gateway.binding) || {};
+  const poolBox = $('connect-pool');
+  if (poolBox) {
+    poolBox.textContent = gateway && gateway.address
+      ? `${gateway.address} · ${fmt(gateway.proxies || 0)}`
+      : (lang === 'ru' ? 'ротирующий прокси выключен' : 'rotating proxy is off');
+  }
+  const generation = $('connect-generation');
+  if (generation) {
+    const parts = [];
+    if (binding.generation) parts.push(String(binding.generation).replace(/^\.generation-/, '').slice(0, 12));
+    if (binding.state) parts.push(binding.state + (binding.state_detail ? ` / ${binding.state_detail}` : ''));
+    if (binding.available !== undefined) parts.push(lang === 'ru' ? `доступно ${binding.available}` : `${binding.available} available`);
+    generation.textContent = parts.length ? parts.join(' · ') : '—';
+  }
+  const lan = $('connect-lan');
+  if (lan && gateway) {
+    lan.textContent = gateway.mobile_ready
+      ? (lang === 'ru' ? `LAN включён: ${gateway.bind_host}` : `LAN is on: ${gateway.bind_host}`)
+      : t('connect.lanOptIn');
+    lan.classList.toggle('warn', Boolean(gateway.mobile_ready));
+  }
+  const note = $('connect-probe-note');
+  if (note) note.textContent = (gateway && gateway.probe_note) || t('connect.probeNote');
+  const hint = $('connect-disconnect-hint');
+  if (hint) hint.textContent = (gateway && gateway.disconnect_hint) || t('connect.disconnectText');
+}
+
+async function stopGateway() {
+  const button = $('connect-disconnect');
+  if (button) button.disabled = true;
+  try {
+    await api('/api/gateway/stop', {});
+    toast(t('connect.gatewayStopped'));
+    poll();
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+function setupResultList() {
+  loadColumns();
+  document.querySelectorAll('#results-view-tabs [data-view]').forEach(button => {
+    button.onclick = () => {
+      resultState.view = button.dataset.view;
+      offset = 0;
+      loadResults();
+    };
+  });
+  const scope = $('results-scope-select');
+  if (scope) {
+    scope.onchange = () => { resultState.scope = scope.value; };
+  }
+  const bulk = {copy: 'bulk-copy', export: 'bulk-export', recheck: 'bulk-recheck', tag: 'bulk-tag', note: 'bulk-note',
+    unfavorite: 'bulk-unfavorite', exclude: 'bulk-exclude', include: 'bulk-include'};
+  for (const [op, id] of Object.entries(bulk)) {
+    const button = $(id);
+    if (!button) continue;
+    button.onclick = () => bulkAction(op);
+  }
+  const matrix = $('open-matrix');
+  if (matrix) matrix.onclick = loadMatrix;
+  const closeMatrix = $('matrix-close');
+  if (closeMatrix) closeMatrix.onclick = () => $('matrix-panel').classList.add('hidden');
+  const saveView = $('save-view');
+  if (saveView) {
+    saveView.onclick = async () => {
+      const name = prompt(t('results.viewName'));
+      if (!name) return;
+      try {
+        const view = await api('/api/views', {name, query: resultQuery(), columns: resultState.columns});
+        renderSavedViews([...(resultState.views || []), view]);
+        toast(t('results.viewSaved', {name: view.name}));
+      } catch (error) {
+        toast(error.message, true);
+      }
+    };
+  }
+  const views = $('saved-views');
+  if (views) {
+    views.onchange = () => {
+      const view = resultState.views.find(item => item.id === views.value);
+      if (view) applySavedView(view);
+    };
+  }
+  const deleteView = $('delete-view');
+  if (deleteView) {
+    deleteView.onclick = async () => {
+      const id = views ? views.value : '';
+      if (!id) return;
+      try {
+        await api('/api/views/delete', {id});
+        renderSavedViews((resultState.views || []).filter(item => item.id !== id));
+        toast(t('results.viewDeleted'));
+      } catch (error) {
+        toast(error.message, true);
+      }
+    };
+  }
+  const columnsToggle = $('columns-toggle');
+  if (columnsToggle && $('columns-menu')) {
+    columnsToggle.onclick = () => $('columns-menu').classList.toggle('hidden');
+  }
+  const disconnect = $('connect-disconnect');
+  if (disconnect) disconnect.onclick = stopGateway;
+}
 
 function renderTheme() {
   const dark = document.documentElement.dataset.theme === 'dark';
@@ -4172,6 +5026,80 @@ function renderLang() {
   updateSourceCount();
   updateCodeEditors();
 }
+// Scenario presets with an explicit, complete field set (defect 24, R17).
+//
+// A scenario used to change only some fields, so the judge, the DNSBL zones,
+// the strict flag and the anonymity minimum of the previous scenario survived
+// the switch: the "Elite privacy" card could still measure YouTube.  Every
+// scenario here declares every field it owns, and applying one first resets
+// all of them to the application defaults.  Names state what is actually
+// measured: a website response is a website response, not the whole service.
+const SCENARIO_FIELDS = [
+  ['protocol', 'all'], ['connect_timeout', 4], ['timeout', 8], ['prefilter', 512], ['workers', 128],
+  ['watch', 0], ['min_anonymity', 'any'], ['request-profile', 'workbench'], ['fail_fast', true],
+  ['speedtest-url', ''], ['judge-url', ''], ['dnsbl-zones', ''], ['dnsbl-enabled', false],
+  ['strict-clean', false], ['min_success', 2/3], ['max_latency', 0], ['countries', '']
+];
+
+const SCENARIOS = [
+  {
+    id: 'telegram',
+    name: {en: 'Telegram web reachability', ru: 'Telegram: доступность веб-страницы'},
+    note: {en: 'Checks the public web page, not calls or the app protocol.',
+           ru: 'Проверяет публичную веб-страницу, а не звонки и не протокол приложения.'},
+    targets: [{name: 'Telegram web', url: 'https://telegram.org/', method: 'GET', statuses: [200], contains: 'Telegram', headers: {}}],
+    fields: {protocol: 'socks5', connect_timeout: 3, timeout: 6, 'speedtest-url': '', 'request-profile': 'workbench'}
+  },
+  {
+    id: 'youtube',
+    name: {en: 'YouTube page load', ru: 'YouTube: загрузка страницы'},
+    note: {en: 'Checks that the page answers, plus a separate download-size sample.',
+           ru: 'Проверяет ответ страницы и отдельный замер скорости скачивания.'},
+    targets: [{name: 'YouTube web', url: 'https://www.youtube.com/', method: 'GET', statuses: [200], contains: null, headers: {}}],
+    fields: {protocol: 'all', connect_timeout: 4, timeout: 10, 'speedtest-url': 'https://speed.cloudflare.com/__down?bytes=5000000', 'request-profile': 'workbench'}
+  },
+  {
+    id: 'anon',
+    name: {en: 'Anonymity screening', ru: 'Анонимность: отбор'},
+    note: {en: 'Screens the exit address for a judge verdict and DNSBL listings.',
+           ru: 'Проверяет внешний адрес на judge и списки DNSBL.'},
+    targets: [{name: 'Anonymity check', url: 'https://www.wikipedia.org/', method: 'GET', statuses: [200], contains: null, headers: {}}],
+    fields: {protocol: 'socks5', 'judge-url': 'http://azenv.net/', 'dnsbl-zones': 'zen.spamhaus.org\nbl.spamcop.net',
+             'dnsbl-enabled': true, 'strict-clean': true, min_anonymity: 'elite', 'speedtest-url': '',
+             'request-profile': 'workbench'}
+  },
+  {
+    id: 'scrape',
+    name: {en: 'High-throughput sweep', ru: 'Массовый обход'},
+    note: {en: 'Many workers and a short timeout for big lists; no anonymity or speed test.',
+           ru: 'Много потоков и короткий таймаут для больших списков; без анонимности и скорости.'},
+    targets: [{name: 'Website response', url: 'https://www.wikipedia.org/', method: 'GET', statuses: [200], contains: null, headers: {}}],
+    fields: {workers: 256, connect_timeout: 2, timeout: 5, prefilter: 1024, watch: 60,
+             'request-profile': 'minimal', 'speedtest-url': '', min_anonymity: 'any'}
+  },
+  {
+    id: 'custom',
+    name: {en: 'Custom', ru: 'Свой сценарий'},
+    note: {en: 'Keeps everything as it is.', ru: 'Оставляет всё как есть.'},
+    targets: null,
+    fields: {}
+  }
+];
+
+function scenarioById(id) {
+  return SCENARIOS.find(item => item.id === id) || SCENARIOS[SCENARIOS.length - 1];
+}
+
+function resetScenarioFields() {
+  for (const [id, value] of SCENARIO_FIELDS) {
+    const el = $(id);
+    if (!el) continue;
+    if (typeof value === 'boolean') el.checked = value;
+    else el.value = String(value);
+  }
+  if ($('dnsbl-fields') && $('dnsbl-enabled')) $('dnsbl-fields').classList.toggle('hidden', !$('dnsbl-enabled').checked);
+}
+
 function setupEnhancedListeners() {
   // Select All Proxies
   const selectAll = $('select-all-proxies');
@@ -4206,7 +5134,9 @@ function setupEnhancedListeners() {
   if (btnExportSel) {
     btnExportSel.onclick = () => {
       if (!selectedProxies.size || state.running) return;
-      start('export', Array.from(selectedProxies));
+      // The same server-side action as the scope-aware bar, with the scope
+      // digest check, so an export can never be applied to a stale selection.
+      bulkAction('export', {scope: 'selected'});
     };
   }
 
@@ -4282,6 +5212,7 @@ function setupEnhancedListeners() {
     if (!container) return;
     container.replaceChildren();
     targets.forEach(addTarget);
+    syncQuickServiceChips();
   }
 
   // Quick Scenarios in Scan tab
@@ -4297,74 +5228,59 @@ function setupEnhancedListeners() {
     });
   }
 
+  function setVal(id, val) {
+    const el = $(id);
+    if (!el) return;
+    if (typeof val === 'boolean') {
+      el.checked = val;
+    } else {
+      el.value = String(val);
+    }
+  }
+
+  function setScenarioValues(fields, changed) {
+    for (const [id, value] of Object.entries(fields || {})) {
+      setVal(id, value);
+      const el = $(id);
+      if (!el) continue;
+      if (el.tagName === 'SELECT' && el.selectedIndex < 0) {
+        // An unknown value is never silently dropped: the closest option wins.
+        const closest = Array.from(el.options).find(option => option.value !== '');
+        if (closest) el.value = closest.value;
+      }
+      changed.push(el);
+    }
+  }
+
   document.querySelectorAll('.scenario-card').forEach(card => {
     card.onclick = () => {
       document.querySelectorAll('.scenario-card').forEach(c => c.classList.remove('active'));
       card.classList.add('active');
-      const s = card.dataset.scenario;
+      const scenario = scenarioById(card.dataset.scenario);
       const changed = [];
-
-      const setVal = (id, val) => {
-        const el = $(id);
-        if (el && String(el.value) !== String(val)) {
-          el.value = val;
-          changed.push(el);
-        }
-      };
-      const setChecked = (id, val) => {
-        const el = $(id);
-        if (el && el.checked !== Boolean(val)) {
-          el.checked = Boolean(val);
-          changed.push(el);
-        }
-      };
-
-      let scenarioName = 'Telegram';
-      if (s === 'telegram') {
-        scenarioName = 'Telegram';
-        setScenarioTargets([{name: 'Telegram', url: 'https://telegram.org/', method: 'GET', statuses: [200], contains: null, sha256: null, headers: {}}]);
-        setVal('protocol', 'socks5');
-        setVal('connect_timeout', 3);
-        setVal('timeout', 6);
-        setVal('speedtest-url', '');
-        setVal('request-profile', 'workbench');
-      } else if (s === 'youtube') {
-        scenarioName = 'YouTube 4K';
-        setScenarioTargets([{name: 'YouTube', url: 'https://www.youtube.com/', method: 'GET', statuses: [200], contains: null, sha256: null, headers: {}}]);
-        setVal('protocol', 'all');
-        setVal('connect_timeout', 4);
-        setVal('timeout', 10);
-        setVal('speedtest-url', 'https://speed.cloudflare.com/__down?bytes=5000000');
-        setVal('request-profile', 'workbench');
-      } else if (s === 'anon') {
-        scenarioName = 'Elite Privacy';
-        setVal('judge-url', 'http://azenv.net/');
-        setVal('dnsbl-zones', 'zen.spamhaus.org\nbl.spamcop.net');
-        setVal('protocol', 'socks5');
-        setChecked('dnsbl-enabled', true);
-        setChecked('strict-clean', true);
-        setVal('min_anonymity', 'elite');
-        setVal('request-profile', 'workbench');
-      } else if (s === 'scrape') {
-        scenarioName = 'Scraping';
-        setVal('workers', 256);
-        setVal('connect_timeout', 2);
-        setVal('timeout', 5);
-        setVal('prefilter', 1024);
-        setVal('watch', 60);
-        setVal('request-profile', 'minimal');
-      } else if (s === 'custom') {
-        scenarioName = 'Custom Pro';
+      if (scenario.targets) {
+        setScenarioTargets(scenario.targets);
+      } else {
+        // Custom keeps the user's own services and parameters untouched.
       }
-
+      if (scenario.id !== 'custom') {
+        // Reset first: a scenario must not inherit the previous one.
+        resetScenarioFields();
+        setScenarioValues(scenario.fields, changed);
+        if (scenario.id === 'anon') {
+          setVal('judge-url', 'http://azenv.net/');
+          setVal('dnsbl-zones', 'zen.spamhaus.org\nbl.spamcop.net');
+        }
+      }
       highlightChangedInputs(changed);
       syncScanToResults();
       syncAllPresetChips();
       updateIdentity();
-
-      const toastMsg = s === 'custom'
+      const note = $('scenario-note');
+      if (note) note.textContent = lang === 'ru' ? scenario.note.ru : scenario.note.en;
+      const toastMsg = scenario.id === 'custom'
         ? t('scenario.customUnchanged')
-        : (lang === 'ru' ? `Применен сценарий: ${scenarioName}` : `Applied scenario: ${scenarioName}`);
+        : t('scenario.applied');
       toast(toastMsg);
     };
     card.setAttribute('role', 'button');
@@ -4447,6 +5363,7 @@ if (sidebarLangBtn && langBtn) sidebarLangBtn.onclick = langBtn.onclick;
 try { setupCountryComboboxes(); } catch (e) { console.error(e); }
 try { setupFieldPresetChips(); } catch (e) { console.error(e); }
 try { setupEnhancedListeners(); } catch (e) { console.error(e); }
+try { setupResultList(); } catch (e) { console.error(e); }
 
 try { renderLang(); } catch (e) { console.error(e); }
 requestAnimationFrame(updateSegmentedGlider);

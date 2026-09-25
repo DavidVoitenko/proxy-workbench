@@ -154,12 +154,15 @@
     <!-- Page: Scan Dashboard (Dense 1-Screen Dashboard) -->
     <section class="page active" id="page-scan">
       <div class="page-heading">
-        <div>
+        <div class="page-heading-info">
           <div class="eyebrow" data-i18n="scan.eyebrow">FIND. CHECK. SAVE.</div>
           <h1 data-i18n="scan.title">Proxies for your tasks</h1>
           <p data-i18n="scan.lead">One or more services. The result is proxies that work with every one of them.</p>
         </div>
-        <button class="button light" id="save-settings" data-i18n="common.saveSettings">Save settings</button>
+        <button class="button light save-settings-btn" id="save-settings" title="Save current settings to local store">
+          <span class="save-icon">💾</span>
+          <span data-i18n="common.saveSettings">Save settings</span>
+        </button>
       </div>
 
       <!-- Scenarios Bar: Compact 1-line horizontal quick selector -->
@@ -169,34 +172,34 @@
           <span class="scenarios-sub" data-i18n="scenario.subtitle">Preconfigured smart templates for popular workflows</span>
         </div>
         <div class="scenarios-grid one-line-grid">
-          <div class="scenario-card" data-scenario="telegram" title="SOCKS5 TCP proxies for messaging; calls and UDP need a separate tunnel">
+          <div class="scenario-card" data-scenario="telegram" title="Checks that the public web page of the service answers through the proxy. Calls and the app protocol are not measured.">
             <span class="scenario-icon">✈️</span>
             <div class="scenario-meta">
-              <strong data-i18n="scenario.telegram">Telegram (TCP)</strong>
+              <strong data-i18n="scenario.telegram">Telegram web page</strong>
             </div>
             <span class="scenario-tag">SOCKS5</span>
           </div>
 
-          <div class="scenario-card" data-scenario="youtube" title="Bandwidth testing in Mbit/s with high throughput for 4K streaming">
+          <div class="scenario-card" data-scenario="youtube" title="Checks that the page answers and measures a separate download sample in Mbit/s. Video quality is not guaranteed by this number.">
             <span class="scenario-icon">🎬</span>
             <div class="scenario-meta">
-              <strong data-i18n="scenario.youtube">YouTube &amp; 4K Video</strong>
+              <strong data-i18n="scenario.youtube">YouTube page + speed</strong>
             </div>
             <span class="scenario-tag">Mbit/s</span>
           </div>
 
-          <div class="scenario-card" data-scenario="anon" title="Judge verified anonymity with strict DNSBL blacklist filtering">
+          <div class="scenario-card" data-scenario="anon" title="Screens the exit address with a judge and DNSBL zones and keeps only the rows you asked for.">
             <span class="scenario-icon">🛡️</span>
             <div class="scenario-meta">
-              <strong data-i18n="scenario.anon">Elite Privacy</strong>
+              <strong data-i18n="scenario.anon">Anonymity screening</strong>
             </div>
             <span class="scenario-tag">Elite</span>
           </div>
 
-          <div class="scenario-card" data-scenario="scrape" title="256 threads, 2s connect timeout, quick prefiltering for big lists">
+          <div class="scenario-card" data-scenario="scrape" title="256 workers, 2s connect timeout, prefiltering for big lists. No anonymity judge and no speed test.">
             <span class="scenario-icon">⚡</span>
             <div class="scenario-meta">
-              <strong data-i18n="scenario.scrape">Fast Scraping</strong>
+              <strong data-i18n="scenario.scrape">High-throughput sweep</strong>
             </div>
             <span class="scenario-tag">256 Thr</span>
           </div>
@@ -209,6 +212,7 @@
             <span class="scenario-tag">Full</span>
           </div>
         </div>
+        <p class="scenarios-note" id="scenario-note"></p>
       </section>
 
       <!-- Workspace Grid: Dense 2-Column Split -->
@@ -223,13 +227,13 @@
                 <span class="block-step-badge">1</span>
                 <span data-i18n="targets.title">Which services to check</span>
               </h2>
-              <div style="display: flex; align-items: center; gap: 8px;">
-                <span class="badge" data-i18n="targets.badge">Condition: all services</span>
-                <select id="target-preset" class="preset-select" style="height: 28px; font-size: 11.5px; padding: 0 8px;">
+              <div class="targets-header-actions">
+                <span class="badge condition-badge" data-i18n="targets.badge">Condition: all services</span>
+                <select id="target-preset" class="preset-select" aria-label="Add popular service">
                   <option value="" data-i18n="presets.choose">Add popular service…</option>
                 </select>
-                <button type="button" class="button primary chip" id="add-target" style="height: 28px; padding: 0 10px; font-size: 11.5px;">
-                  <span style="font-weight: 800; margin-right: 4px;">＋</span>
+                <button type="button" class="button primary chip add-target-btn" id="add-target">
+                  <span class="btn-plus">＋</span>
                   <span data-i18n="targets.add">Add URL</span>
                 </button>
               </div>
@@ -239,7 +243,7 @@
             <div id="targets"></div>
 
             <!-- Quick service chips -->
-            <div class="quick-services-chips" id="quick-services-chips" style="margin-top: 8px;"></div>
+            <div class="quick-services-chips" id="quick-services-chips"></div>
           </section>
 
           <!-- Block 2: Parameters and Filters -->
@@ -249,12 +253,12 @@
                 <span class="block-step-badge">2</span>
                 <span data-i18n="check.title">Parameters &amp; Filters</span>
               </h2>
-              <div class="presets-segmented-wrapper" style="margin: 0;">
-                <div class="segmented-control" role="group" aria-label="Presets" style="height: 28px;">
+              <div class="presets-segmented-wrapper">
+                <div class="segmented-control" role="group" aria-label="Presets">
                   <div class="segmented-glider" aria-hidden="true"></div>
-                  <button type="button" class="button chip segmented-btn" data-preset="quick" data-i18n="preset.quick" style="height: 24px; padding: 0 8px; font-size: 11px;">⚡ Quick</button>
-                  <button type="button" class="button chip segmented-btn active" data-preset="balanced" data-i18n="preset.balanced" style="height: 24px; padding: 0 8px; font-size: 11px;">⚖ Balanced</button>
-                  <button type="button" class="button chip segmented-btn" data-preset="thorough" data-i18n="preset.thorough" style="height: 24px; padding: 0 8px; font-size: 11px;">🔬 Thorough</button>
+                  <button type="button" class="button chip segmented-btn" data-preset="quick" data-i18n="preset.quick">⚡ Quick</button>
+                  <button type="button" class="button chip segmented-btn active" data-preset="balanced" data-i18n="preset.balanced">⚖️ Balanced</button>
+                  <button type="button" class="button chip segmented-btn" data-preset="thorough" data-i18n="preset.thorough">🔬 Thorough</button>
                 </div>
               </div>
             </div>
@@ -278,18 +282,18 @@
               </label>
 
               <label>
-                <span data-i18n="check.workers">Threads (Workers)</span>
-                <div class="input-unit-wrap">
-                  <input id="workers" type="number" min="1" max="1000" value="128">
-                  <span class="unit-badge" data-i18n="unit.threads">threads</span>
-                </div>
-              </label>
-
-              <label>
                 <span data-i18n="check.connectTimeout">Connect timeout</span>
                 <div class="input-unit-wrap">
                   <input id="connect_timeout" type="number" min="0.1" max="60" step="0.1" value="4">
                   <span class="unit-badge" data-i18n="unit.sec">sec</span>
+                </div>
+              </label>
+
+              <label>
+                <span data-i18n="check.workers">Threads (Workers)</span>
+                <div class="input-unit-wrap">
+                  <input id="workers" type="number" min="1" max="1000" value="128">
+                  <span class="unit-badge" data-i18n="unit.threads">threads</span>
                 </div>
               </label>
 
@@ -439,7 +443,7 @@
                     </div>
                   </label>
                   <label>
-                    <span>Desired quantity (Want)</span>
+                    <span data-i18n="want.label">Stop after finding</span>
                     <div class="input-unit-wrap">
                       <input type="number" id="want" min="0" value="0">
                       <span class="unit-badge">0=all</span>
@@ -488,11 +492,11 @@
                 <span class="block-step-badge">3</span>
                 <span data-i18n="identity.title">Cleanliness &amp; Rotation</span>
               </h2>
-              <div style="display: flex; align-items: center; gap: 8px;">
-                <label style="display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 650; margin: 0; color: var(--ink);">
+              <div class="watch-keep-fresh-wrap">
+                <label class="watch-keep-fresh-label">
                   <span data-i18n="watch.label">Keep-Fresh:</span>
-                  <div class="input-unit-wrap" style="width: 105px;">
-                    <input id="watch" type="number" min="0" max="1440" step="5" value="0" style="height: 26px; font-size: 11.5px;">
+                  <div class="input-unit-wrap watch-unit-wrap">
+                    <input id="watch" type="number" min="0" max="1440" step="5" value="0">
                     <span class="unit-badge" data-i18n="unit.min">min</span>
                   </div>
                 </label>
@@ -501,23 +505,23 @@
 
             <div class="cleanliness-grid">
               <!-- DNSBL Pane -->
-              <div class="clean-pane">
+              <div class="clean-pane clean-pane-dnsbl" id="clean-pane-dnsbl">
                 <div class="clean-pane-header">
-                  <label>
+                  <label class="check-label clean-pane-check" for="dnsbl-enabled">
                     <input type="checkbox" id="dnsbl-enabled">
                     <span data-i18n="identity.dnsbl">Check public DNSBLs</span>
                   </label>
                   <span class="line-count-badge" id="dnsbl-lines-count">0 lines</span>
                 </div>
-                <div id="dnsbl-fields" style="display: flex; flex-direction: column; gap: 6px;">
-                  <textarea id="dnsbl-zones" class="mono-textarea" rows="2" spellcheck="false" placeholder="bl.example.org&#10;dnsbl.example.net"></textarea>
-                  <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
-                    <label style="display: flex; align-items: center; gap: 6px; font-size: 11px; margin: 0;">
+                <div id="dnsbl-fields" class="dnsbl-fields-wrap">
+                  <textarea id="dnsbl-zones" class="mono-textarea" rows="2" spellcheck="false" placeholder="zen.spamhaus.org&#10;bl.spamcop.net"></textarea>
+                  <div class="clean-sub-controls">
+                    <label class="dnsbl-timeout-label">
                       <span data-i18n="identity.dnsblTimeout">Timeout:</span>
-                      <input id="reputation-timeout" type="number" min="0.1" max="30" step="0.1" value="2.5" style="width: 55px; height: 24px; font-size: 11px;">
-                      <span>s</span>
+                      <input id="reputation-timeout" type="number" min="0.1" max="30" step="0.1" value="2.5">
+                      <span class="sub-unit">s</span>
                     </label>
-                    <label style="display: flex; align-items: center; gap: 6px; font-size: 11px; margin: 0;">
+                    <label class="check-label strict-check-label" for="strict-clean">
                       <input type="checkbox" id="strict-clean">
                       <span data-i18n="identity.strict">Strict clean</span>
                     </label>
@@ -526,16 +530,18 @@
               </div>
 
               <!-- Local Denylist Pane -->
-              <div class="clean-pane">
+              <div class="clean-pane clean-pane-local" id="clean-pane-denylist">
                 <div class="clean-pane-header">
-                  <label>
+                  <label class="check-label clean-pane-check" for="local-denylist-enabled">
                     <input type="checkbox" id="local-denylist-enabled" checked>
                     <span data-i18n="identity.local">Local denylist</span>
                   </label>
                   <span class="line-count-badge" id="denylist-lines-count">0 lines</span>
                 </div>
-                <textarea id="denylist" class="mono-textarea" rows="2" spellcheck="false" placeholder="192.0.2.1&#10;198.51.100.0/24"></textarea>
-                <small style="font-size: 10.5px; color: var(--muted);" data-i18n="identity.localHint">IPs or CIDR blocks permanently excluded from tests and exports.</small>
+                <div class="denylist-fields-wrap">
+                  <textarea id="denylist" class="mono-textarea" rows="2" spellcheck="false" placeholder="192.0.2.1&#10;198.51.100.0/24"></textarea>
+                  <small class="denylist-hint-text" data-i18n="identity.localHint">IPs or CIDR blocks permanently excluded from tests and exports.</small>
+                </div>
               </div>
             </div>
           </section>
@@ -546,7 +552,10 @@
         <div class="monitor-column">
           <section class="card monitor" data-phase="ready">
             <div class="monitor-title">
-              <span class="eyebrow" data-i18n="monitor.eyebrow">MISSION CONTROL</span>
+              <div class="monitor-heading-left">
+                <span class="radar-dot" aria-hidden="true"></span>
+                <span class="eyebrow" data-i18n="monitor.eyebrow">MISSION CONTROL</span>
+              </div>
               <span id="phase" class="phase" data-phase="ready">Ready to start</span>
             </div>
 
@@ -558,7 +567,7 @@
                   <circle class="gauge-fill" id="radial-progress-fill" cx="60" cy="60" r="50"></circle>
                 </svg>
                 <div class="gauge-center-content">
-                  <span class="gauge-percent" id="gauge-percent">0%</span>
+                  <span class="gauge-percent" id="gauge-percent">0.0%</span>
                   <span class="gauge-caption" id="gauge-caption" data-i18n="monitor.gaugeTitle">PROGRESS</span>
                 </div>
               </div>
@@ -574,7 +583,7 @@
 
             <div class="progress-meta">
               <span id="progress-text">All collected addresses will be checked</span>
-              <b id="percent">0%</b>
+              <b id="percent">0.0%</b>
             </div>
 
             <div class="metrics metrics-grid">
@@ -587,7 +596,7 @@
               </div>
               <div class="metric-card">
                 <div class="metric-header">
-                  <span class="metric-icon" aria-hidden="true">⏱</span>
+                  <span class="metric-icon" aria-hidden="true">⏱️</span>
                   <small data-i18n="monitor.eta">Remaining</small>
                 </div>
                 <strong id="eta" class="metric-value">—</strong>
@@ -607,7 +616,7 @@
               <b id="source-count">—</b>
             </div>
 
-            <p id="job-detail" class="hint" style="margin: 6px 0; font-size: 11.5px;">Configure services and start the search.</p>
+            <p id="job-detail" class="hint">Configure services and start the search.</p>
 
             <!-- Main Big Action Button -->
             <button class="button primary full mission-btn-start" id="start">
@@ -615,23 +624,34 @@
             </button>
 
             <!-- Secondary Actions Row -->
-            <div class="button-row" style="margin-top: 6px;">
-              <button class="button light ghost-btn" id="resume" title="Check the remaining database addresses with current settings" data-i18n="monitor.resume" data-i18n-title="monitor.resumeTitle" style="flex: 1;">Continue</button>
-              <button class="button danger mission-btn-stop" id="stop" disabled data-i18n="monitor.stop" style="flex: 1;">Stop</button>
+            <div class="button-row secondary-btn-row">
+              <button class="button light ghost-btn" id="resume" title="Check the remaining database addresses with current settings" data-i18n="monitor.resume" data-i18n-title="monitor.resumeTitle">Continue</button>
+              <button class="button danger mission-btn-stop" id="stop" disabled data-i18n="monitor.stop">Stop</button>
             </div>
 
-            <div style="display: flex; gap: 4px; margin-top: 4px;">
-              <button class="button text full ghost-subtle-btn" id="recheck-passing" data-i18n="monitor.recheckPassing" style="font-size: 11px; padding: 4px;">Recheck matching</button>
-              <button class="button text full ghost-subtle-btn" id="recheck" data-i18n="monitor.recheck" style="font-size: 11px; padding: 4px;">Recheck database</button>
+            <!-- Balanced 2-Button Recheck Row (Never Blows Out) -->
+            <div class="recheck-actions-row">
+              <button type="button" class="button text recheck-btn" id="recheck-passing" data-i18n-title="monitor.recheckPassingTitle" title="Recheck only matching proxies">
+                <span class="recheck-btn-icon">⚡</span>
+                <span data-i18n="monitor.recheckPassingShort">Matching</span>
+              </button>
+              <button type="button" class="button text recheck-btn" id="recheck" data-i18n-title="monitor.recheckTitle" title="Recheck all database addresses">
+                <span class="recheck-btn-icon">↺</span>
+                <span data-i18n="monitor.recheckShort">Database</span>
+              </button>
             </div>
           </section>
 
           <!-- Live Inspection Stream Ticker (3-4 lines) -->
           <section class="card live-ticker-card">
             <div class="live-ticker-header">
-              <span class="ticker-live-dot"></span>
-              <strong data-i18n="monitor.liveStream">Live Inspection Stream</strong>
+              <div class="ticker-title-left">
+                <span class="ticker-live-dot"></span>
+                <strong data-i18n="monitor.liveStream">Live Inspection Stream</strong>
+              </div>
+              <span class="ticker-idle-badge" id="ticker-status-badge">READY</span>
             </div>
+            <span class="live-feed-source" id="live-feed-source"></span>
             <div class="live-ticker-stream" id="live-ticker-list">
               <div class="ticker-empty" data-i18n="monitor.liveStreamIdle">Checked proxies appear here in real time.</div>
             </div>
@@ -672,10 +692,28 @@
           <p id="result-context">Matching addresses will appear here after a check.</p>
         </div>
         <div class="results-compact-actions">
-          <button class="button light" id="refresh-results" data-i18n="results.refresh" style="height: 32px; font-size: 12px; padding: 0 10px;">
-            <span>↻</span> <span data-i18n="results.refresh">Refresh</span>
-          </button>
+          <div class="view-tabs" id="results-view-tabs" role="tablist" data-i18n-aria-label="view.label" aria-label="View">
+            <button type="button" class="view-tab active" data-view="fresh" aria-pressed="true" data-i18n="view.fresh">Fresh <span class="view-count">0</span></button>
+            <button type="button" class="view-tab" data-view="stale" aria-pressed="false" data-i18n="view.stale">Expired <span class="view-count">0</span></button>
+            <button type="button" class="view-tab" data-view="failed" aria-pressed="false" data-i18n="view.failed">Failed <span class="view-count">0</span></button>
+            <button type="button" class="view-tab" data-view="unknown" aria-pressed="false" data-i18n="view.unknown">Unknown <span class="view-count">0</span></button>
+            <button type="button" class="view-tab" data-view="all" aria-pressed="false" data-i18n="view.all">All <span class="view-count">0</span></button>
+          </div>
+          <div class="view-tools">
+            <select id="saved-views" class="compact-select" data-i18n-aria-label="results.views" aria-label="Saved views"></select>
+            <button type="button" class="button light chip" id="save-view" data-i18n="results.viewSave">Save view</button>
+            <button type="button" class="button light chip" id="delete-view" data-i18n="common.delete">Delete</button>
+            <div class="columns-wrap">
+              <button type="button" class="button light chip" id="columns-toggle" aria-haspopup="true" aria-expanded="false" data-i18n="results.columns">Columns</button>
+              <div class="columns-menu hidden" id="columns-menu" role="group" data-i18n-aria-label="results.columns" aria-label="Columns"></div>
+            </div>
+            <button type="button" class="button light chip" id="open-matrix" data-i18n="results.matrix">Targets matrix</button>
+            <button class="button light" id="refresh-results" data-i18n="results.refresh" style="height: 32px; font-size: 12px; padding: 0 10px;">
+              <span>↻</span> <span data-i18n="results.refresh">Refresh</span>
+            </button>
+          </div>
         </div>
+        <p class="results-scope-hint" id="results-view-hint"></p>
       </div>
 
       <!-- Ultra-Compact 2-Row Toolbar -->
@@ -768,7 +806,7 @@
         <!-- Row 2: Secondary Filter Controls & Copy Page -->
         <div class="results-tb-row-2">
           <label class="tb-mini-field">
-            <span data-i18n="results.order">Order:</span>
+            <span data-i18n="tb.order">Order:</span>
             <select id="result-sort">
               <option value="recommended" data-i18n="results.byRecommended">Recommended</option>
               <option value="quality" data-i18n="results.byQuality">By quality</option>
@@ -780,7 +818,7 @@
           </label>
 
           <label class="tb-mini-field">
-            <span data-i18n="filter.protocol">Proto:</span>
+            <span data-i18n="tb.proto">Proto:</span>
             <select id="result-protocol">
               <option value="all" data-i18n="filter.allProtocols">All</option>
               <option value="http">HTTP</option>
@@ -791,7 +829,7 @@
           </label>
 
           <label class="tb-mini-field">
-            <span data-i18n="anon.min">Anon:</span>
+            <span data-i18n="tb.anon">Anon:</span>
             <select id="result-anon">
               <option value="any" data-i18n="anon.any">Any</option>
               <option value="anonymous" data-i18n="anon.minAnonymous">Anon+</option>
@@ -800,7 +838,7 @@
           </label>
 
           <label class="tb-mini-field">
-            <span data-i18n="results.min">Success:</span>
+            <span data-i18n="tb.min">Success:</span>
             <select id="result-min">
               <option value="0.6666666666666666" data-i18n="results.minTwoThirds">≥ ⅔</option>
               <option value="1" data-i18n="results.minAll">100%</option>
@@ -809,17 +847,17 @@
           </label>
 
           <label class="tb-mini-field">
-            <span data-i18n="filter.maxLatency">Max Latency:</span>
+            <span data-i18n="tb.latency">Max Latency:</span>
             <input type="number" id="result-max-latency" min="0" max="600000" step="50" value="0" placeholder="0=off">
           </label>
 
           <label class="tb-mini-field">
-            <span data-i18n="results.top">Top:</span>
+            <span data-i18n="tb.top">Top:</span>
             <input type="number" id="result-top" value="0" min="0" placeholder="0=all">
           </label>
 
           <label class="tb-mini-field">
-            <span data-i18n="filter.excludeHosting">Hosting:</span>
+            <span data-i18n="tb.hosting">Hosting:</span>
             <select id="result-hosting">
               <option value="keep" data-i18n="filter.keepHosting">Keep all</option>
               <option value="exclude" data-i18n="filter.excludeHostingAction">Exclude</option>
@@ -827,9 +865,9 @@
           </label>
 
           <div style="margin-left: auto; display: flex; align-items: center; gap: 8px;">
-            <button class="button light chip" id="copy-page" style="height: 26px; font-size: 11px; padding: 0 8px;">
+            <button class="button light chip tb-copy-btn" id="copy-page">
               <span class="btn-icon">📋</span>
-              <span data-i18n="filter.copyPage">Copy page</span>
+              <span data-i18n="tb.copyPage">Copy page</span>
             </button>
           </div>
         </div>
@@ -840,7 +878,7 @@
       <div class="breakdown hidden" id="breakdown"></div>
 
       <!-- 6px Slim Country Distribution Progress Bar directly below toolbar -->
-      <div class="country-bar-wrap thin-bar" id="country-distribution-card">
+      <div class="country-bar-wrap thin-bar hidden" id="country-distribution-card">
         <div class="country-bar-header">
           <span class="country-bar-title" data-i18n="results.geoBarTitle">Country Distribution</span>
           <span class="country-bar-stats" id="country-bar-stats"></span>
@@ -851,13 +889,51 @@
       <!-- Floating Selection Action Bar -->
       <div class="floating-selection-bar hidden" id="selection-action-bar" role="region" data-i18n-aria-label="results.selectedRegion" aria-label="Actions for selected proxies">
         <div class="selection-pill" id="selection-count">Selected: 0</div>
+        <label class="scope-select">
+          <span data-i18n="results.scope">Bulk scope</span>
+          <select id="results-scope-select" class="compact-select">
+            <option value="page" data-i18n="scope.page">This page</option>
+            <option value="selected" data-i18n="scope.selected">Selected</option>
+            <option value="all_matching" data-i18n="scope.allMatching">All matching</option>
+          </select>
+        </label>
         <div class="selection-actions">
           <button type="button" class="button light chip" id="action-copy-selected" data-i18n="results.copySelected">Copy Selected</button>
+          <button type="button" class="button light chip" id="bulk-copy" data-i18n="results.copySelected">Copy scope</button>
           <button type="button" class="button light chip" id="action-export-selected" data-i18n="results.exportSelected">Download Selected</button>
+          <button type="button" class="button light chip" id="bulk-export" data-i18n="results.exportSelected">Download scope</button>
+          <button type="button" class="button light chip" id="bulk-recheck" data-i18n="results.bulkRecheck" title="Full re-check">Re-check</button>
+          <input type="text" id="bulk-tag-input" class="compact-input" data-i18n-placeholder="results.tagInput" placeholder="Tag" maxlength="40">
+          <button type="button" class="button light chip" id="bulk-tag" data-i18n="results.tag">Tag</button>
+          <button type="button" class="button light chip" id="bulk-unfavorite" data-i18n="results.unfavorite">Unfavourite</button>
+          <input type="text" id="bulk-note-input" class="compact-input wide" data-i18n-placeholder="results.noteInput" placeholder="Note" maxlength="2000">
+          <button type="button" class="button light chip" id="bulk-note" data-i18n="results.note">Note</button>
+          <button type="button" class="button light chip" id="bulk-exclude" data-i18n="results.exclude">Exclude</button>
+          <button type="button" class="button light chip" id="bulk-include" data-i18n="results.include">Return</button>
           <button type="button" class="button danger chip" id="action-ban-selected" data-i18n="results.banSelected">Add to Denylist</button>
           <button type="button" class="button text chip" id="action-clear-selection" data-i18n="results.clearSelection">Clear</button>
         </div>
       </div>
+
+      <!-- Matrix proxy x target -->
+      <section class="card matrix-card hidden" id="matrix-panel" role="region" data-i18n-aria-label="results.matrix" aria-label="Targets matrix">
+        <div class="matrix-head">
+          <strong data-i18n="results.matrix">Targets matrix</strong>
+          <span class="matrix-note" id="matrix-note"></span>
+          <small data-i18n="results.matrixHint">One row per proxy, one column per checked service.</small>
+          <button type="button" class="button text chip" id="matrix-close" data-i18n="results.matrixClose">Close matrix</button>
+        </div>
+        <div class="table-wrap matrix-wrap" id="matrix-body"></div>
+      </section>
+
+      <!-- Recent actions and undo -->
+      <section class="card history-card" id="history-card">
+        <div class="history-head">
+          <strong data-i18n="results.history">Recent actions</strong>
+          <button type="button" class="button text chip" id="history-undo-last" disabled data-i18n="results.undo">Undo</button>
+        </div>
+        <div class="history-list" id="history-list"></div>
+      </section>
 
       <!-- Main Results Table (Sticky thead, 38px compact rows) -->
       <section class="card results-card table-focus-card">
@@ -865,24 +941,25 @@
           <table class="results-table" id="result-table">
             <thead>
               <tr>
-                <th class="th-check"><input type="checkbox" id="select-all-proxies" title="Select all proxies on this page" data-i18n-title="results.selectAll" aria-label="Select all proxies on this page" data-i18n-aria-label="results.selectAll"></th>
-                <th class="th-num">#</th>
-                <th class="th-proxy" data-i18n="col.proxy">Proxy</th>
-                <th class="th-score" data-i18n="col.quality">Quality</th>
-                <th class="th-latency" data-i18n="col.latency">Latency</th>
-                <th class="th-jitter" data-i18n="col.jitter">Jitter</th>
-                <th class="th-speed" data-i18n="col.mbps" data-i18n-title="col.mbpsHint" title="Download speed from the speed test">Mbit/s</th>
-                <th class="th-success" data-i18n="col.success">Success</th>
-                <th class="th-uptime" data-i18n="col.uptime" data-i18n-title="col.uptimeHint" title="Passed re-checks / all checks">Uptime</th>
-                <th class="th-clean" data-i18n="col.cleanliness">Cleanliness</th>
-                <th class="th-anon" data-i18n="col.anonymity">Anonymity</th>
-                <th class="th-country" data-i18n="col.country">Country</th>
-                <th class="th-provider" data-i18n="col.provider">Provider</th>
-                <th class="th-actions"></th>
+                <th class="th-check" data-col="col-check"><input type="checkbox" id="select-all-proxies" title="Select all proxies on this page" data-i18n-title="results.selectAll" aria-label="Select all proxies on this page" data-i18n-aria-label="results.selectAll"></th>
+                <th class="th-num" data-col="col-num">#</th>
+                <th class="th-proxy" data-col="col-proxy" data-i18n="col.proxy">Proxy</th>
+                <th class="th-score" data-col="col-score" data-i18n="col.quality">Quality</th>
+                <th class="th-latency" data-col="col-latency" data-i18n="col.latency">Latency</th>
+                <th class="th-jitter" data-col="col-jitter" data-i18n="col.jitter">Jitter</th>
+                <th class="th-speed" data-col="col-speed" data-i18n="col.mbps" data-i18n-title="col.mbpsHint" title="Download speed from the speed test">Mbit/s</th>
+                <th class="th-success" data-col="col-success" data-i18n="col.success">Success</th>
+                <th class="th-uptime" data-col="col-uptime" data-i18n="col.uptime" data-i18n-title="col.uptimeHint" title="Passed re-checks / all checks">Uptime</th>
+                <th class="th-clean" data-col="col-cleanliness" data-i18n="col.cleanliness">Cleanliness</th>
+                <th class="th-anon" data-col="col-anonymity" data-i18n="col.anonymity">Anonymity</th>
+                <th class="th-country" data-col="col-country" data-i18n="col.country">Country</th>
+                <th class="th-provider" data-col="col-provider" data-i18n="col.provider">Provider</th>
+                <th class="th-age" data-col="col-age" data-i18n="col.age">Age</th>
+                <th class="th-actions" data-col="col-actions"></th>
               </tr>
             </thead>
             <tbody id="result-rows">
-              <tr><td colspan="14" class="empty">No results yet. Start a check on the first tab.</td></tr>
+              <tr><td colspan="15" class="empty">No results yet. Start a check on the first tab.</td></tr>
             </tbody>
           </table>
         </div>
@@ -934,11 +1011,11 @@
           <div class="gw-metrics-pair">
             <div class="gw-metric-item">
               <span class="stat-number" id="gw-pool-size">0</span>
-              <span class="stat-label" data-i18n="monitor.proxiesFound">Pool Size</span>
+              <span class="stat-label" data-i18n="gateway.poolSize">Proxies in pool</span>
             </div>
             <div class="gw-metric-item">
               <span class="stat-number" id="gw-conns-size">0</span>
-              <span class="stat-label" data-i18n="group.network">Active Conns</span>
+              <span class="stat-label" data-i18n="gateway.activeConns">Active conns</span>
             </div>
           </div>
         </div>
@@ -950,7 +1027,44 @@
           <span class="gateway-stats" id="gateway-stats"></span>
         </div>
 
-        <!-- Split View: Config Tabs + Mobile QR Box -->
+        <!-- Connection path: pool -> client -> fields -> route control -> disconnect -->
+      <div class="card connect-card" id="connect-card" role="region" data-i18n-aria-label="connect.title" aria-label="Connection path">
+        <div class="connect-head">
+          <strong data-i18n="connect.title">Connection path</strong>
+          <span class="connect-lan" id="connect-lan"></span>
+        </div>
+        <ol class="connect-steps">
+          <li class="connect-step">
+            <span class="connect-step-title" data-i18n="connect.pool">1. Pool</span>
+            <span class="connect-step-value" id="connect-pool">—</span>
+            <span class="connect-step-note" id="connect-generation">—</span>
+          </li>
+          <li class="connect-step">
+            <span class="connect-step-title" data-i18n="connect.client">2. App or browser</span>
+            <span class="connect-step-value" data-i18n="gateway.hint">Set 127.0.0.1:8899 as an HTTP or SOCKS5 proxy anywhere.</span>
+            <span class="connect-step-note" id="connect-probe-note"></span>
+          </li>
+          <li class="connect-step">
+            <span class="connect-step-title" data-i18n="connect.fields">3. Fields</span>
+            <div class="endpoint-specs">
+              <div><strong>Host:</strong> <code>127.0.0.1</code></div>
+              <div><strong>Port:</strong> <code>8899</code></div>
+              <div><strong>Protocol:</strong> <code>SOCKS5 / HTTP</code></div>
+            </div>
+          </li>
+          <li class="connect-step" id="connect-route">
+            <span class="connect-step-title" data-i18n="connect.route">4. Route control</span>
+            <span class="connect-step-value" data-i18n="connect.routeText">Every new TCP connection rotates to the next working proxy. UDP is not supported.</span>
+          </li>
+          <li class="connect-step">
+            <span class="connect-step-title" data-i18n="connect.disconnect">5. Disconnect</span>
+            <span class="connect-step-value" id="connect-disconnect-hint"></span>
+            <button type="button" class="button danger chip" id="connect-disconnect" data-i18n="connect.stopGateway">Stop rotating proxy</button>
+          </li>
+        </ol>
+      </div>
+
+      <!-- Split View: Config Tabs + Mobile QR Box -->
         <div class="gw-center-split">
           <!-- Left: Quick Client Config Switchers -->
           <div class="gateway-tabs-wrap">
@@ -1130,24 +1244,49 @@ with httpx.Client(proxy="socks5://127.0.0.1:8899") as client:
               </div>
             </div>
           </div>
+          <div class="client-features-wrap">
+            <span class="client-feature-tag">SOCKS5 Protocol</span>
+            <span class="client-feature-tag">Desktop &amp; Mobile</span>
+            <span class="client-feature-tag">Zero-Config</span>
+            <span class="client-feature-tag">Direct Link</span>
+          </div>
           <div class="telegram-qr-preview-wrap">
             <div id="mobile-tg-qr-box" class="qr-container"></div>
-            <a class="button light" id="mobile-tg-btn-link" target="_blank" rel="noopener" aria-disabled="true" data-i18n="gateway.openTelegram">Open in Telegram Desktop</a>
+          </div>
+          <div class="client-actions-row">
+            <a class="button primary" id="mobile-tg-btn-link" target="_blank" rel="noopener" aria-disabled="true" data-i18n="gateway.openTelegram">Open in Telegram Desktop</a>
           </div>
         </div>
       </div>
 
       <!-- Mobile Walkthrough Guide -->
       <section class="card mobile-guide-card">
-        <h2 data-i18n="mobile.guideTitle">How to setup on Mobile</h2>
+        <div class="guide-header">
+          <h2 data-i18n="mobile.guideTitle">How to setup on Mobile</h2>
+          <p class="guide-lead" data-i18n="mobile.guideLead">Step-by-step instructions for popular mobile proxy clients</p>
+        </div>
         <div class="guide-steps-grid">
           <div class="guide-step-card">
-            <span class="step-badge">iOS</span>
-            <p data-i18n="mobile.guideIos">1. Install sing-box or Shadowrocket from App Store. 2. Import config or scan QR code. 3. Enable TUN VPN mode.</p>
+            <div class="guide-step-header">
+              <span class="step-badge step-badge-ios">iOS</span>
+              <span class="guide-step-apps">sing-box · Shadowrocket</span>
+            </div>
+            <ol class="guide-step-list">
+              <li><span class="guide-num">1</span> <span data-i18n="mobile.ios1">Install sing-box or Shadowrocket from the App Store</span></li>
+              <li><span class="guide-num">2</span> <span data-i18n="mobile.ios2">Import downloaded config file or scan LAN QR code</span></li>
+              <li><span class="guide-num">3</span> <span data-i18n="mobile.ios3">Review routing rules and enable TUN VPN mode</span></li>
+            </ol>
           </div>
           <div class="guide-step-card">
-            <span class="step-badge">Android</span>
-            <p data-i18n="mobile.guideAndroid">1. Install sing-box or Hiddify from Google Play. 2. Add profile via QR or file. 3. Connect.</p>
+            <div class="guide-step-header">
+              <span class="step-badge step-badge-android">Android</span>
+              <span class="guide-step-apps">sing-box · Hiddify · v2rayNG</span>
+            </div>
+            <ol class="guide-step-list">
+              <li><span class="guide-num">1</span> <span data-i18n="mobile.android1">Install sing-box or Hiddify from Google Play</span></li>
+              <li><span class="guide-num">2</span> <span data-i18n="mobile.android2">Add profile via imported file or scan LAN QR code</span></li>
+              <li><span class="guide-num">3</span> <span data-i18n="mobile.android3">Tap Connect to route traffic through the proxy pool</span></li>
+            </ol>
           </div>
         </div>
       </section>
