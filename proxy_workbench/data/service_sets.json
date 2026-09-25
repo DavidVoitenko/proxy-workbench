@@ -1,0 +1,1747 @@
+{
+  "schema_version": 1,
+  "manifest_version": 1,
+  "maintainer": "Proxy Workbench contributors",
+  "generated_at": "2026-09-25",
+  "notes_ru": "Каталог описывает ровно то, что доказывает конкретная HTTP-проба. Поле not_proved обязательно и не пустое ни у одного preset: главная страница не доказывает API, 204-эндпоинт не доказывает видеопоток, ответ 401 не доказывает наличие ключа. Живая проверка определений в этом манифесте не выполнялась (definition_checked_on — дата сверки определения с документацией или с исходным кодом, а не результат пробы через прокси).",
+  "notes_en": "The catalog states exactly what one HTTP probe proves. not_proved is mandatory and never empty: a homepage does not prove API access, a 204 endpoint does not prove a video stream, a 401 does not prove a usable key. No live validation was performed for this manifest (definition_checked_on is the date the definition was cross-checked against documentation or source, not a probe result through a proxy).",
+  "categories": [
+    {
+      "id": "basic",
+      "title_ru": "Базовая передача",
+      "title_en": "Basic transfer",
+      "description_ru": "Контрольные HTTP/HTTPS-пробы без ввода URL.",
+      "description_en": "Control HTTP/HTTPS probes that need no URL input."
+    },
+    {
+      "id": "search",
+      "title_ru": "Поиск",
+      "title_en": "Search",
+      "description_ru": "Доступность поисковых сервисов и справочных сайтов.",
+      "description_en": "Reachability of search engines and reference sites."
+    },
+    {
+      "id": "messengers",
+      "title_ru": "Мессенджеры",
+      "title_en": "Messengers",
+      "description_ru": "Веб-доступ к мессенджерам. Звонки, голос и видео не проверяются.",
+      "description_en": "Web reachability of messengers. Calls, voice and video are not measured."
+    },
+    {
+      "id": "social",
+      "title_ru": "Соцсети",
+      "title_en": "Social",
+      "description_ru": "Главные страницы социальных сетей без входа в аккаунт.",
+      "description_en": "Social network homepages, without signing in."
+    },
+    {
+      "id": "video",
+      "title_ru": "Видео",
+      "title_en": "Video",
+      "description_ru": "Доступность видеосервиса. Видеопоток, разрешение и DRM не измеряются.",
+      "description_en": "Video service reachability. Streams, resolution and DRM are not measured."
+    },
+    {
+      "id": "development",
+      "title_ru": "Разработка",
+      "title_en": "Development",
+      "description_ru": "Сервисы, которыми пользуется разработчик: сайты, публичные API, магазины.",
+      "description_en": "Services a developer uses: sites, public APIs, storefronts."
+    },
+    {
+      "id": "api",
+      "title_ru": "API",
+      "title_en": "API",
+      "description_ru": "Публичные контракты API, доступные без ключа и без аккаунта.",
+      "description_en": "Public API contracts reachable without a key or an account."
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "status_endpoint",
+      "title_ru": "Контрольный эндпоинт",
+      "title_en": "Status endpoint",
+      "proves_ru": "Сервис отвечает ожидаемым кодом на известный служебный адрес.",
+      "proves_en": "The service answers with the expected code on a known control URL.",
+      "not_proved_ru": "Содержимое страниц, аккаунты, подписки и медиапоток.",
+      "not_proved_en": "Page content, accounts, subscriptions and media streams.",
+      "probeable": true
+    },
+    {
+      "id": "homepage",
+      "title_ru": "Главная страница",
+      "title_en": "Homepage",
+      "proves_ru": "Сайт отдал главную страницу через прокси.",
+      "proves_en": "The site served its homepage through the proxy.",
+      "not_proved_ru": "Вход в аккаунт, лента, поиск по сайту, приложение и его протоколы.",
+      "not_proved_en": "Signing in, feeds, on-site search, the app and its protocols.",
+      "probeable": true
+    },
+    {
+      "id": "api",
+      "title_ru": "API",
+      "title_en": "API",
+      "proves_ru": "Публичный API-контракт отвечает ожидаемым кодом и телом.",
+      "proves_en": "A public API contract answers with the expected code and body.",
+      "not_proved_ru": "Наличие ключа, лимиты аккаунта, региональные ограничения и платные функции.",
+      "not_proved_en": "Key availability, account quotas, regional restrictions and paid features.",
+      "probeable": true
+    },
+    {
+      "id": "websocket",
+      "title_ru": "WebSocket",
+      "title_en": "WebSocket",
+      "proves_ru": "Установлено и удерживается WebSocket-соединение.",
+      "proves_en": "A WebSocket connection is established and held open.",
+      "not_proved_ru": "Обмен сообщениями по этому соединению.",
+      "not_proved_en": "Application messages exchanged over that connection.",
+      "probeable": false,
+      "not_probeable_reason_ru": "HTTP GET не выполняет апгрейд до WebSocket. Реальная проба — F20 (probes.py), поддерживающего движка в этом каталоге нет.",
+      "not_probeable_reason_en": "An HTTP GET does not perform the WebSocket upgrade. A real probe belongs to F20 (probes.py); this catalog has no such engine."
+    },
+    {
+      "id": "media",
+      "title_ru": "Медиа",
+      "title_en": "Media",
+      "proves_ru": "Получен и декодирован реальный медиасегмент заданного размера.",
+      "proves_en": "A real media segment of the expected size was fetched and decoded.",
+      "not_proved_ru": "Стабильность потока, разрешение, DRM и рекламная вставка.",
+      "not_proved_en": "Stream stability, resolution, DRM and ad insertion.",
+      "probeable": false,
+      "not_probeable_reason_ru": "Медиапроба требует загрузки сегмента и декодирования; движок F20 (probes.py) в этом каталоге не подключён.",
+      "not_probeable_reason_en": "A media probe needs segment download and decoding; the F20 engine (probes.py) is not wired into this catalog."
+    },
+    {
+      "id": "long_connection",
+      "title_ru": "Длительное соединение",
+      "title_en": "Long connection",
+      "proves_ru": "Соединение удерживается дольше заданного окна без разрыва.",
+      "proves_en": "A connection is held for a defined window without dropping.",
+      "not_proved_ru": "Работа приложения поверх этого соединения и стабильность в будущем.",
+      "not_proved_en": "Application behaviour over that connection and future stability.",
+      "probeable": false,
+      "not_probeable_reason_ru": "Требует отдельного измерения длительности; общий срок пробы (F07, дефект 23) в этом каталоге не реализован.",
+      "not_probeable_reason_en": "Needs a dedicated hold-time measurement; the whole-probe deadline (F07, defect 23) is not implemented here."
+    }
+  ],
+  "combination_rules": [
+    {
+      "id": "all",
+      "ru": "все дополнительные проверки должны пройти",
+      "en": "every optional check must pass"
+    },
+    {
+      "id": "any",
+      "ru": "хотя бы одна дополнительная проверка должна пройти",
+      "en": "at least one optional check must pass"
+    },
+    {
+      "id": "at_least",
+      "ru": "не меньше указанного числа дополнительных проверок должно пройти",
+      "en": "at least the given number of optional checks must pass"
+    },
+    {
+      "id": "none",
+      "ru": "дополнительные проверки не требуются",
+      "en": "no optional check is required"
+    }
+  ],
+  "field_scope": [
+    {
+      "field": "targets",
+      "ownership": "scenario",
+      "derived": true,
+      "label_ru": "Проверяемые сервисы",
+      "label_en": "Checked services"
+    },
+    {
+      "field": "attempts",
+      "ownership": "scenario",
+      "label_ru": "Попыток на проверку",
+      "label_en": "Attempts per check"
+    },
+    {
+      "field": "connect_timeout",
+      "ownership": "scenario",
+      "label_ru": "Таймаут подключения, с",
+      "label_en": "Connect timeout, s"
+    },
+    {
+      "field": "timeout",
+      "ownership": "scenario",
+      "label_ru": "Таймаут ответа, с",
+      "label_en": "Response timeout, s"
+    },
+    {
+      "field": "max_bytes",
+      "ownership": "scenario",
+      "label_ru": "Лимит тела ответа, байт",
+      "label_en": "Response body limit, bytes"
+    },
+    {
+      "field": "min_success",
+      "ownership": "scenario",
+      "label_ru": "Доля успешных попыток",
+      "label_en": "Required success ratio"
+    },
+    {
+      "field": "fail_fast",
+      "ownership": "scenario",
+      "label_ru": "Останавливаться на первом провале",
+      "label_en": "Stop on first failure"
+    },
+    {
+      "field": "request_profile",
+      "ownership": "scenario",
+      "label_ru": "Профиль запроса",
+      "label_en": "Request profile"
+    },
+    {
+      "field": "protocol",
+      "ownership": "scenario",
+      "label_ru": "Протокол прокси",
+      "label_en": "Proxy protocol"
+    },
+    {
+      "field": "prefilter",
+      "ownership": "scenario",
+      "label_ru": "Порог TCP-префильтра, мс",
+      "label_en": "TCP prefilter threshold, ms"
+    },
+    {
+      "field": "anonymity.judge_url",
+      "ownership": "scenario",
+      "label_ru": "Judge анонимности",
+      "label_en": "Anonymity judge"
+    },
+    {
+      "field": "min_anonymity",
+      "ownership": "scenario",
+      "label_ru": "Минимальный уровень анонимности",
+      "label_en": "Minimum anonymity level"
+    },
+    {
+      "field": "reputation.local_enabled",
+      "ownership": "scenario",
+      "label_ru": "Локальный denylist",
+      "label_en": "Local denylist"
+    },
+    {
+      "field": "reputation.dnsbl_enabled",
+      "ownership": "scenario",
+      "label_ru": "Проверка по DNSBL",
+      "label_en": "DNSBL check"
+    },
+    {
+      "field": "reputation.dnsbl_zones",
+      "ownership": "scenario",
+      "label_ru": "Зоны DNSBL",
+      "label_en": "DNSBL zones"
+    },
+    {
+      "field": "reputation.strict",
+      "ownership": "scenario",
+      "label_ru": "Строгий режим чистоты",
+      "label_en": "Strict cleanliness mode"
+    },
+    {
+      "field": "speedtest.url",
+      "ownership": "scenario",
+      "label_ru": "Адрес замера скорости",
+      "label_en": "Speed test URL"
+    },
+    {
+      "field": "speedtest.max_bytes",
+      "ownership": "scenario",
+      "label_ru": "Лимит замера скорости, байт",
+      "label_en": "Speed test byte budget"
+    },
+    {
+      "field": "workers",
+      "ownership": "user",
+      "label_ru": "Потоков",
+      "label_en": "Workers"
+    },
+    {
+      "field": "rate",
+      "ownership": "user",
+      "label_ru": "Запросов в секунду",
+      "label_en": "Requests per second"
+    },
+    {
+      "field": "watch",
+      "ownership": "user",
+      "label_ru": "Интервал watch, мин",
+      "label_en": "Watch interval, min"
+    },
+    {
+      "field": "want",
+      "ownership": "user",
+      "label_ru": "Желаемый размер пула",
+      "label_en": "Desired pool size"
+    },
+    {
+      "field": "top",
+      "ownership": "user",
+      "label_ru": "Ограничение выдачи",
+      "label_en": "Output limit"
+    },
+    {
+      "field": "sort",
+      "ownership": "user",
+      "label_ru": "Сортировка",
+      "label_en": "Sort order"
+    },
+    {
+      "field": "max_latency",
+      "ownership": "user",
+      "label_ru": "Максимальная задержка, мс",
+      "label_en": "Maximum latency, ms"
+    },
+    {
+      "field": "countries",
+      "ownership": "user",
+      "label_ru": "Страны",
+      "label_en": "Countries"
+    },
+    {
+      "field": "exclude_hosting",
+      "ownership": "user",
+      "label_ru": "Исключать хостинг",
+      "label_en": "Exclude hosting"
+    },
+    {
+      "field": "detect_protocols",
+      "ownership": "user",
+      "label_ru": "Определять протоколы",
+      "label_en": "Detect protocols"
+    },
+    {
+      "field": "sources",
+      "ownership": "user",
+      "label_ru": "Источники",
+      "label_en": "Sources"
+    },
+    {
+      "field": "use_sources",
+      "ownership": "user",
+      "label_ru": "Использовать источники",
+      "label_en": "Use sources"
+    },
+    {
+      "field": "proxies",
+      "ownership": "user",
+      "label_ru": "Свой список",
+      "label_en": "Own list"
+    },
+    {
+      "field": "denylist",
+      "ownership": "user",
+      "label_ru": "Список запрета",
+      "label_en": "Denylist"
+    }
+  ],
+  "presets": [
+    {
+      "id": "google-204",
+      "version": 1,
+      "maintainer": "Proxy Workbench contributors",
+      "title_ru": "Google: контрольный 204-эндпоинт",
+      "title_en": "Google: control 204 endpoint",
+      "aliases": [
+        "google",
+        "гугл",
+        "google.com"
+      ],
+      "categories": [
+        "basic",
+        "search"
+      ],
+      "capability": "status_endpoint",
+      "origin": "legacy_app_js",
+      "definition_checked_on": "2026-09-25",
+      "live_checked_on": null,
+      "verification": "legacy_definition",
+      "definition_source": {
+        "kind": "legacy_code",
+        "ref": "proxy_workbench/ui/app.js -> TARGET_PRESETS (app.js:1512)"
+      },
+      "contract_source": "https://www.google.com/generate_204",
+      "probes": [
+        {
+          "id": "p1",
+          "url": "https://www.google.com/generate_204",
+          "method": "GET",
+          "statuses": [
+            204
+          ],
+          "contains": null,
+          "sha256": null,
+          "headers": {}
+        }
+      ],
+      "pass_condition_ru": "HTTP 204 без тела на служебном эндпоинте generate_204.",
+      "pass_condition_en": "HTTP 204 with no body on the generate_204 control endpoint.",
+      "not_proved_ru": [
+        "Поисковую выдачу, аккаунт Google, Gmail и региональные ограничения.",
+        "Что через тот же прокси открывается YouTube или другой сервис Google."
+      ],
+      "not_proved_en": [
+        "Search results, a Google account, Gmail and regional restrictions.",
+        "That YouTube or any other Google service opens through the same proxy."
+      ],
+      "limitations_ru": [
+        "Ответ без тела, поэтому проверка утверждений по содержимому невозможна.",
+        "Отдельный хост от youtube-204: успех одной пробы не означает успех другой."
+      ],
+      "limitations_en": [
+        "Empty body, so content assertions are impossible.",
+        "A different host from youtube-204: one pass does not imply the other."
+      ],
+      "cost": {
+        "requests_per_pass": 1,
+        "max_bytes": 0,
+        "budget_weight": 0.2,
+        "rate_limit_ru": "Один запрос на адрес за проход; публичный 204-эндпоинт, отдельного лимита не заявлено.",
+        "rate_limit_en": "One request per endpoint per pass; public 204 endpoint, no separate limit published."
+      },
+      "deprecated": false,
+      "deprecated_reason_ru": null,
+      "user_owned": false
+    },
+    {
+      "id": "youtube-204",
+      "version": 1,
+      "maintainer": "Proxy Workbench contributors",
+      "title_ru": "YouTube: контрольный 204-эндпоинт",
+      "title_en": "YouTube: control 204 endpoint",
+      "aliases": [
+        "youtube",
+        "ютуб",
+        "yt"
+      ],
+      "categories": [
+        "basic",
+        "video"
+      ],
+      "capability": "status_endpoint",
+      "origin": "legacy_app_js",
+      "definition_checked_on": "2026-09-25",
+      "live_checked_on": null,
+      "verification": "legacy_definition",
+      "definition_source": {
+        "kind": "legacy_code",
+        "ref": "proxy_workbench/ui/app.js -> TARGET_PRESETS (app.js:1513)"
+      },
+      "contract_source": "https://www.youtube.com/generate_204",
+      "probes": [
+        {
+          "id": "p1",
+          "url": "https://www.youtube.com/generate_204",
+          "method": "GET",
+          "statuses": [
+            204
+          ],
+          "contains": null,
+          "sha256": null,
+          "headers": {}
+        }
+      ],
+      "pass_condition_ru": "HTTP 204 без тела на служебном эндпоинте generate_204.",
+      "pass_condition_en": "HTTP 204 with no body on the generate_204 control endpoint.",
+      "not_proved_ru": [
+        "Видеопоток, разрешение 1080p или 4K, DRM и рекламные вставки.",
+        "Возможность смотреть видео, доступ к возрастным и гео-ограниченным роликам."
+      ],
+      "not_proved_en": [
+        "A video stream, 1080p or 4K resolution, DRM and ad insertion.",
+        "That video actually plays, or that age- and geo-restricted videos open."
+      ],
+      "limitations_ru": [
+        "Ответ без тела: проверяется только код.",
+        "Скорость и стабильность потока измеряются отдельным режимом замера скорости, а не этой пробой."
+      ],
+      "limitations_en": [
+        "Empty body: only the status code is checked.",
+        "Throughput and stream stability belong to the separate speed-test mode, not to this probe."
+      ],
+      "cost": {
+        "requests_per_pass": 1,
+        "max_bytes": 0,
+        "budget_weight": 0.2,
+        "rate_limit_ru": "Один запрос на адрес за проход.",
+        "rate_limit_en": "One request per endpoint per pass."
+      },
+      "deprecated": false,
+      "deprecated_reason_ru": null,
+      "user_owned": false
+    },
+    {
+      "id": "cloudflare-trace",
+      "version": 1,
+      "maintainer": "Proxy Workbench contributors",
+      "title_ru": "Cloudflare: диагностический trace",
+      "title_en": "Cloudflare: diagnostic trace",
+      "aliases": [
+        "cloudflare",
+        "cf",
+        "trace",
+        "exit ip"
+      ],
+      "categories": [
+        "basic"
+      ],
+      "capability": "status_endpoint",
+      "origin": "legacy_app_js",
+      "definition_checked_on": "2026-09-25",
+      "live_checked_on": null,
+      "verification": "legacy_definition",
+      "definition_source": {
+        "kind": "legacy_code",
+        "ref": "proxy_workbench/ui/app.js -> TARGET_PRESETS (app.js:1520)"
+      },
+      "contract_source": "https://www.cloudflare.com/cdn-cgi/trace",
+      "probes": [
+        {
+          "id": "p1",
+          "url": "https://www.cloudflare.com/cdn-cgi/trace",
+          "method": "GET",
+          "statuses": [
+            200
+          ],
+          "contains": "ip=",
+          "sha256": null,
+          "headers": {}
+        }
+      ],
+      "pass_condition_ru": "HTTP 200 и тело, содержащее строку ip=.",
+      "pass_condition_en": "HTTP 200 and a body containing the string ip=.",
+      "not_proved_ru": [
+        "Скорость, стабильность и качество видео.",
+        "Что ip= совпадает с адресом прокси: это отдельная проверка fresh/exit, а не этот preset.",
+        "Анонимность: адрес может совпадать с реальным IP пользователя."
+      ],
+      "not_proved_en": [
+        "Speed, stability and video quality.",
+        "That the ip= value matches the proxy address: that is a separate exit-IP check, not this preset.",
+        "Anonymity: the address may equal the user's real IP."
+      ],
+      "limitations_ru": [
+        "Тело не фиксируется целиком, проверяется только наличие маркера ip=.",
+        "Возвращается то, что видит Cloudflare, а не то, что внёс оператор."
+      ],
+      "limitations_en": [
+        "Only the presence of the ip= marker is asserted, not the whole body.",
+        "It returns what Cloudflare observes, not what the operator injected."
+      ],
+      "cost": {
+        "requests_per_pass": 1,
+        "max_bytes": 1024,
+        "budget_weight": 0.2,
+        "rate_limit_ru": "Один запрос на адрес за проход.",
+        "rate_limit_en": "One request per endpoint per pass."
+      },
+      "deprecated": false,
+      "deprecated_reason_ru": null,
+      "user_owned": false
+    },
+    {
+      "id": "wikipedia-home",
+      "version": 1,
+      "maintainer": "Proxy Workbench contributors",
+      "title_ru": "Wikipedia: главная страница",
+      "title_en": "Wikipedia: homepage",
+      "aliases": [
+        "wikipedia",
+        "википедия",
+        "wiki"
+      ],
+      "categories": [
+        "basic",
+        "search"
+      ],
+      "capability": "homepage",
+      "origin": "legacy_app_js",
+      "definition_checked_on": "2026-09-25",
+      "live_checked_on": null,
+      "verification": "legacy_definition",
+      "definition_source": {
+        "kind": "legacy_code",
+        "ref": "proxy_workbench/ui/app.js -> TARGET_PRESETS (app.js:1518)"
+      },
+      "contract_source": "https://www.wikipedia.org/",
+      "probes": [
+        {
+          "id": "p1",
+          "url": "https://www.wikipedia.org/",
+          "method": "GET",
+          "statuses": [
+            200
+          ],
+          "contains": "Wikipedia",
+          "sha256": null,
+          "headers": {}
+        }
+      ],
+      "pass_condition_ru": "HTTP 200 и тело, содержащее строку Wikipedia.",
+      "pass_condition_en": "HTTP 200 and a body containing the string Wikipedia.",
+      "not_proved_ru": [
+        "Доступ к конкретным статьям, медиафайлам и Wikimedia REST/Action API.",
+        "Другие языковые домены википедии: probe проверяет только www.wikipedia.org."
+      ],
+      "not_proved_en": [
+        "Access to specific articles, media files, or the Wikimedia REST/Action APIs.",
+        "Other language domains: the probe only covers www.wikipedia.org."
+      ],
+      "limitations_ru": [
+        "Утверждение по маркеру Wikipedia отсекает пустую страницу, но не отсекает страницу-заглушку с этим же словом."
+      ],
+      "limitations_en": [
+        "The Wikipedia marker rejects an empty page but not a placeholder page containing the same word."
+      ],
+      "cost": {
+        "requests_per_pass": 1,
+        "max_bytes": 65536,
+        "budget_weight": 0.4,
+        "rate_limit_ru": "Один запрос на адрес за проход.",
+        "rate_limit_en": "One request per endpoint per pass."
+      },
+      "deprecated": false,
+      "deprecated_reason_ru": null,
+      "user_owned": false
+    },
+    {
+      "id": "bing-home",
+      "version": 1,
+      "maintainer": "Proxy Workbench contributors",
+      "title_ru": "Bing: главная страница",
+      "title_en": "Bing: homepage",
+      "aliases": [
+        "bing",
+        "бинг",
+        "microsoft bing"
+      ],
+      "categories": [
+        "search"
+      ],
+      "capability": "homepage",
+      "origin": "researched",
+      "definition_checked_on": "2026-09-25",
+      "live_checked_on": null,
+      "verification": "unverified_live",
+      "definition_source": {
+        "kind": "site_contract",
+        "ref": "контракт главной страницы: GET / отвечает 200; публичный API без ключа в этой сессии не подтверждён"
+      },
+      "contract_source": "https://www.bing.com/",
+      "probes": [
+        {
+          "id": "p1",
+          "url": "https://www.bing.com/",
+          "method": "GET",
+          "statuses": [
+            200
+          ],
+          "contains": null,
+          "sha256": null,
+          "headers": {}
+        }
+      ],
+      "pass_condition_ru": "HTTP 200 на главной странице.",
+      "pass_condition_en": "HTTP 200 on the homepage.",
+      "not_proved_ru": [
+        "Поисковую выдачу, рекламные сценарии, Copilot и учётную запись Microsoft.",
+        "Региональные ограничения выдачи."
+      ],
+      "not_proved_en": [
+        "Search results, ad scenarios, Copilot and a Microsoft account.",
+        "Regional result restrictions."
+      ],
+      "limitations_ru": [
+        "Утверждения по содержимому нет: страница-заглушка или challenge-ответ 200 пройдут как успех.",
+        "Живая проверка определения не выполнялась; при первом реальном прогоне смотрите частоту 200 с пустым телом."
+      ],
+      "limitations_en": [
+        "No content assertion: a placeholder or challenge page answering 200 counts as a pass.",
+        "No live validation was performed; watch for 200 responses with an empty body on the first real run."
+      ],
+      "cost": {
+        "requests_per_pass": 1,
+        "max_bytes": 65536,
+        "budget_weight": 0.4,
+        "rate_limit_ru": "Один запрос на адрес за проход; отдельный лимит не заявлен.",
+        "rate_limit_en": "One request per endpoint per pass; no separate limit published."
+      },
+      "deprecated": false,
+      "deprecated_reason_ru": null,
+      "user_owned": false
+    },
+    {
+      "id": "duckduckgo-home",
+      "version": 1,
+      "maintainer": "Proxy Workbench contributors",
+      "title_ru": "DuckDuckGo: главная страница",
+      "title_en": "DuckDuckGo: homepage",
+      "aliases": [
+        "duckduckgo",
+        "ddg",
+        "утка"
+      ],
+      "categories": [
+        "search"
+      ],
+      "capability": "homepage",
+      "origin": "researched",
+      "definition_checked_on": "2026-09-25",
+      "live_checked_on": null,
+      "verification": "unverified_live",
+      "definition_source": {
+        "kind": "site_contract",
+        "ref": "контракт главной страницы: GET / отвечает 200; Instant Answer API требует обращения с параметрами и здесь не используется"
+      },
+      "contract_source": "https://duckduckgo.com/",
+      "probes": [
+        {
+          "id": "p1",
+          "url": "https://duckduckgo.com/",
+          "method": "GET",
+          "statuses": [
+            200
+          ],
+          "contains": null,
+          "sha256": null,
+          "headers": {}
+        }
+      ],
+      "pass_condition_ru": "HTTP 200 на главной странице.",
+      "pass_condition_en": "HTTP 200 on the homepage.",
+      "not_proved_ru": [
+        "Поисковую выдачу, Bang и утечку поисковых запросов на серверы DuckDuckGo.",
+        "То, что страница на этом языке совпадает с результатом без прокси."
+      ],
+      "not_proved_en": [
+        "Search results, Bang, and whether search queries still reach DuckDuckGo servers.",
+        "That the page matches what a direct connection would show."
+      ],
+      "limitations_ru": [
+        "Утверждения по содержимому нет: challenge-ответ 200 пройдёт как успех.",
+        "Живая проверка определения не выполнялась."
+      ],
+      "limitations_en": [
+        "No content assertion: a challenge response answering 200 counts as a pass.",
+        "No live validation was performed."
+      ],
+      "cost": {
+        "requests_per_pass": 1,
+        "max_bytes": 65536,
+        "budget_weight": 0.4,
+        "rate_limit_ru": "Один запрос на адрес за проход; отдельный лимит не заявлен.",
+        "rate_limit_en": "One request per endpoint per pass; no separate limit published."
+      },
+      "deprecated": false,
+      "deprecated_reason_ru": null,
+      "user_owned": false
+    },
+    {
+      "id": "telegram-home",
+      "version": 1,
+      "maintainer": "Proxy Workbench contributors",
+      "title_ru": "Telegram: главная страница сайта",
+      "title_en": "Telegram: website homepage",
+      "aliases": [
+        "telegram",
+        "телеграм",
+        "tg"
+      ],
+      "categories": [
+        "messengers"
+      ],
+      "capability": "homepage",
+      "origin": "legacy_app_js",
+      "definition_checked_on": "2026-09-25",
+      "live_checked_on": null,
+      "verification": "legacy_definition",
+      "definition_source": {
+        "kind": "legacy_code",
+        "ref": "proxy_workbench/ui/app.js -> TARGET_PRESETS (app.js:1514)"
+      },
+      "contract_source": "https://telegram.org/",
+      "probes": [
+        {
+          "id": "p1",
+          "url": "https://telegram.org/",
+          "method": "GET",
+          "statuses": [
+            200
+          ],
+          "contains": "Telegram",
+          "sha256": null,
+          "headers": {}
+        }
+      ],
+      "pass_condition_ru": "HTTP 200 и тело, содержащее строку Telegram.",
+      "pass_condition_en": "HTTP 200 and a body containing the string Telegram.",
+      "not_proved_ru": [
+        "MTProto и доставку сообщений: проверяется сайт, а не клиент.",
+        "Звонки, голос, видео и любой UDP-трафик.",
+        "Вход в аккаунт и работу веб-клиента."
+      ],
+      "not_proved_en": [
+        "MTProto and message delivery: the website is checked, not the client.",
+        "Calls, voice, video and any UDP traffic.",
+        "Signing in and the web client working."
+      ],
+      "limitations_ru": [
+        "Сайт доступен и при отсутствии рабочего MTProto: это разные хосты и разные протоколы."
+      ],
+      "limitations_en": [
+        "The site can be reachable while MTProto is not: different hosts, different protocols."
+      ],
+      "cost": {
+        "requests_per_pass": 1,
+        "max_bytes": 65536,
+        "budget_weight": 0.4,
+        "rate_limit_ru": "Один запрос на адрес за проход.",
+        "rate_limit_en": "One request per endpoint per pass."
+      },
+      "deprecated": false,
+      "deprecated_reason_ru": null,
+      "user_owned": false
+    },
+    {
+      "id": "discord-gateway",
+      "version": 1,
+      "maintainer": "Proxy Workbench contributors",
+      "title_ru": "Discord: публичный API шлюза",
+      "title_en": "Discord: public gateway API",
+      "aliases": [
+        "discord",
+        "дискорд"
+      ],
+      "categories": [
+        "messengers",
+        "api"
+      ],
+      "capability": "api",
+      "origin": "legacy_app_js",
+      "definition_checked_on": "2026-09-25",
+      "live_checked_on": null,
+      "verification": "legacy_definition",
+      "definition_source": {
+        "kind": "legacy_code",
+        "ref": "proxy_workbench/ui/app.js -> TARGET_PRESETS (app.js:1515)"
+      },
+      "contract_source": "https://discord.com/api/v10/gateway",
+      "probes": [
+        {
+          "id": "p1",
+          "url": "https://discord.com/api/v10/gateway",
+          "method": "GET",
+          "statuses": [
+            200
+          ],
+          "contains": "gateway.discord.gg",
+          "sha256": null,
+          "headers": {}
+        }
+      ],
+      "pass_condition_ru": "HTTP 200 и тело, содержащее адрес шлюза gateway.discord.gg.",
+      "pass_condition_en": "HTTP 200 and a body containing the gateway.discord.gg address.",
+      "not_proved_ru": [
+        "WebSocket-соединение с gateway: возвращается только его адрес, апгрейд не выполняется.",
+        "Голос, видео и звонки.",
+        "Аутентификацию и работу с аккаунтом."
+      ],
+      "not_proved_en": [
+        "A WebSocket connection to the gateway: only its address is returned, no upgrade is performed.",
+        "Voice, video and calls.",
+        "Authentication and any account operation."
+      ],
+      "limitations_ru": [
+        "Поле url — адрес шлюза в ответе, а не соединение: успех HTTP-запроса не равен успеху WebSocket."
+      ],
+      "limitations_en": [
+        "The url field is the gateway address inside the response, not a connection: HTTP success is not WebSocket success."
+      ],
+      "cost": {
+        "requests_per_pass": 1,
+        "max_bytes": 8192,
+        "budget_weight": 0.3,
+        "rate_limit_ru": "Один запрос на адрес за проход; эндпоинт discovery не тарифицируется.",
+        "rate_limit_en": "One request per endpoint per pass; the discovery endpoint is not billed."
+      },
+      "deprecated": false,
+      "deprecated_reason_ru": null,
+      "user_owned": false
+    },
+    {
+      "id": "signal-home",
+      "version": 1,
+      "maintainer": "Proxy Workbench contributors",
+      "title_ru": "Signal: главная страница",
+      "title_en": "Signal: homepage",
+      "aliases": [
+        "signal",
+        "сигнал"
+      ],
+      "categories": [
+        "messengers"
+      ],
+      "capability": "homepage",
+      "origin": "researched",
+      "definition_checked_on": "2026-09-25",
+      "live_checked_on": null,
+      "verification": "unverified_live",
+      "definition_source": {
+        "kind": "site_contract",
+        "ref": "контракт главной страницы: GET / отвечает 200; серверный протокол Signal и его service.json в этом каталоге не проверяются"
+      },
+      "contract_source": "https://signal.org/",
+      "probes": [
+        {
+          "id": "p1",
+          "url": "https://signal.org/",
+          "method": "GET",
+          "statuses": [
+            200
+          ],
+          "contains": null,
+          "sha256": null,
+          "headers": {}
+        }
+      ],
+      "pass_condition_ru": "HTTP 200 на главной странице.",
+      "pass_condition_en": "HTTP 200 on the homepage.",
+      "not_proved_ru": [
+        "Протокол Signal и доставку сообщений.",
+        "Звонки и групповые вызовы.",
+        "Регистрацию номера и работу приложения."
+      ],
+      "not_proved_en": [
+        "The Signal protocol and message delivery.",
+        "Calls and group calls.",
+        "Number registration and the app working."
+      ],
+      "limitations_ru": [
+        "Утверждения по содержимому нет: challenge-ответ 200 пройдёт как успех.",
+        "Signal обращается к своему service.json на другом хосте; успех главной страницы этого не покрывает."
+      ],
+      "limitations_en": [
+        "No content assertion: a challenge response answering 200 counts as a pass.",
+        "Signal fetches its service.json from another host; homepage success does not cover that."
+      ],
+      "cost": {
+        "requests_per_pass": 1,
+        "max_bytes": 65536,
+        "budget_weight": 0.4,
+        "rate_limit_ru": "Один запрос на адрес за проход.",
+        "rate_limit_en": "One request per endpoint per pass."
+      },
+      "deprecated": false,
+      "deprecated_reason_ru": null,
+      "user_owned": false
+    },
+    {
+      "id": "instagram-home",
+      "version": 1,
+      "maintainer": "Proxy Workbench contributors",
+      "title_ru": "Instagram: главная страница",
+      "title_en": "Instagram: homepage",
+      "aliases": [
+        "instagram",
+        "инстаграм",
+        "ig"
+      ],
+      "categories": [
+        "social"
+      ],
+      "capability": "homepage",
+      "origin": "legacy_app_js",
+      "definition_checked_on": "2026-09-25",
+      "live_checked_on": null,
+      "verification": "legacy_definition",
+      "definition_source": {
+        "kind": "legacy_code",
+        "ref": "proxy_workbench/ui/app.js -> TARGET_PRESETS (app.js:1516)"
+      },
+      "contract_source": "https://www.instagram.com/",
+      "probes": [
+        {
+          "id": "p1",
+          "url": "https://www.instagram.com/",
+          "method": "GET",
+          "statuses": [
+            200
+          ],
+          "contains": "Instagram",
+          "sha256": null,
+          "headers": {}
+        }
+      ],
+      "pass_condition_ru": "HTTP 200 и тело, содержащее строку Instagram.",
+      "pass_condition_en": "HTTP 200 and a body containing the string Instagram.",
+      "not_proved_ru": [
+        "Вход в аккаунт, ленту, Reels и Stories.",
+        "Загрузку медиа и стабильность потока."
+      ],
+      "not_proved_en": [
+        "Signing in, the feed, Reels and Stories.",
+        "Media loading and stream stability."
+      ],
+      "limitations_ru": [
+        "Публичная страница Instagram отдаёт логин-экран и код 200 до авторизации: успех говорит о достижимости сайта, а не об аккаунте."
+      ],
+      "limitations_en": [
+        "Instagram's public page serves a login screen with 200 before authorization: success means the site is reachable, not that an account works."
+      ],
+      "cost": {
+        "requests_per_pass": 1,
+        "max_bytes": 65536,
+        "budget_weight": 0.4,
+        "rate_limit_ru": "Один запрос на адрес за проход.",
+        "rate_limit_en": "One request per endpoint per pass."
+      },
+      "deprecated": false,
+      "deprecated_reason_ru": null,
+      "user_owned": false
+    },
+    {
+      "id": "reddit-home",
+      "version": 1,
+      "maintainer": "Proxy Workbench contributors",
+      "title_ru": "Reddit: главная страница",
+      "title_en": "Reddit: homepage",
+      "aliases": [
+        "reddit",
+        "реддит"
+      ],
+      "categories": [
+        "social"
+      ],
+      "capability": "homepage",
+      "origin": "researched",
+      "definition_checked_on": "2026-09-25",
+      "live_checked_on": null,
+      "verification": "unverified_live",
+      "definition_source": {
+        "kind": "site_contract",
+        "ref": "контракт главной страницы: GET / отвечает 200. Неаутентифицированный эндпоинт Data API официальной документацией не подтверждён, поэтому проверяется только сайт"
+      },
+      "contract_source": "https://www.reddit.com/",
+      "probes": [
+        {
+          "id": "p1",
+          "url": "https://www.reddit.com/",
+          "method": "GET",
+          "statuses": [
+            200
+          ],
+          "contains": null,
+          "sha256": null,
+          "headers": {}
+        }
+      ],
+      "pass_condition_ru": "HTTP 200 на главной странице.",
+      "pass_condition_en": "HTTP 200 on the homepage.",
+      "not_proved_ru": [
+        "Доступ к Reddit Data API, subreddit-лентам и комментариям.",
+        "Обход правил Reddit для автоматизированного доступа."
+      ],
+      "not_proved_en": [
+        "Access to the Reddit Data API, subreddit feeds and comments.",
+        "Compliance with Reddit's rules for automated access."
+      ],
+      "limitations_ru": [
+        "Утверждения по содержимому нет: страница-заглушка или challenge-ответ 200 пройдут как успех.",
+        "Reddit различает трафик браузера и автоматизированный: этот preset не моделирует заголовки браузера сверх request_profile."
+      ],
+      "limitations_en": [
+        "No content assertion: a placeholder or challenge response answering 200 counts as a pass.",
+        "Reddit distinguishes browser from automated traffic; this preset does not model browser headers beyond request_profile."
+      ],
+      "cost": {
+        "requests_per_pass": 1,
+        "max_bytes": 65536,
+        "budget_weight": 0.4,
+        "rate_limit_ru": "Один запрос на адрес за проход; у Reddit действует собственная политика частоты запросов для автоматизированного доступа.",
+        "rate_limit_en": "One request per endpoint per pass; Reddit applies its own automated-access rate policy."
+      },
+      "deprecated": false,
+      "deprecated_reason_ru": null,
+      "user_owned": false
+    },
+    {
+      "id": "x-home",
+      "version": 1,
+      "maintainer": "Proxy Workbench contributors",
+      "title_ru": "X: главная страница",
+      "title_en": "X: homepage",
+      "aliases": [
+        "x",
+        "twitter",
+        "твиттер",
+        "икс"
+      ],
+      "categories": [
+        "social"
+      ],
+      "capability": "homepage",
+      "origin": "researched",
+      "definition_checked_on": "2026-09-25",
+      "live_checked_on": null,
+      "verification": "unverified_live",
+      "definition_source": {
+        "kind": "site_contract",
+        "ref": "контракт главной страницы: GET / отвечает 200. Публичный API X требует bearer-токен, поэтому проверяется только сайт"
+      },
+      "contract_source": "https://x.com/",
+      "probes": [
+        {
+          "id": "p1",
+          "url": "https://x.com/",
+          "method": "GET",
+          "statuses": [
+            200
+          ],
+          "contains": null,
+          "sha256": null,
+          "headers": {}
+        }
+      ],
+      "pass_condition_ru": "HTTP 200 на главной странице.",
+      "pass_condition_en": "HTTP 200 on the homepage.",
+      "not_proved_ru": [
+        "Доступ к API X, ленте твитов и публичным таймлайнам.",
+        "Публичность постов: без входа лента не отдаётся."
+      ],
+      "not_proved_en": [
+        "Access to the X API, timelines and public tweet streams.",
+        "That posts are visible: without signing in no feed is served."
+      ],
+      "limitations_ru": [
+        "Утверждения по содержимому нет: страница-заглушка или challenge-ответ 200 пройдут как успех.",
+        "Без входа в аккаунт главная страница отдаёт только каркас интерфейса."
+      ],
+      "limitations_en": [
+        "No content assertion: a placeholder or challenge response answering 200 counts as a pass.",
+        "Without signing in, the homepage only serves the interface shell."
+      ],
+      "cost": {
+        "requests_per_pass": 1,
+        "max_bytes": 65536,
+        "budget_weight": 0.4,
+        "rate_limit_ru": "Один запрос на адрес за проход.",
+        "rate_limit_en": "One request per endpoint per pass."
+      },
+      "deprecated": false,
+      "deprecated_reason_ru": null,
+      "user_owned": false
+    },
+    {
+      "id": "tiktok-home",
+      "version": 1,
+      "maintainer": "Proxy Workbench contributors",
+      "title_ru": "TikTok: главная страница",
+      "title_en": "TikTok: homepage",
+      "aliases": [
+        "tiktok",
+        "тикток"
+      ],
+      "categories": [
+        "social",
+        "video"
+      ],
+      "capability": "homepage",
+      "origin": "researched",
+      "definition_checked_on": "2026-09-25",
+      "live_checked_on": null,
+      "verification": "unverified_live",
+      "definition_source": {
+        "kind": "site_contract",
+        "ref": "контракт главной страницы: GET / отвечает 200. Публичные API TikTok требуют OAuth 2.0, неаутентифицированный эндпоинт не подтверждён"
+      },
+      "contract_source": "https://www.tiktok.com/",
+      "probes": [
+        {
+          "id": "p1",
+          "url": "https://www.tiktok.com/",
+          "method": "GET",
+          "statuses": [
+            200
+          ],
+          "contains": null,
+          "sha256": null,
+          "headers": {}
+        }
+      ],
+      "pass_condition_ru": "HTTP 200 на главной странице.",
+      "pass_condition_en": "HTTP 200 on the homepage.",
+      "not_proved_ru": [
+        "Видеопоток, разрешение и воспроизведение роликов.",
+        "Display API и Research API, которые требуют OAuth 2.0.",
+        "Региональные ограничения TikTok."
+      ],
+      "not_proved_en": [
+        "A video stream, resolution and playback.",
+        "The Display and Research APIs, which require OAuth 2.0.",
+        "TikTok regional restrictions."
+      ],
+      "limitations_ru": [
+        "Утверждения по содержимому нет: страница-заглушка или challenge-ответ 200 пройдут как успех.",
+        "Категория video здесь означает только, что сервис видеохостинга; медиапоток не измеряется."
+      ],
+      "limitations_en": [
+        "No content assertion: a placeholder or challenge response answering 200 counts as a pass.",
+        "The video category here only says the service hosts video; no media stream is measured."
+      ],
+      "cost": {
+        "requests_per_pass": 1,
+        "max_bytes": 65536,
+        "budget_weight": 0.4,
+        "rate_limit_ru": "Один запрос на адрес за проход.",
+        "rate_limit_en": "One request per endpoint per pass."
+      },
+      "deprecated": false,
+      "deprecated_reason_ru": null,
+      "user_owned": false
+    },
+    {
+      "id": "github-home",
+      "version": 1,
+      "maintainer": "Proxy Workbench contributors",
+      "title_ru": "GitHub: главная страница",
+      "title_en": "GitHub: homepage",
+      "aliases": [
+        "github",
+        "гитхаб",
+        "git"
+      ],
+      "categories": [
+        "development"
+      ],
+      "capability": "homepage",
+      "origin": "legacy_app_js",
+      "definition_checked_on": "2026-09-25",
+      "live_checked_on": null,
+      "verification": "legacy_definition",
+      "definition_source": {
+        "kind": "legacy_code",
+        "ref": "proxy_workbench/ui/app.js -> TARGET_PRESETS (app.js:1517)"
+      },
+      "contract_source": "https://github.com/",
+      "probes": [
+        {
+          "id": "p1",
+          "url": "https://github.com/",
+          "method": "GET",
+          "statuses": [
+            200
+          ],
+          "contains": "GitHub",
+          "sha256": null,
+          "headers": {}
+        }
+      ],
+      "pass_condition_ru": "HTTP 200 и тело, содержащее строку GitHub.",
+      "pass_condition_en": "HTTP 200 and a body containing the string GitHub.",
+      "not_proved_ru": [
+        "API-токен, доступ к api.github.com и коду 401/403 этого API.",
+        "git push и git fetch по HTTPS, ssh через 22 порт и приватные репозитории.",
+        "Скорость клонирования репозитория."
+      ],
+      "not_proved_en": [
+        "An API token, access to api.github.com and that API's 401/403 contract.",
+        "git push and git fetch over HTTPS, SSH on port 22, and private repositories.",
+        "Repository clone speed."
+      ],
+      "limitations_ru": [
+        "Главная страница и git-протоколы используют разные хосты и порты; успех здесь ничего не говорит о git."
+      ],
+      "limitations_en": [
+        "The homepage and the git protocols use different hosts and ports; success here says nothing about git."
+      ],
+      "cost": {
+        "requests_per_pass": 1,
+        "max_bytes": 65536,
+        "budget_weight": 0.4,
+        "rate_limit_ru": "Один запрос на адрес за проход.",
+        "rate_limit_en": "One request per endpoint per pass."
+      },
+      "deprecated": false,
+      "deprecated_reason_ru": null,
+      "user_owned": false
+    },
+    {
+      "id": "openai-models",
+      "version": 1,
+      "maintainer": "Proxy Workbench contributors",
+      "title_ru": "OpenAI: контракт ошибки /v1/models без ключа",
+      "title_en": "OpenAI: /v1/models error contract without a key",
+      "aliases": [
+        "openai",
+        "chatgpt",
+        "gpt",
+        "oai"
+      ],
+      "categories": [
+        "api",
+        "development"
+      ],
+      "capability": "api",
+      "origin": "legacy_app_js",
+      "definition_checked_on": "2026-09-25",
+      "live_checked_on": null,
+      "verification": "legacy_definition",
+      "definition_source": {
+        "kind": "legacy_code",
+        "ref": "proxy_workbench/ui/app.js -> TARGET_PRESETS (app.js:1519)"
+      },
+      "contract_source": "https://api.openai.com/v1/models",
+      "probes": [
+        {
+          "id": "p1",
+          "url": "https://api.openai.com/v1/models",
+          "method": "GET",
+          "statuses": [
+            401
+          ],
+          "contains": "invalid_request_error",
+          "sha256": null,
+          "headers": {}
+        }
+      ],
+      "pass_condition_ru": "HTTP 401 и тело, содержащее invalid_request_error.",
+      "pass_condition_en": "HTTP 401 and a body containing invalid_request_error.",
+      "not_proved_ru": [
+        "Наличие ключа, баланс аккаунта и возможность вызвать модель.",
+        "Доступность моделей в конкретном регионе и тарифы.",
+        "Работу API с валидным токеном: пробы без credentials по контракту F07 не получают."
+      ],
+      "not_proved_en": [
+        "Key availability, account balance and the ability to call a model.",
+        "Regional model availability and pricing.",
+        "The API with a valid token: probes never receive credentials by contract F07."
+      ],
+      "limitations_ru": [
+        "Успех означает «контракт ошибки на месте», а не «сервис работает»: это осознанно иное доказательство, чем 200.",
+        "Если OpenAI начнёт отдавать 200 анонимным запросам, условие 401 перестанет выполняться и preset потребует ревизии."
+      ],
+      "limitations_en": [
+        "Success means the error contract is in place, not that the service works: deliberately a different proof from 200.",
+        "If OpenAI starts answering anonymous requests with 200, the 401 condition stops holding and the preset needs a revision."
+      ],
+      "cost": {
+        "requests_per_pass": 1,
+        "max_bytes": 8192,
+        "budget_weight": 0.3,
+        "rate_limit_ru": "Один запрос на адрес за проход; запросы без ключа попадают в отдельный лимит 401.",
+        "rate_limit_en": "One request per endpoint per pass; keyless requests count against a separate 401 limit."
+      },
+      "deprecated": false,
+      "deprecated_reason_ru": null,
+      "user_owned": false
+    },
+    {
+      "id": "microsoft-oidc-discovery",
+      "version": 1,
+      "maintainer": "Proxy Workbench contributors",
+      "title_ru": "Microsoft identity platform: OIDC discovery",
+      "title_en": "Microsoft identity platform: OIDC discovery",
+      "aliases": [
+        "microsoft",
+        "azure",
+        "entra",
+        "azure ad",
+        "микрософт",
+        "oidc"
+      ],
+      "categories": [
+        "api",
+        "development"
+      ],
+      "capability": "api",
+      "origin": "researched",
+      "definition_checked_on": "2026-09-25",
+      "live_checked_on": null,
+      "verification": "documented",
+      "definition_source": {
+        "kind": "official_doc",
+        "ref": "learn.microsoft.com/en-us/entra/identity-platform/v2-protocols-oidc: OIDC endpoint overview, Discovery /.well-known/openid-configuration, publicly accessible, no authentication"
+      },
+      "contract_source": "https://learn.microsoft.com/en-us/entra/identity-platform/v2-protocols-oidc",
+      "probes": [
+        {
+          "id": "p1",
+          "url": "https://login.microsoftonline.com/common/v2.0/.well-known/openid-configuration",
+          "method": "GET",
+          "statuses": [
+            200
+          ],
+          "contains": "authorization_endpoint",
+          "sha256": null,
+          "headers": {}
+        }
+      ],
+      "pass_condition_ru": "HTTP 200 и JSON-документ, содержащий поле authorization_endpoint.",
+      "pass_condition_en": "HTTP 200 and a JSON document containing the authorization_endpoint field.",
+      "not_proved_ru": [
+        "Выдачу или приём токенов: discovery не создаёт и не проверяет credential flow.",
+        "Доступ к Microsoft Graph и данным аккаунта.",
+        "Работу конкретного клиента или библиотеки и версию клиента."
+      ],
+      "not_proved_en": [
+        "Issuing or accepting tokens: discovery neither creates nor verifies a credential flow.",
+        "Access to Microsoft Graph or account data.",
+        "That a specific client or library works, and which client version it is."
+      ],
+      "limitations_ru": [
+        "Путь common обслуживает и личные, и рабочие аккаунты; конкретный tenant даёт другой issuer и другой документ.",
+        "Национальные облака Microsoft используют другие authority-домены и этой пробой не покрываются."
+      ],
+      "limitations_en": [
+        "The common path serves both personal and work accounts; a specific tenant yields a different issuer and document.",
+        "Microsoft national clouds use different authority hosts and are not covered by this probe."
+      ],
+      "cost": {
+        "requests_per_pass": 1,
+        "max_bytes": 16384,
+        "budget_weight": 0.3,
+        "rate_limit_ru": "Один запрос на адрес за проход; discovery-документ не тарифицируется отдельно.",
+        "rate_limit_en": "One request per endpoint per pass; the discovery document is not billed separately."
+      },
+      "deprecated": false,
+      "deprecated_reason_ru": null,
+      "user_owned": false
+    },
+    {
+      "id": "steam-store-home",
+      "version": 1,
+      "maintainer": "Proxy Workbench contributors",
+      "title_ru": "Steam: витрина магазина",
+      "title_en": "Steam: store front page",
+      "aliases": [
+        "steam",
+        "стим",
+        "valve",
+        "steamworks"
+      ],
+      "categories": [
+        "development"
+      ],
+      "capability": "homepage",
+      "origin": "researched",
+      "definition_checked_on": "2026-09-25",
+      "live_checked_on": null,
+      "verification": "unverified_live",
+      "definition_source": {
+        "kind": "site_contract",
+        "ref": "контракт витрины: GET / отвечает 200. Steamworks Web API документирует ISteamUserStats/GetNumberOfCurrentPlayers, но хост эндпоинта официальной документацией в этой сессии не подтверждён, поэтому API-проба в каталог не включена"
+      },
+      "contract_source": "https://partner.steamgames.com/doc/webapi/ISteamUserStats",
+      "probes": [
+        {
+          "id": "p1",
+          "url": "https://store.steampowered.com/",
+          "method": "GET",
+          "statuses": [
+            200
+          ],
+          "contains": null,
+          "sha256": null,
+          "headers": {}
+        }
+      ],
+      "pass_condition_ru": "HTTP 200 на витрине магазина.",
+      "pass_condition_en": "HTTP 200 on the store front page.",
+      "not_proved_ru": [
+        "Steamworks Web API, в том числе ISteamUserStats/GetNumberOfCurrentPlayers.",
+        "Загрузку игр, обновление библиотеки и работу клиента.",
+        "Региональные ограничения и цены магазина."
+      ],
+      "not_proved_en": [
+        "The Steamworks Web API, including ISteamUserStats/GetNumberOfCurrentPlayers.",
+        "Game downloads, library updates and the client working.",
+        "Regional restrictions and store pricing."
+      ],
+      "limitations_ru": [
+        "Магазин (store.steampowered.com) и клиент (api.steampowered.com) — разные хосты: успех витрины не говорит о клиенте.",
+        "Утверждения по содержимому нет: challenge-ответ 200 пройдёт как успех.",
+        "Живая проверка определения не выполнялась."
+      ],
+      "limitations_en": [
+        "The store (store.steampowered.com) and the client (api.steampowered.com) are different hosts: store success says nothing about the client.",
+        "No content assertion: a challenge response answering 200 counts as a pass.",
+        "No live validation was performed."
+      ],
+      "cost": {
+        "requests_per_pass": 1,
+        "max_bytes": 65536,
+        "budget_weight": 0.4,
+        "rate_limit_ru": "Один запрос на адрес за проход.",
+        "rate_limit_en": "One request per endpoint per pass."
+      },
+      "deprecated": false,
+      "deprecated_reason_ru": null,
+      "user_owned": false
+    }
+  ],
+  "service_sets": [
+    {
+      "id": "basic",
+      "version": 1,
+      "maintainer": "Proxy Workbench contributors",
+      "title_ru": "Базовая передача без ввода URL",
+      "title_en": "Basic transfer without URL input",
+      "description_ru": "Контрольный 204-эндпоинт и диагностический trace. Доказывает, что прокси передаёт HTTP и HTTPS и что виден адрес, который наблюдает Cloudflare. Не доказывает скорость и не относится ни к одному сервису из набора.",
+      "description_en": "A control 204 endpoint and a diagnostic trace. It proves the proxy carries HTTP and HTTPS and that the address observed by Cloudflare is visible. It proves no speed and belongs to no service in the set.",
+      "required": [
+        "google-204"
+      ],
+      "optional": [
+        "cloudflare-trace"
+      ],
+      "combination": "any",
+      "min_passes": 0,
+      "scenario": {
+        "attempts": 2,
+        "connect_timeout": 4,
+        "timeout": 8,
+        "max_bytes": 262144,
+        "min_success": 0.67,
+        "fail_fast": true,
+        "request_profile": "workbench",
+        "protocol": "all",
+        "prefilter": 512,
+        "anonymity.judge_url": null,
+        "min_anonymity": "any",
+        "reputation.local_enabled": true,
+        "reputation.dnsbl_enabled": false,
+        "reputation.dnsbl_zones": [],
+        "reputation.strict": false,
+        "speedtest.url": null,
+        "speedtest.max_bytes": 5000000
+      }
+    },
+    {
+      "id": "search",
+      "version": 1,
+      "maintainer": "Proxy Workbench contributors",
+      "title_ru": "Поиск и справочные сайты",
+      "title_en": "Search and reference sites",
+      "description_ru": "Контрольный 204-эндпоинт Google обязателен; главные страницы Bing, DuckDuckGo и Wikipedia — дополнительные. Выдача поиска, реклама и вход в аккаунт не проверяются.",
+      "description_en": "The Google control 204 endpoint is required; Bing, DuckDuckGo and Wikipedia homepages are optional. Search results, ads and signing in are not checked.",
+      "required": [
+        "google-204"
+      ],
+      "optional": [
+        "bing-home",
+        "duckduckgo-home",
+        "wikipedia-home"
+      ],
+      "combination": "at_least",
+      "min_passes": 1,
+      "scenario": {
+        "attempts": 2,
+        "connect_timeout": 4,
+        "timeout": 8,
+        "max_bytes": 262144,
+        "min_success": 0.67,
+        "fail_fast": true,
+        "request_profile": "workbench",
+        "protocol": "all",
+        "prefilter": 512,
+        "anonymity.judge_url": null,
+        "min_anonymity": "any",
+        "reputation.local_enabled": true,
+        "reputation.dnsbl_enabled": false,
+        "reputation.dnsbl_zones": [],
+        "reputation.strict": false,
+        "speedtest.url": null,
+        "speedtest.max_bytes": 5000000
+      }
+    },
+    {
+      "id": "messengers",
+      "version": 1,
+      "maintainer": "Proxy Workbench contributors",
+      "title_ru": "Мессенджеры: веб-доступ",
+      "title_en": "Messengers: web reachability",
+      "description_ru": "Главная страница Telegram обязательна, публичный discovery-эндпоинт Discord и главная страница Signal — дополнительные. Звонки, голос, видео, MTProto и любой UDP не измеряются: это отдельный класс проверок, которого в каталоге нет.",
+      "description_en": "The Telegram homepage is required; the public Discord discovery endpoint and the Signal homepage are optional. Calls, voice, video, MTProto and any UDP are not measured: that is a separate probe class this catalog does not have.",
+      "required": [
+        "telegram-home"
+      ],
+      "optional": [
+        "discord-gateway",
+        "signal-home"
+      ],
+      "combination": "any",
+      "min_passes": 0,
+      "scenario": {
+        "attempts": 2,
+        "connect_timeout": 3,
+        "timeout": 6,
+        "max_bytes": 262144,
+        "min_success": 0.67,
+        "fail_fast": true,
+        "request_profile": "workbench",
+        "protocol": "socks5",
+        "prefilter": 512,
+        "anonymity.judge_url": null,
+        "min_anonymity": "any",
+        "reputation.local_enabled": true,
+        "reputation.dnsbl_enabled": false,
+        "reputation.dnsbl_zones": [],
+        "reputation.strict": false,
+        "speedtest.url": null,
+        "speedtest.max_bytes": 5000000
+      }
+    },
+    {
+      "id": "social",
+      "version": 1,
+      "maintainer": "Proxy Workbench contributors",
+      "title_ru": "Соцсети: главные страницы",
+      "title_en": "Social networks: homepages",
+      "description_ru": "Главная страница Instagram обязательна; Reddit, X и TikTok — дополнительные. Вход в аккаунт, лента, Reels и Stories не проверяются: главная страница отдаётся и без авторизации.",
+      "description_en": "The Instagram homepage is required; Reddit, X and TikTok are optional. Signing in, feeds, Reels and Stories are not checked: homepages are served without authorization.",
+      "required": [
+        "instagram-home"
+      ],
+      "optional": [
+        "reddit-home",
+        "x-home",
+        "tiktok-home"
+      ],
+      "combination": "at_least",
+      "min_passes": 1,
+      "scenario": {
+        "attempts": 2,
+        "connect_timeout": 4,
+        "timeout": 8,
+        "max_bytes": 262144,
+        "min_success": 0.67,
+        "fail_fast": true,
+        "request_profile": "workbench",
+        "protocol": "all",
+        "prefilter": 512,
+        "anonymity.judge_url": null,
+        "min_anonymity": "any",
+        "reputation.local_enabled": true,
+        "reputation.dnsbl_enabled": false,
+        "reputation.dnsbl_zones": [],
+        "reputation.strict": false,
+        "speedtest.url": null,
+        "speedtest.max_bytes": 5000000
+      }
+    },
+    {
+      "id": "video",
+      "version": 1,
+      "maintainer": "Proxy Workbench contributors",
+      "title_ru": "Видеосервис: доступность по 204-эндпоинту",
+      "title_en": "Video service: reachability via the 204 endpoint",
+      "description_ru": "Только контрольный 204-эндпоинт YouTube. Он не доказывает видеопоток, разрешение 1080p или 4K, DRM, рекламу и возрастные ограничения. Замер скорости и медиапроба — отдельный режим, в этот набор они не входят намеренно.",
+      "description_en": "Only the YouTube control 204 endpoint. It does not prove a video stream, 1080p or 4K resolution, DRM, ads or age restrictions. The speed test and a media probe are a separate mode and are deliberately not part of this set.",
+      "required": [
+        "youtube-204"
+      ],
+      "optional": [],
+      "combination": "none",
+      "min_passes": 0,
+      "scenario": {
+        "attempts": 2,
+        "connect_timeout": 4,
+        "timeout": 8,
+        "max_bytes": 65536,
+        "min_success": 0.67,
+        "fail_fast": true,
+        "request_profile": "workbench",
+        "protocol": "all",
+        "prefilter": 512,
+        "anonymity.judge_url": null,
+        "min_anonymity": "any",
+        "reputation.local_enabled": true,
+        "reputation.dnsbl_enabled": false,
+        "reputation.dnsbl_zones": [],
+        "reputation.strict": false,
+        "speedtest.url": null,
+        "speedtest.max_bytes": 5000000
+      }
+    },
+    {
+      "id": "development",
+      "version": 1,
+      "maintainer": "Proxy Workbench contributors",
+      "title_ru": "Разработка: сайты и публичные API",
+      "title_en": "Development: sites and public APIs",
+      "description_ru": "Главная страница GitHub обязательна; OIDC discovery Microsoft и контракт ошибки OpenAI — дополнительные. API-токены, git по HTTPS и SSH не проверяются.",
+      "description_en": "The GitHub homepage is required; Microsoft OIDC discovery and the OpenAI error contract are optional. API tokens, git over HTTPS and SSH are not checked.",
+      "required": [
+        "github-home"
+      ],
+      "optional": [
+        "microsoft-oidc-discovery",
+        "openai-models"
+      ],
+      "combination": "at_least",
+      "min_passes": 1,
+      "scenario": {
+        "attempts": 2,
+        "connect_timeout": 4,
+        "timeout": 8,
+        "max_bytes": 262144,
+        "min_success": 0.67,
+        "fail_fast": true,
+        "request_profile": "workbench",
+        "protocol": "all",
+        "prefilter": 512,
+        "anonymity.judge_url": null,
+        "min_anonymity": "any",
+        "reputation.local_enabled": true,
+        "reputation.dnsbl_enabled": false,
+        "reputation.dnsbl_zones": [],
+        "reputation.strict": false,
+        "speedtest.url": null,
+        "speedtest.max_bytes": 5000000
+      }
+    },
+    {
+      "id": "api",
+      "version": 1,
+      "maintainer": "Proxy Workbench contributors",
+      "title_ru": "API: публичные контракты без ключа",
+      "title_en": "API: public contracts without a key",
+      "description_ru": "Контракт ошибки OpenAI обязателен; OIDC discovery Microsoft и discovery шлюза Discord — дополнительные. Ни одна проба не передаёт учётные данные: API с ключом проверяется собственным профилем с секретами, а не этим набором.",
+      "description_en": "The OpenAI error contract is required; Microsoft OIDC discovery and the Discord gateway discovery are optional. No probe sends credentials: a keyed API is checked by an own profile with secrets, not by this set.",
+      "required": [
+        "openai-models"
+      ],
+      "optional": [
+        "microsoft-oidc-discovery",
+        "discord-gateway"
+      ],
+      "combination": "at_least",
+      "min_passes": 1,
+      "scenario": {
+        "attempts": 2,
+        "connect_timeout": 4,
+        "timeout": 8,
+        "max_bytes": 262144,
+        "min_success": 0.67,
+        "fail_fast": true,
+        "request_profile": "workbench",
+        "protocol": "all",
+        "prefilter": 512,
+        "anonymity.judge_url": null,
+        "min_anonymity": "any",
+        "reputation.local_enabled": true,
+        "reputation.dnsbl_enabled": false,
+        "reputation.dnsbl_zones": [],
+        "reputation.strict": false,
+        "speedtest.url": null,
+        "speedtest.max_bytes": 5000000
+      }
+    }
+  ]
+}
