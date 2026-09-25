@@ -240,17 +240,26 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(pool.refresh(), [])
 
     def test_client_options_parsing(self):
-        self.assertEqual(gateway.client_options('user'), ({}, None))
+        self.assertEqual(gateway.client_options('user'), ({}, None, None))
         self.assertEqual(gateway.client_options('country-de_nl-protocol-SOCKS5-latency-800-anonymity-elite-session-s1'),
-                         ({'countries': ('DE', 'NL'), 'protocol': 'socks5', 'max_latency': 800.0, 'anonymity': 'elite'}, 's1'))
-        for bad in ('country-germany', 'protocol-https', 'latency-fast', 'session-a/b'):
+                         ({'countries': ('DE', 'NL'), 'protocol': 'socks5', 'max_latency': 800.0,
+                           'anonymity': 'elite'}, 's1', None))
+        self.assertEqual(gateway.client_options('pool-main'),
+                         ({}, None, 'main'))
+        for bad in ('country-germany', 'protocol-ftp', 'latency-fast', 'session-a/b', 'pool-a/b'):
             with self.assertRaises(ValueError):
                 gateway.client_options(bad)
 
-    def test_per_proxy_limit(self):
+    def test_pick_needs_an_explicit_refresh_and_reservation_is_atomic(self):
+        # Picking no longer reads the export: refresh() is explicit, and the
+        # gateway calls it off the event loop, so a client request never blocks
+        # on a file read.
         pool = gateway.Pool(self.home, max_per_proxy=1)
         (self.home / 'exports').mkdir(exist_ok=True)
-        (self.home / 'exports' / 'ranked.json').write_text(json.dumps([row('http://11.0.0.1:80'), row('http://11.0.0.2:80')]))
+        (self.home / 'exports' / 'ranked.json').write_text(json.dumps([row('http://11.0.0.1:80'),
+                                                                      row('http://11.0.0.2:80')]))
+        self.assertIsNone(pool.pick())
+        pool.refresh()
         first = pool.pick()
         pool.acquire(first)
         second = pool.pick()
@@ -260,15 +269,43 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         pool.release(first)
         self.assertEqual(pool.pick(), first)
 
-    def test_pool_filters_and_skips_https_proxies(self):
+    def test_reserve_takes_the_slot_before_the_caller_awaits(self):
+        pool = gateway.Pool(self.home, max_per_proxy=1)
+        (self.home / 'exports').mkdir(exist_ok=True)
+        (self.home / 'exports' / 'ranked.json').write_text(json.dumps([row('http://11.0.0.1:80'),
+                                                                      row('http://11.0.0.2:80')]))
+        pool.refresh()
+        first = pool.reserve()
+        second = pool.reserve()
+        self.assertIsNotNone(first)
+        self.assertIsNotNone(second)
+        self.assertNotEqual(first.proxy, second.proxy)
+        # Both slots are taken before any await happened, so the third request
+        # has nothing to take - the old pick() then await() could hand it out.
+        self.assertIsNone(pool.reserve())
+        self.assertEqual(sum(pool.active.values()), 2)
+        first.release()
+        third = pool.reserve()
+        self.assertIsNotNone(third)
+        for lease in (first, second, third):
+            lease.release()
+        self.assertEqual(sum(pool.active.values()), 0)
+
+    def test_pool_keeps_every_supported_transport(self):
         (self.home / 'exports').mkdir()
         rows = [row('http://11.0.0.1:80', country='DE'), row('https://11.0.0.2:443', country='DE'),
-                row('socks4://11.0.0.3:4145', country='NL'), row('socks5://11.0.0.4:1080', latency=900, country='DE')]
+                row('socks4://11.0.0.3:4145', country='NL'), row('socks4a://11.0.0.5:4145', country='NL'),
+                row('socks5://11.0.0.4:1080', latency=900, country='DE'),
+                row('socks5h://11.0.0.6:1080', country='DE'),
+                row('ftp://11.0.0.7:21', country='DE')]
         (self.home / 'exports' / 'ranked.json').write_text(json.dumps(rows))
-        self.assertEqual(gateway.Pool(self.home).refresh(), ['http://11.0.0.1:80', 'socks4://11.0.0.3:4145',
-                                                             'socks5://11.0.0.4:1080'])
+        # https:// is a transport the gateway speaks now, not a row to discard;
+        # ftp:// is not one and stays out.
+        self.assertEqual(gateway.Pool(self.home).refresh(),
+                         ['http://11.0.0.1:80', 'https://11.0.0.2:443', 'socks4://11.0.0.3:4145',
+                          'socks4a://11.0.0.5:4145', 'socks5://11.0.0.4:1080', 'socks5h://11.0.0.6:1080'])
         pool = gateway.Pool(self.home, dict(countries=('DE',), max_latency=500))
-        self.assertEqual(pool.refresh(), ['http://11.0.0.1:80'])
+        self.assertEqual(pool.refresh(), ['http://11.0.0.1:80', 'https://11.0.0.2:443', 'socks5h://11.0.0.6:1080'])
 
 
 class BackgroundTests(unittest.TestCase):
@@ -285,11 +322,27 @@ class BackgroundTests(unittest.TestCase):
 
     def test_authenticated_lan_bind_exposes_non_loopback_qr_target(self):
         with tempfile.TemporaryDirectory() as temp:
-            background = gateway.Background(Path(temp), '0.0.0.0', 0, token='fixture-password')
+            background = gateway.Background(Path(temp), '0.0.0.0', 0, token='fixture-password', lan=True)
             try:
                 self.assertEqual(background.host, '0.0.0.0')
                 self.assertTrue(background.display_host)
                 self.assertTrue(background.token)
+                self.assertTrue(background.lan)
+            finally:
+                background.close()
+
+    def test_lan_is_opt_in_and_the_default_stays_loopback(self):
+        with tempfile.TemporaryDirectory() as temp:
+            # A non-loopback address is refused until LAN is asked for, and a
+            # loopback listener is the default.
+            with self.assertRaises(ValueError):
+                gateway.Background(Path(temp), '0.0.0.0', 0, token='fixture-password')
+            background = gateway.Background(Path(temp), port=0)
+            try:
+                self.assertEqual(background.host, '127.0.0.1')
+                self.assertFalse(background.lan)
+                self.assertIsNone(background.token)
+                self.assertEqual(background.token_origin, 'none')
             finally:
                 background.close()
 

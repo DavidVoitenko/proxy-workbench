@@ -1,36 +1,117 @@
-"""Rotating proxy gateway: one local address that spreads TCP connections over working proxies.
+"""Rotating proxy gateway: one local address that spreads client connections over measured upstreams.
 
 Browsers, scripts and apps point at ``127.0.0.1:8899`` as an HTTP or SOCKS5
-proxy.  The GUI can explicitly bind an authenticated LAN address for a phone;
-the wildcard address itself is never used as a QR target.  SOCKS5 CONNECT is
-implemented, while UDP ASSOCIATE is intentionally rejected because the local
-relay has no authenticated UDP path.
+proxy.  LAN access is an explicit opt-in with its own interface choice and its
+own password; the wildcard address itself is never used as a QR target.
+SOCKS5 CONNECT is implemented, while UDP ASSOCIATE is intentionally rejected
+because the local relay has no authenticated UDP path.
+
+Rules this module keeps, because each of them was a defect or a requirement:
+
+* a concurrency slot is **reserved before** the first ``await`` that can block
+  and is released on success, on error and on cancellation (defect 16);
+* one absolute deadline covers the whole client handshake, not just the first
+  byte, and the number of accepted clients is bounded (defect 16, R11);
+* an open TCP stream is never moved to another upstream: the request that was
+  already written to one upstream is never written to another (F16, defect 17);
+* ``connected`` is not ``working``: only bytes from the target prove an HTTP
+  upstream works, and a target that refused is not the proxy's fault
+  (defect 17);
+* the local denylist is applied **before** any network call, and a new rule
+  revokes new admissions immediately; the fate of already open streams is a
+  separate, explicit ``on_deny`` policy (defect 19, R13);
+* the gateway password is a separate identity from the GUI session token and
+  the API token, and the default bind stays on loopback (defect 18, R12,
+  CONTRACTS §5.1).
 """
 from __future__ import annotations
 
 import asyncio
 import base64
 import contextlib
+import dataclasses
 import hmac
 import ipaddress
 import json
 import random
 import re
+import secrets
 import socket
+import ssl
 import struct
+import threading
 import time
+from collections import OrderedDict
 from pathlib import Path
 
-from . import geoip, socks4
+from . import geoip, reputation, socks4
 from .api import Exports, is_loopback, select
 from .i18n import tr
 
+DEFAULT_HOST = '127.0.0.1'
 DEFAULT_PORT = 8899
-SUPPORTED = ('http', 'socks4', 'socks5')
-STRATEGIES = ('round-robin', 'random')
+#: Every upstream transport the gateway can speak.  ``socks5h`` resolves the
+#: name at the proxy, ``socks4a`` carries a hostname to a SOCKS4 proxy and
+#: ``https`` wraps the connection to the proxy itself in TLS.
+SUPPORTED = ('http', 'https', 'socks4', 'socks4a', 'socks5', 'socks5h')
+#: Transports whose DNS mode is "the proxy resolves the name".
+REMOTE_DNS = ('socks5h', 'socks4a')
+STRATEGIES = ('round-robin', 'random', 'health-aware')
+STICKY_MODES = ('failover', 'strict')
+#: What happens to streams that are already open when a proxy is denied.
+REVOKE_POLICIES = ('keep', 'close')
+#: Methods that may be sent again if the very first tunnel attempt failed before
+#: anything was written.  A request is never replayed once bytes reached an
+#: upstream, whatever the method is.
+IDEMPOTENT = frozenset({b'GET', b'HEAD', b'OPTIONS', b'TRACE', b'PUT', b'DELETE'})
 MAX_HEAD = 64 * 1024
 SESSION = re.compile(r'[A-Za-z0-9_]{1,64}')
 HOP_HEADERS = {b'proxy-authorization', b'proxy-connection', b'connection', b'keep-alive'}
+#: A client request may name a listener binding with ``pool-<id>`` in its user
+#: name.  Every other client option only narrows the bound scope.
+POOL_OPTION = re.compile(r'[A-Za-z0-9._-]{1,64}')
+
+# Health outcomes.  Only the ones in HEALTH_FAULT are a fault of the proxy
+# itself; a target that refused must never rest a working upstream.
+HEALTH_GOOD = frozenset({'response', 'tunnel_bytes'})
+HEALTH_TARGET = frozenset({'upstream_unavailable', 'no_response'})
+HEALTH_FAULT = frozenset({'handshake_failed', 'upstream_refused', 'closed_empty'})
+HEALTH_OUTCOMES = HEALTH_GOOD | HEALTH_TARGET | HEALTH_FAULT
+#: Half-life of a gateway health observation, seconds.
+HEALTH_DECAY = 300.0
+#: Laplace prior, so a proxy nobody tried yet is neither praised nor punished.
+HEALTH_PRIOR = 1.0
+CACHE_LIMIT = 256
+SESSIONS_LIMIT = 10_000
+MAX_CLIENTS = 512
+
+
+class UpstreamError(Exception):
+    pass
+
+
+def new_gateway_token():
+    """A fresh password for gateway clients.
+
+    The gateway password is a separate identity from the GUI session token and
+    from the API token (CONTRACTS §5.1, defect 18).  This function never reads
+    either of them, so a LAN phone password can never become a control secret.
+    """
+    return secrets.token_urlsafe(24)
+
+
+def resolve_token(bind, token=None):
+    """The gateway password for a bind: explicit, freshly generated, or none.
+
+    On a LAN bind a password is mandatory, and when the caller did not supply
+    one the gateway makes its own.  It never reads the GUI session token and
+    never reads the API token: those are different identities (CONTRACTS §5.1,
+    defect 18).  A loopback listener keeps the old behaviour, where a token is
+    used when given and none is invented when not.
+    """
+    if bind.local:
+        return token, ('explicit' if token else 'none')
+    return (token or new_gateway_token()), ('explicit' if token else 'generated')
 
 
 def local_interface_addresses():
@@ -49,145 +130,612 @@ def local_interface_addresses():
     return addresses
 
 
-def display_host(bind_host):
-    """Return an address a phone on the same LAN can actually dial.
+def lan_interfaces():
+    """Concrete addresses a phone on the same LAN could dial, best first.
 
-    Binding to ``0.0.0.0`` is useful for a desktop acting as a phone gateway,
-    but the wildcard address itself is not a valid QR target.  Resolution is
-    local hostname metadata only; no proxy/source network scan is performed.
+    Local hostname metadata only: no probe, no scan, no third-party service.
     """
-    if bind_host not in ('0.0.0.0', '::', ''):
-        return bind_host
-    try:
-        infos = socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET, socket.SOCK_DGRAM)
-    except OSError:
-        infos = []
-    if not infos:
-        try:
-            infos = [(socket.AF_INET, socket.SOCK_DGRAM, 0, '', (socket.gethostbyname(socket.gethostname()), 0))]
-        except OSError:
-            pass
-    for info in infos:
-        candidate = info[4][0]
+    found = []
+    for candidate in sorted(local_interface_addresses()):
         try:
             address = ipaddress.ip_address(candidate)
         except ValueError:
             continue
-        if not address.is_loopback and not address.is_link_local:
-            return candidate
-    return '127.0.0.1'
+        if address.is_loopback or address.is_link_local or not address.is_private:
+            continue
+        if candidate not in found:
+            found.append(candidate)
+    return found
 
 
-class UpstreamError(Exception):
-    pass
+def display_host(bind_host, interface=None):
+    """Return an address a phone on the same LAN can actually dial.
+
+    Binding to ``0.0.0.0`` is useful for a desktop acting as a phone gateway,
+    but the wildcard address itself is not a valid QR target.  An explicit
+    ``interface`` wins, so the user can choose which adapter is published.
+    """
+    if interface:
+        return interface
+    if bind_host not in ('0.0.0.0', '::', ''):
+        return bind_host
+    found = lan_interfaces()
+    return found[0] if found else DEFAULT_HOST
+
+
+@dataclasses.dataclass(frozen=True)
+class Bind:
+    """Where a listener listens and what is visible about it.
+
+    ``lan`` is the explicit opt-in.  Without it only loopback is allowed, so
+    the local default stays local and a phone needs a deliberate decision.
+    """
+
+    host: str = DEFAULT_HOST
+    port: int = DEFAULT_PORT
+    lan: bool = False
+    interface: str | None = None
+
+    def __post_init__(self):
+        if not 0 <= int(self.port) <= 65535:
+            raise ValueError('port')
+        if not is_loopback(self.host) and not self.lan:
+            raise ValueError(tr(
+                f'Адрес {self.host} доступен из сети: LAN включается явно (bind.lan=True) и с выбором интерфейса.',
+                f'the address {self.host} is reachable from the network: enable LAN explicitly '
+                f'(bind.lan=True) and choose an interface.'))
+        if self.interface and is_loopback(self.interface):
+            raise ValueError(tr('Интерфейс LAN не может быть loopback.',
+                                'the LAN interface cannot be a loopback address.'))
+
+    @property
+    def local(self):
+        return is_loopback(self.host)
+
+    @property
+    def published_host(self):
+        """The address to hand to a client; loopback while LAN is off."""
+        return display_host(self.host, self.interface) if self.lan else self.host
+
+    def as_dict(self):
+        return dict(host=self.host, port=int(self.port), lan=self.lan, interface=self.interface,
+                    published_host=self.published_host if self.lan else self.host)
+
+
+SCOPING_KEYS = ('protocol', 'countries', 'anonymity', 'max_latency')
+
+
+@dataclasses.dataclass(frozen=True)
+class Binding:
+    """Which pool, generation, profile and policy one listener or client serves.
+
+    A binding pins the generation and profile so publishing another run does
+    not silently move an already connected client (defect 8).  ``policy`` holds
+    per-binding knobs: ``max_per_proxy``, ``sticky``, ``strategy`` and the
+    scoping filters ``protocol``/``countries``/``anonymity``/``max_latency``,
+    which narrow the rows a client may ever be offered.
+    """
+
+    pool_id: str = 'default'
+    generation: str | None = None
+    profile_id: str | None = None
+    profile_revision: int | None = None
+    policy: dict = dataclasses.field(default_factory=dict)
+
+    def as_dict(self):
+        data = dataclasses.asdict(self)
+        data['policy'] = {key: (list(value) if isinstance(value, tuple) else value)
+                          for key, value in self.policy.items()}
+        return data
+
+    def option(self, name, fallback=None):
+        value = self.policy.get(name, fallback)
+        return fallback if value is None else value
+
+    def scope(self):
+        """The filters this binding applies, whatever a client asks for."""
+        scope = {}
+        for key in SCOPING_KEYS:
+            value = self.policy.get(key)
+            if value is None:
+                continue
+            scope[key] = tuple(value) if key == 'countries' and not isinstance(value, str) else value
+        return scope
+
+
+class Lease:
+    """A held concurrency slot for one proxy.
+
+    Released exactly once, whether the connection succeeded, failed or was
+    cancelled (defect 16).  ``with lease:`` is the safe form.
+    """
+
+    __slots__ = ('pool', 'proxy', 'taken_at', '_released')
+
+    def __init__(self, pool, proxy, now=None):
+        self.pool = pool
+        self.proxy = proxy
+        self.taken_at = time.monotonic() if now is None else now
+        self._released = False
+
+    @property
+    def released(self):
+        return self._released
+
+    def release(self):
+        if self._released:
+            return
+        self._released = True
+        self.pool.release(self.proxy)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.release()
+        return False
+
+
+class ReplayGuard:
+    """One client request is written to at most one upstream.
+
+    A gateway may try several upstreams while nothing of the request has been
+    sent.  The moment the first byte of the request goes out, the request
+    belongs to that upstream: a non-idempotent request is never repeated on
+    another one (defect 17).  The guard makes that structural - there is no
+    code path that can write the same request twice.
+    """
+
+    __slots__ = ('sent_to', 'bytes_written')
+
+    def __init__(self):
+        self.sent_to = None
+        self.bytes_written = 0
+
+    def write_once(self, lease, writer, payload):
+        if self.sent_to is not None:
+            raise UpstreamError('REPLAY_REFUSED')
+        self.sent_to = lease.proxy
+        self.bytes_written = len(payload)
+        writer.write(payload)
 
 
 class Pool:
-    """Working proxies from the latest export with rotation, sessions, limits and failure cool-down."""
+    """Working proxies from one export with rotation, sessions, reservations and health.
+
+    The pool is the gateway's only view of an upstream.  It decides *which*
+    proxy, never whether a request succeeded: the gateway reports outcomes and
+    the pool turns them into rotation, cool-down and health-aware order.
+    """
 
     def __init__(self, data, filters=None, strategy='round-robin', max_failures=2, cooldown=300,
-                 max_per_proxy=0, session_ttl=600):
-        self.exports = Exports(Path(data) / 'exports')
+                 max_per_proxy=0, session_ttl=600, *, sticky='failover', denylist=None,
+                 denylist_path=None, denylist_normalizer=None, on_deny='keep',
+                 cache_limit=CACHE_LIMIT, bindings=None, default_binding=None,
+                 healthy_latency_ms=0):
+        if strategy not in STRATEGIES:
+            raise ValueError('strategy')
+        if sticky not in STICKY_MODES:
+            raise ValueError('sticky')
+        if on_deny not in REVOKE_POLICIES:
+            raise ValueError('on_deny')
+        if int(cache_limit) < 1:
+            raise ValueError('cache_limit')
+        self.data = Path(data)
+        self.exports = Exports(self.data / 'exports')
         self.filters = {'protocol': 'all', 'countries': (), 'anonymity': 'any', 'max_latency': 0, **(filters or {})}
         self.strategy = strategy
         self.max_failures = max_failures
         self.cooldown = cooldown
         self.max_per_proxy = max_per_proxy
         self.session_ttl = session_ttl
+        self.sticky = sticky
+        self.on_deny = on_deny
+        self.cache_limit = int(cache_limit)
+        self.healthy_latency_ms = healthy_latency_ms
+        self.denylist_path = Path(denylist_path) if denylist_path else self.data / 'denylist.txt'
+        self.denylist_normalizer = denylist_normalizer
+        self.denylist = denylist if denylist is not None else reputation.Denylist.empty()
+        self.bindings = dict(bindings or {})
+        self.default_binding = default_binding or Binding()
+        self.lock = threading.RLock()
         self.failures = {}
         self.resting = {}
         self.active = {}
         self.usage = {}
+        self.health = {}
         self.sessions = {}
         self.position = 0
         self.key = None
         self.revision = None
+        self.generation = None
+        self.status = {}
         self.rows = []
-        self.cache = {}
-        self.stats = dict(connections=0, failed=0, retries=0)
+        self.cache = OrderedDict()
+        self.denied = set()
+        self.revoked = 0
+        self.stats = dict(connections=0, failed=0, retries=0, rejected=0, upstream_5xx=0,
+                          closed_idle=0, closed_deadline=0, denied=0, replay_refused=0)
+
+    # --- export and denylist -------------------------------------------------
+
+    def load_denylist(self):
+        """Re-read data/denylist.txt.  Called off the event loop (see ``Gateway``)."""
+        path = self.denylist_path
+        try:
+            stat = path.stat()
+            stamp = (stat.st_mtime_ns, stat.st_size)
+        except OSError:
+            stamp = None
+        if stamp == getattr(self, '_denylist_stamp', object()):
+            return self.denylist
+        try:
+            denylist = reputation.Denylist.from_file(path, normalizer=self.denylist_normalizer)
+        except OSError:
+            denylist = reputation.Denylist.empty()
+        self._denylist_stamp = stamp
+        return self.set_denylist(denylist)
+
+    def set_denylist(self, denylist):
+        """Install a denylist and revoke admissions for everything it now names.
+
+        Revoking an admission is immediate and complete: the proxy leaves the
+        row list, the filter cache and every session binding, so no later
+        request can pick it.  Streams that are already open are a separate
+        decision - see ``on_deny`` and :meth:`revoke_streams`.
+        """
+        denylist = denylist if denylist is not None else reputation.Denylist.empty()
+        with self.lock:
+            previous = self.denylist.digest
+            self.denylist = denylist
+            fresh = {row['proxy'] for row in self.rows if denylist.match(row['proxy'])}
+            if previous != denylist.digest or fresh:
+                self.denied = fresh
+                if self.denied:
+                    self.revoked += len(self.denied)
+                    self.stats['denied'] += len(self.denied)
+                    self.rows = [row for row in self.rows if row['proxy'] not in self.denied]
+                    self.cache.clear()
+                    # Session bindings are left in place on purpose.  A denied
+                    # address is no longer available, so a failover session
+                    # re-binds to a working one and a strict session is refused -
+                    # both of which the sticky mode decides, not the denylist.
+            else:
+                self.denied = fresh
+        return self.denylist
+
+    def denied_proxies(self):
+        with self.lock:
+            return sorted(self.denied)
+
+    def allowed(self, proxy):
+        """False when the local denylist names this proxy, before any network call."""
+        return self.denylist.match(proxy) is None and proxy not in self.denied
+
+    def revoke_streams(self, close):
+        """Return the proxies whose open streams the caller must close, honouring policy."""
+        if self.on_deny != 'close' and not close:
+            return []
+        with self.lock:
+            return sorted(self.denied)
 
     def refresh(self):
-        rows, _ = self.exports.load()
-        if self.exports.key != self.key or self.exports.revision != self.revision:
-            self.key = self.exports.key
-            self.revision = self.exports.revision
-            self.rows = [row for row in select(rows, self.filters)
-                         if row['protocol'] in SUPPORTED and not row['proxy'].startswith('https://')]
-            self.cache.clear()
-        return [row['proxy'] for row in self.rows]
+        """Re-read the export and the denylist.  Performs file I/O: not for the event loop."""
+        self.load_denylist()
+        rows, status = self.exports.load()
+        with self.lock:
+            self.status = status
+            if self.exports.key != self.key or self.exports.revision != self.revision:
+                self.key = self.exports.key
+                self.revision = self.exports.revision
+                self.generation = (status or {}).get('generation')
+                # The URL scheme is the transport, so https://, socks4a and
+                # socks5h are first-class rows now, not filtered away.
+                self.rows = [row for row in select(rows, self.filters)
+                             if str(row['proxy']).partition('://')[0] in SUPPORTED]
+                self.cache.clear()
+            denied = {row['proxy'] for row in self.rows if not self.allowed(row['proxy'])}
+            if denied != self.denied:
+                if denied:
+                    self.revoked += len(denied - self.denied)
+                    self.stats['denied'] += len(denied - self.denied)
+                self.denied = denied
+                self.rows = [row for row in self.rows if row['proxy'] not in denied]
+                self.cache.clear()
+            # What this listener would serve right now: the denylist and the
+            # binding of the default pool.  A named binding narrows from here.
+            return self.matching(binding=self.default_binding)
 
-    def matching(self, request=None):
-        """Proxies allowed by the gateway filters and, if given, one client's own filters."""
-        everything = self.refresh()
-        if not request:
-            return everything
-        key = tuple(sorted(request.items()))
-        if key not in self.cache:
+    async def arefresh(self):
+        """Refresh off the event loop, so the listener never blocks on a file read."""
+        return await asyncio.to_thread(self.refresh)
+
+    # --- selection -----------------------------------------------------------
+
+    def binding_for(self, name=None):
+        """The binding a listener or a client serves.  ``default`` is always addressable."""
+        if name is None or name == 'default':
+            return self.default_binding
+        binding = self.bindings.get(name)
+        if binding is None:
+            raise KeyError(name)
+        return binding
+
+    def _bound_rows(self, binding):
+        rows = self.rows
+        if binding is None:
+            return rows
+        if binding.generation and binding.generation != self.generation:
+            return []
+        if binding.profile_id:
+            # A pinned profile is served only from an export that declares it;
+            # an export without a profile cannot prove the scope, so it fails closed.
+            if (self.status or {}).get('profile') != binding.profile_id:
+                return []
+        if binding.profile_revision:
+            if (self.status or {}).get('profile_revision') not in (None, binding.profile_revision):
+                return []
+        scope = binding.scope()
+        if not scope:
+            return rows
+        return select(rows, {'protocol': 'all', 'countries': (), 'anonymity': 'any',
+                             'max_latency': 0, **scope})
+
+    def matching(self, request=None, binding=None):
+        """Proxies allowed by the binding, the gateway filters and the denylist.
+
+        Pure in-memory: the export is read by :meth:`refresh` (or
+        :meth:`arefresh` off the event loop), never here.
+        """
+        with self.lock:
+            source = self._bound_rows(binding)
+            if not request:
+                return [row['proxy'] for row in source]
+            key = (binding.pool_id if binding else '', *sorted(request.items()))
+            cached = self.cache.get(key)
+            if cached is not None:
+                self.cache.move_to_end(key)
+                return cached
             query = {'protocol': 'all', 'countries': (), 'anonymity': 'any', 'max_latency': 0, **request}
-            self.cache[key] = [row['proxy'] for row in select(self.rows, query)]
-        return self.cache[key]
+            value = [row['proxy'] for row in select(source, query)]
+            self.cache[key] = value
+            while len(self.cache) > self.cache_limit:
+                self.cache.popitem(last=False)
+            return value
 
-    def available(self, request=None, now=None):
+    def available(self, request=None, now=None, binding=None):
         now = time.monotonic() if now is None else now
-        return [proxy for proxy in self.matching(request) if self.resting.get(proxy, 0) <= now
-                and (not self.max_per_proxy or self.active.get(proxy, 0) < self.max_per_proxy)]
+        limit = self._limit(binding)
+        with self.lock:
+            return [proxy for proxy in self.matching(request, binding)
+                    if self.resting.get(proxy, 0) <= now and self.allowed(proxy)
+                    and (not limit or self.active.get(proxy, 0) < limit)]
 
-    def pick(self, exclude=(), request=None, session=None):
+    def _limit(self, binding):
+        if binding is not None and binding.policy.get('max_per_proxy'):
+            return int(binding.policy['max_per_proxy'])
+        return self.max_per_proxy
+
+    def _strategy(self, binding):
+        if binding is not None and binding.policy.get('strategy') in STRATEGIES:
+            return binding.policy['strategy']
+        return self.strategy
+
+    def _sticky(self, binding, sticky):
+        if sticky:
+            return sticky
+        if binding is not None and binding.policy.get('sticky') in STICKY_MODES:
+            return binding.policy['sticky']
+        return self.sticky
+
+    def health_score(self, proxy, now=None):
+        """Decayed success ratio with a Laplace prior, in ``(0, 1)``.
+
+        A proxy nobody tried yet scores ``0.5`` - neither praised for a
+        measurement the gateway never made nor punished for one.  Observations
+        lose half their weight every ``HEALTH_DECAY`` seconds, so an address
+        that stopped working falls out of the ranking on its own.  Only genuine
+        upstream faults count against a proxy; a target that refused does not.
+        """
+        now = time.monotonic() if now is None else now
+        record = self.health.get(proxy)
+        if not record:
+            return 0.5
+        weight = 0.5 ** (max(0.0, now - record['at']) / HEALTH_DECAY)
+        good = record['ok'] * weight + HEALTH_PRIOR
+        bad = record['failed'] * weight + HEALTH_PRIOR
+        score = good / (good + bad)
+        if self.healthy_latency_ms and record.get('connect_ms'):
+            penalty = min(0.25, record['connect_ms'] / (4 * self.healthy_latency_ms))
+            score *= 1 - penalty
+        return score
+
+    def _choose(self, candidates, strategy, now):
+        if strategy == 'random':
+            return random.choice(candidates)
+        self.position = (self.position + 1) % len(candidates)
+        if strategy == 'health-aware':
+            # Best observed health wins.  Equal scores - which is every proxy the
+            # gateway has not measured yet, and every proxy whose target happened
+            # to be down - fall back to the round-robin cursor, so one address
+            # cannot starve the rest before any evidence exists.
+            start = self.position
+            return min(candidates, key=lambda proxy: (-round(self.health_score(proxy, now), 6),
+                                                      (candidates.index(proxy) - start) % len(candidates)))
+        return candidates[self.position]
+
+    def _session(self, session, now):
+        proxy, expires = self.sessions.get(session, (None, 0))
+        return proxy if expires > now else None
+
+    def _prune_sessions(self, now):
+        if len(self.sessions) <= SESSIONS_LIMIT:
+            return
+        # Expired bindings go first; if that is not enough the ones that expire
+        # soonest go next, so the table is bounded by a number, not by uptime.
+        self.sessions = {key: value for key, value in self.sessions.items() if value[1] > now}
+        if len(self.sessions) > SESSIONS_LIMIT:
+            keep = sorted(self.sessions.items(), key=lambda item: -item[1][1])[:SESSIONS_LIMIT]
+            self.sessions = dict(keep)
+
+    def pick(self, exclude=(), request=None, session=None, sticky=None, binding=None):
+        """Choose a proxy without taking a slot.  Prefer :meth:`reserve` in a gateway."""
+        return self._pick(exclude, request, session, sticky, binding, reserve=False)
+
+    def reserve(self, request=None, exclude=(), session=None, sticky=None, binding=None):
+        """Pick a proxy and take its concurrency slot in one indivisible step.
+
+        Doing both together is what keeps parallel connects under
+        ``max_per_proxy``: there is no await between the check and the
+        reservation, so two clients can never observe the same free slot
+        (defect 16).  The caller owns the returned :class:`Lease`.
+        """
+        return self._pick(exclude, request, session, sticky, binding, reserve=True)
+
+    def _pick(self, exclude, request, session, sticky, binding, reserve):
         now = time.monotonic()
-        candidates = [proxy for proxy in self.available(request, now) if proxy not in exclude]
-        if session:
-            # The same session keeps its proxy while it works, so a site sees one address.
-            proxy, expires = self.sessions.get(session, (None, 0))
-            if proxy in candidates and expires > now:
-                self.sessions[session] = (proxy, now + self.session_ttl)
-                return proxy
-        if not candidates:
-            return None
-        if self.strategy == 'random':
-            choice = random.choice(candidates)
-        else:
-            self.position = (self.position + 1) % len(candidates)
-            choice = candidates[self.position]
-        if session:
-            if len(self.sessions) > 10_000:
-                self.sessions = {key: value for key, value in self.sessions.items() if value[1] > now}
-            self.sessions[session] = (choice, now + self.session_ttl)
-        return choice
+        sticky = self._sticky(binding, sticky)
+        with self.lock:
+            self._prune_sessions(now)
+            candidates = [proxy for proxy in self.available(request, now, binding) if proxy not in exclude]
+            if session:
+                pinned = self._session(session, now)
+                if pinned and pinned in candidates:
+                    if reserve:
+                        self._take(pinned)
+                        self.sessions[session] = (pinned, now + self.session_ttl)
+                        return Lease(self, pinned)
+                    return pinned
+                if pinned and sticky == 'strict':
+                    # A strict session never silently changes its address: no
+                    # free slot for the proxy it is bound to means a refusal.
+                    return None
+            if not candidates:
+                return None
+            choice = self._choose(candidates, self._strategy(binding), now)
+            if session:
+                self.sessions[session] = (choice, now + self.session_ttl)
+            if not reserve:
+                return choice
+            self._take(choice)
+            return Lease(self, choice)
 
-    def acquire(self, proxy):
+    def _take(self, proxy):
         self.active[proxy] = self.active.get(proxy, 0) + 1
 
+    def acquire(self, proxy):
+        """Kept for callers that reserve by hand; :meth:`reserve` is safer."""
+        with self.lock:
+            self._take(proxy)
+
     def release(self, proxy):
-        if self.active.get(proxy, 0) > 1:
-            self.active[proxy] -= 1
-        else:
-            self.active.pop(proxy, None)
+        with self.lock:
+            if self.active.get(proxy, 0) > 1:
+                self.active[proxy] -= 1
+            else:
+                self.active.pop(proxy, None)
+
+    def active_for(self, proxy):
+        return self.active.get(proxy, 0)
+
+    # --- health --------------------------------------------------------------
+
+    def connected(self, proxy, connect_ms=0.0):
+        """The upstream accepted a connection and finished its handshake.
+
+        This is deliberately *not* a success and it does not clear a failure
+        streak: nothing of the target has been proved yet (defect 17).  Only an
+        outcome that carried traffic does that.
+        """
+        with self.lock:
+            record = self.health.setdefault(proxy, {'ok': 0.0, 'failed': 0.0, 'target': 0, 'at': 0.0, 'connect_ms': 0.0})
+            record['connect_ms'] = float(connect_ms)
+            usage = self.usage.setdefault(proxy, {'ok': 0, 'failed': 0, 'target_failed': 0})
+            usage.setdefault('target_failed', 0)
+
+    def outcome(self, proxy, kind, detail=None):
+        """Record what the exchange with one upstream actually proved."""
+        if kind not in HEALTH_OUTCOMES:
+            raise ValueError(kind)
+        with self.lock:
+            usage = self.usage.setdefault(proxy, {'ok': 0, 'failed': 0, 'target_failed': 0})
+            record = self.health.setdefault(proxy, {'ok': 0.0, 'failed': 0.0, 'target': 0, 'at': 0.0, 'connect_ms': 0.0})
+            if kind in HEALTH_GOOD:
+                usage['ok'] += 1
+                record['ok'] += 1
+                record['at'] = time.monotonic()
+                self.failures.pop(proxy, None)
+            elif kind in HEALTH_TARGET:
+                # The upstream answered: the target refused.  Not the proxy's fault.
+                usage['target_failed'] += 1
+                record['target'] += 1
+            else:
+                usage['failed'] += 1
+                record['failed'] += 1
+                record['at'] = time.monotonic()
+                self.failures[proxy] = self.failures.get(proxy, 0) + 1
+                if self.failures[proxy] >= self.max_failures:
+                    self.resting[proxy] = time.monotonic() + self.cooldown
+                    self.failures.pop(proxy)
+            if detail:
+                usage.setdefault('detail', detail)
 
     def ok(self, proxy):
-        self.failures.pop(proxy, None)
-        self.usage.setdefault(proxy, {'ok': 0, 'failed': 0})['ok'] += 1
+        """A target answered: the only evidence that counts as working."""
+        self.outcome(proxy, 'response')
 
     def failed(self, proxy):
-        self.usage.setdefault(proxy, {'ok': 0, 'failed': 0})['failed'] += 1
-        self.failures[proxy] = self.failures.get(proxy, 0) + 1
-        if self.failures[proxy] >= self.max_failures:
-            self.resting[proxy] = time.monotonic() + self.cooldown
-            self.failures.pop(proxy)
+        """A fault of the upstream itself."""
+        self.outcome(proxy, 'handshake_failed')
+
+    def report(self, proxy):
+        with self.lock:
+            return dict(self.usage.get(proxy, {'ok': 0, 'failed': 0, 'target_failed': 0}))
+
+    # --- visibility ----------------------------------------------------------
 
     def snapshot(self, top=20):
+        """Counters only: no file access, so it is safe from any thread.
+
+        The event loop must use :meth:`asnapshot` when it wants a fresh export;
+        a blocking read on the loop is what made the old status page stall
+        every client (F16, "safe snapshot from the event loop").
+        """
         now = time.monotonic()
-        busiest = sorted(self.usage.items(), key=lambda item: (-item[1]['ok'], item[1]['failed']))[:top]
-        return dict(self.stats, proxies=len(self.refresh()), available=len(self.available(now=now)),
-                    resting=sum(until > now for until in self.resting.values()),
-                    sessions=sum(expires > now for _, expires in self.sessions.values()),
-                    active=sum(self.active.values()),
-                    top=[dict(proxy=proxy, active=self.active.get(proxy, 0), **counts) for proxy, counts in busiest])
+        with self.lock:
+            busiest = sorted(self.usage.items(), key=lambda item: (-item[1]['ok'], item[1]['failed']))[:top]
+            return dict(self.stats,
+                        proxies=len(self.rows), available=len(self.available(now=now)),
+                        resting=sum(until > now for until in self.resting.values()),
+                        sessions=sum(expires > now for _, expires in self.sessions.values()),
+                        active=sum(self.active.values()),
+                        denied=len(self.denied), revoked=self.revoked,
+                        generation=self.generation,
+                        binding=self.default_binding.as_dict(),
+                        strategy=self.strategy, sticky=self.sticky, on_deny=self.on_deny,
+                        denylist_rules=self.denylist.rules, denylist_digest=self.denylist.digest,
+                        top=[dict(proxy=proxy, active=self.active.get(proxy, 0),
+                                  health=round(self.health_score(proxy, now), 3), **counts)
+                             for proxy, counts in busiest])
+
+    async def asnapshot(self, top=20):
+        await self.arefresh()
+        return self.snapshot(top)
+
+    def state(self):
+        """Everything a GUI or an API needs to show the binding and the policy."""
+        with self.lock:
+            return dict(self.snapshot(), filters=dict(self.filters),
+                        bindings={name: value.as_dict() for name, value in self.bindings.items()},
+                        profile=self.status.get('profile') if self.status else None,
+                        export_state=(self.status or {}).get('state'),
+                        export_valid_until=(self.status or {}).get('valid_until'))
 
 
 def client_options(username):
     """Per-client choices carried in the proxy user name, e.g. ``country-de_nl-protocol-socks5-session-a1``."""
     parts = [part for part in (username or '').split('-') if part]
-    request, session = {}, None
+    request, session, pool = {}, None, None
     for key, value in zip(parts[::2], parts[1::2]):
         key = key.lower()
         if key == 'country':
@@ -206,7 +754,11 @@ def client_options(username):
             if not SESSION.fullmatch(value):
                 raise ValueError('session')
             session = value
-    return request, session
+        elif key == 'pool':
+            if not POOL_OPTION.fullmatch(value):
+                raise ValueError('pool')
+            pool = value
+    return request, session, pool
 
 
 async def resolve(host, port, family=socket.AF_UNSPEC):
@@ -236,28 +788,60 @@ async def read_head(reader):
         raise UpstreamError('CLOSED') from None
 
 
-async def open_tunnel(proxy, host, port, forward=False):
+def http_status(head):
+    """Status code of an HTTP response head, or None when this is not HTTP."""
+    if not head:
+        return None
+    line = head.split(b'\r\n', 1)[0].split()
+    if len(line) < 2 or not line[0].upper().startswith(b'HTTP/'):
+        return None
+    try:
+        return int(line[1])
+    except ValueError:
+        return None
+
+
+async def open_tunnel(proxy, host, port, forward=False, ssl_context=None):
     """A stream to host:port through `proxy`, after the proxy's own handshake.
 
     With ``forward`` an HTTP proxy gets the plain request itself instead of a
     CONNECT tunnel, since many HTTP proxies allow CONNECT only to port 443.
+    An ``https://`` upstream is reached over TLS with the proxy host name as
+    the server name, so certificate verification stays on.
     """
     scheme, _, address = proxy.partition('://')
+    if scheme not in SUPPORTED:
+        # Refused before any socket is opened, so an address the gateway cannot
+        # speak to is never dialled.
+        raise UpstreamError('UNSUPPORTED')
     proxy_host, _, proxy_port = address.rpartition(':')
-    reader, writer = await asyncio.open_connection(proxy_host.strip('[]'), int(proxy_port), limit=MAX_HEAD)
+    proxy_host = proxy_host.strip('[]')
+    if scheme == 'https':
+        context = ssl_context or ssl.create_default_context()
+        reader, writer = await asyncio.open_connection(proxy_host, int(proxy_port), limit=MAX_HEAD,
+                                                       ssl=context, server_hostname=proxy_host)
+    else:
+        reader, writer = await asyncio.open_connection(proxy_host, int(proxy_port), limit=MAX_HEAD)
     try:
-        if scheme == 'http' and forward:
+        if scheme in ('http', 'https') and forward:
             pass
-        elif scheme == 'http':
+        elif scheme in ('http', 'https'):
             target = f'[{host}]:{port}' if ':' in host else f'{host}:{port}'
             writer.write(f'CONNECT {target} HTTP/1.1\r\nHost: {target}\r\n\r\n'.encode())
             await writer.drain()
-            status = (await read_head(reader)).split(b'\r\n', 1)[0].split()
-            if len(status) < 2 or status[1] != b'200':
-                raise UpstreamError('CONNECT_REFUSED')
-        elif scheme == 'socks4':
-            ip = await resolve(host, port, socket.AF_INET)
-            writer.write(socks4.connect_request(ipaddress.IPv4Address(ip).packed, port))
+            status = http_status(await read_head(reader))
+            if status != 200:
+                raise UpstreamError('CONNECT_REFUSED' if status is not None else 'CONNECT_REFUSED')
+        elif scheme in ('socks4', 'socks4a'):
+            if scheme == 'socks4a':
+                # SOCKS4a: DSTIP 0.0.0.x marks a hostname in the USERID field.
+                name = host.encode('idna')
+                if len(name) > 255:
+                    raise UpstreamError('SOCKS4A_NAME_TOO_LONG')
+                writer.write(struct.pack('>BBH4s', 4, 1, port, b'\x00\x00\x00\x01') + name + b'\x00')
+            else:
+                ip = await resolve(host, port, socket.AF_INET)
+                writer.write(socks4.connect_request(ipaddress.IPv4Address(ip).packed, port))
             await writer.drain()
             try:
                 socks4.check_reply(await read_exactly(reader, socks4.REPLY_SIZE))
@@ -269,6 +853,7 @@ async def open_tunnel(proxy, host, port, forward=False):
             if await read_exactly(reader, 2) != b'\x05\x00':
                 raise UpstreamError('SOCKS5_AUTH')
             if scheme == 'socks5':
+                # socks5 resolves locally, socks5h lets the proxy do it.
                 host = await resolve(host, port)
             try:
                 ip = ipaddress.ip_address(host)
@@ -293,18 +878,58 @@ async def open_tunnel(proxy, host, port, forward=False):
     return reader, writer
 
 
-async def pipe(reader, writer, idle):
+async def response_head(reader, timeout):
+    """Read one HTTP response head and classify the answer.
+
+    Returns ``(status, head, reason)``.  A truncated answer is returned as-is
+    instead of being swallowed, so the client still sees whatever the upstream
+    managed to send.  ``status`` is None when the answer is not HTTP at all,
+    and ``reason`` separates "the upstream answered" from "it hung" and from
+    "it closed the connection" - three different verdicts for the same silence.
+    """
+    data = b''
+    try:
+        data = await asyncio.wait_for(reader.readuntil(b'\r\n\r\n'), timeout)
+    except asyncio.TimeoutError:
+        return None, b'', 'timeout'
+    except asyncio.LimitOverrunError:
+        return None, b'', 'oversized'
+    except asyncio.IncompleteReadError as exc:
+        data = exc.partial
+    except (OSError, UpstreamError):
+        return None, b'', 'closed'
+    if not data:
+        return None, b'', 'closed'
+    return http_status(data), data, 'head'
+
+
+async def pipe(reader, writer, idle, on_bytes=None, state=None):
+    """Copy one direction until EOF, idle timeout or cancel.
+
+    ``on_bytes`` is called with the running byte count after every chunk, so the
+    relay can tell "the tunnel carried traffic" from "the client opened a socket
+    and left" - the gateway only has evidence for the first.
+    """
+    total = 0
     try:
         while True:
             data = await asyncio.wait_for(reader.read(65536), idle)
             if not data:
+                if state is not None:
+                    state['ended'] = True
                 break
+            total += len(data)
+            if on_bytes is not None:
+                on_bytes(total)
             writer.write(data)
             await writer.drain()
         if writer.can_write_eof():
             writer.write_eof()
     except (OSError, asyncio.TimeoutError):
+        if state is not None:
+            state['ended'] = True
         writer.close()
+    return total
 
 
 def split_target(value, default_port):
@@ -319,39 +944,75 @@ def split_target(value, default_port):
 
 class Gateway:
     def __init__(self, pool, token=None, attempts=3, connect_timeout=8, idle_timeout=300,
-                 allow_local_without_auth=False):
+                 allow_local_without_auth=False, *, handshake_timeout=30, response_timeout=15,
+                 max_clients=MAX_CLIENTS, max_session=0, bind=None, token_origin=None,
+                 drain_timeout=2.0, ssl_context=None, refresh_interval=2.0):
         self.pool = pool
         self.token = token
-        self.attempts = attempts
+        self.token_origin = token_origin or ('explicit' if token else 'none')
+        self.attempts = max(1, int(attempts))
         self.connect_timeout = connect_timeout
         self.idle_timeout = idle_timeout
         self.allow_local_without_auth = allow_local_without_auth
+        self.handshake_timeout = handshake_timeout
+        self.response_timeout = response_timeout
+        self.max_clients = max(1, int(max_clients))
+        #: 0 means "as long as the client is idle-free"; a positive value caps
+        #: the life of one relayed connection and is visible in the snapshot.
+        self.max_session = max(0, int(max_session))
+        self.bind = bind or Bind()
+        self.drain_timeout = drain_timeout
+        self.ssl_context = ssl_context
+        self.refresh_interval = float(refresh_interval)
+        self.refresher = None
         # asyncio.Server.wait_closed() waits for listening sockets, not for
         # client handler tasks.  Track the latter so Background.close() can
         # cancel and await them before the helper loop is stopped.
         self.tasks = set()
         self.connections = {}
+        self.streams = {}
         self.shutting_down = False
+        self.closed_sessions = 0
 
-    async def connect(self, host, port, forward=False, request=None, session=None):
-        """A tunnel through a working proxy; the caller must release() the returned proxy."""
-        tried = []
+    # --- upstream selection --------------------------------------------------
+
+    async def connect(self, host, port, forward=False, request=None, session=None, binding=None,
+                      sticky=None):
+        """A tunnel through a working proxy, with the slot already reserved.
+
+        The returned lease owns the concurrency slot; the caller must release it
+        (or use ``with``) whatever happens to the stream.
+        """
+        tried = set()
         for attempt in range(self.attempts):
-            proxy = self.pool.pick(exclude=tried, request=request, session=session)
-            if proxy is None:
+            lease = self.pool.reserve(request=request, exclude=tried, session=session,
+                                      sticky=sticky, binding=binding)
+            if lease is None:
                 break
-            tried.append(proxy)
+            proxy = lease.proxy
+            tried.add(proxy)
             self.pool.stats['retries'] += attempt > 0
+            started = time.monotonic()
             try:
-                stream = await asyncio.wait_for(open_tunnel(proxy, host, port, forward), self.connect_timeout)
-            except (OSError, UpstreamError, asyncio.TimeoutError, ValueError, UnicodeError):
-                self.pool.failed(proxy)
+                stream = await asyncio.wait_for(
+                    open_tunnel(proxy, host, port, forward, ssl_context=self.ssl_context),
+                    self.connect_timeout)
+            except (OSError, UpstreamError, ValueError, UnicodeError) as exc:
+                lease.release()
+                self.pool.outcome(proxy, 'handshake_failed', detail=type(exc).__name__)
+                if session and sticky == 'strict':
+                    break
                 continue
-            self.pool.ok(proxy)
-            self.pool.acquire(proxy)
-            return proxy, stream
+            except BaseException:
+                # Cancellation and timeout both belong here: the slot must not leak.
+                lease.release()
+                raise
+            self.pool.connected(proxy, (time.monotonic() - started) * 1000)
+            return lease, stream
         self.pool.stats['failed'] += 1
         raise UpstreamError('NO_WORKING_PROXY' if tried else 'NO_PROXIES')
+
+    # --- authentication ------------------------------------------------------
 
     def local_client(self, writer=None):
         """Whether a connection originated on this computer."""
@@ -371,7 +1032,7 @@ class Gateway:
         # local browser/curl can keep the simple no-password loopback workflow.
         if self.allow_local_without_auth and self.local_client(writer):
             return True
-        return hmac.compare_digest(password, self.token.encode())
+        return hmac.compare_digest(password or b'', self.token.encode())
 
     @staticmethod
     def basic_credentials(headers):
@@ -384,39 +1045,147 @@ class Gateway:
             return b'', b''
         return user, password
 
-    async def relay(self, client_reader, client_writer, proxy, upstream, first=b''):
+    # --- relaying ------------------------------------------------------------
+
+    async def relay(self, client_reader, client_writer, lease, upstream, first=b'', kind='tunnel'):
+        """Carry one client exchange over one upstream, and report what it proved.
+
+        ``first`` is the client's own request for the plain-HTTP path.  It is
+        written once, to the lease it belongs to, after the tunnel is up: a
+        request that reached an upstream is never sent to another one.
+        """
         upstream_reader, upstream_writer = upstream
-        if first:
-            upstream_writer.write(first)
+        proxy = lease.proxy
+        state = {'ended': False, 'scored': False}
+        task = asyncio.current_task()
+        if task is not None:
+            self.streams[task] = lease
+
+        def score(kind):
+            # One relayed exchange is scored once: the response head is the
+            # verdict, and bytes that arrive later confirm it rather than
+            # counting the same connection twice.
+            if state['scored']:
+                return
+            state['scored'] = True
+            self.pool.outcome(proxy, kind)
+
         try:
-            await asyncio.gather(pipe(client_reader, upstream_writer, self.idle_timeout),
-                                 pipe(upstream_reader, client_writer, self.idle_timeout))
+            if first:
+                guard = ReplayGuard()
+                try:
+                    guard.write_once(lease, upstream_writer, first)
+                except UpstreamError:
+                    self.pool.stats['replay_refused'] += 1
+                    raise
+                status, head, reason = await response_head(upstream_reader, self.response_timeout)
+                if reason == 'head' and status is None:
+                    # Bytes arrived, but not an HTTP answer: whatever is at the
+                    # other end of this proxy is not an HTTP proxy for us.
+                    score('upstream_refused')
+                elif reason == 'closed':
+                    # The upstream took the request and closed without an
+                    # answer.  That is a fault of the upstream, not of the
+                    # target, and it is what the old TCP-open health missed.
+                    score('upstream_refused')
+                elif reason in ('timeout', 'oversized'):
+                    # It hung.  Nothing is proven either way, so it is recorded
+                    # as unknown instead of being blamed on the target.
+                    score('no_response')
+                elif status == 407:
+                    # The upstream wants its own credentials.  Through this
+                    # gateway it is unusable, and resting it is correct.
+                    score('upstream_refused')
+                elif status >= 500:
+                    # The upstream answered and the target did not.  Resting the
+                    # proxy would punish it for somebody else's outage.
+                    score('upstream_unavailable')
+                    self.pool.stats['upstream_5xx'] += 1
+                else:
+                    score('response')
+                if head and status is not None:
+                    client_writer.write(head)
+                    with contextlib.suppress(OSError):
+                        await client_writer.drain()
+                elif reason in ('head', 'closed', 'timeout', 'oversized'):
+                    # The client asked for an HTTP request and got no usable
+                    # answer.  Forwarding whatever arrived, or a bare disconnect,
+                    # would look like a network glitch, so the gateway says what
+                    # happened instead.
+                    status_line = b'HTTP/1.1 504 Gateway Timeout\r\n' if reason == 'timeout' \
+                        else b'HTTP/1.1 502 Bad Gateway\r\n'
+                    body = tr('Выбранный прокси не ответил на запрос.',
+                              'The chosen proxy did not answer the request.').encode()
+                    with contextlib.suppress(OSError):
+                        await self._refuse(client_writer, status_line, body)
+            received = []
+
+            def saw_bytes(total):
+                if not received:
+                    received.append(total)
+                    score('tunnel_bytes')
+
+            def sent_bytes(total):
+                state['sent'] = True
+
+            await asyncio.wait_for(
+                asyncio.gather(pipe(client_reader, upstream_writer, self.idle_timeout,
+                                    on_bytes=sent_bytes, state=state),
+                               pipe(upstream_reader, client_writer, self.idle_timeout,
+                                    on_bytes=saw_bytes, state=state)),
+                self.max_session or None)
+            if not received and not first:
+                # Nothing came back.  A client that opened a socket and left is
+                # not evidence against the proxy, so only a client that really
+                # sent something and got silence counts as a fault.
+                if state.get('sent'):
+                    score('closed_empty')
+        except (OSError, asyncio.TimeoutError):
+            self.pool.stats['closed_idle'] += 1
         finally:
+            if task is not None:
+                self.streams.pop(task, None)
             upstream_writer.close()
-            self.pool.release(proxy)
+            lease.release()
+            self.closed_sessions += 1
+
+    # --- client side ---------------------------------------------------------
 
     async def handle(self, reader, writer):
         self.pool.stats['connections'] += 1
         task = asyncio.current_task()
-        if task is not None:
-            self.tasks.add(task)
-            self.connections[task] = writer
         if self.shutting_down:
             with contextlib.suppress(OSError, RuntimeError):
                 writer.close()
                 await writer.wait_closed()
-            if task is not None:
-                self.connections.pop(task, None)
-                self.tasks.discard(task)
             return
+        if len(self.tasks) >= self.max_clients:
+            # A bounded number of client connections; the rest are told why.
+            self.pool.stats['rejected'] += 1
+            with contextlib.suppress(OSError, RuntimeError):
+                writer.write(b'HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n')
+                await writer.drain()
+                writer.close()
+                await writer.wait_closed()
+            return
+        if task is not None:
+            self.tasks.add(task)
+            self.connections[task] = writer
+        loop = asyncio.get_running_loop()
+        # One absolute deadline for the whole handshake: the first byte, the
+        # request line, the SOCKS5 negotiation and the upstream tunnel all have
+        # to fit into it (defect 16, R11).  The relayed connection is not part
+        # of the handshake and is governed by idle_timeout / max_session.
+        deadline = loop.time() + self.handshake_timeout
         try:
-            first = await asyncio.wait_for(reader.readexactly(1), 30)
-            if first == b'\x05':
-                await self.handle_socks5(reader, writer)
-            else:
-                await self.handle_http(first, reader, writer)
+            first = await asyncio.wait_for(reader.readexactly(1), _left(deadline))
+            plan = await asyncio.wait_for(
+                self.handle_socks5(reader, writer) if first == b'\x05'
+                else self.handle_http(first, reader, writer), _left(deadline))
+            if plan is not None:
+                await self.relay(reader, writer, *plan)
         except (OSError, asyncio.TimeoutError, asyncio.IncompleteReadError, UpstreamError, ValueError):
-            pass
+            self.pool.stats['closed_deadline'] += 1
         finally:
             with contextlib.suppress(OSError, RuntimeError):
                 writer.close()
@@ -424,6 +1193,11 @@ class Gateway:
             if task is not None:
                 self.connections.pop(task, None)
                 self.tasks.discard(task)
+
+    def _refuse(self, writer, code, body):
+        writer.write(code + b'Content-Type: text/plain; charset=utf-8\r\n'
+                     b'Content-Length: %d\r\n\r\n' % len(body) + body)
+        return writer.drain()
 
     async def handle_http(self, first, reader, writer):
         head = first + await read_head(reader)
@@ -443,12 +1217,13 @@ class Gateway:
             return await writer.drain()
         if method == b'GET' and target.split(b'?')[0] in (b'/', b'/status'):
             # Asked directly rather than as a proxy: show the pool state.
-            body = json.dumps(self.pool.snapshot(), indent=1).encode() + b'\n'
+            body = json.dumps(await self.pool.asnapshot(20), indent=1).encode() + b'\n'
             writer.write(b'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nCache-Control: no-store\r\n'
                          b'Content-Length: %d\r\nConnection: close\r\n\r\n' % len(body) + body)
             return await writer.drain()
         try:
-            request, session = client_options(user.decode('utf-8', 'replace'))
+            request, session, pool_name = client_options(user.decode('utf-8', 'replace'))
+            binding = self.pool.binding_for(pool_name)
             if method == b'CONNECT':
                 host, port = split_target(target.decode('ascii'), 443)
                 path = None
@@ -460,27 +1235,30 @@ class Gateway:
                 host, port = split_target(authority, 80)
                 path = '/' + rest
                 absolute = url
-        except (ValueError, UnicodeError):
+        except (ValueError, UnicodeError, KeyError):
             writer.write(b'HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n')
             return await writer.drain()
+        sticky = 'strict' if (session and binding.option('sticky') == 'strict') else None
         try:
-            proxy, upstream = await self.connect(host, port, forward=path is not None, request=request, session=session)
+            lease, upstream = await self.connect(host, port, forward=path is not None,
+                                                 request=request, session=session, binding=binding,
+                                                 sticky=sticky)
         except UpstreamError as exc:
-            message = tr('Нет рабочих прокси: запустите проверку.', 'No working proxies: run a check first.') \
-                if str(exc) == 'NO_PROXIES' else tr('Все выбранные прокси не ответили.', 'None of the tried proxies answered.')
-            body = message.encode()
-            writer.write(b'HTTP/1.1 502 Bad Gateway\r\nContent-Type: text/plain; charset=utf-8\r\n'
-                         b'Content-Length: %d\r\n\r\n' % len(body) + body)
-            return await writer.drain()
+            body = tr('Нет рабочих прокси: запустите проверку.', 'No working proxies: run a check first.') \
+                if str(exc) == 'NO_PROXIES' else tr('Все выбранные прокси не ответили.',
+                                                    'None of the tried proxies answered.')
+            return await self._refuse(writer, b'HTTP/1.1 502 Bad Gateway\r\n', body.encode())
         if path is None:
             writer.write(b'HTTP/1.1 200 Connection established\r\n\r\n')
             await writer.drain()
-            return await self.relay(reader, writer, proxy, upstream)
-        # Plain HTTP: one request per connection keeps rotation simple and predictable.
-        target = absolute if proxy.startswith('http://') else path
+            return lease, upstream, b'', 'tunnel'
+        # Plain HTTP: one request per connection keeps rotation simple and
+        # predictable.  The request is written exactly once, after the tunnel is
+        # up, and only to the upstream that owns this lease.
+        target = absolute if lease.proxy.startswith(('http://', 'https://')) else path
         payload = b'\r\n'.join([b' '.join([method, target.encode('ascii'), version or b'HTTP/1.1']), *kept,
                                 b'Connection: close']) + b'\r\n\r\n'
-        await self.relay(reader, writer, proxy, upstream, payload)
+        return lease, upstream, payload, 'forward'
 
     async def handle_socks5(self, reader, writer):
         methods = await reader.readexactly((await reader.readexactly(1))[0])
@@ -518,42 +1296,173 @@ class Gateway:
             writer.write(b'\x05\x07\x00\x01' + bytes(6))
             return await writer.drain()
         try:
-            request, session = client_options(user.decode('utf-8', 'replace'))
-            proxy, upstream = await self.connect(host, port, request=request, session=session)
-        except (UpstreamError, ValueError):
+            request, session, pool_name = client_options(user.decode('utf-8', 'replace'))
+            binding = self.pool.binding_for(pool_name)
+            lease, upstream = await self.connect(host, port, request=request, session=session,
+                                                 binding=binding)
+        except (UpstreamError, ValueError, KeyError):
             writer.write(b'\x05\x01\x00\x01' + bytes(6))
             return await writer.drain()
         writer.write(b'\x05\x00\x00\x01' + bytes(6))
         await writer.drain()
-        await self.relay(reader, writer, proxy, upstream)
+        return lease, upstream, b'', 'tunnel'
+
+    # --- lifecycle -----------------------------------------------------------
+
+    def set_denylist(self, denylist):
+        """Install a denylist and, under ``on_deny='close'``, drop denied streams.
+
+        ``keep`` is the default and it is a real decision, not an omission: an
+        open stream belongs to a client that already has bytes on the wire, and
+        cutting it is the user's call, not a side effect of adding a rule.
+        """
+        self.pool.set_denylist(denylist)
+        if self.pool.on_deny != 'close':
+            return []
+        denied = set(self.pool.denied)
+        closed = []
+        for task, lease in list(self.streams.items()):
+            if lease.proxy in denied and not task.done():
+                writer = self.connections.get(task)
+                if writer is not None:
+                    with contextlib.suppress(OSError, RuntimeError):
+                        writer.close()
+                task.cancel()
+                closed.append(lease.proxy)
+        return closed
+
+    async def shutdown(self, grace=None):
+        """Stop serving and end every client connection with a bounded wait."""
+        self.shutting_down = True
+        refresher, self.refresher = self.refresher, None
+        if refresher is not None and not refresher.done():
+            refresher.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await refresher
+        grace = self.drain_timeout if grace is None else grace
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + max(0.0, grace)
+        while self.tasks and loop.time() < deadline:
+            await asyncio.sleep(0.01)
+        pending = [task for task in self.tasks if not task.done()]
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+        return dict(drained=len(self.tasks) - len(pending), forced=len(pending),
+                    closed_sessions=self.closed_sessions)
+
+    def state(self):
+        """Visible state of the listener: bind, identity and policy, no secrets."""
+        return dict(self.pool.state(), bind=self.bind.as_dict(),
+                    token_origin=self.token_origin, authenticated=bool(self.token),
+                    handshake_timeout=self.handshake_timeout, connect_timeout=self.connect_timeout,
+                    idle_timeout=self.idle_timeout, max_session=self.max_session,
+                    max_clients=self.max_clients, clients=len(self.tasks),
+                    refresh_interval=self.refresh_interval,
+                    closing=self.shutting_down, supported=list(SUPPORTED),
+                    strategies=list(STRATEGIES), sticky_modes=list(STICKY_MODES),
+                    revoke_policies=list(REVOKE_POLICIES))
+
+    async def refresh_loop(self, interval=None):
+        """Follow the current export without reading a file on the event loop.
+
+        The rows a client may be served are pinned to a binding; this loop only
+        decides *when* the listener notices that the export or the denylist
+        moved, so the wait is a visible interval instead of a hidden block in
+        the middle of somebody's request.
+        """
+        interval = self.refresh_interval if interval is None else interval
+        while not self.shutting_down:
+            await asyncio.sleep(interval)
+            try:
+                await self.pool.arefresh()
+            except (OSError, ValueError, KeyError, TypeError):
+                continue
 
 
-async def start(data, host='127.0.0.1', port=DEFAULT_PORT, token=None, filters=None, strategy='round-robin',
-                max_per_proxy=0, session_ttl=600):
-    if not is_loopback(host) and not token:
-        raise ValueError(tr(f'Шлюз на {host} доступен из сети: задайте пароль через --api-token.',
-                            f'the gateway on {host} is reachable from the network: set a password with --api-token'))
-    gateway = Gateway(Pool(data, filters, strategy, max_per_proxy=max_per_proxy, session_ttl=session_ttl), token,
-                      allow_local_without_auth=host in ('0.0.0.0', '::'))
-    server = await asyncio.start_server(gateway.handle, host, port, limit=MAX_HEAD)
+def _left(deadline):
+    """Remaining seconds until an absolute deadline, for ``asyncio.wait_for``."""
+    left = deadline - asyncio.get_running_loop().time()
+    if left <= 0:
+        raise asyncio.TimeoutError
+    return left
+
+
+async def start(data, host=DEFAULT_HOST, port=DEFAULT_PORT, token=None, filters=None,
+                strategy='round-robin', max_per_proxy=0, session_ttl=600, *, bind=None, lan=None,
+                sticky='failover', denylist=None, denylist_path=None, denylist_normalizer=None,
+                on_deny='keep', bindings=None, default_binding=None,
+                handshake_timeout=30, max_clients=MAX_CLIENTS,
+                max_session=0, cache_limit=CACHE_LIMIT, attempts=3, connect_timeout=8,
+                idle_timeout=300, refresh_interval=2.0, response_timeout=15,
+                max_failures=2, cooldown=300):
+    """Listen for proxy clients and spread their connections over the export.
+
+    A non-loopback address needs ``lan=True`` (or ``bind=Bind(lan=True)``) and its
+    own password.  When none is given, a dedicated one is generated here - never
+    the GUI session token and never the API token.
+    """
+    if bind is None:
+        # LAN is off unless it was asked for, so the local default stays local.
+        bind = Bind(host=host, port=port, lan=bool(lan) if lan is not None else False)
+    elif lan is not None and bool(lan) != bind.lan:
+        raise ValueError(tr('bind.lan противоречит аргументу lan.', 'bind.lan contradicts the lan argument.'))
+    origin = 'none'
+    token, origin = resolve_token(bind, token)
+    pool = Pool(data, filters, strategy, max_per_proxy=max_per_proxy, session_ttl=session_ttl,
+                sticky=sticky, denylist=denylist, denylist_path=denylist_path,
+                denylist_normalizer=denylist_normalizer, on_deny=on_deny,
+                cache_limit=cache_limit, bindings=bindings, default_binding=default_binding,
+                max_failures=max_failures, cooldown=cooldown)
+    gateway = Gateway(pool, token, attempts=attempts, connect_timeout=connect_timeout,
+                      idle_timeout=idle_timeout,
+                      # The no-password exception exists only where the listener
+                      # really is reachable from the network; on loopback a
+                      # configured password is required from every client.
+                      allow_local_without_auth=bind.lan and not bind.local,
+                      handshake_timeout=handshake_timeout, max_clients=max_clients,
+                      max_session=max_session, bind=bind, token_origin=origin,
+                      refresh_interval=refresh_interval, response_timeout=response_timeout)
+    # The first read happens before the listener opens, off the loop, so the very
+    # first client already sees a real generation.
+    await pool.arefresh()
+    server = await asyncio.start_server(gateway.handle, bind.host, bind.port, limit=MAX_HEAD)
     server.gateway = gateway
+    server.bind = bind
+    gateway.refresher = asyncio.get_running_loop().create_task(gateway.refresh_loop())
     return server
 
 
 class Background:
     """The gateway on its own event loop thread, for the GUI."""
 
-    def __init__(self, data, host='127.0.0.1', port=DEFAULT_PORT, token=None):
-        import threading
+    def __init__(self, data, host=DEFAULT_HOST, port=DEFAULT_PORT, token=None, **options):
         self.loop = asyncio.new_event_loop()
-        self.token = token
-        self.server = self.loop.run_until_complete(start(data, host, port, token=token))
-        self.host = host
-        self.display_host = display_host(host)
+        bind = options.pop('bind', None)
+        lan = options.pop('lan', None)
+        if bind is None:
+            # LAN is off unless it was asked for, so the local default stays local.
+            bind = Bind(host=host, port=port, lan=bool(lan) if lan is not None else False)
+        elif lan is not None and bool(lan) != bind.lan:
+            raise ValueError(tr('bind.lan противоречит аргументу lan.',
+                                'bind.lan contradicts the lan argument.'))
+        self.bind = bind
+        self.server = self.loop.run_until_complete(start(data, bind=bind, token=token, **options))
+        self.host = bind.host
+        self.display_host = bind.published_host
+        self.token = self.server.gateway.token
+        self.token_origin = self.server.gateway.token_origin
+        self.lan = bind.lan
         self.port = self.server.sockets[0].getsockname()[1]
         self.thread = threading.Thread(target=self.loop.run_forever, daemon=True)
         self.thread.start()
         self._closed = False
+        self.shutdown_report = None
+
+    def state(self):
+        """The same visible state the GUI and the API show; no secret values."""
+        return dict(self.server.gateway.state(), port=self.port, interfaces=lan_interfaces())
 
     def close(self):
         if self._closed:
@@ -561,7 +1470,6 @@ class Background:
         gateway = self.server.gateway
 
         async def stop():
-            gateway.shutting_down = True
             # Drain accept callbacks that were queued before close while the
             # listening socket is still valid.  Closing first can make a
             # callback create a transport against an already-detached server.
@@ -570,21 +1478,11 @@ class Background:
             self.server.close()
             for _ in range(2):
                 await asyncio.sleep(0)
-                tasks = list(gateway.tasks)
-                for writer in list(gateway.connections.values()):
-                    with contextlib.suppress(OSError, RuntimeError):
-                        writer.close()
-                for task in tasks:
-                    if not task.done():
-                        task.cancel()
-                if tasks:
-                    await asyncio.gather(*tasks, return_exceptions=True)
-            with contextlib.suppress(Exception):
-                await asyncio.wait_for(self.server.wait_closed(), 2)
+            return await gateway.shutdown()
 
         stopped = False
         try:
-            asyncio.run_coroutine_threadsafe(stop(), self.loop).result(5)
+            self.shutdown_report = asyncio.run_coroutine_threadsafe(stop(), self.loop).result(5)
             stopped = True
         except (TimeoutError, RuntimeError):
             # A misbehaving client must not make us close an event loop with
