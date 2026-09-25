@@ -11,6 +11,7 @@ import ipaddress
 import json
 import random
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
@@ -20,7 +21,9 @@ from . import formats
 from . import geoip
 from .branding import PRODUCT_NAME, PRODUCT_VERSION
 from .i18n import tr
-from .proxytool import PROTOCOLS, proxy_protocol, row_history
+from .proxytool import (PROTOCOLS, export_file as proxytool_export_file,
+                        export_manifest as proxytool_export_manifest, proxy_protocol, reputation_status,
+                        row_fresh, row_history)
 
 DEFAULT_PORT = 8765
 TOKEN_ENV = 'PROXY_WORKBENCH_API_TOKEN'
@@ -51,6 +54,13 @@ def public_row(row):
     address = proxy.partition('://')[2]
     host, _, port = address.rpartition(':')
     history = row_history(row)
+    verdict = row.get('reputation') if isinstance(row.get('reputation'), dict) else {}
+    dnsbl = verdict.get('dnsbl') if isinstance(verdict.get('dnsbl'), list) else []
+    source_keys = row.get('source_keys') or []
+    if isinstance(source_keys, str):
+        source_keys = [source_keys]
+    elif not isinstance(source_keys, (list, tuple, set)):
+        source_keys = []
     return {
         'proxy': proxy,
         'protocol': proxy_protocol(proxy),
@@ -66,43 +76,124 @@ def public_row(row):
         'latency_ms': row.get('latency_ms'),
         'mbps': (row.get('speed') or {}).get('mbps'),
         'jitter_ms': row.get('jitter_ms'),
+        'source_keys': list(row.get('source_keys') or []),
         'reliability': row.get('reliability'),
         'uptime': round(history['passes'] / history['checks'], 4) if history['checks'] else None,
         'checks': history['checks'],
         'score': row.get('score'),
         'checked_at': row.get('checked_at'),
+        'valid_until': row.get('valid_until'),
+        'reputation_status': reputation_status(row),
+        'reputation_sources': ','.join(item.get('zone', '') for item in dnsbl
+                                       if isinstance(item, dict) and item.get('status') == 'listed'),
+        'stale': not row_fresh(row),
     }
 
 
 class Exports:
-    """Latest export, reloaded when the file changes."""
+    """One coherent current generation, reloaded when its pointer or files change."""
 
     def __init__(self, directory):
         self.directory = Path(directory)
         self.lock = threading.Lock()
         self.key = None
+        self.revision = 0
+        self.visible = None
+        self.rows = []
+        self.status = {}
+
+    def _clear(self, key=None):
+        self.key = key
+        self.revision += 1
+        self.visible = None
         self.rows = []
         self.status = {}
 
     def load(self):
-        path = self.directory / 'ranked.json'
+        """Return only fresh rows; an expired row disappears without restarting API/gateway."""
+        manifest = proxytool_export_manifest(self.directory)
+        generation = manifest.get('generation') if manifest else None
+        ranked_path = proxytool_export_file(self.directory, 'ranked.json', generation=generation)
+        status_path = proxytool_export_file(self.directory, 'status.json', generation=generation)
         try:
-            stat = path.stat()
+            if generation and not status_path.is_file():
+                raise OSError('snapshot status missing')
+            ranked_stat = ranked_path.stat()
+            status_stat = status_path.stat() if status_path.is_file() else None
         except OSError:
-            return [], {}
-        key = (stat.st_mtime_ns, stat.st_size)
+            with self.lock:
+                self._clear((generation, 'missing'))
+                return [], {}
+        key = (generation or 'legacy', ranked_stat.st_mtime_ns, ranked_stat.st_size,
+               (status_stat.st_mtime_ns, status_stat.st_size) if status_stat else None)
+        now = time.time()
         with self.lock:
             if key != self.key:
                 try:
-                    rows = json.loads(path.read_text(encoding='utf-8'))
-                    status_path = self.directory / 'status.json'
-                    status = json.loads(status_path.read_text(encoding='utf-8')) if status_path.is_file() else {}
+                    rows = json.loads(ranked_path.read_text(encoding='utf-8'))
+                    status = json.loads(status_path.read_text(encoding='utf-8')) if status_stat else {}
+                    if not isinstance(rows, list) or not isinstance(status, dict):
+                        raise ValueError('invalid export')
+                    if generation and status.get('generation') != generation:
+                        raise ValueError('mixed export generations')
                     self.rows = [public_row(row) for row in rows]
+                    self.status = status
+                    self.key = key
                 except (OSError, ValueError, KeyError, TypeError):
-                    # A new export is being written; keep serving the previous one.
-                    return self.rows, self.status
-                self.status, self.key = status, key
-            return self.rows, self.status
+                    # Legacy root files can be observed mid-write. A generation is
+                    # immutable, so a broken current snapshot is safer to clear.
+                    if generation or self.key is None:
+                        self._clear(key)
+                    return [], self.status
+            rows = [dict(row, stale=not row_fresh(row, now)) for row in self.rows if row_fresh(row, now)]
+            visible = (key, tuple(row['proxy'] for row in rows), tuple(row.get('valid_until') for row in rows))
+            if visible != self.visible:
+                self.visible = visible
+                self.revision += 1
+            status = dict(self.status)
+            if status:
+                valid_until = status.get('valid_until')
+                try:
+                    status['stale'] = valid_until is not None and float(valid_until) <= now
+                except (TypeError, ValueError, OverflowError):
+                    status['stale'] = True
+                status.setdefault('generation', generation)
+                if status.get('state') == 'stale':
+                    status['stale'] = True
+                # A pre-contract status has no scope counts, so it cannot be
+                # advertised as a completed current export.  Keep its rows
+                # readable for compatibility, but make the state explicit and
+                # internally consistent.
+                checked = status.get('checked')
+                scope = status.get('scope_candidates')
+                has_counts = (type(checked) is int and checked >= 0
+                              and type(scope) is int and scope >= 0)
+                declared_state = status.get('state')
+                if not has_counts:
+                    status.setdefault('checked', None)
+                    status.setdefault('scope_candidates', None)
+                    status['state'] = 'error' if declared_state == 'error' else 'partial'
+                    status['stop_reason'] = 'legacy'
+                    status['complete'] = False
+                else:
+                    exported = status.get('exported', 0)
+                    complete = (status.get('complete') is True and declared_state == 'complete'
+                                and checked == scope and type(exported) is int and exported > 0
+                                and not status['stale'])
+                    if status['stale'] and declared_state != 'error':
+                        status['state'] = 'stale'
+                    elif declared_state == 'complete' and not complete:
+                        status['state'] = 'partial'
+                    elif declared_state not in ('complete', 'partial', 'error', 'stale'):
+                        status['state'] = 'partial'
+                    status['stop_reason'] = status.get('stop_reason') or (
+                        'complete' if status['state'] == 'complete' else
+                        'expired' if status['state'] == 'stale' else 'stopped')
+                    status['complete'] = complete
+            if status.get('stale'):
+                rows = []
+            return rows, status
+
 
 
 def parse_query(query):
@@ -209,10 +300,23 @@ def make_api_server(data, host='127.0.0.1', port=DEFAULT_PORT, token=None):
             if url.path in ('/', '/status'):
                 return self.send_json(200, {
                     'service': PRODUCT_NAME, 'version': PRODUCT_VERSION, 'available': len(rows),
-                    'generated_at': status.get('generated_at'), 'complete': status.get('complete'),
-                    'checked': status.get('checked'), 'candidates': status.get('candidates'),
-                    'sort': status.get('sort'), 'targets': status.get('targets', []),
-                    'endpoints': ENDPOINTS})
+                    'schema_version': status.get('schema_version'), 'generation': status.get('generation'),
+                    'profile': status.get('profile'), 'state': status.get('state'),
+                    'stop_reason': status.get('stop_reason'), 'scope': status.get('scope'),
+                    'scope_candidates': status.get('scope_candidates'), 'checked': status.get('checked'),
+                    'pending': status.get('pending'), 'passed': status.get('passed'),
+                    'query': status.get('query'), 'quick': status.get('quick'),
+                    'candidates': status.get('candidates'), 'generated_at': status.get('generated_at'),
+                    'valid_until': status.get('valid_until'), 'stale': status.get('stale', False),
+                    'complete': status.get('complete'), 'sort': status.get('sort'),
+                    'reputation': status.get('reputation'), 'anonymity': status.get('anonymity'),
+                    'source_quality': status.get('source_quality'),
+                    'source_health_basis': status.get('source_health_basis'),
+                    'breakdown': status.get('breakdown'),
+                    'selection_requested': status.get('selection_requested', 0),
+                    'selection_exported': status.get('selection_exported', 0),
+                    'selection_missing': status.get('selection_missing', []),
+                    'targets': status.get('targets', []), 'endpoints': ENDPOINTS})
             if url.path not in ('/proxies', '/random', '/pac', '/clash', '/singbox'):
                 return self.send_json(404, {'error': 'not found', 'endpoints': ENDPOINTS})
             try:
@@ -238,8 +342,11 @@ def make_api_server(data, host='127.0.0.1', port=DEFAULT_PORT, token=None):
             if query['format'] == 'hostport':
                 return self.send(200, ''.join(f"{row['proxy'].partition('://')[2]}\n" for row in selected),
                                  'text/plain; charset=utf-8')
-            return self.send_json(200, {'count': len(selected), 'generated_at': status.get('generated_at'),
-                                        'proxies': selected})
+            body = {'count': len(selected), 'generated_at': status.get('generated_at'), 'proxies': selected}
+            if status:
+                body.update(valid_until=status.get('valid_until'), stale=status.get('stale', False),
+                            generation=status.get('generation'), state=status.get('state'))
+            return self.send_json(200, body)
 
     server = ThreadingHTTPServer((host, port), Handler)
     server.daemon_threads = True

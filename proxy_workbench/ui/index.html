@@ -2,56 +2,1608 @@
 <html lang="en" data-theme="dark">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="workbench-token" content="__TOKEN__">
   <title>Proxy Workbench</title>
   <script>try{document.documentElement.dataset.theme=localStorage.getItem("proxy-workbench-theme")||"dark"}catch{}</script>
   <link rel="stylesheet" href="/style.css">
   <script src="/app.js" defer></script>
+
+
+  <script>
+    // Terminal height controller
+    document.addEventListener('DOMContentLoaded', function() {
+      document.querySelectorAll('.term-height-btn').forEach(function(btn) {
+        btn.addEventListener('click', function(e) {
+          e.preventDefault();
+          document.querySelectorAll('.term-height-btn').forEach(function(b) { b.classList.remove('active'); });
+          btn.classList.add('active');
+          var term = document.querySelector('.mac-terminal');
+          if (!term) return;
+          term.classList.remove('compact', 'expanded');
+          if (btn.dataset.height === '120') term.classList.add('compact');
+          else if (btn.dataset.height === '450') term.classList.add('expanded');
+        });
+      });
+      var zoomDot = document.querySelector('.mac-dot-zoom');
+      if (zoomDot) {
+        zoomDot.addEventListener('click', function() {
+          var term = document.querySelector('.mac-terminal');
+          if (term) term.classList.toggle('expanded');
+        });
+      }
+    });
+  </script>
 </head>
 <body>
   <aside class="sidebar">
-    <a class="brand" href="#"><span class="brand-icon">↗</span><span>PROXY<br><b>WORKBENCH</b></span></a>
+    <a class="brand" href="#">
+      <span class="brand-icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+        </svg>
+      </span>
+      <span>PROXY<br><b>WORKBENCH</b></span>
+    </a>
+
     <div class="nav-label" data-i18n="nav.workspace">WORKSPACE</div>
     <nav>
-      <button class="nav active" data-tab="scan"><span>◎</span> <span data-i18n="nav.scan">Scan</span></button>
-      <button class="nav" data-tab="results"><span>≋</span> <span data-i18n="nav.results">Results</span> <small id="nav-count">0</small></button>
-      <button class="nav" data-tab="sources"><span>⊞</span> <span data-i18n="nav.sources">Sources</span></button>
-      <button class="nav" data-tab="help"><span>?</span> <span data-i18n="nav.help">How it works</span></button>
+      <button class="nav active" data-tab="scan">
+        <span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"/>
+            <path d="m4.93 4.93 4.24 4.24"/>
+            <path d="m14.83 9.17 4.24-4.24"/>
+            <path d="m14.83 14.83 4.24 4.24"/>
+            <path d="m9.17 14.83-4.24 4.24"/>
+            <circle cx="12" cy="12" r="4"/>
+          </svg>
+        </span>
+        <span data-i18n="nav.scan">Scan</span>
+      </button>
+
+      <button class="nav" data-tab="results">
+        <span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 3v18h18"/>
+            <path d="m19 9-5 5-4-4-3 3"/>
+          </svg>
+        </span>
+        <span data-i18n="nav.results">Results</span>
+        <small id="nav-count">0</small>
+      </button>
+
+      <button class="nav" data-tab="gateway">
+        <span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2" y="2" width="20" height="8" rx="2" ry="2"/>
+            <rect x="2" y="14" width="20" height="8" rx="2" ry="2"/>
+            <line x1="6" y1="6" x2="6.01" y2="6"/>
+            <line x1="6" y1="18" x2="6.01" y2="18"/>
+          </svg>
+        </span>
+        <span data-i18n="nav.gateway">Rotating Gateway</span>
+      </button>
+
+      <button class="nav" data-tab="mobile">
+        <span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="5" y="2" width="14" height="20" rx="2" ry="2"/>
+            <line x1="12" y1="18" x2="12.01" y2="18"/>
+          </svg>
+        </span>
+        <span data-i18n="nav.mobile">Mobile &amp; Clients</span>
+      </button>
+
+      <button class="nav" data-tab="sources">
+        <span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <ellipse cx="12" cy="5" rx="9" ry="3"/>
+            <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
+            <path d="M3 12c0 1.66 4 3 9 3s9-1.34 9-3"/>
+          </svg>
+        </span>
+        <span data-i18n="nav.sources">Sources</span>
+      </button>
+
+      <button class="nav" data-tab="help">
+        <span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"/>
+            <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
+            <path d="M12 17h.01"/>
+          </svg>
+        </span>
+        <span data-i18n="nav.help">How it works</span>
+      </button>
     </nav>
-    <div class="sidebar-bottom"><span class="dot"></span> <span data-i18n="sidebar.local">Runs on your device</span><p data-i18n-html="sidebar.data">Data and results are stored<br>in the local data folder.</p></div>
+
+    <div class="sidebar-bottom">
+      <div class="sidebar-status">
+        <span class="dot"></span>
+        <span data-i18n="sidebar.local">Runs on your device</span>
+      </div>
+      <p data-i18n-html="sidebar.data">Data and results are stored<br>in the local data folder.</p>
+      <div class="sidebar-lang-box">
+        <button type="button" class="sidebar-lang-btn" id="sidebar-lang-toggle" aria-label="Switch interface language">
+          <span class="sidebar-lang-globe">🌐</span>
+          <span id="sidebar-lang-label" data-i18n="lang.currentName">Russian</span>
+        </button>
+      </div>
+    </div>
   </aside>
+
   <main>
     <header>
-      <div class="breadcrumb"><span data-i18n="nav.workspaceTitle">Workspace</span> <span>/</span> <b id="page-label">Scan</b></div>
-      <div class="header-actions"><button class="button light" id="theme-toggle" aria-label="Switch to light theme">☀ Light theme</button><button class="button light" id="lang-toggle" aria-label="Switch interface to Russian">RU</button><div class="local-badge"><span class="dot"></span> LOCAL APP</div></div>
+      <div class="breadcrumb">
+        <span data-i18n="nav.workspaceTitle">Workspace</span>
+        <span>/</span>
+        <b id="page-label">Scan</b>
+      </div>
+      <div class="header-actions">
+        <button class="button light" id="theme-toggle" aria-label="Switch to light theme">☀ Light theme</button>
+        <button class="button light" id="lang-toggle" aria-label="Switch interface to Russian">RU</button>
+        <div class="local-badge"><span class="dot"></span> <span data-i18n="header.localBadge">LOCAL APP</span></div>
+      </div>
     </header>
+
     <div id="toast" role="status" hidden></div>
 
+    <!-- Page: Scan -->
+
+    <!-- Page: Scan Dashboard (Dense 1-Screen Dashboard) -->
     <section class="page active" id="page-scan">
-      <div class="page-heading"><div><div class="eyebrow" data-i18n="scan.eyebrow">FIND. CHECK. SAVE.</div><h1 data-i18n="scan.title">Proxies for your tasks</h1><p data-i18n="scan.lead">One or more services. The result is proxies that work with every one of them.</p></div><button class="button light" id="save-settings" data-i18n="common.saveSettings">Save settings</button></div>
+      <div class="page-heading">
+        <div>
+          <div class="eyebrow" data-i18n="scan.eyebrow">FIND. CHECK. SAVE.</div>
+          <h1 data-i18n="scan.title">Proxies for your tasks</h1>
+          <p data-i18n="scan.lead">One or more services. The result is proxies that work with every one of them.</p>
+        </div>
+        <button class="button light" id="save-settings" data-i18n="common.saveSettings">Save settings</button>
+      </div>
+
+      <!-- Scenarios Bar: Compact 1-line horizontal quick selector -->
+      <section class="scenarios-container compact-scenarios-bar">
+        <div class="scenarios-header compact-header">
+          <span class="scenarios-title" data-i18n="scenario.title">One-Click Quick Scenarios</span>
+          <span class="scenarios-sub" data-i18n="scenario.subtitle">Preconfigured smart templates for popular workflows</span>
+        </div>
+        <div class="scenarios-grid one-line-grid">
+          <div class="scenario-card" data-scenario="telegram" title="SOCKS5 TCP proxies for messaging; calls and UDP need a separate tunnel">
+            <span class="scenario-icon">✈️</span>
+            <div class="scenario-meta">
+              <strong data-i18n="scenario.telegram">Telegram (TCP)</strong>
+            </div>
+            <span class="scenario-tag">SOCKS5</span>
+          </div>
+
+          <div class="scenario-card" data-scenario="youtube" title="Bandwidth testing in Mbit/s with high throughput for 4K streaming">
+            <span class="scenario-icon">🎬</span>
+            <div class="scenario-meta">
+              <strong data-i18n="scenario.youtube">YouTube &amp; 4K Video</strong>
+            </div>
+            <span class="scenario-tag">Mbit/s</span>
+          </div>
+
+          <div class="scenario-card" data-scenario="anon" title="Judge verified anonymity with strict DNSBL blacklist filtering">
+            <span class="scenario-icon">🛡️</span>
+            <div class="scenario-meta">
+              <strong data-i18n="scenario.anon">Elite Privacy</strong>
+            </div>
+            <span class="scenario-tag">Elite</span>
+          </div>
+
+          <div class="scenario-card" data-scenario="scrape" title="256 threads, 2s connect timeout, quick prefiltering for big lists">
+            <span class="scenario-icon">⚡</span>
+            <div class="scenario-meta">
+              <strong data-i18n="scenario.scrape">Fast Scraping</strong>
+            </div>
+            <span class="scenario-tag">256 Thr</span>
+          </div>
+
+          <div class="scenario-card active" data-scenario="custom" title="Manual control over all check, identity and export parameters">
+            <span class="scenario-icon">⚙️</span>
+            <div class="scenario-meta">
+              <strong data-i18n="scenario.custom">Custom Pro</strong>
+            </div>
+            <span class="scenario-tag">Full</span>
+          </div>
+        </div>
+      </section>
+
+      <!-- Workspace Grid: Dense 2-Column Split -->
       <div class="workspace-grid">
-        <div class="configuration">
-          <section class="card"><div class="card-title"><div><span class="step">01</span><h2 data-i18n="targets.title">Which services to check</h2></div><span class="badge" data-i18n="targets.badge">Condition: all services</span></div><p class="hint" data-i18n="targets.hint">Add the exact URL of a page or API. Each service must reach the configured success threshold.</p><div id="targets"></div><button class="button add" id="add-target" data-i18n="targets.add">＋ Add service</button><label class="preset-picker"><span data-i18n="presets.label">Or add a ready-made check</span><select id="target-preset"><option value="" data-i18n="presets.choose">Choose a service…</option></select></label></section>
-          <section class="card"><div class="card-title"><div><span class="step">02</span><h2 data-i18n="check.title">How to check</h2></div><span class="badge subtle" data-i18n="check.badge">Full sweep</span></div><div class="presets"><span data-i18n="preset.label">Preset:</span><button class="button chip" data-preset="quick" data-i18n="preset.quick">⚡ Quick</button><button class="button chip" data-preset="balanced" data-i18n="preset.balanced">⚖ Balanced</button><button class="button chip" data-preset="thorough" data-i18n="preset.thorough">🔬 Thorough</button><small data-i18n="preset.hint">Quick: 1 attempt, short timeouts, more workers. Thorough: 5 attempts, patient timeouts.</small></div><div class="field-grid three"><label><span data-i18n="check.attempts">Attempts per service</span><input type="number" id="attempts" min="1" max="100" value="3"><small data-i18n="check.attemptsHint">Repeated stability measurements</small></label><label><span data-i18n="check.timeout">Timeout, seconds</span><input type="number" id="timeout" min="0.1" max="300" step="0.1" value="8"><small data-i18n="check.timeoutHint">Limit for a single request</small></label><label><span data-i18n="check.threshold">Success threshold</span><select id="min_success"><option value="0.6666666666666666" data-i18n="threshold.twoThirds">At least ⅔ of attempts</option><option value="1" data-i18n="threshold.all">All attempts (strict)</option><option value="0" data-i18n="threshold.one">At least 1 per service</option></select><small data-i18n="check.thresholdHint">Applied to each service separately</small></label></div><details class="advanced"><summary data-i18n="check.advanced">Performance and response size</summary><div class="field-grid three"><label><span data-i18n="check.workers">Parallel checks</span><input id="workers" type="number" min="1" max="2048" value="128"></label><label><span data-i18n="check.prefilter">Quick pre-check, connections</span><input id="prefilter" type="number" min="0" max="5000" value="512"><small data-i18n="check.prefilterHint">Drops addresses that do not even accept a connection before the full check. 0 — off.</small></label><label><span data-i18n="check.rate">Requests / second</span><input id="rate" type="number" min="0" max="10000" value="100"><small data-i18n="check.rateHint">0 — no rate limit</small></label><label><span data-i18n="check.maxBytes">Maximum response bytes</span><input id="max_bytes" type="number" min="1" max="100000000" value="1048576"></label></div><div class="field-grid speedup"><label><span data-i18n="check.connectTimeout">Connect timeout, seconds</span><input id="connect_timeout" type="number" min="0.1" max="300" step="0.1" value="4"><small data-i18n="check.connectTimeoutHint">Dead addresses fail sooner; the full request still gets the main timeout.</small></label><label class="check-label identity-check"><input type="checkbox" id="fail_fast" checked><span data-i18n="check.failFast">Stop early when a proxy can no longer pass</span><small data-i18n="check.failFastHint">Skips the remaining attempts once the success threshold is out of reach. Much faster on big lists.</small></label></div><p class="hint" data-i18n="check.advancedHint">The sweep is not limited by time or pool size. A large list can take several hours to check.</p></details></section>
-          <section class="card"><div class="card-title"><div><span class="step">03</span><h2 data-i18n="identity.title">Fingerprint and cleanliness</h2></div><span class="badge subtle" id="profile-summary">Workbench profile</span></div><p class="hint" data-i18n="identity.hint">The request profile sets only neutral HTTP metadata. It does not change the TLS/browser fingerprint, does not add personal data and does not guarantee anonymity.</p><div class="field-grid"><label><span data-i18n="identity.profile">Request profile</span><select id="request-profile"><option value="workbench" data-i18n="profile.workbench">Workbench profile</option><option value="standard" data-i18n="profile.standard">Standard</option><option value="minimal" data-i18n="profile.minimal">Minimal</option></select><small id="profile-description">User-Agent ProxyWorkbench/__PRODUCT_VERSION__, Accept and Accept-Encoding.</small></label><label class="check-label identity-check"><input type="checkbox" id="dnsbl-enabled"><span data-i18n="identity.dnsbl">Check public DNSBLs</span><small data-i18n="identity.dnsblHint">Optional. Uses DNS queries only, no API keys.</small></label></div><div class="field-grid" id="dnsbl-fields"><label><span data-i18n="identity.zones">DNSBL zones</span><textarea id="dnsbl-zones" rows="3" spellcheck="false" placeholder="bl.example.org&#10;dnsbl.example.net"></textarea><small data-i18n="identity.zonesHint">One zone name per line. Empty — DNSBL is off.</small></label><div class="field-grid"><label><span data-i18n="identity.dnsblTimeout">DNSBL timeout, seconds</span><input id="reputation-timeout" type="number" min="0.1" max="30" step="0.1" value="2.5"><small data-i18n="identity.dnsblTimeoutHint">Per zone and per address.</small></label><label class="check-label identity-check"><input type="checkbox" id="strict-clean"><span data-i18n="identity.strict">Strict mode</span><small data-i18n="identity.strictHint">Do not export if a DNSBL did not respond.</small></label></div></div><label class="denylist-label"><span data-i18n="identity.denylist">Local denylist</span><textarea id="denylist" rows="4" spellcheck="false" placeholder="11.0.0.0/24&#10;http://11.0.0.1:8080&#10;# comment" data-i18n-placeholder="identity.denylistPlaceholder"></textarea><small data-i18n="identity.denylistHint">IP, CIDR or exact proxy address. Stored only in data/denylist.txt and never included in the code.</small></label><label class="check-label"><input type="checkbox" id="local-denylist-enabled" checked><span data-i18n="identity.applyDenylist">Apply the local denylist during collection, checks and export</span></label><label class="judge-label"><span data-i18n="anon.judge">Anonymity judge URL (optional)</span><input id="judge-url" type="url" spellcheck="false" placeholder="http://httpbin.org/get"><small data-i18n="anon.judgeHint">An echo page that shows the client IP and request headers. Each working proxy is rated transparent, anonymous or elite. Use an http:// judge: over HTTPS a proxy cannot add headers. Your own IP is requested once directly and never saved.</small></label><label class="judge-label"><span data-i18n="speed.url">Speed test file (optional)</span><input id="speedtest-url" type="url" spellcheck="false" placeholder="https://speed.cloudflare.com/__down?bytes=5000000"><small data-i18n="speed.hint">Every proxy that works for your services downloads this file once, and the table shows its real download speed in Mbit/s. Leave empty to skip; it adds a few seconds per working proxy.</small></label></section>
-          <section class="card"><div class="card-title"><div><span class="step">04</span><h2 data-i18n="output.title">What to save</h2></div></div><div class="field-grid three"><label><span data-i18n="output.ranking">Ranking</span><select id="sort"><option value="recommended" data-i18n="sort.recommended">Recommended: quality, survival, rare lists, trusted sources</option><option value="quality" data-i18n="sort.quality">Quality: stability + speed</option><option value="speed" data-i18n="sort.speed">Speed: fastest first</option><option value="stability" data-i18n="sort.stability">Stability: lowest jitter first</option><option value="uptime" data-i18n="sort.uptime">Uptime: passed most re-checks first</option><option value="bandwidth" data-i18n="sort.bandwidth">Bandwidth: most Mbit/s first</option></select></label><label><span data-i18n="output.count">Number of proxies</span><input id="top" type="number" min="0" value="0"><small data-i18n="output.countHint">0 — all matching. Does not affect how much is checked.</small></label><label><span data-i18n="anon.min">Minimum anonymity</span><select id="min_anonymity"><option value="any" data-i18n="anon.any">Any level</option><option value="anonymous" data-i18n="anon.minAnonymous">Anonymous or elite</option><option value="elite" data-i18n="anon.minElite">Elite only</option></select><small data-i18n="anon.minHint">Applies only when a judge URL is set.</small></label><label><span data-i18n="filter.protocol">Protocol</span><select id="protocol"><option value="all" data-i18n="filter.allProtocols">All protocols</option><option value="http">HTTP</option><option value="https">HTTPS</option><option value="socks4">SOCKS4</option><option value="socks5">SOCKS5</option></select></label><label><span data-i18n="filter.maxLatency">Max latency, ms</span><input id="max_latency" type="number" min="0" max="600000" step="50" value="0"><small data-i18n="filter.maxLatencyHint">0 — no limit</small></label><label><span data-i18n="geo.countries">Countries</span><input id="countries" spellcheck="false" autocomplete="off" placeholder="DE, NL, US"><small data-i18n="geo.countriesHint">ISO codes. Other countries are skipped before checking, so the scan is much shorter.</small></label><label><span data-i18n="want.label">Stop after finding</span><input id="want" type="number" min="0" max="1000000000" value="0"><small data-i18n="want.hint">0 — check everything. Otherwise the scan ends as soon as this many proxies match.</small></label><label><span data-i18n="watch.label">Keep fresh: re-check every, min</span><input id="watch" type="number" min="0" max="1440" step="5" value="0"><small data-i18n="watch.hint">0 — off. Otherwise, after the check the app keeps running and re-checks the working proxies on this schedule, so exports, the API and the rotating proxy stay fresh.</small></label></div></section>
+        <!-- Left Column: Unified Configuration Blocks -->
+        <div class="configuration compact-config-flow">
+
+          <!-- Block 1: Target Services -->
+          <section class="card compact-block" id="step-targets-card">
+            <div class="compact-block-title">
+              <h2>
+                <span class="block-step-badge">1</span>
+                <span data-i18n="targets.title">Which services to check</span>
+              </h2>
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <span class="badge" data-i18n="targets.badge">Condition: all services</span>
+                <select id="target-preset" class="preset-select" style="height: 28px; font-size: 11.5px; padding: 0 8px;">
+                  <option value="" data-i18n="presets.choose">Add popular service…</option>
+                </select>
+                <button type="button" class="button primary chip" id="add-target" style="height: 28px; padding: 0 10px; font-size: 11.5px;">
+                  <span style="font-weight: 800; margin-right: 4px;">＋</span>
+                  <span data-i18n="targets.add">Add URL</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Target URLs list -->
+            <div id="targets"></div>
+
+            <!-- Quick service chips -->
+            <div class="quick-services-chips" id="quick-services-chips" style="margin-top: 8px;"></div>
+          </section>
+
+          <!-- Block 2: Parameters and Filters -->
+          <section class="card compact-block" id="step-params-card">
+            <div class="compact-block-title">
+              <h2>
+                <span class="block-step-badge">2</span>
+                <span data-i18n="check.title">Parameters &amp; Filters</span>
+              </h2>
+              <div class="presets-segmented-wrapper" style="margin: 0;">
+                <div class="segmented-control" role="group" aria-label="Presets" style="height: 28px;">
+                  <div class="segmented-glider" aria-hidden="true"></div>
+                  <button type="button" class="button chip segmented-btn" data-preset="quick" data-i18n="preset.quick" style="height: 24px; padding: 0 8px; font-size: 11px;">⚡ Quick</button>
+                  <button type="button" class="button chip segmented-btn active" data-preset="balanced" data-i18n="preset.balanced" style="height: 24px; padding: 0 8px; font-size: 11px;">⚖ Balanced</button>
+                  <button type="button" class="button chip segmented-btn" data-preset="thorough" data-i18n="preset.thorough" style="height: 24px; padding: 0 8px; font-size: 11px;">🔬 Thorough</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Clean, even grid of key parameters WITHOUT messy chip rows -->
+            <div class="clean-field-grid">
+              <label>
+                <span data-i18n="check.attempts">Attempts per service</span>
+                <div class="input-unit-wrap">
+                  <input type="number" id="attempts" min="1" max="100" value="3">
+                  <span class="unit-badge" data-i18n="unit.attempts">tries</span>
+                </div>
+              </label>
+
+              <label>
+                <span data-i18n="check.timeout">Request timeout</span>
+                <div class="input-unit-wrap">
+                  <input type="number" id="timeout" min="0.1" max="300" step="0.1" value="8">
+                  <span class="unit-badge" data-i18n="unit.sec">sec</span>
+                </div>
+              </label>
+
+              <label>
+                <span data-i18n="check.workers">Threads (Workers)</span>
+                <div class="input-unit-wrap">
+                  <input id="workers" type="number" min="1" max="1000" value="128">
+                  <span class="unit-badge" data-i18n="unit.threads">threads</span>
+                </div>
+              </label>
+
+              <label>
+                <span data-i18n="check.connectTimeout">Connect timeout</span>
+                <div class="input-unit-wrap">
+                  <input id="connect_timeout" type="number" min="0.1" max="60" step="0.1" value="4">
+                  <span class="unit-badge" data-i18n="unit.sec">sec</span>
+                </div>
+              </label>
+
+              <label>
+                <span data-i18n="filter.protocol">Protocol</span>
+                <div class="select-unit-wrap">
+                  <select id="protocol">
+                    <option value="all" data-i18n="filter.allProtocols">All protocols</option>
+                    <option value="http">HTTP</option>
+                    <option value="https">HTTPS</option>
+                    <option value="socks4">SOCKS4</option>
+                    <option value="socks5">SOCKS5</option>
+                  </select>
+                </div>
+              </label>
+
+              <label>
+                <span data-i18n="check.threshold">Success threshold</span>
+                <div class="select-unit-wrap">
+                  <select id="min_success">
+                    <option value="0.6666666666666666" data-i18n="threshold.twoThirds">At least ⅔ of attempts</option>
+                    <option value="1" data-i18n="threshold.all">All attempts (strict)</option>
+                    <option value="0" data-i18n="threshold.one">At least 1 per service</option>
+                  </select>
+                </div>
+              </label>
+
+              <label>
+                <span data-i18n="output.ranking">Ranking order</span>
+                <div class="select-unit-wrap">
+                  <select id="sort">
+                    <option value="recommended" data-i18n="sort.recommended">Recommended</option>
+                    <option value="quality" data-i18n="sort.quality">Quality: stability + speed</option>
+                    <option value="speed" data-i18n="sort.speed">Speed: fastest first</option>
+                    <option value="stability" data-i18n="sort.stability">Stability: lowest jitter first</option>
+                    <option value="uptime" data-i18n="sort.uptime">Uptime: passed most re-checks</option>
+                    <option value="bandwidth" data-i18n="sort.bandwidth">Bandwidth: most Mbit/s</option>
+                  </select>
+                </div>
+              </label>
+
+              <label>
+                <span data-i18n="anon.min">Min anonymity</span>
+                <div class="select-unit-wrap">
+                  <select id="min_anonymity">
+                    <option value="any" data-i18n="anon.any">Any level</option>
+                    <option value="anonymous" data-i18n="anon.minAnonymous">Anonymous or elite</option>
+                    <option value="elite" data-i18n="anon.minElite">Elite only</option>
+                  </select>
+                </div>
+              </label>
+
+              <div class="country-field-wrapper">
+                <div class="field-label-with-count" style="margin-bottom: 4px;">
+                  <span style="font-size: 11.5px; font-weight: 600; color: var(--ink);" data-i18n="geo.countries">Countries</span>
+                  <span class="country-badge-count hidden" id="countries-count-badge"></span>
+                </div>
+                <div class="smart-country-combobox" id="countries-combobox-wrap" data-target="countries">
+                  <input id="countries" class="country-native-input" type="text" spellcheck="false" autocomplete="off" placeholder="DE, NL, US">
+                  <div class="country-input-box" id="countries-box" tabindex="0" role="combobox" aria-haspopup="dialog" aria-expanded="false" style="height: 32px; min-height: 32px; font-size: 12px;">
+                    <div class="country-chips-list" id="countries-chips"></div>
+                    <input type="text" class="country-typeahead-input" id="countries-typeahead" placeholder="DE, NL, US or select…" autocomplete="off" spellcheck="false" data-i18n-placeholder="geo.inputPlaceholder">
+                    <div class="country-input-actions">
+                      <button type="button" class="country-clear-btn hidden" id="countries-clear-btn" title="Clear all" aria-label="Clear all" data-i18n-title="geo.clearAll">✕</button>
+                      <button type="button" class="country-toggle-btn" id="countries-toggle-btn" title="Open country list" aria-label="Open country list" data-i18n-title="geo.openDropdown">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+                      </button>
+                    </div>
+                  </div>
+
+                  <!-- Floating Dropdown Popover Menu -->
+                  <div class="country-dropdown hidden" id="countries-dropdown" role="dialog" aria-modal="false">
+                    <div class="country-dropdown-header">
+                      <div class="country-search-field">
+                        <span class="country-search-icon">🔍</span>
+                        <input type="search" class="country-search-input" id="countries-search" placeholder="Search country by name or ISO code…" autocomplete="off" spellcheck="false" data-i18n-placeholder="geo.searchPlaceholder">
+                        <button type="button" class="country-search-clear hidden" id="countries-search-clear">✕</button>
+                      </div>
+                      <div class="country-dropdown-stats">
+                        <span class="country-count-label" id="countries-stat-label">0</span>
+                        <button type="button" class="country-action-clear-btn" id="countries-action-clear" data-i18n="chip.clear">Clear</button>
+                      </div>
+                    </div>
+                    <div class="country-regions-bar">
+                      <span class="regions-label" data-i18n="geo.quickRegions">Quick regions:</span>
+                      <div class="regions-chips-list">
+                        <button type="button" class="region-chip" data-reg="top" data-i18n="geo.regionTop">⭐ Top 5</button>
+                        <button type="button" class="region-chip" data-reg="eu" data-i18n="geo.regionEu">🇪🇺 Europe</button>
+                        <button type="button" class="region-chip" data-reg="na" data-i18n="geo.regionNa">🇺🇸 N. America</button>
+                        <button type="button" class="region-chip" data-reg="asia" data-i18n="geo.regionAsia">🌏 Asia</button>
+                        <button type="button" class="region-chip" data-reg="cis" data-i18n="geo.regionCis">🌐 CIS</button>
+                      </div>
+                    </div>
+                    <div class="country-list-scroll" id="countries-list-scroll"></div>
+                    <div class="country-dropdown-footer">
+                      <button type="button" class="button light country-done-btn" id="countries-done-btn" data-i18n="common.close">Done</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Compact Advanced Accordion for Secondary Limits & URLs -->
+            <details class="advanced-accordion" id="check-advanced-accordion" style="margin-top: 10px;">
+              <summary class="advanced-accordion-summary" style="padding: 6px 8px; font-size: 11.5px;">
+                <div class="summary-title-wrap">
+                  <span class="summary-badge-icon">⚙</span>
+                  <span class="summary-heading" data-i18n="check.advanced">Advanced network, limits &amp; speeds</span>
+                </div>
+                <span class="accordion-arrow" aria-hidden="true"></span>
+              </summary>
+              <div class="accordion-content" style="padding-top: 8px;">
+                <div class="clean-field-grid" style="margin-bottom: 8px;">
+                  <label>
+                    <span data-i18n="check.prefilter">Quick pre-check conns</span>
+                    <div class="input-unit-wrap">
+                      <input id="prefilter" type="number" min="0" max="5000" value="512">
+                      <span class="unit-badge" data-i18n="unit.conns">conns</span>
+                    </div>
+                  </label>
+                  <label>
+                    <span data-i18n="check.rate">Rate limit (req/sec)</span>
+                    <div class="input-unit-wrap">
+                      <input id="rate" type="number" min="0" max="10000" value="100">
+                      <span class="unit-badge">req/s</span>
+                    </div>
+                  </label>
+                  <label>
+                    <span data-i18n="check.maxBytes">Max response bytes</span>
+                    <div class="input-unit-wrap">
+                      <input id="max_bytes" type="number" min="1" max="100000000" value="1048576">
+                      <span class="unit-badge" data-i18n="unit.bytes">bytes</span>
+                    </div>
+                  </label>
+                  <label>
+                    <span data-i18n="results.top">Save limit (Top)</span>
+                    <div class="input-unit-wrap">
+                      <input type="number" id="top" min="0" value="0">
+                      <span class="unit-badge">0=all</span>
+                    </div>
+                  </label>
+                  <label>
+                    <span data-i18n="filter.maxLatency">Max latency, ms</span>
+                    <div class="input-unit-wrap">
+                      <input id="max_latency" type="number" min="0" max="600000" step="50" value="0">
+                      <span class="unit-badge">ms</span>
+                    </div>
+                  </label>
+                  <label>
+                    <span>Desired quantity (Want)</span>
+                    <div class="input-unit-wrap">
+                      <input type="number" id="want" min="0" value="0">
+                      <span class="unit-badge">0=all</span>
+                    </div>
+                  </label>
+                </div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px;">
+                  <label>
+                    <span data-i18n="anon.judge">Anonymity judge URL</span>
+                    <input id="judge-url" type="url" spellcheck="false" placeholder="https://api.ipify.org?format=json">
+                  </label>
+                  <label>
+                    <span data-i18n="speed.url">Speed test URL (Mbit/s)</span>
+                    <input id="speedtest-url" type="url" spellcheck="false" placeholder="https://speed.cloudflare.com/__down?bytes=5000000">
+                  </label>
+                </div>
+                <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px;">
+                  <label class="toggle-switch-card fast-fail-banner" style="margin: 0; padding: 6px 10px;">
+                    <div class="toggle-switch-wrap">
+                      <input type="checkbox" id="fail_fast" checked class="toggle-switch-input">
+                      <span class="toggle-switch-slider"></span>
+                    </div>
+                    <div class="toggle-switch-text">
+                      <span class="check-headline" data-i18n="check.failFast">Stop early when proxy cannot pass</span>
+                    </div>
+                  </label>
+                  <div style="display: flex; align-items: center; gap: 8px;">
+                    <span style="font-size: 11.5px; font-weight: 600; color: var(--ink);" data-i18n="identity.profile">Profile:</span>
+                    <select id="request-profile" style="height: 28px; font-size: 11px;">
+                      <option value="workbench" data-i18n="profile.workbench">Workbench profile</option>
+                      <option value="standard" data-i18n="profile.standard">Standard</option>
+                      <option value="minimal" data-i18n="profile.minimal">Minimal</option>
+                    </select>
+                    <span id="profile-summary" class="hidden">Workbench profile</span>
+                    <span id="profile-description" class="hidden">Neutral HTTP headers</span>
+                  </div>
+                </div>
+              </div>
+            </details>
+          </section>
+
+          <!-- Block 3: Cleanliness, Denylist & Keep-Fresh Rotation -->
+          <section class="card compact-block" id="step-identity-card">
+            <div class="compact-block-title">
+              <h2>
+                <span class="block-step-badge">3</span>
+                <span data-i18n="identity.title">Cleanliness &amp; Rotation</span>
+              </h2>
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <label style="display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 650; margin: 0; color: var(--ink);">
+                  <span data-i18n="watch.label">Keep-Fresh:</span>
+                  <div class="input-unit-wrap" style="width: 105px;">
+                    <input id="watch" type="number" min="0" max="1440" step="5" value="0" style="height: 26px; font-size: 11.5px;">
+                    <span class="unit-badge" data-i18n="unit.min">min</span>
+                  </div>
+                </label>
+              </div>
+            </div>
+
+            <div class="cleanliness-grid">
+              <!-- DNSBL Pane -->
+              <div class="clean-pane">
+                <div class="clean-pane-header">
+                  <label>
+                    <input type="checkbox" id="dnsbl-enabled">
+                    <span data-i18n="identity.dnsbl">Check public DNSBLs</span>
+                  </label>
+                  <span class="line-count-badge" id="dnsbl-lines-count">0 lines</span>
+                </div>
+                <div id="dnsbl-fields" style="display: flex; flex-direction: column; gap: 6px;">
+                  <textarea id="dnsbl-zones" class="mono-textarea" rows="2" spellcheck="false" placeholder="bl.example.org&#10;dnsbl.example.net"></textarea>
+                  <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+                    <label style="display: flex; align-items: center; gap: 6px; font-size: 11px; margin: 0;">
+                      <span data-i18n="identity.dnsblTimeout">Timeout:</span>
+                      <input id="reputation-timeout" type="number" min="0.1" max="30" step="0.1" value="2.5" style="width: 55px; height: 24px; font-size: 11px;">
+                      <span>s</span>
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 6px; font-size: 11px; margin: 0;">
+                      <input type="checkbox" id="strict-clean">
+                      <span data-i18n="identity.strict">Strict clean</span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Local Denylist Pane -->
+              <div class="clean-pane">
+                <div class="clean-pane-header">
+                  <label>
+                    <input type="checkbox" id="local-denylist-enabled" checked>
+                    <span data-i18n="identity.local">Local denylist</span>
+                  </label>
+                  <span class="line-count-badge" id="denylist-lines-count">0 lines</span>
+                </div>
+                <textarea id="denylist" class="mono-textarea" rows="2" spellcheck="false" placeholder="192.0.2.1&#10;198.51.100.0/24"></textarea>
+                <small style="font-size: 10.5px; color: var(--muted);" data-i18n="identity.localHint">IPs or CIDR blocks permanently excluded from tests and exports.</small>
+              </div>
+            </div>
+          </section>
+
         </div>
+
+        <!-- Right Column: Mission Control Pulse -->
         <div class="monitor-column">
-          <section class="card monitor"><div class="monitor-title"><span class="eyebrow" data-i18n="monitor.eyebrow">CURRENT CHECK</span><span id="phase" class="phase">Ready to start</span></div><div class="progress-number"><b id="checked">0</b><span> / <span id="candidates">0</span></span></div><div class="progress-track"><div id="progress-bar"></div></div><div class="progress-meta"><span id="progress-text">All collected addresses will be checked</span><b id="percent">0%</b></div><div class="metrics"><div><small data-i18n="monitor.speed">Proxies / sec</small><strong id="speed">—</strong></div><div><small data-i18n="monitor.eta">Time remaining (approx.)</small><strong id="eta">—</strong></div></div><div class="source-summary live-passed"><span data-i18n="monitor.passed">Matching proxies</span><b id="live-passed">0</b></div><div class="source-summary"><span data-i18n="monitor.sources">Connected sources</span><b id="source-count">—</b></div><p id="job-detail" class="hint">Configure services and start the search.</p><button class="button primary full" id="start"><span data-i18n="monitor.start">Find and check</span> <span>↗</span></button><div class="button-row"><button class="button light" id="resume" title="Check the remaining database addresses with the current settings" data-i18n="monitor.resume" data-i18n-title="monitor.resumeTitle">Continue database</button><button class="button danger" id="stop" disabled data-i18n="monitor.stop">Stop</button></div><button class="button text full" id="recheck-passing" data-i18n="monitor.recheckPassing">Re-check only matching proxies (fast)</button><button class="button text full" id="recheck" data-i18n="monitor.recheck">Recheck the whole database</button><div class="callout"><span>↻</span><p data-i18n="monitor.callout">Progress is saved when you stop. “Continue database” skips checks already completed for the same profile.</p></div></section>
-          <section class="card mini"><h3 data-i18n="mini.title">Results that fit your service</h3><p data-i18n="mini.text">We check the real HTTP response through the proxy. DNSBL and the local denylist flag potentially dirty addresses but do not determine anonymity.</p><button class="text-link" data-go="results"><span data-i18n="mini.link">Open ranking</span> <span>→</span></button></section>
-          <details class="card logs"><summary data-i18n="log.title">Execution log</summary><pre id="log">Check progress will appear here.</pre></details>
+          <section class="card monitor" data-phase="ready">
+            <div class="monitor-title">
+              <span class="eyebrow" data-i18n="monitor.eyebrow">MISSION CONTROL</span>
+              <span id="phase" class="phase" data-phase="ready">Ready to start</span>
+            </div>
+
+            <!-- Radial Speedometer Gauge -->
+            <div class="radial-gauge-container">
+              <div class="radial-gauge-wrap">
+                <svg class="radial-gauge-svg" viewBox="0 0 120 120">
+                  <circle class="gauge-bg" cx="60" cy="60" r="50"></circle>
+                  <circle class="gauge-fill" id="radial-progress-fill" cx="60" cy="60" r="50"></circle>
+                </svg>
+                <div class="gauge-center-content">
+                  <span class="gauge-percent" id="gauge-percent">0%</span>
+                  <span class="gauge-caption" id="gauge-caption" data-i18n="monitor.gaugeTitle">PROGRESS</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="progress-number">
+              <b id="checked">0</b><span class="progress-separator">/</span><span id="candidates">0</span>
+            </div>
+
+            <div class="progress-track">
+              <div id="progress-bar"></div>
+            </div>
+
+            <div class="progress-meta">
+              <span id="progress-text">All collected addresses will be checked</span>
+              <b id="percent">0%</b>
+            </div>
+
+            <div class="metrics metrics-grid">
+              <div class="metric-card">
+                <div class="metric-header">
+                  <span class="metric-icon" aria-hidden="true">⚡</span>
+                  <small data-i18n="monitor.speed">Speed</small>
+                </div>
+                <strong id="speed" class="metric-value">—</strong>
+              </div>
+              <div class="metric-card">
+                <div class="metric-header">
+                  <span class="metric-icon" aria-hidden="true">⏱</span>
+                  <small data-i18n="monitor.eta">Remaining</small>
+                </div>
+                <strong id="eta" class="metric-value">—</strong>
+              </div>
+            </div>
+
+            <div class="source-summary live-passed">
+              <div class="live-passed-info">
+                <span class="live-passed-icon" aria-hidden="true">🎯</span>
+                <span data-i18n="monitor.passed">Matching proxies</span>
+              </div>
+              <b id="live-passed">0</b>
+            </div>
+
+            <div class="source-summary sources-summary">
+              <span data-i18n="monitor.sources">Connected sources</span>
+              <b id="source-count">—</b>
+            </div>
+
+            <p id="job-detail" class="hint" style="margin: 6px 0; font-size: 11.5px;">Configure services and start the search.</p>
+
+            <!-- Main Big Action Button -->
+            <button class="button primary full mission-btn-start" id="start">
+              <span data-i18n="monitor.start">Find and check</span> <span class="arrow-icon">↗</span>
+            </button>
+
+            <!-- Secondary Actions Row -->
+            <div class="button-row" style="margin-top: 6px;">
+              <button class="button light ghost-btn" id="resume" title="Check the remaining database addresses with current settings" data-i18n="monitor.resume" data-i18n-title="monitor.resumeTitle" style="flex: 1;">Continue</button>
+              <button class="button danger mission-btn-stop" id="stop" disabled data-i18n="monitor.stop" style="flex: 1;">Stop</button>
+            </div>
+
+            <div style="display: flex; gap: 4px; margin-top: 4px;">
+              <button class="button text full ghost-subtle-btn" id="recheck-passing" data-i18n="monitor.recheckPassing" style="font-size: 11px; padding: 4px;">Recheck matching</button>
+              <button class="button text full ghost-subtle-btn" id="recheck" data-i18n="monitor.recheck" style="font-size: 11px; padding: 4px;">Recheck database</button>
+            </div>
+          </section>
+
+          <!-- Live Inspection Stream Ticker (3-4 lines) -->
+          <section class="card live-ticker-card">
+            <div class="live-ticker-header">
+              <span class="ticker-live-dot"></span>
+              <strong data-i18n="monitor.liveStream">Live Inspection Stream</strong>
+            </div>
+            <div class="live-ticker-stream" id="live-ticker-list">
+              <div class="ticker-empty" data-i18n="monitor.liveStreamIdle">Checked proxies appear here in real time.</div>
+            </div>
+          </section>
         </div>
+      </div>
+
+      <!-- Collapsible Terminal Log below Workspace -->
+      <details class="card logs mac-terminal-card" open>
+        <summary data-i18n="log.title">Execution log</summary>
+        <div class="mac-terminal">
+          <div class="mac-terminal-bar">
+            <div class="mac-terminal-dots">
+              <span class="mac-dot mac-dot-close" title="Close"></span>
+              <span class="mac-dot mac-dot-minimize" title="Minimize"></span>
+              <span class="mac-dot mac-dot-zoom" title="Zoom"></span>
+            </div>
+            <div class="mac-terminal-title" data-i18n="log.terminalTitle">mission-control — log</div>
+            <div class="mac-terminal-height-toggle" role="group" aria-label="Terminal height">
+              <button type="button" class="term-height-btn" data-height="120" title="Compact (120px)">120</button>
+              <button type="button" class="term-height-btn active" data-height="240" title="Normal (240px)">240</button>
+              <button type="button" class="term-height-btn" data-height="450" title="Expanded (450px)">450</button>
+            </div>
+            <div class="mac-terminal-badge"><span class="terminal-live-dot"></span>LIVE</div>
+          </div>
+          <pre id="log">Check progress will appear here.</pre>
+        </div>
+      </details>
+    </section>
+
+
+    <!-- Page: Results (Table-First Focus) -->
+    <section class="page" id="page-results">
+      <!-- Compact Top Header -->
+      <div class="results-compact-header">
+        <div class="results-title-group">
+          <h1 data-i18n="results.title">Proxy ranking</h1>
+          <p id="result-context">Matching addresses will appear here after a check.</p>
+        </div>
+        <div class="results-compact-actions">
+          <button class="button light" id="refresh-results" data-i18n="results.refresh" style="height: 32px; font-size: 12px; padding: 0 10px;">
+            <span>↻</span> <span data-i18n="results.refresh">Refresh</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Ultra-Compact 2-Row Toolbar -->
+      <div class="results-compact-toolbar">
+        <!-- Row 1: Search, Filter Chips, Country Select, Export & Quick Downloads -->
+        <div class="results-tb-row-1">
+          <!-- Search box -->
+          <div class="results-tb-search">
+            <span class="search-icon">🔍</span>
+            <input type="search" id="result-search" data-i18n-placeholder="filter.searchPlaceholder" placeholder="Search address or port…" spellcheck="false">
+          </div>
+
+          <!-- Quick Filter Chips -->
+          <div class="results-tb-filter-chips" id="results-filter-chips">
+            <button type="button" class="filter-chip active" data-filter="all" data-i18n="filter.all">All Alive</button>
+            <button type="button" class="filter-chip" data-filter="socks5" data-i18n="filter.socks5">🔒 SOCKS5</button>
+            <button type="button" class="filter-chip" data-filter="http" data-i18n="filter.http">🌐 HTTP/S</button>
+            <button type="button" class="filter-chip" data-filter="fast" data-i18n="filter.fast">⚡ &lt;300ms</button>
+            <button type="button" class="filter-chip" data-filter="clean" data-i18n="filter.clean">🧹 Verified clean</button>
+            <button type="button" class="filter-chip" data-filter="elite" data-i18n="filter.elite">🛡️ Elite</button>
+            <button type="button" class="filter-chip" data-filter="speed" data-i18n="filter.withSpeed">🚀 Speed</button>
+          </div>
+
+          <!-- Compact Country Combobox -->
+          <div class="results-tb-country">
+            <span class="country-badge-count hidden" id="result-countries-count-badge"></span>
+            <div class="smart-country-combobox" id="result-country-combobox-wrap" data-target="result-country">
+              <input id="result-country" class="country-native-input" type="text" spellcheck="false" autocomplete="off" placeholder="Country">
+              <div class="country-input-box" id="result-country-box" tabindex="0" role="combobox" aria-haspopup="dialog" aria-expanded="false">
+                <div class="country-chips-list" id="result-country-chips"></div>
+                <input type="text" class="country-typeahead-input" id="result-country-typeahead" placeholder="Countries…" autocomplete="off" spellcheck="false" data-i18n-placeholder="geo.inputPlaceholder">
+                <div class="country-input-actions">
+                  <button type="button" class="country-clear-btn hidden" id="result-country-clear-btn" title="Clear all" aria-label="Clear all">✕</button>
+                  <button type="button" class="country-toggle-btn" id="result-country-toggle-btn" title="Open country list" aria-label="Open country list">
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Country Popover -->
+              <div class="country-dropdown hidden" id="result-country-dropdown" role="dialog" aria-modal="false">
+                <div class="country-dropdown-header">
+                  <div class="country-search-field">
+                    <span class="country-search-icon">🔍</span>
+                    <input type="search" class="country-search-input" id="result-country-search" placeholder="Search country…" autocomplete="off" spellcheck="false">
+                    <button type="button" class="country-search-clear hidden" id="result-country-search-clear">✕</button>
+                  </div>
+                  <div class="country-dropdown-stats">
+                    <span class="country-count-label" id="result-country-stat-label">0</span>
+                    <button type="button" class="country-action-clear-btn" id="result-country-action-clear" data-i18n="chip.clear">Clear</button>
+                  </div>
+                </div>
+                <div class="country-regions-bar">
+                  <span class="regions-label" data-i18n="geo.quickRegions">Regions:</span>
+                  <div class="regions-chips-list">
+                    <button type="button" class="region-chip" data-reg="top">⭐ Top 5</button>
+                    <button type="button" class="region-chip" data-reg="eu">🇪🇺 Europe</button>
+                    <button type="button" class="region-chip" data-reg="na">🇺🇸 N. America</button>
+                    <button type="button" class="region-chip" data-reg="asia">🌏 Asia</button>
+                    <button type="button" class="region-chip" data-reg="cis">🌐 CIS</button>
+                  </div>
+                </div>
+                <div class="country-list-scroll" id="result-country-list-scroll"></div>
+                <div class="country-dropdown-footer">
+                  <button type="button" class="button light country-done-btn" id="result-country-done-btn" data-i18n="common.close">Done</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Build Export & Quick Download Chips -->
+          <div class="results-tb-downloads">
+            <button class="button primary btn-export-main" id="export" data-i18n="results.export">Build Export</button>
+            <button class="button light chip download-chip" data-download="proxies.txt" disabled title="Standard text list (IP:Port)">📄 TXT</button>
+            <button class="button light chip download-chip" data-download="ranked.csv" disabled title="CSV spreadsheet table">📊 CSV</button>
+            <button class="button light chip download-chip" data-download="ranked.json" disabled title="Full JSON dump">📦 JSON</button>
+            <button class="button light chip download-chip" data-download="proxy.pac" disabled title="Browser auto-config">🧭 PAC</button>
+            <button class="button light chip download-chip" data-download="clash.yaml" disabled title="Clash config">🐱 Clash</button>
+            <button class="button light chip download-chip" data-download="singbox.json" disabled title="sing-box config">📦 sing-box</button>
+            <!-- Hidden format downloads preserved for complete infrastructure support -->
+            <button class="button light chip download-chip hidden" data-download="http.txt" disabled>HTTP</button>
+            <button class="button light chip download-chip hidden" data-download="https.txt" disabled>HTTPS</button>
+            <button class="button light chip download-chip hidden" data-download="socks4.txt" disabled>SOCKS4</button>
+            <button class="button light chip download-chip hidden" data-download="socks5.txt" disabled>SOCKS5</button>
+            <button class="button light chip download-chip hidden" data-download="hostport.txt" disabled>hostport</button>
+            <button class="button light chip download-chip hidden" data-download="proxychains.txt" disabled>proxychains</button>
+          </div>
+        </div>
+
+        <!-- Row 2: Secondary Filter Controls & Copy Page -->
+        <div class="results-tb-row-2">
+          <label class="tb-mini-field">
+            <span data-i18n="results.order">Order:</span>
+            <select id="result-sort">
+              <option value="recommended" data-i18n="results.byRecommended">Recommended</option>
+              <option value="quality" data-i18n="results.byQuality">By quality</option>
+              <option value="speed" data-i18n="results.bySpeed">By speed</option>
+              <option value="stability" data-i18n="results.byStability">By stability</option>
+              <option value="uptime" data-i18n="results.byUptime">By uptime</option>
+              <option value="bandwidth" data-i18n="results.byBandwidth">By bandwidth</option>
+            </select>
+          </label>
+
+          <label class="tb-mini-field">
+            <span data-i18n="filter.protocol">Proto:</span>
+            <select id="result-protocol">
+              <option value="all" data-i18n="filter.allProtocols">All</option>
+              <option value="http">HTTP</option>
+              <option value="https">HTTPS</option>
+              <option value="socks4">SOCKS4</option>
+              <option value="socks5">SOCKS5</option>
+            </select>
+          </label>
+
+          <label class="tb-mini-field">
+            <span data-i18n="anon.min">Anon:</span>
+            <select id="result-anon">
+              <option value="any" data-i18n="anon.any">Any</option>
+              <option value="anonymous" data-i18n="anon.minAnonymous">Anon+</option>
+              <option value="elite" data-i18n="anon.minElite">Elite</option>
+            </select>
+          </label>
+
+          <label class="tb-mini-field">
+            <span data-i18n="results.min">Success:</span>
+            <select id="result-min">
+              <option value="0.6666666666666666" data-i18n="results.minTwoThirds">≥ ⅔</option>
+              <option value="1" data-i18n="results.minAll">100%</option>
+              <option value="0" data-i18n="results.minOne">≥ 1</option>
+            </select>
+          </label>
+
+          <label class="tb-mini-field">
+            <span data-i18n="filter.maxLatency">Max Latency:</span>
+            <input type="number" id="result-max-latency" min="0" max="600000" step="50" value="0" placeholder="0=off">
+          </label>
+
+          <label class="tb-mini-field">
+            <span data-i18n="results.top">Top:</span>
+            <input type="number" id="result-top" value="0" min="0" placeholder="0=all">
+          </label>
+
+          <label class="tb-mini-field">
+            <span data-i18n="filter.excludeHosting">Hosting:</span>
+            <select id="result-hosting">
+              <option value="keep" data-i18n="filter.keepHosting">Keep all</option>
+              <option value="exclude" data-i18n="filter.excludeHostingAction">Exclude</option>
+            </select>
+          </label>
+
+          <div style="margin-left: auto; display: flex; align-items: center; gap: 8px;">
+            <button class="button light chip" id="copy-page" style="height: 26px; font-size: 11px; padding: 0 8px;">
+              <span class="btn-icon">📋</span>
+              <span data-i18n="filter.copyPage">Copy page</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Export status feedback note -->
+      <div id="export-note" class="export-note" style="margin-bottom: 6px; font-size: 11px;"></div>
+      <div class="breakdown hidden" id="breakdown"></div>
+
+      <!-- 6px Slim Country Distribution Progress Bar directly below toolbar -->
+      <div class="country-bar-wrap thin-bar" id="country-distribution-card">
+        <div class="country-bar-header">
+          <span class="country-bar-title" data-i18n="results.geoBarTitle">Country Distribution</span>
+          <span class="country-bar-stats" id="country-bar-stats"></span>
+        </div>
+        <div class="country-bar" id="country-distribution-bar"></div>
+      </div>
+
+      <!-- Floating Selection Action Bar -->
+      <div class="floating-selection-bar hidden" id="selection-action-bar" role="region" data-i18n-aria-label="results.selectedRegion" aria-label="Actions for selected proxies">
+        <div class="selection-pill" id="selection-count">Selected: 0</div>
+        <div class="selection-actions">
+          <button type="button" class="button light chip" id="action-copy-selected" data-i18n="results.copySelected">Copy Selected</button>
+          <button type="button" class="button light chip" id="action-export-selected" data-i18n="results.exportSelected">Download Selected</button>
+          <button type="button" class="button danger chip" id="action-ban-selected" data-i18n="results.banSelected">Add to Denylist</button>
+          <button type="button" class="button text chip" id="action-clear-selection" data-i18n="results.clearSelection">Clear</button>
+        </div>
+      </div>
+
+      <!-- Main Results Table (Sticky thead, 38px compact rows) -->
+      <section class="card results-card table-focus-card">
+        <div class="table-wrap">
+          <table class="results-table" id="result-table">
+            <thead>
+              <tr>
+                <th class="th-check"><input type="checkbox" id="select-all-proxies" title="Select all proxies on this page" data-i18n-title="results.selectAll" aria-label="Select all proxies on this page" data-i18n-aria-label="results.selectAll"></th>
+                <th class="th-num">#</th>
+                <th class="th-proxy" data-i18n="col.proxy">Proxy</th>
+                <th class="th-score" data-i18n="col.quality">Quality</th>
+                <th class="th-latency" data-i18n="col.latency">Latency</th>
+                <th class="th-jitter" data-i18n="col.jitter">Jitter</th>
+                <th class="th-speed" data-i18n="col.mbps" data-i18n-title="col.mbpsHint" title="Download speed from the speed test">Mbit/s</th>
+                <th class="th-success" data-i18n="col.success">Success</th>
+                <th class="th-uptime" data-i18n="col.uptime" data-i18n-title="col.uptimeHint" title="Passed re-checks / all checks">Uptime</th>
+                <th class="th-clean" data-i18n="col.cleanliness">Cleanliness</th>
+                <th class="th-anon" data-i18n="col.anonymity">Anonymity</th>
+                <th class="th-country" data-i18n="col.country">Country</th>
+                <th class="th-provider" data-i18n="col.provider">Provider</th>
+                <th class="th-actions"></th>
+              </tr>
+            </thead>
+            <tbody id="result-rows">
+              <tr><td colspan="14" class="empty">No results yet. Start a check on the first tab.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Compact Pagination Footer -->
+        <div class="pagination compact-pagination">
+          <div class="result-total-pill" id="result-total">0 matching</div>
+          <div class="pagination-nav">
+            <button class="button light nav-page-btn" id="prev" disabled aria-label="Previous page">←</button>
+            <div class="page-badge" id="page-number">1 / 1</div>
+            <button class="button light nav-page-btn" id="next" disabled aria-label="Next page">→</button>
+          </div>
+        </div>
+      </section>
+    </section>
+
+
+    <!-- Page: Gateway Command Center -->
+    <section class="page" id="page-gateway">
+      <div class="page-heading">
+        <div>
+          <div class="eyebrow" data-i18n="gateway.title">Rotating Proxy Gateway</div>
+          <h1 data-i18n="gateway.heading">Local Rotating Proxy Gateway</h1>
+          <p data-i18n="gateway.lead">Single local endpoint 127.0.0.1:8899 that rotates every new connection through your pool of verified proxies.</p>
+        </div>
+        <button class="button light" id="copy-gateway" disabled>
+          <span class="btn-icon">📋</span>
+          <span class="btn-text" data-i18n="gateway.copy">Copy address</span>
+        </button>
+      </div>
+
+      <!-- Unified Command Center Hero Card -->
+      <div class="gateway-unified-card">
+        <div class="gateway-top-bar">
+          <div style="display: flex; align-items: center; gap: 14px; flex-wrap: wrap;">
+            <div class="gw-live-status-pill">
+              <span class="status-pulse-large" style="width: 10px; height: 10px;"></span>
+              <span class="gateway-status-badge" data-i18n="gateway.online">Online</span>
+            </div>
+            <div class="gw-endpoint-box">
+              <code id="gateway-address">—</code>
+              <button type="button" class="button light chip copy-action-btn" id="copy-gateway-hero" title="Copy endpoint" disabled>
+                <span class="btn-icon">📋</span>
+                <span class="btn-text" data-i18n="api.copy">Copy</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="gw-metrics-pair">
+            <div class="gw-metric-item">
+              <span class="stat-number" id="gw-pool-size">0</span>
+              <span class="stat-label" data-i18n="monitor.proxiesFound">Pool Size</span>
+            </div>
+            <div class="gw-metric-item">
+              <span class="stat-number" id="gw-conns-size">0</span>
+              <span class="stat-label" data-i18n="group.network">Active Conns</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Gateway Stats Banner (Active when gateway has connections) -->
+        <div class="api-line hidden" id="gateway-line" style="margin-top: 12px;">
+          <span data-i18n="gateway.label">Rotating proxy:</span>
+          <a class="button chip" id="telegram-gateway" aria-disabled="true" data-i18n="gateway.telegram">Telegram</a>
+          <span class="gateway-stats" id="gateway-stats"></span>
+        </div>
+
+        <!-- Split View: Config Tabs + Mobile QR Box -->
+        <div class="gw-center-split">
+          <!-- Left: Quick Client Config Switchers -->
+          <div class="gateway-tabs-wrap">
+            <div class="gateway-tabs-nav" style="margin-bottom: 12px;">
+              <button type="button" class="gw-tab-btn active" data-gw-tab="tg" data-i18n="gateway.tabTelegram">Telegram</button>
+              <button type="button" class="gw-tab-btn" data-gw-tab="singbox">sing-box</button>
+              <button type="button" class="gw-tab-btn" data-gw-tab="clash">Clash</button>
+              <button type="button" class="gw-tab-btn" data-gw-tab="curl" data-i18n="gateway.tabCurl">cURL</button>
+              <button type="button" class="gw-tab-btn" data-gw-tab="python" data-i18n="gateway.tabPython">Python</button>
+              <button type="button" class="gw-tab-btn" data-gw-tab="browser" data-i18n="gateway.tabBrowser">Browser</button>
+            </div>
+
+            <!-- Tab: Telegram -->
+            <div class="gw-tab-content active" id="gw-tab-tg">
+              <div style="display: flex; flex-direction: column; gap: 10px;">
+                <p data-i18n="gateway.hint">Set 127.0.0.1:8899 as an HTTP or SOCKS5 proxy anywhere. Every TCP connection automatically rotates through the best working proxy; UDP is not supported.</p>
+                <div>
+                  <a class="button primary tg-connect-big" id="gw-tg-link" target="_blank" rel="noopener" aria-disabled="true">
+                    <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
+                      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm4.64 6.8c-.15 1.58-.8 5.42-1.13 7.19-.14.75-.42 1-.68 1.03-.58.05-1.02-.38-1.58-.75-.88-.58-1.38-.94-2.23-1.5-.99-.65-.35-1.01.22-1.59.15-.15 2.71-2.48 2.76-2.69a.2.2 0 00-.05-.18c-.06-.05-.14-.03-.21-.02-.09.02-1.49.95-4.22 2.79-.4.27-.76.41-1.08.4-.36-.01-1.04-.2-1.55-.37-.63-.2-1.12-.31-1.08-.66.02-.18.27-.36.75-.55 2.92-1.27 4.86-2.11 5.83-2.51 2.78-1.16 3.35-1.36 3.73-1.36.08 0 .27.02.39.12.1.08.13.19.14.27-.01.06.01.24 0 .38z"/>
+                    </svg>
+                    <span data-i18n="gateway.openTelegram">Open in Telegram Desktop</span>
+                  </a>
+                </div>
+              </div>
+            </div>
+
+            <!-- Tab: sing-box -->
+            <div class="gw-tab-content" id="gw-tab-singbox">
+              <div style="display: flex; flex-direction: column; gap: 10px;">
+                <p data-i18n="mobile.singboxDesc">Client config with automatic proxy group and URLTest health checks.</p>
+                <div style="display: flex; gap: 8px;">
+                  <button class="button primary" id="btn-copy-singbox" data-i18n="mobile.copyConfig">Copy Config</button>
+                  <button class="button light download-chip" data-download="singbox.json" disabled data-i18n="mobile.downloadConfig">Download File</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Tab: Clash -->
+            <div class="gw-tab-content" id="gw-tab-clash">
+              <div style="display: flex; flex-direction: column; gap: 10px;">
+                <p data-i18n="mobile.clashDesc">Fail-closed URLTest group with fastest-latency selection.</p>
+                <div style="display: flex; gap: 8px;">
+                  <button class="button primary" id="btn-copy-clash" data-i18n="mobile.copyConfig">Copy Config</button>
+                  <button class="button light download-chip" data-download="clash.yaml" disabled data-i18n="mobile.downloadConfig">Download File</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Tab: cURL -->
+            <div class="gw-tab-content" id="gw-tab-curl">
+              <div class="code-snippet-box">
+                <pre><code># SOCKS5 rotation
+curl -x socks5h://127.0.0.1:8899 https://api.ipify.org
+
+# HTTP rotation
+curl -x http://127.0.0.1:8899 https://api.ipify.org</code></pre>
+                <button class="button light chip copy-code-btn" data-copy-text="curl -x socks5h://127.0.0.1:8899 https://api.ipify.org" data-i18n="gateway.copyCode">Copy Code</button>
+              </div>
+            </div>
+
+            <!-- Tab: Python -->
+            <div class="gw-tab-content" id="gw-tab-python">
+              <div class="code-snippet-box">
+                <pre><code>import httpx
+
+with httpx.Client(proxy="socks5://127.0.0.1:8899") as client:
+    response = client.get("https://api.ipify.org")
+    print("Rotated IP:", response.text)</code></pre>
+                <button class="button light chip copy-code-btn" data-copy-text='import httpx&#10;with httpx.Client(proxy="socks5://127.0.0.1:8899") as client:&#10;    print(client.get("https://api.ipify.org").text)' data-i18n="gateway.copyCode">Copy Code</button>
+              </div>
+            </div>
+
+            <!-- Tab: Browser -->
+            <div class="gw-tab-content" id="gw-tab-browser">
+              <div class="browser-guide-card">
+                <p data-i18n="gateway.hint">Set it as an HTTP or SOCKS5 proxy anywhere. Every TCP connection goes through the next working proxy; UDP is not supported.</p>
+                <div class="endpoint-specs">
+                  <div><strong>Host:</strong> <code>127.0.0.1</code></div>
+                  <div><strong>Port:</strong> <code>8899</code></div>
+                  <div><strong>Protocol:</strong> <code>SOCKS5 / HTTP</code></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Right: Telegram Mobile QR Sidebar -->
+          <div class="gw-qr-sidebar">
+            <span class="qr-label" data-i18n="gateway.qrHint">Telegram Mobile QR:</span>
+            <div class="qr-container" id="gw-tg-qr"></div>
+            <small style="font-size: 11px; color: var(--muted);">Scan in Telegram Mobile</small>
+          </div>
+        </div>
+      </div>
+
+      <!-- Local API Box -->
+      <div class="card api-card" id="api-line">
+        <div class="api-card-row">
+          <span class="api-method-tag">GET</span>
+          <span class="api-title-text" data-i18n="api.label">API for your programs:</span>
+          <code id="api-example">http://127.0.0.1:8765/random?protocol=socks5&amp;format=txt</code>
+          <button class="button chip copy-action-btn" id="copy-api">
+            <span class="btn-icon">📋</span>
+            <span class="btn-text" data-i18n="api.copy">Copy</span>
+          </button>
+        </div>
+        <small class="api-hint" data-i18n="api.hint">Returns the latest export, filtered by protocol, country, latency and anonymity.</small>
       </div>
     </section>
 
-    <section class="page" id="page-results"><div class="page-heading"><div><div class="eyebrow" data-i18n="results.eyebrow">SELECTION WITH CLEANLINESS CHECK</div><h1 data-i18n="results.title">Proxy ranking</h1><p id="result-context">Matching addresses will appear here after a check.</p></div><button class="button light" id="refresh-results" data-i18n="results.refresh">Refresh table</button></div><section class="card"><div class="results-toolbar"><label><span data-i18n="results.order">Order</span><select id="result-sort"><option value="recommended" data-i18n="results.byRecommended">Recommended</option><option value="quality" data-i18n="results.byQuality">By quality</option><option value="speed" data-i18n="results.bySpeed">By speed</option><option value="stability" data-i18n="results.byStability">By stability</option><option value="uptime" data-i18n="results.byUptime">By uptime</option><option value="bandwidth" data-i18n="results.byBandwidth">By bandwidth</option></select></label><label><span data-i18n="results.min">Success rate for each service</span><select id="result-min"><option value="0.6666666666666666" data-i18n="results.minTwoThirds">At least ⅔</option><option value="1" data-i18n="results.minAll">All attempts</option><option value="0" data-i18n="results.minOne">At least 1</option></select></label><label><span data-i18n="anon.min">Minimum anonymity</span><select id="result-anon"><option value="any" data-i18n="anon.any">Any level</option><option value="anonymous" data-i18n="anon.minAnonymous">Anonymous or elite</option><option value="elite" data-i18n="anon.minElite">Elite only</option></select></label><label><span data-i18n="results.top">How many to export</span><input type="number" id="result-top" value="0" min="0"><small data-i18n="results.topHint">0 — everything that passed</small></label><label><span data-i18n="filter.protocol">Protocol</span><select id="result-protocol"><option value="all" data-i18n="filter.allProtocols">All protocols</option><option value="http">HTTP</option><option value="https">HTTPS</option><option value="socks4">SOCKS4</option><option value="socks5">SOCKS5</option></select></label><label><span data-i18n="filter.maxLatency">Max latency, ms</span><input type="number" id="result-max-latency" min="0" max="600000" step="50" value="0"><small data-i18n="filter.maxLatencyHint">0 — no limit</small></label><label><span data-i18n="geo.countries">Countries</span><input id="result-country" spellcheck="false" autocomplete="off" placeholder="DE, NL"></label><label><span data-i18n="provider.filter">Providers</span><select id="result-hosting"><option value="" data-i18n="provider.all">All providers</option><option value="hide" data-i18n="provider.hide">Hide hosting / data centres</option></select></label><button class="button primary" id="export" data-i18n="results.export">Build export</button></div><div class="export-note" id="export-note" data-i18n="results.exportNote">Exports are built after a check or with the button. Table filters alone do not change the files.</div><div class="downloads"><span data-i18n="results.downloads">Download ready files:</span><button class="button chip" data-download="proxies.txt" disabled>TXT ↓</button><button class="button chip" data-download="ranked.csv" disabled>CSV ↓</button><button class="button chip" data-download="ranked.json" disabled>JSON ↓</button><button class="button chip" data-download="http.txt" disabled title="host:port">HTTP ↓</button><button class="button chip" data-download="https.txt" disabled title="host:port">HTTPS ↓</button><button class="button chip" data-download="socks4.txt" disabled title="host:port">SOCKS4 ↓</button><button class="button chip" data-download="socks5.txt" disabled title="host:port">SOCKS5 ↓</button><button class="button chip" data-download="hostport.txt" disabled title="host:port">host:port ↓</button><button class="button chip" data-download="proxychains.txt" disabled title="proxychains.conf">proxychains ↓</button><button class="button chip" data-download="proxy.pac" disabled data-i18n-title="download.pacHint" title="Browser auto-config: the 10 best proxies in order">PAC ↓</button><button class="button chip" data-download="clash.yaml" disabled data-i18n-title="download.clashHint" title="Clash / Mihomo config with automatic fastest-proxy selection">Clash ↓</button><button class="button chip" data-download="singbox.json" disabled title="sing-box config">sing-box ↓</button></div><div class="breakdown hidden" id="breakdown"></div><div class="api-line hidden" id="api-line"><span data-i18n="api.label">API for your programs:</span><code id="api-example"></code><button class="button chip" id="copy-api" data-i18n="api.copy">Copy</button><small data-i18n="api.hint">Returns the latest export, filtered by protocol, country, latency and anonymity. See README → Local API.</small></div><div class="api-line hidden" id="gateway-line"><span data-i18n="gateway.label">Rotating proxy for browsers and apps:</span><code id="gateway-address"></code><button class="button chip" id="copy-gateway" data-i18n="api.copy">Copy</button><a class="button chip" id="telegram-gateway" href="tg://socks?server=127.0.0.1&amp;port=8899" data-i18n="gateway.telegram">Use in Telegram</a><span id="gateway-stats"></span><small data-i18n="gateway.hint">Set it as an HTTP or SOCKS5 proxy anywhere. Every new connection goes through the next working proxy from the latest export; failed ones are skipped automatically.</small></div><div class="result-tools"><input type="search" id="result-search" data-i18n-placeholder="filter.searchPlaceholder" placeholder="Search by address or port" spellcheck="false"><button class="button light" id="copy-page" data-i18n="filter.copyPage">Copy this page</button></div><div class="table-wrap"><table><thead><tr><th>#</th><th data-i18n="col.proxy">Proxy</th><th data-i18n="col.quality">Quality</th><th data-i18n="col.latency">Latency</th><th data-i18n="col.jitter">Jitter</th><th data-i18n="col.mbps" data-i18n-title="col.mbpsHint" title="Download speed from the speed test">Mbit/s</th><th data-i18n="col.success">Success</th><th data-i18n="col.uptime" data-i18n-title="col.uptimeHint" title="Passed re-checks / all checks">Uptime</th><th data-i18n="col.cleanliness">Cleanliness</th><th data-i18n="col.anonymity">Anonymity</th><th data-i18n="col.country">Country</th><th data-i18n="col.provider">Provider</th><th></th></tr></thead><tbody id="result-rows"><tr><td colspan="13" class="empty">No results yet. Start a check on the first tab.</td></tr></tbody></table></div><div class="pagination"><span id="result-total">0 matching</span><div><button class="button light" id="prev" disabled>←</button><span id="page-number">1</span><button class="button light" id="next" disabled>→</button></div></div></section><p class="hint" data-i18n="results.footnote">Latency is the median of a full successful request, including connection and TLS. Success is the worst value among the selected services. “Cleanliness” shows the local denylist and DNSBL verdict. Click “Details” to see every attempt.</p></section>
 
-    <section class="page" id="page-sources"><div class="page-heading"><div><div class="eyebrow" data-i18n="sources.eyebrow">TRANSPARENT COLLECTION</div><h1 data-i18n="sources.title">Sources and your own lists</h1><p data-i18n="sources.lead">Every unique address from the connected lists goes into the database. No first-N-lines limit.</p></div><button class="button light" id="save-sources" data-i18n="common.saveSettings">Save settings</button></div><div class="two-columns"><section class="card"><h2 data-i18n="sources.public">Public lists</h2><label class="check-label"><input type="checkbox" id="use_sources" checked> <span data-i18n="sources.use">Load proxies from sources</span></label><label><span data-i18n="sources.list">Sources: URL or protocol + URL, one per line</span><textarea id="sources" rows="14" spellcheck="false" placeholder="https://example.org/proxies.txt"></textarea></label><div class="field-grid"><label><span data-i18n="sources.timeout">Source timeout, seconds</span><input id="source_timeout" type="number" value="60" min="1" max="3600"></label><div class="align-end"><button id="reset-sources" class="button light" data-i18n="sources.reset">Built-in sources</button></div></div><div class="button-row"><button id="prune-sources" class="button light" data-i18n="sources.prune" data-i18n-title="sources.pruneHint" title="Removes lists that gave at least 20 addresses in the last export and none of them worked.">Remove dead sources</button><button id="update-sources" class="button light" data-i18n="sources.update" data-i18n-title="sources.updateHint" title="Adds lists published on GitHub after this version.">Get new sources</button></div><p class="hint" data-i18n="sources.hint">A plain URL is an HTTP list. For SOCKS4 / SOCKS5: socks4 URL / socks5 URL. Unknown protocol: auto URL. Any web page or CSV: text URL. For a paginated JSON API: geonode URL. Errors and incomplete downloads are shown below. Size limits and safe address checks are on by default; local mock sources are available only through a CLI flag.</p></section><section class="card"><h2 data-i18n="own.title">Add your own list</h2><p class="hint" data-i18n="own.hint">Paste addresses or choose a TXT file. Duplicates are merged automatically.</p><label class="file-drop"><span data-i18n="own.file">↑ Choose TXT file</span><input type="file" id="import-file" accept=".txt,.list,text/plain"></label><label><span data-i18n="own.list">One proxy per line</span><textarea id="proxies" rows="12" spellcheck="false" placeholder="11.0.0.1:8080&#10;socks5://11.0.0.2:1080"></textarea></label><label class="check-label"><input type="checkbox" id="exclude_hosting"> <span data-i18n="provider.exclude">Skip hosting providers and data centres (needs the provider database)</span></label><label class="check-label"><input type="checkbox" id="detect_protocols"> <span data-i18n="own.detect">Try HTTP, SOCKS4 and SOCKS5 for addresses without a protocol</span></label><p class="hint" data-i18n="own.note">HTTP / CONNECT, SOCKS4 and SOCKS5. Public IPs only, without login or password. The database accumulates: disabling sources does not remove previously collected addresses.</p><button class="button primary" id="collect" data-i18n="own.collect">Collect addresses only</button></section></div><section class="card geo-card"><div class="card-title"><h2 data-i18n="geo.title">Country database</h2><span id="geo-status" class="badge subtle" data-i18n="geo.missing">Not downloaded</span></div><p class="hint" data-i18n="geo.hint">Needed for country filters, the Country and Provider columns and hiding hosting providers. The free DB-IP Country Lite and ASN Lite files are downloaded once into the local data folder; lookups then work offline. Geonode sources already include countries.</p><div class="button-row"><button class="button light" id="geo-update" data-i18n="geo.download">Download / update</button></div><p class="hint geo-attribution"><a href="https://db-ip.com" target="_blank" rel="noopener" data-i18n="geo.attribution">IP geolocation by DB-IP</a> · CC BY 4.0</p></section><section class="card"><div class="card-title"><h2 data-i18n="report.title">Source report</h2><span id="sources-status" class="badge subtle">No downloads yet</span></div><div class="table-wrap"><table><thead><tr><th data-i18n="col.source">Source</th><th data-i18n="col.lines">Lines</th><th data-i18n="col.rejected">Rejected</th><th data-i18n="col.blocked">Blocked</th><th data-i18n="col.download">Download</th><th data-i18n="col.working" data-i18n-title="col.workingHint" title="Matching / checked in the last export">Working</th></tr></thead><tbody id="source-rows"><tr><td colspan="6" class="empty">Results of the last collection will appear here.</td></tr></tbody></table></div></section></section>
+    <!-- Page: Mobile & Clients Hub -->
+    <section class="page" id="page-mobile">
+      <div class="page-heading">
+        <div>
+          <div class="eyebrow" data-i18n="results.groupClients">Client Configs</div>
+          <h1 data-i18n="mobile.heading">Mobile Profiles &amp; Client Configs</h1>
+          <p data-i18n="mobile.lead">Client configs are fail-closed: an empty or expired pool blocks traffic instead of silently using DIRECT.</p>
+        </div>
+      </div>
 
-    <section class="page" id="page-help"><div class="page-heading"><div><div class="eyebrow" data-i18n="help.eyebrow">QUICK START</div><h1 data-i18n="help.title">From a list to working proxies</h1><p data-i18n="help.lead">Configure once. Come back to checks and results in this window.</p></div></div><div class="help-grid"><section class="card"><span class="step">1</span><h2 data-i18n="help.s1.title">Choose services</h2><p data-i18n="help.s1.p1">Enter the URL of every service you need. A proxy is selected only if it works with all of them. Code 200 is a normal successful response; for APIs that use other codes, specify your own.</p><p data-i18n="help.s1.p2">To guard against placeholder pages, specify text that must appear in the response. Redirects are not followed: use the final URL.</p></section><section class="card"><span class="step">2</span><h2 data-i18n="help.s2.title">Set the request profile</h2><p data-i18n="help.s2.p1">The preset sets only User-Agent and Accept/Accept-Encoding. It is part of the check profile, so changing it creates separate results. Personal values are never added automatically.</p><p data-i18n="help.s2.p2">This is technical identification of the HTTP request, not browser impersonation, TLS/JA3/JA4 masking or a guarantee of anonymity.</p></section><section class="card"><span class="step">3</span><h2 data-i18n="help.s3.title">Check cleanliness</h2><p data-i18n="help.s3.p1">The local denylist matches IPs, CIDRs and exact addresses. DNSBL flags responses from public blacklist zones; in strict mode an unknown response is not treated as clean.</p><p data-i18n="help.s3.p2">DNSBL is enabled manually and uses DNS queries only. The list and zones are stored locally in data/.</p></section><section class="card"><span class="step">4</span><h2 data-i18n="help.s4.title">Pick the best and download</h2><p data-i18n="help.s4.p1">“By speed” puts the lowest latency first. “By quality” balances success rate, speed and jitter. Enter any number; 0 keeps every matching proxy.</p><p data-i18n="help.s4.p2">TXT contains the addresses, CSV the ranking table, JSON detailed request results and safe cleanliness statuses.</p></section><section class="card"><h2 data-i18n="help.s5.title">Good to know</h2><p data-i18n="help.s5.p1">This measures availability and response time, not throughput in Mbit/s. A public proxy may stop working after the check: use “Recheck” for fresh results.</p><p data-i18n="help.s5.p2">New URLs, measurement parameters, request profile or cleanliness policy create a separate profile. Settings and history are stored locally. Closing the tab does not stop the application; to exit, press Ctrl+C in its terminal window.</p><div class="button-row"><button class="button light" id="export-settings" data-i18n="settings.export">Save settings to a file</button><label class="button light" data-i18n-title="settings.importHint" title="Replaces the current settings with a saved file"><span data-i18n="settings.import">Load settings from a file</span><input type="file" id="import-settings" accept=".json,application/json" hidden></label></div><button class="button danger full" id="clear-data" data-i18n="help.clear">Delete local results</button><p class="hint" data-i18n="help.clearHint">Deletes the database, profiles and exports but keeps settings and the denylist. Local results cannot be restored.</p></section></div></section>
-    <footer><span>PROXY WORKBENCH <b id="product-version">__PRODUCT_VERSION__</b></span><span data-i18n="footer.tagline">Full sweep · Repeated measurements · Your services</span></footer>
+      <div class="mobile-grid">
+        <!-- sing-box Card -->
+        <div class="card mobile-client-card">
+          <div class="card-title">
+            <div class="client-title-wrap">
+              <span class="client-icon">📦</span>
+              <div>
+                <h2 data-i18n="mobile.singboxTitle">sing-box (iOS &amp; Android)</h2>
+                <small data-i18n="mobile.singboxDesc">Client config with automatic proxy group.</small>
+              </div>
+            </div>
+          </div>
+          <div class="client-features-wrap">
+            <span class="client-feature-tag">JSON Outbounds</span>
+            <span class="client-feature-tag">URLTest Failover</span>
+            <span class="client-feature-tag">TUN Mode</span>
+            <span class="client-feature-tag">iOS · Android · Mac</span>
+          </div>
+          <div class="client-actions-row">
+            <button class="button primary" data-copy-config="singbox.json" data-i18n="mobile.copyConfig">Copy Config</button>
+            <button class="button light download-chip" data-download="singbox.json" disabled data-i18n="mobile.downloadConfig">Download File</button>
+          </div>
+        </div>
+
+        <!-- Clash Card -->
+        <div class="card mobile-client-card">
+          <div class="card-title">
+            <div class="client-title-wrap">
+              <span class="client-icon">🐱</span>
+              <div>
+                <h2 data-i18n="mobile.clashTitle">Clash / Mihomo</h2>
+                <small data-i18n="mobile.clashDesc">Fail-closed URLTest group with fastest-latency selection.</small>
+              </div>
+            </div>
+          </div>
+          <div class="client-features-wrap">
+            <span class="client-feature-tag">YAML Proxy Group</span>
+            <span class="client-feature-tag">Fastest Latency</span>
+            <span class="client-feature-tag">Fail-Closed</span>
+            <span class="client-feature-tag">Windows · Android · Linux</span>
+          </div>
+          <div class="client-actions-row">
+            <button class="button primary" data-copy-config="clash.yaml" data-i18n="mobile.copyConfig">Copy Config</button>
+            <button class="button light download-chip" data-download="clash.yaml" disabled data-i18n="mobile.downloadConfig">Download File</button>
+          </div>
+        </div>
+
+        <!-- Telegram Mobile Card -->
+        <div class="card mobile-client-card telegram-mobile-card">
+          <div class="card-title">
+            <div class="client-title-wrap">
+              <span class="client-icon">✈️</span>
+              <div>
+                <h2 data-i18n="mobile.telegramTitle">Telegram Mobile</h2>
+                <small data-i18n="mobile.telegramDesc">Scan QR for instant SOCKS5 setup.</small>
+              </div>
+            </div>
+          </div>
+          <div class="telegram-qr-preview-wrap">
+            <div id="mobile-tg-qr-box" class="qr-container"></div>
+            <a class="button light" id="mobile-tg-btn-link" target="_blank" rel="noopener" aria-disabled="true" data-i18n="gateway.openTelegram">Open in Telegram Desktop</a>
+          </div>
+        </div>
+      </div>
+
+      <!-- Mobile Walkthrough Guide -->
+      <section class="card mobile-guide-card">
+        <h2 data-i18n="mobile.guideTitle">How to setup on Mobile</h2>
+        <div class="guide-steps-grid">
+          <div class="guide-step-card">
+            <span class="step-badge">iOS</span>
+            <p data-i18n="mobile.guideIos">1. Install sing-box or Shadowrocket from App Store. 2. Import config or scan QR code. 3. Enable TUN VPN mode.</p>
+          </div>
+          <div class="guide-step-card">
+            <span class="step-badge">Android</span>
+            <p data-i18n="mobile.guideAndroid">1. Install sing-box or Hiddify from Google Play. 2. Add profile via QR or file. 3. Connect.</p>
+          </div>
+        </div>
+      </section>
+    </section>
+
+<section class="page" id="page-sources">
+      <div class="page-heading">
+        <div>
+          <div class="eyebrow" data-i18n="sources.eyebrow">TRANSPARENT COLLECTION</div>
+          <h1 data-i18n="sources.title">Sources and your own lists</h1>
+          <p data-i18n="sources.lead">Every unique address from the connected lists goes into the database. No first-N-lines limit.</p>
+        </div>
+        <button class="button light" id="save-sources" data-i18n="common.saveSettings">Save settings</button>
+      </div>
+
+      <div class="two-columns">
+        <!-- Public Lists -->
+        <section class="card">
+          <h2 data-i18n="sources.public">Public lists</h2>
+          <label class="check-label">
+            <input type="checkbox" id="use_sources" checked>
+            <span data-i18n="sources.use">Load proxies from sources</span>
+          </label>
+          <div class="code-editor-frame">
+            <div class="code-editor-header">
+              <div class="code-editor-title-wrap">
+                <span class="code-editor-badge">SOURCES</span>
+                <span class="code-editor-title" data-i18n="sources.list">Sources: URL or protocol + URL, one per line</span>
+              </div>
+              <span class="code-editor-meta" id="sources-line-count">0 lines</span>
+            </div>
+            <div class="code-editor-body">
+              <div class="code-editor-gutter" id="sources-gutter" aria-hidden="true">1</div>
+              <textarea id="sources" rows="14" spellcheck="false" placeholder="https://example.org/proxies.txt" class="code-editor-input"></textarea>
+            </div>
+          </div>
+          <div class="field-grid">
+            <label>
+              <span data-i18n="sources.timeout">Source timeout, seconds</span>
+              <input id="source_timeout" type="number" value="60" min="1" max="3600">
+            </label>
+            <div class="align-end">
+              <button id="reset-sources" class="button light" data-i18n="sources.reset">Built-in sources</button>
+            </div>
+          </div>
+          <div class="button-row">
+            <button id="prune-sources" class="button light" data-i18n="sources.prune" data-i18n-title="sources.pruneHint" title="Removes lists that gave at least 20 addresses in the last export and none of them worked.">Remove dead sources</button>
+            <button id="update-sources" class="button light" data-i18n="sources.update" data-i18n-title="sources.updateHint" title="Adds lists published on GitHub after this version.">Get new sources</button>
+          </div>
+          <p class="hint" data-i18n="sources.hint">A plain URL is an HTTP list. For SOCKS4 / SOCKS5: socks4 URL / socks5 URL. Unknown protocol: auto URL. Any web page or CSV: text URL. For a paginated JSON API: geonode URL. Errors and incomplete downloads are shown below. Size limits and safe address checks are on by default; local mock sources are available only through a CLI flag.</p>
+        </section>
+
+        <!-- Own Lists -->
+        <section class="card">
+          <h2 data-i18n="own.title">Add your own list</h2>
+          <p class="hint" data-i18n="own.hint">Paste addresses or choose a TXT file. Duplicates are merged automatically.</p>
+          <label class="file-drop">
+            <svg class="file-drop-icon" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="17 8 12 3 7 8"/>
+              <line x1="12" y1="3" x2="12" y2="15"/>
+            </svg>
+            <span class="file-drop-title" data-i18n="own.file">↑ Choose TXT file</span>
+            <small class="file-drop-hint" data-i18n="sources.fileDropHint">or drag and drop file here (.txt, .list)</small>
+            <input type="file" id="import-file" accept=".txt,.list,text/plain">
+          </label>
+          <div class="code-editor-frame">
+            <div class="code-editor-header">
+              <div class="code-editor-title-wrap">
+                <span class="code-editor-badge">PROXIES</span>
+                <span class="code-editor-title" data-i18n="own.list">One proxy per line</span>
+              </div>
+              <span class="code-editor-meta" id="proxies-line-count">0 lines</span>
+            </div>
+            <div class="code-editor-body">
+              <div class="code-editor-gutter" id="proxies-gutter" aria-hidden="true">1</div>
+              <textarea id="proxies" rows="12" spellcheck="false" placeholder="11.0.0.1:8080&#10;socks5://11.0.0.2:1080" class="code-editor-input"></textarea>
+            </div>
+          </div>
+          <label class="check-label">
+            <input type="checkbox" id="exclude_hosting">
+            <span data-i18n="provider.exclude">Skip hosting providers and data centres (needs the provider database)</span>
+          </label>
+          <label class="check-label">
+            <input type="checkbox" id="detect_protocols">
+            <span data-i18n="own.detect">Try HTTP, SOCKS4 and SOCKS5 for addresses without a protocol</span>
+          </label>
+          <p class="hint" data-i18n="own.note">HTTP / CONNECT, SOCKS4 and SOCKS5. Public IPs only, without login or password. The database accumulates: disabling sources does not remove previously collected addresses.</p>
+          <button class="button primary" id="collect" data-i18n="own.collect">Collect addresses only</button>
+        </section>
+      </div>
+
+      <!-- GeoIP Card -->
+      <section class="card geo-card">
+        <div class="card-title">
+          <div class="geo-title-wrap">
+            <div class="geo-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10"/>
+                <line x1="2" y1="12" x2="22" y2="12"/>
+                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+              </svg>
+            </div>
+            <h2 data-i18n="geo.title">Country database</h2>
+          </div>
+          <span id="geo-status" class="badge subtle" data-i18n="geo.missing">Not downloaded</span>
+        </div>
+        <p class="hint" data-i18n="geo.hint">Needed for country filters, the Country and Provider columns and hiding hosting providers. The free DB-IP Country Lite and ASN Lite files are downloaded once into the local data folder; lookups then work offline. Geonode sources already include countries.</p>
+        <div class="button-row geo-btn-row">
+          <button class="button light" id="geo-update">
+            <span class="btn-spinner hidden" aria-hidden="true"></span>
+            <span class="btn-label" data-i18n="geo.download">Download / update</span>
+          </button>
+          <a href="https://db-ip.com" target="_blank" rel="noopener" class="button chip geo-db-link" title="DB-IP Geolocation Database">
+            <span>DB-IP</span>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+          </a>
+        </div>
+        <p class="hint geo-attribution">
+          <a href="https://db-ip.com" target="_blank" rel="noopener" data-i18n="geo.attribution">IP geolocation by DB-IP</a> · CC BY 4.0
+        </p>
+      </section>
+
+      <!-- Source Report -->
+      <section class="card">
+        <div class="card-title">
+          <h2 data-i18n="report.title">Source report</h2>
+          <span id="sources-status" class="badge subtle">No downloads yet</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th data-i18n="col.source">Source</th>
+                <th data-i18n="col.lines">Lines</th>
+                <th data-i18n="col.rejected">Rejected</th>
+                <th data-i18n="col.blocked">Blocked</th>
+                <th data-i18n="col.download">Download</th>
+                <th data-i18n="col.working" data-i18n-title="col.workingHint" title="Matching / checked in the last export">Working</th>
+              </tr>
+            </thead>
+            <tbody id="source-rows">
+              <tr><td colspan="6" class="empty">Results of the last collection will appear here.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
+            <!-- Page: How it works / Tools -->
+
+<section class="page" id="page-help">
+      <div class="help-hero-banner">
+        <div class="help-hero-content">
+          <div class="help-hero-badge">
+            <span class="sparkle-icon">✨</span>
+            <span data-i18n="help.eyebrow">QUICK START · USER GUIDE</span>
+          </div>
+          <h1 class="help-hero-title" data-i18n="help.title">From a list to working proxies</h1>
+          <p class="help-hero-lead" data-i18n="help.lead">Configure once. Come back to checks and results in this window.</p>
+          <div class="help-hero-actions">
+            <button type="button" class="button primary help-action-btn" data-go="scan">
+              <span class="btn-icon">🚀</span>
+              <span data-i18n="help.btnScan">Start proxy search</span>
+            </button>
+            <button type="button" class="button light help-action-btn" data-go="gateway">
+              <span class="btn-icon">🔄</span>
+              <span data-i18n="help.btnGateway">Local Gateway</span>
+            </button>
+            <button type="button" class="button light help-action-btn" data-go="mobile">
+              <span class="btn-icon">📱</span>
+              <span data-i18n="help.btnMobile">Mobile &amp; Clients</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Interactive 4-Step Pipeline -->
+      <div class="help-pipeline-card card">
+        <div class="pipeline-header">
+          <div class="pipeline-header-title">
+            <span class="pipeline-badge" data-i18n="help.pipelineBadge">WORKFLOW</span>
+            <span class="pipeline-title" data-i18n="help.flowTitle">How it works: 4 simple steps</span>
+          </div>
+          <span class="pipeline-sub" data-i18n="help.flowSubtitle">Automatic pipeline from discovery to connection</span>
+        </div>
+        <div class="pipeline-steps">
+          <div class="pipeline-step-item" data-go="sources" role="button" tabindex="0">
+            <div class="pipeline-step-top">
+              <span class="pipeline-step-badge">1</span>
+              <span class="pipeline-step-icon">📥</span>
+            </div>
+            <strong data-i18n="help.flow1">1. Collection</strong>
+            <span data-i18n="help.flow1Desc">Thousands of free proxies</span>
+            <span class="pipeline-arrow" aria-hidden="true">→</span>
+          </div>
+          <div class="pipeline-step-item" data-go="scan" role="button" tabindex="0">
+            <div class="pipeline-step-top">
+              <span class="pipeline-step-badge">2</span>
+              <span class="pipeline-step-icon">🎯</span>
+            </div>
+            <strong data-i18n="help.flow2">2. Your Services</strong>
+            <span data-i18n="help.flow2Desc">YouTube, Telegram, API</span>
+            <span class="pipeline-arrow" aria-hidden="true">→</span>
+          </div>
+          <div class="pipeline-step-item" data-go="scan" role="button" tabindex="0">
+            <div class="pipeline-step-top">
+              <span class="pipeline-step-badge">3</span>
+              <span class="pipeline-step-icon">⚡</span>
+            </div>
+            <strong data-i18n="help.flow3">3. Smart Check</strong>
+            <span data-i18n="help.flow3Desc">Speed, ping, DNSBL clean</span>
+            <span class="pipeline-arrow" aria-hidden="true">→</span>
+          </div>
+          <div class="pipeline-step-item" data-go="gateway" role="button" tabindex="0">
+            <div class="pipeline-step-top">
+              <span class="pipeline-step-badge">4</span>
+              <span class="pipeline-step-icon">🚀</span>
+            </div>
+            <strong data-i18n="help.flow4">4. Ready to Use</strong>
+            <span data-i18n="help.flow4Desc">1-click Gateway or export</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 4 Rich Feature Cards -->
+      <div class="help-features-grid">
+        <section class="card help-feature-card">
+          <div class="help-card-head">
+            <div class="help-step-icon-wrap icon-cyan">🎯</div>
+            <span class="help-step-pill">01</span>
+          </div>
+          <h2 data-i18n="help.s1.title">Choose services</h2>
+          <p data-i18n="help.s1.p1">Enter the URL of every service you need. A proxy is selected only if it works with all of them. Code 200 is a normal successful response; for APIs that use other codes, specify your own.</p>
+          <p class="help-subtext" data-i18n="help.s1.p2">To guard against placeholder pages, specify text that must appear in the response. Redirects are not followed: use the final URL.</p>
+          <ul class="help-checklist">
+            <li>
+              <span class="check-icon">✓</span>
+              <span data-i18n="help.s1.bullet1">Preconfigured presets for popular services in 1 click</span>
+            </li>
+            <li>
+              <span class="check-icon">✓</span>
+              <span data-i18n="help.s1.bullet2">HTTP 200 response &amp; content verification</span>
+            </li>
+            <li>
+              <span class="check-icon">✓</span>
+              <span data-i18n="help.s1.bullet3">Strict matching across all chosen targets</span>
+            </li>
+          </ul>
+          <div class="help-card-footer">
+            <button type="button" class="help-card-link" data-go="scan">
+              <span data-i18n="help.linkServices">Configure services</span>
+              <span class="link-arrow">→</span>
+            </button>
+          </div>
+        </section>
+
+        <section class="card help-feature-card">
+          <div class="help-card-head">
+            <div class="help-step-icon-wrap icon-amber">⚡</div>
+            <span class="help-step-pill">02</span>
+          </div>
+          <h2 data-i18n="help.s2.title">Smart testing &amp; speed</h2>
+          <p data-i18n="help.s2.p1">Checks stability and latency with repeated requests. Filters out proxies that drop connections or respond too slowly.</p>
+          <p class="help-subtext" data-i18n="help.s2.p2">You can also specify a speed test URL to measure real download throughput in Mbit/s for smooth video streaming.</p>
+          <ul class="help-checklist">
+            <li>
+              <span class="check-icon">✓</span>
+              <span data-i18n="help.s2.bullet1">Latency measurement in milliseconds (ms)</span>
+            </li>
+            <li>
+              <span class="check-icon">✓</span>
+              <span data-i18n="help.s2.bullet2">Multiple attempts to filter out unstable proxies</span>
+            </li>
+            <li>
+              <span class="check-icon">✓</span>
+              <span data-i18n="help.s2.bullet3">Real throughput test in Mbit/s</span>
+            </li>
+          </ul>
+          <div class="help-card-footer">
+            <button type="button" class="help-card-link" data-go="scan">
+              <span data-i18n="help.linkCheck">Adjust parameters</span>
+              <span class="link-arrow">→</span>
+            </button>
+          </div>
+        </section>
+
+        <section class="card help-feature-card">
+          <div class="help-card-head">
+            <div class="help-step-icon-wrap icon-emerald">🛡️</div>
+            <span class="help-step-pill">03</span>
+          </div>
+          <h2 data-i18n="help.s3.title">Cleanliness &amp; privacy</h2>
+          <p data-i18n="help.s3.p1">The local denylist matches IPs and subnets. Real-time DNSBL checks verify that proxies are not listed on public spam blacklists.</p>
+          <p class="help-subtext" data-i18n="help.s3.p2">Optional anonymity judge detects whether proxies hide your real IP (Transparent, Anonymous or Elite).</p>
+          <ul class="help-checklist">
+            <li>
+              <span class="check-icon">✓</span>
+              <span data-i18n="help.s3.bullet1">DNSBL real-time spam blacklist checks</span>
+            </li>
+            <li>
+              <span class="check-icon">✓</span>
+              <span data-i18n="help.s3.bullet2">Anonymity level rating (Elite / Anonymous)</span>
+            </li>
+            <li>
+              <span class="check-icon">✓</span>
+              <span data-i18n="help.s3.bullet3">Local subnet and IP denylist filter</span>
+            </li>
+          </ul>
+          <div class="help-card-footer">
+            <button type="button" class="help-card-link" data-go="scan">
+              <span data-i18n="help.linkDenylist">Manage denylist</span>
+              <span class="link-arrow">→</span>
+            </button>
+          </div>
+        </section>
+
+        <section class="card help-feature-card">
+          <div class="help-card-head">
+            <div class="help-step-icon-wrap icon-purple">🔄</div>
+            <span class="help-step-pill">04</span>
+          </div>
+          <h2 data-i18n="help.s4.title">1-Click connection &amp; export</h2>
+          <p data-i18n="help.s4.p1">Sort by speed (lowest latency first) or by quality (balanced stability and speed). Export to TXT, CSV, JSON, PAC or Clash.</p>
+          <p class="help-subtext" data-i18n="help.s4.p2">Or enable the Local Rotating Gateway (127.0.0.1:8899): configure it once in Telegram or your browser, and it rotates working proxies automatically!</p>
+          <ul class="help-checklist">
+            <li>
+              <span class="check-icon">✓</span>
+              <span data-i18n="help.s4.bullet1">Rotating gateway 127.0.0.1:8899</span>
+            </li>
+            <li>
+              <span class="check-icon">✓</span>
+              <span data-i18n="help.s4.bullet2">Instant Telegram &amp; browser connection</span>
+            </li>
+            <li>
+              <span class="check-icon">✓</span>
+              <span data-i18n="help.s4.bullet3">Exports to TXT, CSV, JSON, PAC, Clash, Sing-Box</span>
+            </li>
+          </ul>
+          <div class="help-card-footer">
+            <button type="button" class="help-card-link" data-go="gateway">
+              <span data-i18n="help.linkGateway">Open Gateway</span>
+              <span class="link-arrow">→</span>
+            </button>
+          </div>
+        </section>
+      </div>
+
+      <!-- FAQ Section -->
+      <section class="card help-faq-card">
+        <div class="faq-header">
+          <div>
+            <span class="faq-badge">FAQ</span>
+            <h2 class="faq-title" data-i18n="help.faqTitle">Frequently Asked Questions</h2>
+            <p class="faq-subtitle" data-i18n="help.faqSubtitle">Everything you need to know about proxies and privacy</p>
+          </div>
+        </div>
+        <div class="faq-accordion">
+          <details class="faq-item" open>
+            <summary class="faq-question">
+              <span class="faq-q-text" data-i18n="help.faq1Q">What is a proxy and why do I need it?</span>
+              <span class="faq-chevron" aria-hidden="true">▾</span>
+            </summary>
+            <div class="faq-answer">
+              <p data-i18n="help.faq1A">A proxy acts as an intermediary between your device and the internet. Websites see the proxy's IP address instead of your real IP, allowing you to bypass regional restrictions, access blocked services, and protect your privacy.</p>
+            </div>
+          </details>
+
+          <details class="faq-item">
+            <summary class="faq-question">
+              <span class="faq-q-text" data-i18n="help.faq2Q">What is the difference between HTTP and SOCKS5?</span>
+              <span class="faq-chevron" aria-hidden="true">▾</span>
+            </summary>
+            <div class="faq-answer">
+              <p data-i18n="help.faq2A">HTTP/HTTPS proxies are designed for web browsers and websites. SOCKS5 handles TCP streams and DNS through the proxy. This local gateway does not implement SOCKS5 UDP ASSOCIATE, Telegram calls and games that require UDP are not supported here.</p>
+            </div>
+          </details>
+
+          <details class="faq-item">
+            <summary class="faq-question">
+              <span class="faq-q-text" data-i18n="help.faq3Q">Why do free proxies stop working after some time?</span>
+              <span class="faq-chevron" aria-hidden="true">▾</span>
+            </summary>
+            <div class="faq-answer">
+              <p data-i18n="help.faq3A">Public proxies are hosted on servers worldwide and can be overloaded or restarted. Proxy Workbench includes an automatic Keep-Fresh (Watch) mode that continually re-checks working proxies every few minutes in the background, keeping your pool 100% active!</p>
+            </div>
+          </details>
+
+          <details class="faq-item">
+            <summary class="faq-question">
+              <span class="faq-q-text" data-i18n="help.faq4Q">How does the Local Rotating Gateway (127.0.0.1:8899) work?</span>
+              <span class="faq-chevron" aria-hidden="true">▾</span>
+            </summary>
+            <div class="faq-answer">
+              <p data-i18n="help.faq4A">Instead of copying dozens of proxy addresses manually into your apps, you configure only one address: 127.0.0.1:8899. The gateway automatically routes each new connection through the best verified proxy, instantly switching if any proxy drops.</p>
+            </div>
+          </details>
+
+          <details class="faq-item">
+            <summary class="faq-question">
+              <span class="faq-q-text" data-i18n="help.faq5Q">Where is my data stored and is it private?</span>
+              <span class="faq-chevron" aria-hidden="true">▾</span>
+            </summary>
+            <div class="faq-answer">
+              <p data-i18n="help.faq5A">100% of your data, history, and settings are stored locally on your own computer in the data/ folder. The application is completely offline-first, has no tracking, no cloud telemetry, and sends no personal data anywhere.</p>
+            </div>
+          </details>
+        </div>
+      </section>
+
+      <!-- Balanced 2-Column Storage & Maintenance Section -->
+      <div class="help-storage-grid">
+        <section class="card help-storage-card">
+          <div class="storage-card-head">
+            <span class="storage-icon">💾</span>
+            <div>
+              <h2 data-i18n="help.manageSettings">Settings Management</h2>
+              <p data-i18n="help.manageSettingsDesc">Save your target URLs and check parameters to a JSON file or restore them anytime.</p>
+            </div>
+          </div>
+          <div class="button-row storage-btn-row">
+            <button class="button light" id="export-settings" data-action="export-settings" data-i18n="settings.export">Save settings to a file</button>
+            <label class="button light" data-i18n-title="settings.importHint" title="Replaces the current settings with a saved file">
+              <span data-i18n="settings.import">Load settings from a file</span>
+              <input type="file" id="import-settings" data-action="import-settings" accept=".json,application/json" hidden>
+            </label>
+          </div>
+        </section>
+
+        <section class="card help-storage-card danger-zone">
+          <div class="storage-card-head">
+            <span class="storage-icon danger">🗑️</span>
+            <div>
+              <h2 data-i18n="help.manageData">Storage Maintenance</h2>
+              <p data-i18n="help.manageDataDesc">Clear checked candidates and cache while keeping your settings and custom denylist intact.</p>
+            </div>
+          </div>
+          <button class="button danger full" id="clear-data" data-action="clear-data" data-i18n="help.clear">Delete local results</button>
+          <p class="hint" data-i18n="help.clearHint">Deletes the database, profiles and exports but keeps settings and the denylist. Local results cannot be restored.</p>
+        </section>
+      </div>
+    </section>
+
+<footer>
+      <span>PROXY WORKBENCH <b id="product-version">__PRODUCT_VERSION__</b></span>
+      <span data-i18n="footer.tagline">Full sweep · Repeated measurements · Your services</span>
+    </footer>
   </main>
-  <dialog id="details-dialog"><div class="dialog-heading"><h2 id="details-title">Attempt results</h2><button class="button light" id="close-details" aria-label="Close" data-i18n-aria-label="common.close">✕</button></div><div id="details-body"></div></dialog>
+
+  <!-- Modal Dialog: Details -->
+  <dialog id="details-dialog">
+    <div class="dialog-heading">
+      <h2 id="details-title">Attempt results</h2>
+      <button class="button light" id="close-details" aria-label="Close" data-i18n-aria-label="common.close">✕</button>
+    </div>
+    <div id="details-body"></div>
+  </dialog>
 </body>
 </html>

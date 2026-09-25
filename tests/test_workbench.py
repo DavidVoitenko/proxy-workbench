@@ -265,6 +265,12 @@ class WorkbenchTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result_allowed(row, 1, denylist, strict=True))
         self.assertTrue(result_allowed(dict(row, reputation=clear), 1, denylist, strict=True))
 
+    async def test_no_dnsbl_does_not_claim_a_verified_clean_verdict(self):
+        policy = make_policy({}, Denylist.empty())
+        verdict = await screen_proxy('http://11.1.1.1:80', policy, Denylist.empty())
+        self.assertEqual(verdict['status'], 'unknown')
+        self.assertEqual(verdict['dnsbl'], [])
+
     async def test_scan_stores_blocked_verdict_and_resumes(self):
         self.db.execute('INSERT INTO candidates VALUES (?)', ('http://11.4.4.4:80',))
         self.db.commit()
@@ -318,13 +324,16 @@ class WorkbenchTests(unittest.IsolatedAsyncioTestCase):
     def test_clear_runtime_preserves_user_settings(self):
         (self.home/'gui-settings.json').write_text('{}', encoding='utf-8')
         (self.home/'denylist.txt').write_text('11.0.0.0/24\n', encoding='utf-8')
+        (self.home/'gui-selection.json').write_text('["http://11.0.0.1:80"]', encoding='utf-8')
         (self.home/'proxies.sqlite3').write_bytes(b'db')
         (self.home/'exports').mkdir()
         (self.home/'exports'/'proxies.txt').write_text('11.0.0.1:80\n', encoding='utf-8')
         removed = clear_runtime(self.home, keep_lock=True)
         self.assertIn('proxies.sqlite3', removed)
+        self.assertIn('gui-selection.json', removed)
         self.assertTrue((self.home/'gui-settings.json').exists())
         self.assertTrue((self.home/'denylist.txt').exists())
+        self.assertFalse((self.home/'gui-selection.json').exists())
         self.assertFalse((self.home/'exports').exists())
 
     def test_atomic_retries_transient_replace_denial(self):
@@ -352,7 +361,7 @@ class WorkbenchTests(unittest.IsolatedAsyncioTestCase):
 
     def test_normalization(self):
         self.assertEqual(p.normalize('https://11.1.1.1:80'), 'https://11.1.1.1:80')
-        for raw in ['ftp://11.1.1.1:80', '11.1.1.1:99999', 'http://u:p@11.1.1.1:80', '127.0.0.1:80', '11.1.1.1:80/a']:
+        for raw in ['ftp://11.1.1.1:80', '11.1.1.1:99999', 'http://u:p@11.1.1.1:80', '127.0.0.1:80', '11.1.1.1:80/a', None, 123]:
             self.assertIsNone(p.normalize(raw))
 
 

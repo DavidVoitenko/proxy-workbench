@@ -20,6 +20,7 @@ RUNTIME_FILES = (
     "gui-targets.json",
     "gui-sources.json",
     "gui-input.txt",
+    "gui-selection.json",
     "gui-progress.json",
     "gui-job.json",
     "gui-run.log",

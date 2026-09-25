@@ -1,9 +1,10 @@
-"""Rotating proxy gateway: one local address that spreads connections over working proxies.
+"""Rotating proxy gateway: one local address that spreads TCP connections over working proxies.
 
-Browsers, scripts and apps point at ``127.0.0.1:8899`` as an HTTP or SOCKS5 proxy.
-Every new connection goes out through the next proxy from the latest export;
-a proxy that fails is skipped and rested for a while, and the connection is
-retried through another one before the client sees an error.
+Browsers, scripts and apps point at ``127.0.0.1:8899`` as an HTTP or SOCKS5
+proxy.  The GUI can explicitly bind an authenticated LAN address for a phone;
+the wildcard address itself is never used as a QR target.  SOCKS5 CONNECT is
+implemented, while UDP ASSOCIATE is intentionally rejected because the local
+relay has no authenticated UDP path.
 """
 from __future__ import annotations
 
@@ -32,6 +33,51 @@ SESSION = re.compile(r'[A-Za-z0-9_]{1,64}')
 HOP_HEADERS = {b'proxy-authorization', b'proxy-connection', b'connection', b'keep-alive'}
 
 
+def local_interface_addresses():
+    """Return addresses assigned to this host, without contacting a network."""
+    addresses = set()
+    try:
+        _name, _aliases, candidates = socket.gethostbyname_ex(socket.gethostname())
+        addresses.update(candidates)
+    except OSError:
+        pass
+    try:
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET, socket.SOCK_DGRAM):
+            addresses.add(info[4][0])
+    except OSError:
+        pass
+    return addresses
+
+
+def display_host(bind_host):
+    """Return an address a phone on the same LAN can actually dial.
+
+    Binding to ``0.0.0.0`` is useful for a desktop acting as a phone gateway,
+    but the wildcard address itself is not a valid QR target.  Resolution is
+    local hostname metadata only; no proxy/source network scan is performed.
+    """
+    if bind_host not in ('0.0.0.0', '::', ''):
+        return bind_host
+    try:
+        infos = socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET, socket.SOCK_DGRAM)
+    except OSError:
+        infos = []
+    if not infos:
+        try:
+            infos = [(socket.AF_INET, socket.SOCK_DGRAM, 0, '', (socket.gethostbyname(socket.gethostname()), 0))]
+        except OSError:
+            pass
+    for info in infos:
+        candidate = info[4][0]
+        try:
+            address = ipaddress.ip_address(candidate)
+        except ValueError:
+            continue
+        if not address.is_loopback and not address.is_link_local:
+            return candidate
+    return '127.0.0.1'
+
+
 class UpstreamError(Exception):
     pass
 
@@ -55,14 +101,16 @@ class Pool:
         self.sessions = {}
         self.position = 0
         self.key = None
+        self.revision = None
         self.rows = []
         self.cache = {}
         self.stats = dict(connections=0, failed=0, retries=0)
 
     def refresh(self):
         rows, _ = self.exports.load()
-        if self.exports.key != self.key:
+        if self.exports.key != self.key or self.exports.revision != self.revision:
             self.key = self.exports.key
+            self.revision = self.exports.revision
             self.rows = [row for row in select(rows, self.filters)
                          if row['protocol'] in SUPPORTED and not row['proxy'].startswith('https://')]
             self.cache.clear()
@@ -270,12 +318,20 @@ def split_target(value, default_port):
 
 
 class Gateway:
-    def __init__(self, pool, token=None, attempts=3, connect_timeout=8, idle_timeout=300):
+    def __init__(self, pool, token=None, attempts=3, connect_timeout=8, idle_timeout=300,
+                 allow_local_without_auth=False):
         self.pool = pool
         self.token = token
         self.attempts = attempts
         self.connect_timeout = connect_timeout
         self.idle_timeout = idle_timeout
+        self.allow_local_without_auth = allow_local_without_auth
+        # asyncio.Server.wait_closed() waits for listening sockets, not for
+        # client handler tasks.  Track the latter so Background.close() can
+        # cancel and await them before the helper loop is stopped.
+        self.tasks = set()
+        self.connections = {}
+        self.shutting_down = False
 
     async def connect(self, host, port, forward=False, request=None, session=None):
         """A tunnel through a working proxy; the caller must release() the returned proxy."""
@@ -297,8 +353,25 @@ class Gateway:
         self.pool.stats['failed'] += 1
         raise UpstreamError('NO_WORKING_PROXY' if tried else 'NO_PROXIES')
 
-    def password_ok(self, password):
-        return not self.token or hmac.compare_digest(password, self.token.encode())
+    def local_client(self, writer=None):
+        """Whether a connection originated on this computer."""
+        if writer is None:
+            return False
+        peer = writer.get_extra_info('peername')
+        try:
+            address = peer[0]
+            return is_loopback(address) or address in local_interface_addresses()
+        except (IndexError, TypeError):
+            return False
+
+    def password_ok(self, password, writer=None):
+        if not self.token:
+            return True
+        # A LAN bind is authenticated for phones and other machines, while a
+        # local browser/curl can keep the simple no-password loopback workflow.
+        if self.allow_local_without_auth and self.local_client(writer):
+            return True
+        return hmac.compare_digest(password, self.token.encode())
 
     @staticmethod
     def basic_credentials(headers):
@@ -324,6 +397,18 @@ class Gateway:
 
     async def handle(self, reader, writer):
         self.pool.stats['connections'] += 1
+        task = asyncio.current_task()
+        if task is not None:
+            self.tasks.add(task)
+            self.connections[task] = writer
+        if self.shutting_down:
+            with contextlib.suppress(OSError, RuntimeError):
+                writer.close()
+                await writer.wait_closed()
+            if task is not None:
+                self.connections.pop(task, None)
+                self.tasks.discard(task)
+            return
         try:
             first = await asyncio.wait_for(reader.readexactly(1), 30)
             if first == b'\x05':
@@ -333,7 +418,12 @@ class Gateway:
         except (OSError, asyncio.TimeoutError, asyncio.IncompleteReadError, UpstreamError, ValueError):
             pass
         finally:
-            writer.close()
+            with contextlib.suppress(OSError, RuntimeError):
+                writer.close()
+                await writer.wait_closed()
+            if task is not None:
+                self.connections.pop(task, None)
+                self.tasks.discard(task)
 
     async def handle_http(self, first, reader, writer):
         head = first + await read_head(reader)
@@ -347,7 +437,7 @@ class Gateway:
             if name.strip().lower() not in HOP_HEADERS:
                 kept.append(line)
         user, password = self.basic_credentials(headers)
-        if not self.password_ok(password):
+        if not self.password_ok(password, writer):
             writer.write(b'HTTP/1.1 407 Proxy Authentication Required\r\n'
                          b'Proxy-Authenticate: Basic realm="proxy-workbench"\r\nContent-Length: 0\r\n\r\n')
             return await writer.drain()
@@ -394,8 +484,11 @@ class Gateway:
 
     async def handle_socks5(self, reader, writer):
         methods = await reader.readexactly((await reader.readexactly(1))[0])
-        # User/password is required with a token and preferred otherwise: the user name carries options.
-        wanted = 2 if self.token or 2 in methods else 0
+        # User/password is required for a remote token client and preferred
+        # otherwise: the user name carries options. A loopback client may use
+        # the no-auth method even when the same listener is LAN-enabled.
+        wanted = 2 if (self.token and not (self.allow_local_without_auth and self.local_client(writer))) \
+            or 2 in methods else 0
         if wanted not in methods:
             writer.write(b'\x05\xff')
             return await writer.drain()
@@ -406,7 +499,7 @@ class Gateway:
             await reader.readexactly(1)
             user = await reader.readexactly((await reader.readexactly(1))[0])
             password = await reader.readexactly((await reader.readexactly(1))[0])
-            granted = self.password_ok(password)
+            granted = self.password_ok(password, writer)
             writer.write(b'\x01\x00' if granted else b'\x01\x01')
             await writer.drain()
             if not granted:
@@ -440,7 +533,8 @@ async def start(data, host='127.0.0.1', port=DEFAULT_PORT, token=None, filters=N
     if not is_loopback(host) and not token:
         raise ValueError(tr(f'Шлюз на {host} доступен из сети: задайте пароль через --api-token.',
                             f'the gateway on {host} is reachable from the network: set a password with --api-token'))
-    gateway = Gateway(Pool(data, filters, strategy, max_per_proxy=max_per_proxy, session_ttl=session_ttl), token)
+    gateway = Gateway(Pool(data, filters, strategy, max_per_proxy=max_per_proxy, session_ttl=session_ttl), token,
+                      allow_local_without_auth=host in ('0.0.0.0', '::'))
     server = await asyncio.start_server(gateway.handle, host, port, limit=MAX_HEAD)
     server.gateway = gateway
     return server
@@ -449,19 +543,58 @@ async def start(data, host='127.0.0.1', port=DEFAULT_PORT, token=None, filters=N
 class Background:
     """The gateway on its own event loop thread, for the GUI."""
 
-    def __init__(self, data, host='127.0.0.1', port=DEFAULT_PORT):
+    def __init__(self, data, host='127.0.0.1', port=DEFAULT_PORT, token=None):
         import threading
         self.loop = asyncio.new_event_loop()
-        self.server = self.loop.run_until_complete(start(data, host, port))
+        self.token = token
+        self.server = self.loop.run_until_complete(start(data, host, port, token=token))
+        self.host = host
+        self.display_host = display_host(host)
         self.port = self.server.sockets[0].getsockname()[1]
         self.thread = threading.Thread(target=self.loop.run_forever, daemon=True)
         self.thread.start()
+        self._closed = False
 
     def close(self):
+        if self._closed:
+            return
+        gateway = self.server.gateway
+
         async def stop():
+            gateway.shutting_down = True
+            # Drain accept callbacks that were queued before close while the
+            # listening socket is still valid.  Closing first can make a
+            # callback create a transport against an already-detached server.
+            for _ in range(4):
+                await asyncio.sleep(0)
             self.server.close()
+            for _ in range(2):
+                await asyncio.sleep(0)
+                tasks = list(gateway.tasks)
+                for writer in list(gateway.connections.values()):
+                    with contextlib.suppress(OSError, RuntimeError):
+                        writer.close()
+                for task in tasks:
+                    if not task.done():
+                        task.cancel()
+                if tasks:
+                    await asyncio.gather(*tasks, return_exceptions=True)
             with contextlib.suppress(Exception):
                 await asyncio.wait_for(self.server.wait_closed(), 2)
-        asyncio.run_coroutine_threadsafe(stop(), self.loop).result(5)
-        self.loop.call_soon_threadsafe(self.loop.stop)
+
+        stopped = False
+        try:
+            asyncio.run_coroutine_threadsafe(stop(), self.loop).result(5)
+            stopped = True
+        except (TimeoutError, RuntimeError):
+            # A misbehaving client must not make us close an event loop with
+            # live tasks.  The loop/thread remain available for a later retry;
+            # normal handler cancellation completes within the bounded wait.
+            pass
+        if stopped and not self.loop.is_closed():
+            self.loop.call_soon_threadsafe(self.loop.stop)
         self.thread.join(5)
+        if stopped and not self.thread.is_alive():
+            if not self.loop.is_closed():
+                self.loop.close()
+            self._closed = True

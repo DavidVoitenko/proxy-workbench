@@ -3,6 +3,7 @@ from pathlib import Path
 import sys
 import tempfile
 import threading
+import time
 import unittest
 
 import httpx
@@ -58,12 +59,14 @@ class ApiTests(unittest.TestCase):
         with self.start() as client:
             status = client.get('/status').json()
             self.assertEqual((status['available'], status['version']), (3, p.PRODUCT_VERSION))
+            self.assertIn('unknown', status['source_quality'])
             body = client.get('/proxies').json()
             self.assertEqual([row['proxy'] for row in body['proxies']],
                              ['socks5://11.0.0.2:1080', 'https://11.0.0.3:443', 'http://11.0.0.1:8080'])
             first = body['proxies'][0]
             self.assertEqual((first['protocol'], first['host'], first['port'], first['country'], first['anonymity']),
                              ('socks5', '11.0.0.2', 1080, 'DE', 'elite'))
+            self.assertEqual(first['reputation_status'], 'unknown')
             self.assertEqual(client.get('/proxies?country=de&format=txt').text, 'socks5://11.0.0.2:1080\n')
             self.assertEqual(client.get('/proxies?protocol=https&format=hostport').text, '11.0.0.3:443\n')
             self.assertEqual(client.get('/proxies?max_latency=500&limit=1&format=txt').text, 'socks5://11.0.0.2:1080\n')
@@ -101,6 +104,44 @@ class ApiTests(unittest.TestCase):
             self.db.commit()
             self.export()
             self.assertEqual(client.get('/status').json()['available'], 2)
+
+    def test_snapshot_contract_ttl_and_deleted_current_file(self):
+        with self.start() as client:
+            status = client.get('/status').json()
+            self.assertEqual(status['schema_version'], 1)
+            self.assertEqual(status['state'], 'complete')
+            self.assertEqual(status['scope_candidates'], 3)
+            self.assertIn('valid_until', status)
+            generation = p.current_generation_name(self.home / 'exports')
+            ranked_path = p.export_file(self.home / 'exports', 'ranked.json')
+            status_path = p.export_file(self.home / 'exports', 'status.json')
+            ranked = json.loads(ranked_path.read_text(encoding='utf-8'))
+            for row in ranked:
+                row['valid_until'] = time.time() - 1
+            snapshot = json.loads(status_path.read_text(encoding='utf-8'))
+            snapshot['valid_until'] = time.time() - 1
+            p.atomic(ranked_path, json.dumps(ranked))
+            p.atomic(status_path, json.dumps(snapshot))
+            expired = client.get('/status').json()
+            self.assertEqual(expired['available'], 0)
+            self.assertTrue(expired['stale'])
+            self.assertEqual(client.get('/proxies').json()['count'], 0)
+            ranked_path.unlink()
+            self.assertEqual(client.get('/status').json()['available'], 0)
+            self.assertIsNotNone(generation)
+
+    def test_legacy_status_is_partial_instead_of_contradictory(self):
+        legacy = self.home / 'legacy-exports'
+        legacy.mkdir()
+        (legacy / 'ranked.json').write_text(json.dumps([result_row('http://11.0.0.9:80', 10, 10)]),
+                                             encoding='utf-8')
+        (legacy / 'status.json').write_text(json.dumps({'state': 'complete', 'complete': True,
+                                                         'valid_until': time.time() + 3600}), encoding='utf-8')
+        rows, status = api.Exports(legacy).load()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual((status['state'], status['complete']), ('partial', False))
+        self.assertEqual(status['stop_reason'], 'legacy')
+        self.assertIsNone(status['scope_candidates'])
 
     def test_token_and_network_binding(self):
         with self.assertRaises(ValueError):

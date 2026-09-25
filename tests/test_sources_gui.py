@@ -35,6 +35,13 @@ class SourceActionTests(unittest.TestCase):
     def settings(self, sources):
         return dict(gui.defaults(), sources=sources)
 
+    def test_source_display_labels_distinguish_mirrors_without_urls(self):
+        first = 'https://raw.githubusercontent.com/example/one.txt'
+        second = 'https://raw.githubusercontent.com/example/two.txt'
+        self.assertNotEqual(gui.public_source(first, keyed=True), gui.public_source(second, keyed=True))
+        self.assertNotIn('one.txt', gui.public_source(first, keyed=True))
+        self.assertNotIn('two.txt', gui.public_source(second, keyed=True))
+
     def test_prune_removes_only_well_sampled_dead_sources(self):
         dead, small, alive, unseen = ('https://dead.example/list.txt', 'https://small.example/list.txt',
                                       'socks5 https://alive.example/list.txt', 'https://new.example/list.txt')
@@ -45,10 +52,32 @@ class SourceActionTests(unittest.TestCase):
         response = self.client.post('/api/sources/prune', json=self.settings([dead, small, alive, unseen]))
         response.raise_for_status()
         body = response.json()
-        self.assertEqual(body['removed'], ['https://dead.example/'])
+        self.assertEqual(body['removed'], [gui.public_source(dead)])
         self.assertEqual(body['settings']['sources'], [small, alive, unseen])
         saved = json.loads((self.home / 'gui-settings.json').read_text(encoding='utf-8'))
         self.assertEqual(saved['sources'], [small, alive, unseen])
+
+    def test_filtered_export_does_not_mark_a_working_source_dead(self):
+        source = 'https://a.example/list.txt'
+        key = p.source_key(source)
+        db = p.open_db(self.home / 'proxies.sqlite3')
+        cfg = dict(targets=[dict(url='http://service.invalid/')])
+        db.execute('INSERT INTO profiles VALUES (?,?)', ('fixture', json.dumps(cfg)))
+        for index in range(20):
+            proxy = f'http://11.0.0.{index + 1}:80'
+            row = p.summarize(proxy, [dict(ok=True, ms=5, target=0, attempt=1)], cfg)
+            db.execute('INSERT INTO candidates VALUES (?)', (proxy,))
+            db.execute('INSERT INTO candidate_meta(proxy, source) VALUES (?,?)', (proxy, key))
+            db.execute('INSERT INTO candidate_seen VALUES (?,?)', (proxy, key))
+            db.execute('INSERT INTO results VALUES (?,?,?)', ('fixture', proxy, json.dumps(row)))
+        db.commit()
+        p.export(db, 'fixture', self.home / 'exports', min_success=1, query='does-not-match')
+        db.close()
+        state = self.client.get('/api/state').json()
+        self.assertEqual(state['export']['source_quality'][key], {'checked': 20, 'passed': 20})
+        response = self.client.post('/api/sources/prune', json=self.settings([source]))
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()['removed'], [])
 
     def test_update_adds_only_new_upstream_sources(self):
         bundled = gui.defaults()['sources']
@@ -74,7 +103,8 @@ class SourceActionTests(unittest.TestCase):
         finally:
             upstream_server.shutdown()
             upstream_server.server_close()
-        self.assertEqual(body['added'], ['text https://fresh.example/', 'auto https://mine.example/'])
+        self.assertEqual(body['added'], [gui.public_source('text https://fresh.example/page'),
+                                        gui.public_source('auto https://mine.example/list.txt')])
         self.assertNotIn(bundled[0], body['settings']['sources'])
         self.assertEqual(body['settings']['sources'][-2:], ['text https://fresh.example/page', 'auto https://mine.example/list.txt'])
 
