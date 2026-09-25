@@ -11,7 +11,6 @@ from __future__ import annotations
 import json
 import re
 import shutil
-import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -74,11 +73,18 @@ def main(command):
     gui = None
     client = None
     try:
-        # An empty collect creates the database; then the mock proxy is added as a candidate.
-        subprocess.run([*command, 'collect', '--no-sources', '--data', str(data)], check=True, timeout=120,
-                       capture_output=True)
-        with sqlite3.connect(data / 'proxies.sqlite3') as db:
-            db.execute('INSERT INTO candidates VALUES (?)', (f'http://127.0.0.1:{mock.server_port}',))
+        # An empty collect creates the database; then the mock proxy is added as a
+        # candidate through the engine's own writer.  Writing the row with plain
+        # SQL is not an option any more and must not become one again: after the
+        # versioned schema the table carries a second column, so a positional
+        # INSERT is exactly the "old binary writes into the new schema" failure
+        # F24 requires (CONTRACTS §3.5.2).  A loopback address is only accepted
+        # from a list the user handed over locally, hence the flag.
+        listing = data / 'smoke-mock.txt'
+        listing.write_text(f'http://127.0.0.1:{mock.server_port}\n', encoding='utf-8')
+        subprocess.run([*command, 'collect', '--no-sources', '--data', str(data),
+                        '--input', str(listing), '--allow-private-endpoints'],
+                       check=True, timeout=120, capture_output=True)
         # Let the OS choose every port. Fixed CI ports made this smoke test fail
         # whenever another local test or a developer's service happened to use one.
         gui = subprocess.Popen([*command, 'gui', '--no-browser', '--port', '0', '--data', str(data),
@@ -110,9 +116,30 @@ def main(command):
         assert state['export']['passed'] == 1, state['log']
         proxy = httpx.get(f'{state["api"]}/random?format=txt', trust_env=False).text.strip()
         assert proxy == f'http://127.0.0.1:{mock.server_port}', proxy
-        gateway = state['gateway']['address']
-        with httpx.Client(proxy=f'http://{gateway}', trust_env=False, timeout=15) as through:
-            assert through.get('http://service.invalid/through-gateway').text == 'healthy'
+        # The rotating proxy has its own password now, not the GUI session token
+        # (defect 18 / F29): an unauthenticated request gets 407, so the client
+        # uses the address the GUI itself hands to a phone.  The password is
+        # minted per run and is never printed.
+        #
+        # The listener re-reads the published set on its own interval instead of
+        # following every write, so a request sent in the same second as the
+        # publication is answered by the *previous* generation.  Waiting for the
+        # new one to be picked up is part of the scenario, not a retry of a
+        # failure.
+        gateway = state['gateway']['copy_address']
+
+        def through_gateway():
+            with httpx.Client(proxy=gateway, trust_env=False, timeout=15) as through:
+                return through.get('http://service.invalid/through-gateway').text
+
+        answer = ''
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            answer = through_gateway()
+            if answer == 'healthy':
+                break
+            time.sleep(0.5)
+        assert answer == 'healthy', answer
         print('smoke test passed')
     finally:
         if client is not None:
