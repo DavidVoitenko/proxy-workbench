@@ -51,9 +51,14 @@ def _limits(limits=None):
         if isinstance(result, bool) or not isinstance(result, int) or result < 1 or result > maximum:
             raise AdapterError("SOURCE_LIMIT_INVALID")
         return result
+    max_records = integer("max_records", DEFAULT_MAX_RECORDS, 10_000_000)
     return {
         "max_bytes": integer("max_bytes", 32 * 1024 * 1024, 512 * 1024 * 1024),
-        "max_records": integer("max_records", DEFAULT_MAX_RECORDS, 10_000_000),
+        "max_records": max_records,
+        # The shape guard exists to stop a hostile document, not to cap output.
+        # It is therefore looser than the record cap: a big list is read up to
+        # the cap and reported as partial, instead of being refused unparsed.
+        "max_shape_items": min(max_records * 8, 20_000_000),
         "max_depth": integer("max_depth", DEFAULT_MAX_DEPTH, 128),
         "max_string": integer("max_string", DEFAULT_MAX_STRING, 16 * 1024 * 1024),
         "max_columns": integer("max_columns", DEFAULT_MAX_COLUMNS, 1024),
@@ -81,14 +86,14 @@ def _check_shape(value, limits, depth=0):
     if isinstance(value, str) and len(value.encode("utf-8")) > limits["max_string"]:
         raise AdapterError("SOURCE_STRING_TOO_LARGE")
     if isinstance(value, dict):
-        if len(value) > limits["max_records"]:
+        if len(value) > limits["max_shape_items"]:
             raise AdapterError("SOURCE_RECORD_LIMIT")
         for key, item in value.items():
             if not isinstance(key, str) or len(key) > limits["max_string"]:
                 raise AdapterError("SOURCE_JSON_SHAPE")
             _check_shape(item, limits, depth + 1)
     elif isinstance(value, list):
-        if len(value) > limits["max_records"]:
+        if len(value) > limits["max_shape_items"]:
             raise AdapterError("SOURCE_RECORD_LIMIT")
         for item in value:
             _check_shape(item, limits, depth + 1)
@@ -331,17 +336,19 @@ def _json_records(body, profile, page_context, limits):
         raise AdapterError("SOURCE_JSON_SHAPE")
     if not container:
         return dict(state="empty", records=[], rejects={}, pages=1, metadata={})
-    if len(container) > limits["max_records"]:
-        raise AdapterError("SOURCE_RECORD_LIMIT")
     default = cfg.get("default_protocol")
     default_list = _protocol(default, default=default) if isinstance(default, str) else []
     default_protocol = default_list[0] if default_list else None
     records, rejects = [], {}
+    # A list larger than the cap is read up to the cap and reported as partial
+    # with the reason, rather than rejected before a single address is seen.
+    truncated = len(container) > limits["max_records"]
     def reject(reason):
         rejects[reason] = rejects.get(reason, 0) + 1
-    for raw in container:
+    for raw in (container[:limits["max_records"]] if truncated else container):
         if len(records) >= limits["max_records"]:
-            raise AdapterError("SOURCE_RECORD_LIMIT")
+            truncated = True
+            break
         if isinstance(raw, str):
             if _has_credentials(raw):
                 reject("credentials_present")
@@ -389,13 +396,17 @@ def _json_records(body, profile, page_context, limits):
             continue
         records.append({"value": values[0], "values": [values[0] if "://" in values[0] else f"{protocol}://{values[0]}" for protocol in protocols],
                         "protocol_origin": "record", "declared": {}})
-    if records and rejects:
+    if records and (rejects or truncated):
         state = "partial"
     elif records:
         state = "complete"
     else:
         state = "empty" if not container else "invalid"
-    return dict(state=state, records=records, rejects=rejects, pages=1, metadata={})
+    result = dict(state=state, records=records, rejects=rejects, pages=1, metadata={})
+    if truncated:
+        result["truncated"] = True
+        result["reason"] = "SOURCE_RECORD_LIMIT"
+    return result
 
 
 def _guess_delimiter(text, requested):
@@ -443,9 +454,11 @@ def _fields(body, profile, page_context, limits):
     records, rejects = [], {}
     def reject(reason):
         rejects[reason] = rejects.get(reason, 0) + 1
+    truncated = False
     for row in data_rows:
         if len(records) >= limits["max_records"]:
-            raise AdapterError("SOURCE_RECORD_LIMIT")
+            truncated = True
+            break
         if not row or not any(str(value).strip() for value in row):
             continue
         if len(row) > limits["max_columns"]:
@@ -478,7 +491,11 @@ def _fields(body, profile, page_context, limits):
         values_for = [value if "://" in value else f"{item}://{value}" for item in protocol]
         records.append({"value": value, "values": values_for, "protocol_origin": "record", "declared": declared})
     state = "partial" if records and rejects else "complete" if records else "empty" if not data_rows else "invalid"
-    return dict(state=state, records=records, rejects=rejects, pages=1, metadata={})
+    result = dict(state=state, records=records, rejects=rejects, pages=1, metadata={})
+    if truncated:
+        result["truncated"] = True
+        result["reason"] = "SOURCE_RECORD_LIMIT"
+    return result
 
 
 class _TableParser(HTMLParser):
@@ -643,9 +660,11 @@ def _html_table(body, profile, page_context, limits):
     records, rejects = [], {}
     def reject(reason):
         rejects[reason] = rejects.get(reason, 0) + 1
+    truncated = False
     for row in rows:
         if len(records) >= limits["max_records"]:
-            raise AdapterError("SOURCE_RECORD_LIMIT")
+            truncated = True
+            break
         if plan is not None:
             ip, port, protocol_text, country = _row_by_columns(row, plan[1])
         else:
@@ -681,7 +700,11 @@ def _html_table(body, profile, page_context, limits):
         records.append({"value": value, "values": [f"{item}://{value}" for item in protocol],
                         "protocol_origin": "record", "declared": {"country": country.upper()} if country else {}})
     state = "partial" if records and rejects else "complete" if records else "empty" if not rows else "invalid"
-    return dict(state=state, records=records, rejects=rejects, pages=1, metadata={})
+    result = dict(state=state, records=records, rejects=rejects, pages=1, metadata={})
+    if truncated:
+        result["truncated"] = True
+        result["reason"] = "SOURCE_RECORD_LIMIT"
+    return result
 
 
 def _json_fragment(text, field, limits):
@@ -784,6 +807,7 @@ def _line(body, profile, page_context, limits):
     default = config.get("default_protocol", "http")
     first_token = config.get("line_address") == "first-token"
     records, rejects = [], {}
+    truncated = False
     for raw in text.splitlines():
         value = raw.strip()
         if not value or value.startswith("#"):
@@ -826,10 +850,17 @@ def _line(body, profile, page_context, limits):
             continue
         records.append({"value": value, "values": [value if "://" in value else f"{item}://{value}" for item in protocols],
                         "protocol_origin": "profile" if "://" not in value else "record", "declared": {}})
-        if len(records) > limits["max_records"]:
-            raise AdapterError("SOURCE_RECORD_LIMIT")
-    return dict(state="partial" if records and rejects else "complete" if records else "empty",
-                records=records, rejects=rejects, pages=1, metadata={})
+        if len(records) >= limits["max_records"]:
+            truncated = True
+            break
+    if truncated:
+        rejects["record_limit"] = rejects.get("record_limit", 0) + 1
+    state = "partial" if records and (rejects or truncated) else "complete" if records else "empty"
+    result = dict(state=state, records=records, rejects=rejects, pages=1, metadata={})
+    if truncated:
+        result["truncated"] = True
+        result["reason"] = "SOURCE_RECORD_LIMIT"
+    return result
 
 
 PARSERS = {
