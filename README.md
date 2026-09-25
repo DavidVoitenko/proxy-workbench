@@ -224,7 +224,7 @@ A JSON array of strings, one per source:
 - `http-fields https://…` — `IP:port:country` lines;
 - `geonode https://proxylist.geonode.com/api/proxy-list?...` — paginated Geonode JSON API.
 
-Remote lists are streamed with limits (8 MiB, 64 KiB per line, 100,000 candidates, 5 redirects by default; see `--source-max-*`). Per-source results are written to `data/sources-report.json`. Authenticated proxies, hostnames and non-public IPs are rejected. `--detect-protocols` tries addresses without a protocol from your own `--input` files as HTTP, SOCKS4 and SOCKS5.
+Remote lists are streamed with limits (32 MiB, 64 KiB per line, 500,000 candidates, 5 redirects by default; see `--source-max-*`). Per-source results are written to `data/sources-report.json`. Authenticated proxies, hostnames and non-public IPs are rejected. `--detect-protocols` tries addresses without a protocol from your own `--input` files as HTTP, SOCKS4 and SOCKS5.
 
 </details>
 
