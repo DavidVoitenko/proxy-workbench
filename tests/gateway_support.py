@@ -50,7 +50,7 @@ def export_row(proxy, country=None, latency=100, valid_for=3600, **extra):
                 checked_at=now, valid_until=now + valid_for, samples=[], **extra)
 
 
-def write_export(home, proxies, *, generation='.generation-a', profile='p1',
+def write_export(home, proxies, *, generation='.generation-aaaaaaaa', profile='p1',
                  profile_revision=1, country=None, rows=None):
     """Publish an immutable generation and point current.json at it."""
     exports = Path(home) / 'exports'

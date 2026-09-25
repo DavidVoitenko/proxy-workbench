@@ -9,6 +9,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from unittest import mock
 
 import httpx
+from tests.workbench_support import add_candidate, mark_seen, store_result  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from proxy_workbench import gui
 from proxy_workbench import proxytool as p
@@ -62,14 +63,14 @@ class SourceActionTests(unittest.TestCase):
         key = p.source_key(source)
         db = p.open_db(self.home / 'proxies.sqlite3')
         cfg = dict(targets=[dict(url='http://service.invalid/')])
-        db.execute('INSERT INTO profiles VALUES (?,?)', ('fixture', json.dumps(cfg)))
+        db.execute('INSERT INTO profiles(id, config) VALUES (?, ?)', ('fixture', json.dumps(cfg)))
         for index in range(20):
             proxy = f'http://11.0.0.{index + 1}:80'
             row = p.summarize(proxy, [dict(ok=True, ms=5, target=0, attempt=1)], cfg)
-            db.execute('INSERT INTO candidates VALUES (?)', (proxy,))
+            add_candidate(db, (proxy))
             db.execute('INSERT INTO candidate_meta(proxy, source) VALUES (?,?)', (proxy, key))
-            db.execute('INSERT INTO candidate_seen VALUES (?,?)', (proxy, key))
-            db.execute('INSERT INTO results VALUES (?,?,?)', ('fixture', proxy, json.dumps(row)))
+            mark_seen(db, (proxy, key))
+            store_result(db, ('fixture', proxy, json.dumps(row)))
         db.commit()
         p.export(db, 'fixture', self.home / 'exports', min_success=1, query='does-not-match')
         db.close()

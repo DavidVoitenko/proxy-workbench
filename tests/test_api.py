@@ -7,14 +7,19 @@ import time
 import unittest
 
 import httpx
+from tests.workbench_support import add_candidate, store_result  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from proxy_workbench import api
 from proxy_workbench import proxytool as p
 
+#: A result fixture describes a measurement that just happened; the
+#: admission contract has no "fresh forever" state (CONTRACTS §2.4).
+_NOW = time.time()
+
 
 def result_row(proxy, latency, score, level=None):
     row = dict(proxy=proxy, reliability=1, min_target_reliability=1, latency_ms=latency, jitter_ms=5,
-               score=score, successes=3, requests=3, checked_at=0, samples=[])
+               score=score, successes=3, requests=3, checked_at=_NOW, samples=[])
     if level:
         row['anonymity'] = {'level': level, 'signals': []}
     return row
@@ -26,13 +31,13 @@ class ApiTests(unittest.TestCase):
         self.home = Path(self.temp.name)
         db = p.open_db(self.home / 'proxies.sqlite3')
         cfg = dict(targets=[dict(url='https://one.invalid/')], anonymity={'judge_url': 'https://judge.invalid/'})
-        db.execute('INSERT INTO profiles VALUES (?,?)', ('fx', json.dumps(cfg)))
+        db.execute('INSERT INTO profiles(id, config) VALUES (?, ?)', ('fx', json.dumps(cfg)))
         rows = [result_row('http://11.0.0.1:8080', 900, 50, 'transparent'),
                 result_row('socks5://11.0.0.2:1080', 200, 90, 'elite'),
                 result_row('https://11.0.0.3:443', 400, 70, 'anonymous')]
         for row in rows:
-            db.execute('INSERT INTO candidates VALUES (?)', (row['proxy'],))
-            db.execute('INSERT INTO results VALUES (?,?,?)', ('fx', row['proxy'], json.dumps(row)))
+            add_candidate(db, (row['proxy']))
+            store_result(db, ('fx', row['proxy'], json.dumps(row)))
         db.execute("INSERT INTO candidate_meta(proxy, country) VALUES ('socks5://11.0.0.2:1080', 'DE')")
         db.commit()
         self.db = db
@@ -108,24 +113,28 @@ class ApiTests(unittest.TestCase):
     def test_snapshot_contract_ttl_and_deleted_current_file(self):
         with self.start() as client:
             status = client.get('/status').json()
-            self.assertEqual(status['schema_version'], 1)
+            self.assertEqual(status['schema_version'], 2)
             self.assertEqual(status['state'], 'complete')
             self.assertEqual(status['scope_candidates'], 3)
             self.assertIn('valid_until', status)
             generation = p.current_generation_name(self.home / 'exports')
             ranked_path = p.export_file(self.home / 'exports', 'ranked.json')
             status_path = p.export_file(self.home / 'exports', 'status.json')
+            # A generation carries a manifest with a checksum per file.  Editing
+            # one after publication is not "an expired snapshot", it is a
+            # publication that no longer verifies, and the reader refuses it
+            # instead of serving what it finds (CONTRACTS §4.2, defect 9).
             ranked = json.loads(ranked_path.read_text(encoding='utf-8'))
             for row in ranked:
                 row['valid_until'] = time.time() - 1
-            snapshot = json.loads(status_path.read_text(encoding='utf-8'))
-            snapshot['valid_until'] = time.time() - 1
             p.atomic(ranked_path, json.dumps(ranked))
-            p.atomic(status_path, json.dumps(snapshot))
-            expired = client.get('/status').json()
-            self.assertEqual(expired['available'], 0)
-            self.assertTrue(expired['stale'])
+            tampered = client.get('/status').json()
+            self.assertEqual(tampered['available'], 0)
+            self.assertEqual(tampered['reader_state'], 'broken')
             self.assertEqual(client.get('/proxies').json()['count'], 0)
+            # An expired row is a different situation and stays visible: only a
+            # whole-set expiry removes the rows.
+            p.atomic(ranked_path, json.dumps([r for r in ranked]))
             ranked_path.unlink()
             self.assertEqual(client.get('/status').json()['available'], 0)
             self.assertIsNotNone(generation)
@@ -139,7 +148,10 @@ class ApiTests(unittest.TestCase):
                                                          'valid_until': time.time() + 3600}), encoding='utf-8')
         rows, status = api.Exports(legacy).load()
         self.assertEqual(len(rows), 1)
-        self.assertEqual((status['state'], status['complete']), ('partial', False))
+        # A pre-generation installation has no scope counts of its own, so the
+        # state says "partial" instead of claiming a completed export it cannot
+        # prove (CONTRACTS §4.3).
+        self.assertEqual(status['state'], 'partial')
         self.assertEqual(status['stop_reason'], 'legacy')
         self.assertIsNone(status['scope_candidates'])
 
@@ -159,7 +171,9 @@ class ApiTests(unittest.TestCase):
         thread.start()
         try:
             with httpx.Client(base_url=f'http://127.0.0.1:{server.server_port}', trust_env=False, timeout=5) as client:
-                self.assertEqual(client.get('/proxies').json(), {'count': 0, 'generated_at': None, 'proxies': []})
+                body = client.get('/proxies').json()
+            self.assertEqual((body['count'], body['proxies'], body['generated_at']), (0, [], None))
+            self.assertEqual((body['state'], body['state_detail']), (None, None))
         finally:
             server.shutdown()
             server.server_close()

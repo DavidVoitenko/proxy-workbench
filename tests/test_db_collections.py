@@ -12,7 +12,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from proxy_workbench import db
-from proxy_workbench import proxytool as proxytool_module
+from tests.workbench_support import legacy_database as legacy_file  # noqa: E402
 
 PUBLIC_ADDRESSES = ("http://1.2.3.4:8080", "socks5://5.6.7.8:1080")
 OWN_ADDRESSES = ("http://10.0.0.1:3128", "http://my-host.example:8080")
@@ -26,7 +26,7 @@ class CollectionTests(unittest.TestCase):
         self.db_path = self.home / "data" / db.DB_FILENAME
 
     def legacy(self, addresses=PUBLIC_ADDRESSES):
-        conn = proxytool_module.open_db(self.db_path)
+        conn = legacy_file(self.db_path)
         for proxy in addresses:
             conn.execute("INSERT INTO candidates VALUES (?)", (proxy,))
         conn.commit()

@@ -23,10 +23,11 @@ def workspace():
 
 
 def make_database(path, rows=3):
+    """A pre-versioning database, the way the 2.x engine left it behind."""
     with closing(sqlite3.connect(path)) as db:
         with db:
             db.execute('CREATE TABLE candidates(proxy TEXT PRIMARY KEY)')
-            db.executemany('INSERT INTO candidates VALUES (?)',
+            db.executemany('INSERT INTO candidates(proxy) VALUES (?)',
                            [(f'http://127.0.0.{index}:8080',) for index in range(rows)])
     return path
 

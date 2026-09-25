@@ -10,9 +10,14 @@ import unittest
 from types import SimpleNamespace
 
 import httpx
+from tests.workbench_support import add_candidate, store_result  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from proxy_workbench import gui
 from proxy_workbench import proxytool as p
+
+#: A result fixture describes a measurement that just happened; the
+#: admission contract has no "fresh forever" state (CONTRACTS §2.4).
+_NOW = time.time()
 
 
 def scan_config(targets=1, attempts=3, fail_fast=None):
@@ -26,7 +31,7 @@ def scan_config(targets=1, attempts=3, fail_fast=None):
 
 def result_row(proxy, latency, jitter, score):
     return dict(proxy=proxy, reliability=1, min_target_reliability=1, latency_ms=latency, jitter_ms=jitter,
-                score=score, successes=3, requests=3, checked_at=0, samples=[])
+                score=score, successes=3, requests=3, checked_at=_NOW, samples=[])
 
 
 class FailFastTests(unittest.IsolatedAsyncioTestCase):
@@ -139,10 +144,10 @@ class SelectionTests(unittest.TestCase):
         self.db = p.open_db(self.home / 'proxies.sqlite3')
         rows = [result_row('http://11.0.0.1:80', 900, 5, 50), result_row('socks5://11.0.0.2:1080', 200, 90, 70),
                 result_row('socks5h://11.0.0.3:1080', 300, 10, 80), result_row('https://11.0.0.4:443', 100, 40, 90)]
-        self.db.execute('INSERT INTO profiles VALUES (?,?)', ('fixture', json.dumps(dict(targets=[dict(url='https://one.invalid/')]))))
+        self.db.execute('INSERT INTO profiles(id, config) VALUES (?, ?)', ('fixture', json.dumps(dict(targets=[dict(url='https://one.invalid/')]))))
         for row in rows:
-            self.db.execute('INSERT INTO candidates VALUES (?)', (row['proxy'],))
-            self.db.execute('INSERT INTO results VALUES (?,?,?)', ('fixture', row['proxy'], json.dumps(row)))
+            add_candidate(self.db, (row['proxy']))
+            store_result(self.db, ('fixture', row['proxy'], json.dumps(row)))
         self.db.commit()
 
     def tearDown(self):
@@ -150,9 +155,16 @@ class SelectionTests(unittest.TestCase):
         self.temp.cleanup()
 
     def exported(self, **options):
+        """Export and read the artifact the export itself produced.
+
+        A selected slice is its own artifact and never republishes the active
+        pool (defect 7), so the rows are read from the artifact directory the
+        report names rather than from the export root.
+        """
         out = self.home / 'out'
         report = p.export(self.db, 'fixture', out, min_success=1, **options)
-        return report, (out / 'proxies.txt').read_text(encoding='utf-8').split()
+        rows = (Path(report['directory']) / 'proxies.txt').read_text(encoding='utf-8').split()
+        return report, rows
 
     def test_matches_selection(self):
         row = result_row('socks5h://11.0.0.3:1080', 300, 10, 80)
@@ -179,14 +191,19 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(proxies, ['http://11.0.0.1:80'])
         self.assertEqual((report['selection_requested'], report['selection_exported']), (2, 1))
         self.assertEqual(report['selection_missing'], ['http://11.0.0.250:80'])
-        out = self.home / 'out'
-        self.assertIn('http://11.0.0.1:80', (out / 'ranked.csv').read_text(encoding='utf-8'))
-        self.assertIn('PROXY 11.0.0.1:80', (out / 'proxy.pac').read_text(encoding='utf-8'))
-        self.assertIn('11.0.0.1:80', (out / 'clash.yaml').read_text(encoding='utf-8'))
-        self.assertIn('11.0.0.1:80', (out / 'singbox.json').read_text(encoding='utf-8'))
+        self.assertEqual(report['kind'], 'selection')
+        out = Path(report['directory'])
+        for name in ('ranked.csv', 'proxy.pac', 'clash.yaml', 'singbox.json'):
+            self.assertIn('11.0.0.1:80', (out / name).read_text(encoding='utf-8'), name)
+        # The active pool is untouched: the pointer still names the previous
+        # generation and the root mirror still holds the whole scope.
+        self.assertEqual(p.export_manifest(self.home / 'out'), None)
 
     def test_stale_selection_is_missing_instead_of_falling_back_to_full_export(self):
-        self.db.execute("UPDATE results SET payload=json_set(payload, '$.checked_at', 1) WHERE proxy='http://11.0.0.1:80'")
+        # A lifetime is written once, at measurement time (CONTRACTS §2.1), so
+        # expiring a row means moving that recorded deadline, not the clock back.
+        self.db.execute("UPDATE results SET payload=json_set(payload, '$.valid_until', 1) "
+                        "WHERE proxy='http://11.0.0.1:80'")
         self.db.commit()
         report, proxies = self.exported(allowed_proxies=['http://11.0.0.1:80'])
         self.assertEqual(proxies, [])
@@ -215,11 +232,14 @@ class GuiSelectionTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.home = Path(self.temp.name)
         db = p.open_db(self.home / 'proxies.sqlite3')
-        db.execute('INSERT INTO profiles VALUES (?,?)', ('fixture', json.dumps(dict(targets=[dict(url='https://one.invalid/')]))))
+        db.execute('INSERT INTO profiles(id, config) VALUES (?, ?)', ('fixture', json.dumps(dict(targets=[dict(url='https://one.invalid/')]))))
         for row in (result_row('http://11.0.0.1:8080', 900, 5, 50), result_row('socks5://11.0.0.2:1080', 200, 90, 70)):
-            db.execute('INSERT INTO candidates VALUES (?)', (row['proxy'],))
-            db.execute('INSERT INTO results VALUES (?,?,?)', ('fixture', row['proxy'], json.dumps(row)))
+            add_candidate(db, (row['proxy']))
+            store_result(db, ('fixture', row['proxy'], json.dumps(row)))
         db.commit()
+        # A published snapshot is what names the collection and the profile for
+        # every reader; without one the surfaces have nothing to agree on.
+        p.export(db, 'fixture', self.home / 'exports', min_success=1)
         db.close()
         (self.home / 'last-profile.txt').write_text('fixture')
         self.server = gui.make_server(self.home)
@@ -272,9 +292,17 @@ class GuiSelectionTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         state = self.await_job()
         self.assertEqual(state['job']['exit_code'], 0, state['log'])
-        self.assertEqual(self.client.get('/api/download/proxies.txt').text.splitlines(), ['http://11.0.0.1:8080'])
-        self.assertEqual(state['export']['selection_missing'], ['http://11.0.0.250:8080'])
-        self.assertEqual(state['export']['selection_exported'], 1)
+        # Defect 7: exporting what the user highlighted is a separate artifact.
+        # The download route still serves the published generation, and the
+        # selection does not hide the rest of the results.
+        report = state['progress']
+        self.assertEqual(report['kind'], 'selection')
+        self.assertEqual(sorted(self.client.get('/api/download/proxies.txt').text.splitlines()),
+                         ['http://11.0.0.1:8080', 'socks5://11.0.0.2:1080'])
+        self.assertEqual(report['selection_missing'], ['http://11.0.0.250:8080'])
+        self.assertEqual(report['selection_exported'], 1)
+        selection = (Path(report['directory']) / 'proxies.txt').read_text(encoding='utf-8').split()
+        self.assertEqual(selection, ['http://11.0.0.1:8080'])
         self.assertFalse((self.home / 'gui-selection.json').exists())
 
 

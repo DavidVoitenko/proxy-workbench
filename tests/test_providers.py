@@ -5,12 +5,18 @@ from pathlib import Path
 import sys
 import tempfile
 import threading
+import time
 import unittest
 
 import httpx
+from tests.workbench_support import add_candidate, add_candidates, store_result  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from proxy_workbench import api, geoip, gui
 from proxy_workbench import proxytool as p
+
+#: A result fixture describes a measurement that just happened; the
+#: admission contract has no "fresh forever" state (CONTRACTS §2.4).
+_NOW = time.time()
 
 ASN_CSV = ('11.0.0.0,11.0.0.255,64500,Example Home Broadband\n'
            '11.0.1.0,11.0.1.255,64501,Hetzner Online GmbH\n'
@@ -20,7 +26,7 @@ ASN_CSV = ('11.0.0.0,11.0.0.255,64500,Example Home Broadband\n'
 
 def result_row(proxy):
     return dict(proxy=proxy, reliability=1, min_target_reliability=1, latency_ms=100, jitter_ms=1, score=90,
-                successes=1, requests=1, checked_at=0, samples=[])
+                successes=1, requests=1, checked_at=_NOW, samples=[])
 
 
 class ProviderTests(unittest.TestCase):
@@ -53,7 +59,7 @@ class ProviderTests(unittest.TestCase):
     def test_scan_skips_hosting_and_export_reports_providers(self):
         db = p.open_db(self.home / 'proxies.sqlite3')
         home, hosted = 'http://11.0.0.1:80', 'http://11.0.1.1:80'
-        db.executemany('INSERT INTO candidates VALUES (?)', ((home,), (hosted,)))
+        add_candidates(db, ((home,), (hosted,)))
         db.commit()
         probed = []
 
@@ -86,12 +92,16 @@ class ProviderTests(unittest.TestCase):
 
     def test_gui_results_column_and_filter(self):
         db = p.open_db(self.home / 'proxies.sqlite3')
-        db.execute('INSERT INTO profiles VALUES (?,?)', ('fx', json.dumps(dict(targets=[dict(url='https://one.invalid/')]))))
+        db.execute('INSERT INTO profiles(id, config) VALUES (?, ?)', ('fx', json.dumps(dict(targets=[dict(url='https://one.invalid/')]))))
         for proxy in ('http://11.0.0.1:80', 'http://11.0.1.1:80'):
-            db.execute('INSERT INTO candidates VALUES (?)', (proxy,))
-            db.execute('INSERT INTO results VALUES (?,?,?)', ('fx', proxy, json.dumps(result_row(proxy))))
+            add_candidate(db, (proxy))
+            store_result(db, ('fx', proxy, json.dumps(result_row(proxy))))
         db.commit()
+        p.export(db, 'fx', self.home / 'exports', min_success=1, provider_of=p.provider_resolver(self.asn))
         db.close()
+        # The table, the API and the engine only agree on which rows exist once a
+        # snapshot is published: the collection and the profile come from the
+        # published status, not from a guess (CONTRACTS §1.2 rule 2).
         (self.home / 'last-profile.txt').write_text('fx')
         server = gui.make_server(self.home)
         thread = threading.Thread(target=server.serve_forever, daemon=True)

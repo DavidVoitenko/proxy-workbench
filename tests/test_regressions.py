@@ -6,6 +6,7 @@ import tempfile
 import unittest
 
 import httpx
+from tests.workbench_support import add_candidate  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from proxy_workbench import proxytool as p
 
@@ -62,7 +63,7 @@ class MalformedSocksTests(unittest.IsolatedAsyncioTestCase):
                                             contains=None, sha256=None)], attempts=1, timeout=3, max_bytes=1024)
         with tempfile.TemporaryDirectory() as temp:
             db = p.open_db(Path(temp) / 'db.sqlite3')
-            db.execute('INSERT INTO candidates VALUES (?)', (proxy,))
+            add_candidate(db, (proxy))
             db.commit()
             async with server:
                 await p.scan(db, cfg, workers=1, rate=0, progress=False, prefilter=4)

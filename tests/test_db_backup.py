@@ -11,13 +11,13 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from proxy_workbench import db
-from proxy_workbench import proxytool as proxytool_module
+from tests.workbench_support import legacy_database as legacy_file  # noqa: E402
 
 LEGACY_PROXY = "http://1.2.3.4:8080"
 
 
 def legacy_database(path):
-    conn = proxytool_module.open_db(path)
+    conn = legacy_file(path)
     conn.execute("INSERT INTO candidates VALUES (?)", (LEGACY_PROXY,))
     conn.execute("INSERT INTO results VALUES (?,?,?)", ("p1", LEGACY_PROXY, '{"score": 80}'))
     conn.commit()

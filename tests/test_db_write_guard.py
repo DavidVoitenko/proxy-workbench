@@ -12,7 +12,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from proxy_workbench import db
-from proxy_workbench import proxytool as proxytool_module
+from tests.workbench_support import legacy_database  # noqa: E402
 
 #: The three positional writes the old worker performs, with their exact SQL.
 OLD_WRITES = {
@@ -33,7 +33,7 @@ class WriteGuardTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.home = Path(self.temp.name)
         self.db_path = self.home / "data" / db.DB_FILENAME
-        conn = proxytool_module.open_db(self.db_path)
+        conn = legacy_database(self.db_path)
         conn.execute("INSERT INTO candidates VALUES (?)", ("http://1.2.3.4:8080",))
         conn.execute("INSERT INTO candidate_seen VALUES (?,?)", ("http://1.2.3.4:8080", "list-1"))
         conn.execute("INSERT INTO results VALUES (?,?,?)",

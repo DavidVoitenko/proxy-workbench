@@ -6,6 +6,7 @@ import tempfile
 import time
 import unittest
 
+from tests.workbench_support import add_candidates  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from proxy_workbench import proxytool as p
 
@@ -35,7 +36,7 @@ class PrefilterTests(unittest.IsolatedAsyncioTestCase):
         self.server = await asyncio.start_server(accept, '127.0.0.1', 0)
         self.live = f'http://127.0.0.1:{self.server.sockets[0].getsockname()[1]}'
         self.dead = [f'socks5://127.0.0.1:{port}' for port in await closed_ports(40)]
-        self.db.executemany('INSERT INTO candidates VALUES (?)', ((proxy,) for proxy in [self.live, *self.dead]))
+        add_candidates(self.db, ((proxy,) for proxy in [self.live, *self.dead]))
         self.db.commit()
         self.probed = []
 

@@ -20,6 +20,7 @@ import httpx
 
 from proxy_workbench import gui
 from proxy_workbench import proxytool as core
+from tests import workbench_support as support
 
 ROOT = Path(__file__).resolve().parents[1]
 APP_JS = ROOT / 'proxy_workbench' / 'ui' / 'app.js'
@@ -67,6 +68,16 @@ def measurement(proxy, *, latency=120.0, reliability=1.0, age=60.0, now=None, er
             {'target': 1, 'attempt': 1, 'ok': True, 'status': 200, 'elapsed_ms': latency},
         ],
     }
+    # A row the engine could actually have written carries its scope: the
+    # collection, the profile revision, the network and the access identity
+    # (CONTRACTS §1.2, §2.3).  A fixture without them describes a measurement no
+    # reader would admit.
+    body['collection_id'] = 'public-base'
+    body['profile_id'] = profile_id()
+    body['profile_revision'] = 1
+    body['network_id'] = 'default'
+    body['access_id'] = 'default'
+    body['access_revision'] = 1
     if country:
         body['country'] = country
     if error:
@@ -89,8 +100,7 @@ def build_data(rows, *, now=None, config=None, publish=True, profile=None, extra
         with conn:
             conn.execute('INSERT OR IGNORE INTO profiles (id, config) VALUES (?,?)', (pid, json.dumps(config)))
             for body in rows:
-                conn.execute('INSERT OR REPLACE INTO results (profile, proxy, payload) VALUES (?,?,?)',
-                             (pid, body['proxy'], json.dumps(body)))
+                support.store_result(conn, (pid, body['proxy'], json.dumps(body)))
     finally:
         conn.close()
     (home / 'last-profile.txt').write_text(pid, encoding='utf-8')
@@ -104,7 +114,9 @@ def publish_generation(home, rows, pid, *, now=None, name='.generation-webtest1'
     generation = home / 'exports' / 'generations' / name
     generation.mkdir(parents=True, exist_ok=True)
     status = {
-        'schema_version': 1, 'profile': pid, 'generation': name, 'state': 'complete',
+        'schema_version': 2, 'profile': pid, 'profile_revision': 1,
+        'collection_id': 'public-base', 'network_id': 'default',
+        'generation': name, 'state': 'complete',
         'checked': len(rows), 'scope_candidates': max(len(rows), 1), 'exported': len(rows) if exported is None else exported,
         'generated_at': now, 'min_success': 2 / 3, 'sort': 'recommended', 'complete': True,
         'scope': {'protocol': 'all', 'countries': [], 'exclude_hosting': False},

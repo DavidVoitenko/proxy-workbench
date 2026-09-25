@@ -5,11 +5,17 @@ from pathlib import Path
 import struct
 import sys
 import tempfile
+import time
 import unittest
 
+from tests.workbench_support import add_candidate, store_result  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from proxy_workbench import proxytool as p
 from proxy_workbench import socks4
+
+#: A result fixture describes a measurement that just happened; the
+#: admission contract has no "fresh forever" state (CONTRACTS §2.4).
+_NOW = time.time()
 
 
 def scan_config(url):
@@ -101,11 +107,11 @@ class Socks4FormatTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             home = Path(temp)
             db = p.open_db(home / 'db.sqlite3')
-            db.execute('INSERT INTO profiles VALUES (?,?)', ('fx', json.dumps(dict(targets=[dict(url='https://one.invalid/')]))))
+            db.execute('INSERT INTO profiles(id, config) VALUES (?, ?)', ('fx', json.dumps(dict(targets=[dict(url='https://one.invalid/')]))))
             row = dict(proxy='socks4://11.0.0.5:4145', reliability=1, min_target_reliability=1, latency_ms=100,
-                       jitter_ms=1, score=90, successes=3, requests=3, checked_at=0, samples=[])
-            db.execute('INSERT INTO candidates VALUES (?)', (row['proxy'],))
-            db.execute('INSERT INTO results VALUES (?,?,?)', ('fx', row['proxy'], json.dumps(row)))
+                       jitter_ms=1, score=90, successes=3, requests=3, checked_at=_NOW, samples=[])
+            add_candidate(db, (row['proxy']))
+            store_result(db, ('fx', row['proxy'], json.dumps(row)))
             db.commit()
             p.export(db, 'fx', home / 'out', min_success=1, protocol='socks4')
             db.close()

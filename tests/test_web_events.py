@@ -13,6 +13,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tests import web_support as ws
+from tests import workbench_support as support
+from proxy_workbench import proxytool as core
 
 
 class EventStreamTests(unittest.TestCase):
@@ -67,11 +69,9 @@ class EventStreamTests(unittest.TestCase):
         before = {event['item_id'] for event in self.events()['events']}
         self.assertIn(self.good['proxy'], before)
         later = ws.measurement('http://11.0.0.12:8080', latency=90.0, age=5, now=time.time())
-        from proxy_workbench import proxytool as core
         conn = core.open_db(self.home / 'proxies.sqlite3')
         with conn:
-            conn.execute('INSERT OR REPLACE INTO results (profile, proxy, payload) VALUES (?,?,?)',
-                         (ws.profile_id(), later['proxy'], json.dumps(later)))
+            support.store_result(conn, (ws.profile_id(), later['proxy'], json.dumps(later)))
         conn.close()
         self.app.event_backfilled = False
         after = self.events()
@@ -96,8 +96,7 @@ class EventStreamTests(unittest.TestCase):
         row.pop('checked_at')
         conn = core.open_db(self.home / 'proxies.sqlite3')
         with conn:
-            conn.execute('INSERT OR REPLACE INTO results (profile, proxy, payload) VALUES (?,?,?)',
-                         (ws.profile_id(), row['proxy'], json.dumps(row)))
+            support.store_result(conn, (ws.profile_id(), row['proxy'], json.dumps(row)))
         conn.close()
         items = [event['item_id'] for event in self.events()['events']]
         self.assertNotIn(row['proxy'], items)

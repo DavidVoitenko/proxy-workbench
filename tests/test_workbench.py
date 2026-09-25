@@ -8,6 +8,7 @@ import unittest
 from unittest import mock
 from types import SimpleNamespace
 
+from tests.workbench_support import add_candidate, add_candidates, store_result  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from proxy_workbench.branding import merge_headers
 from proxy_workbench import proxytool as p
@@ -39,8 +40,8 @@ class WorkbenchTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_190000_full_coverage_bounded_workers_resume_and_export(self):
         count = 190000
-        self.db.executemany('INSERT INTO candidates VALUES (?)',
-                            ((f'http://11.{i//65536}.{i//256%256}.{i%256}:80',) for i in range(count)))
+        add_candidates(self.db,
+                     ((f'http://11.{i//65536}.{i//256%256}.{i%256}:80',) for i in range(count)))
         self.db.commit()
         seen = set()
         active = peak = 0
@@ -67,7 +68,7 @@ class WorkbenchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len((self.home/'out/proxies.txt').read_text(encoding='utf-8').splitlines()), 137)
 
     async def test_interruption_resume_and_profile_isolation(self):
-        self.db.executemany('INSERT INTO candidates VALUES (?)', ((f'http://11.0.0.{i}:80',) for i in range(12)))
+        add_candidates(self.db, ((f'http://11.0.0.{i}:80',) for i in range(12)))
         self.db.commit()
         cfg = config()
         blocked = asyncio.Event()
@@ -182,7 +183,7 @@ class WorkbenchTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_quality_speed_filters_and_unlimited_export(self):
         cfg = config(2)
-        self.db.execute('INSERT INTO profiles VALUES (?,?)', ('test', '{}'))
+        self.db.execute('INSERT INTO profiles(id, config) VALUES (?, ?)', ('test', '{}'))
         stable = row('http://11.0.0.1:80', cfg, ms=100)
         fast = row('http://11.0.0.2:80', cfg, ms=1)
         fast['samples'][0]['ok'] = False
@@ -193,8 +194,8 @@ class WorkbenchTests(unittest.IsolatedAsyncioTestCase):
                 sample['ok'] = False
         failed_target = p.summarize(failed_target['proxy'], failed_target['samples'], cfg)
         for r in [stable, fast, failed_target]:
-            self.db.execute('INSERT INTO candidates VALUES (?)', (r['proxy'],))
-            self.db.execute('INSERT INTO results VALUES (?,?,?)', ('test', r['proxy'], json.dumps(r)))
+            add_candidate(self.db, (r['proxy']))
+            store_result(self.db, ('test', r['proxy'], json.dumps(r)))
         self.db.commit()
         out = self.home/'out'
         report = p.export(self.db, 'test', out, min_success=2/3)
@@ -272,7 +273,7 @@ class WorkbenchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(verdict['dnsbl'], [])
 
     async def test_scan_stores_blocked_verdict_and_resumes(self):
-        self.db.execute('INSERT INTO candidates VALUES (?)', ('http://11.4.4.4:80',))
+        add_candidate(self.db, ('http://11.4.4.4:80'))
         self.db.commit()
         denylist = Denylist.from_text('11.4.4.0/24', normalizer=p.normalize)
         cfg = config()
@@ -295,12 +296,12 @@ class WorkbenchTests(unittest.IsolatedAsyncioTestCase):
     def test_export_filters_blacklist_and_cleanliness(self):
         cfg = config()
         cfg['reputation'] = make_policy({'strict':True}, Denylist.empty())
-        self.db.execute('INSERT INTO profiles VALUES (?,?)', ('fixture', json.dumps(cfg)))
+        self.db.execute('INSERT INTO profiles(id, config) VALUES (?, ?)', ('fixture', json.dumps(cfg)))
         for index, status in enumerate(('clean', 'listed', 'unknown')):
             value = row(f'http://11.6.6.{index+1}:80', cfg)
             value['reputation'] = {'status':status, 'dnsbl':[], 'checked_at':0}
-            self.db.execute('INSERT INTO candidates VALUES (?)', (value['proxy'],))
-            self.db.execute('INSERT INTO results VALUES (?,?,?)', ('fixture', value['proxy'], json.dumps(value)))
+            add_candidate(self.db, (value['proxy']))
+            store_result(self.db, ('fixture', value['proxy'], json.dumps(value)))
         self.db.commit()
         report = p.export(self.db, 'fixture', self.home/'clean-out', min_success=1, denylist=Denylist.empty())
         self.assertEqual(report['exported'], 1)
