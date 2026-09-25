@@ -2,84 +2,72 @@
 
 **Требования:** F16, дефекты 16, 17, 18, 19; R11, R12, R13
 **Контракт:** `docs/integration/CONTRACTS.ru.md` §1.2(3,5), §2.3, §4.4, §5.1, §5.5, §6.3, §7.1, §7.2 (версия 1)
-**База:** ветка `integration/ultra-2026-09-25`, HEAD `a877c2c`; `db.py` (SCHEMA_VERSION 14), `core.py`, `pools.py`, `reputation.py` уже в дереве
-**Мои файлы:** `proxy_workbench/gateway.py`, `tests/gateway_support.py`,
-`tests/test_gateway.py` (переписан под новый контракт — см. §3),
-`tests/test_gateway_reservation.py`, `tests/test_gateway_health.py`, `tests/test_gateway_bind.py`,
-`tests/test_gateway_denylist.py`, `tests/test_gateway_rotation.py`, `tests/test_gateway_transports.py`
+**База этого прохода:** ветка `integration/ultra-2026-09-25`, HEAD `c9e7fd8`; предыдущая редакция писалась на `a877c2c`, с тех пор `gui.py`, `api.py`, `proxytool.py`, `reputation.py` и соседние модули изменились — ниже это перепроверено на текущей ревизии.
+**Мои файлы:** `proxy_workbench/gateway.py`, `tests/gateway_support.py`, `tests/test_gateway.py`, `tests/test_gateway_reservation.py`, `tests/test_gateway_health.py`, `tests/test_gateway_bind.py`, `tests/test_gateway_denylist.py`, `tests/test_gateway_rotation.py`, `tests/test_gateway_transports.py`
 
 `reputation.py` я **не менял**: шлюзу достаточно `Denylist.match()`, `Denylist.from_file()` и `Denylist.digest`, и это снимает конфликт двух писателей из `HANDOFF/README.ru.md` §1.2/§8 п.1.
 
 ---
 
-## 0. Что изменилось по контракту (это ломает потребителей — читать первым)
+## 0. Что изменилось в этом проходе
 
-| Что | Было | Стало | Кого затрагивает |
+Четыре дыры найдены **после** предыдущей правки и все четыре закрыты. Первая редакция этого handoff утверждала, что дефект 16 закрыт полностью — это было неверно: слот брался до `await`, но **терялся** в окне между успешным `connect()` и входом в `relay()`.
+
+| # | Что было | Стало | Требование |
 | --- | --- | --- | --- |
-| `gateway.start(host=...)` без LAN | поднимался на любом адресе, `0.0.0.0` — умолчание GUI | не-loopback адрес **отказывается**, пока не сказано `lan=True` или `Bind(lan=True)` | `gui.py`, `proxytool.py run_gateway` |
-| `Gateway` / `Background` параметр `token` | один и тот же секрет на GUI, API и шлюз | только пароль шлюза; GUI-токен больше не подставляется, а при отсутствии генерируется **свой** (`new_gateway_token()`) | `gui.py`, `proxytool.py` |
-| `Pool.pick()` | читал экспорт с диска | чистая работа с памятью; чтение — `refresh()` / `await arefresh()` | `proxytool.py:2174` (`pool.refresh()` в `run_gateway` — работает без изменений) |
-| `Pool.snapshot()` | читал экспорт с диска | только счётчики, файлов не касается; для свежего состояния — `await asnapshot()` | `gui.py:303` (`runner.server.gateway.pool.snapshot(top=5)` — работает, теперь без ввода-вывода) |
-| `Pool.acquire()` | основной способ занять слот | `reserve()` возвращает `Lease`, который освобождается ровно один раз | прямых внешних вызовов нет |
-| `client_options(user)` | `(request, session)` | `(request, session, pool)` | только `gateway.py` |
-| `SUPPORTED` | `http, socks4, socks5` | `http, https, socks4, socks4a, socks5, socks5h` | `exportsvc`/`apiv1`, если перечисляют транспорты |
-| `STRATEGIES` | `round-robin, random` | + `health-aware` | GUI-переключатель, если он есть |
-| `Gateway.relay()` | `(client_reader, client_writer, proxy, upstream, first=b'')` | `(client_reader, client_writer, lease, upstream, first=b'', kind='tunnel')` | внутренний метод |
+| 1 | `handle_http`/`handle_socks5` брали lease, потом `await writer.drain()` для ответа клиенту. Отмена, дедлайн handshake или оборванный клиент **в этом окне** оставляли `pool.active[proxy] == 1` навсегда | окно закрыто `try/except BaseException` → `Gateway._discard()` возвращает слот и закрывает туннель | дефект 16, R11 |
+| 2 | `Pool.rows` вычитался из denylist **на месте**. Удалённое правило не возвращало прокси: пул монотонно сжимался до следующей публикации | `Pool.source_rows` (что дал экспорт) и `Pool.rows` (source минус denylist) разделены; список выводится заново по ключу `(export key, export revision, denylist digest)` | дефект 19, R13 |
+| 3 | `max_session` приводился к `int()`, поэтому любой дробный лимит становился `0`, а `0` — это документированное «без лимита» | `max(0.0, float(max_session))`; счётчик `stats['capped']` отделён от `closed_idle` | F16 «долгие соединения имеют понятную политику» |
+| 4 | `Pool.revoke_streams(close)` был мёртвым кодом, а `Gateway.set_denylist` держал **вторую** копию решения «рвать ли поток» | политика живёт в одном месте, `Gateway.set_denylist` спрашивает `Pool.revoke_streams()` | дефект 19, R13 |
 
-Позиционный порядок аргументов `start()` и `Background()` сохранён, поэтому существующие вызовы продолжают работать.
+Позиционный порядок аргументов `start()` и `Background()` сохранён; существующие вызовы продолжают работать.
+
+### 0.1 Что снято из контракта
+
+| Что | Статус | Почему |
+| --- | --- | --- |
+| `gateway.IDEMPOTENT` | **удалено** | Константа не имела ни одного чтения (`grep` по `proxy_workbench/gateway.py` и `tests/test_gateway*.py`). Она описывала политику «можно повторять идемпотентный метод», которой в коде нет: `ReplayGuard.write_once` запрещает повторную запись **любого** запроса, а `Gateway.connect` повторяет попытку, только пока ничего не записано. Список разрешённых методов вводил в заблуждение — он выглядел как действующий, а действующим было более строгое правило |
+| `Pool.revoke_streams(close)` → `Pool.revoke_streams(force=None)` | **сигнатура изменена** | Метод не вызывался ниоткуда, кроме упоминания в докстринге. Теперь он единственный носитель политики `on_deny`. `force` перекрывает настроенную политику на один вызов; `None` означает «спроси у `on_deny`» |
+| `Pool.rows` | **остаётся**, рядом появился `Pool.source_rows` | `rows` — то, что клиенту можно выдать; `source_rows` — то, что дал экспорт. Оба публичные, оба без файлового ввода-вывода |
+| `Pool.stats['capped']` | **добавлено** | Счётчик виден в `snapshot()` и в `state()`, то есть в GUI и в API |
 
 ---
 
 ## 1. Прошу внести в чужие файлы
 
-### 1.1 `proxy_workbench/gui.py`: LAN — явный opt-in, отдельный токен (дефект 18, R12)
+### 1.1 `proxy_workbench/gui.py`: `--lan` объявлен, но не доходит до шлюза (дефект 18, R12)
 
-**Где:** `gui.py:1089-1094` (`--gateway-host`, `--gateway-token`) и `gui.py:1128-1146` (запуск `gateway.Background`).
+Флаги уже добавлены и правильные: `--gateway-host` по умолчанию `127.0.0.1` (`gui.py:2441`), `--lan` (`gui.py:2445`), `--gateway-token` (`gui.py:2447`), а пароль генерируется на каждый запуск и не берётся из `server.app.token` (`gui.py:2485-2491`). **Осталось одно: `lan` не передаётся.**
 
-**Сейчас:**
-```python
-parser.add_argument('--gateway-host', default=os.environ.get('PROXY_WORKBENCH_GATEWAY_HOST', '0.0.0.0'), ...)
-...
-if not api.is_loopback(args.gateway_host) and not gateway_token:
-    gateway_token = server.app.token          # <- секрет GUI уходит в QR телефона
-```
-
-**Прошу заменить на:**
+**Где:** `gui.py:2497` и `gui.py:916`.
 
 ```python
-parser.add_argument('--gateway-host', default=os.environ.get('PROXY_WORKBENCH_GATEWAY_HOST', '127.0.0.1'),
-                    help=tr('адрес шлюза; по умолчанию только этот компьютер',
-                            'gateway bind address; this computer only by default'))
-parser.add_argument('--gateway-lan', action='store_true',
-                    help=tr('разрешить доступ с локальной сети (нужен отдельный пароль шлюза)',
-                            'allow access from the local network (a separate gateway password is required)'))
-parser.add_argument('--gateway-interface',
-                    help=tr('какой адрес показывать телефону, если их несколько',
-                            'which LAN address to publish when there is more than one'))
+# gui.py:2497 — сейчас
+server.app.gateway = gateway.Background(args.data, args.gateway_host, args.gateway_port, token=gateway_token)
+# прошу
+server.app.gateway = gateway.Background(args.data, args.gateway_host, args.gateway_port,
+                                        token=gateway_token, lan=args.lan,
+                                        interface=args.gateway_interface)
 ```
 
-и при старте:
-```python
-try:
-    server.app.gateway = gateway.Background(
-        args.data, args.gateway_host, args.gateway_port,
-        lan=args.gateway_lan, interface=args.gateway_interface,
-        # НЕ передавать сюда server.app.token: это секрет GUI, а не шлюза.
-        token=args.gateway_token)
-except (OSError, ValueError) as exc:
-    ...   # уже есть, печатает «Ротирующий прокси не запущен»
+**Что происходит без этого (проверено в этой сессии):**
+
+```
+$ .venv/bin/python proxytool.py --data <tmp> --host 0.0.0.0 gateway
+Gateway not started: the address 0.0.0.0 is reachable from the network: enable LAN explicitly (bind.lan=True) and choose an interface.
 ```
 
-**Почему:** дефект 18 и R12 прямо называют `gui.py:1089` и `gui.py:1134` точкой правки. `gateway.Bind` теперь сам отказывает не-loopback адресу без `lan=True`, так что неправильный дефолт больше не приводит к тихому LAN-режиму: приложение напечатает понятное сообщение и продолжит работать без шлюза. `lan_interfaces()` и `Bind.published_host` дают выбор интерфейса; `Background.state()['interfaces']` — список для GUI.
+`gateway.Bind` сам отказывает не-loopback адресу без `lan=True` (это намеренно: локальный default остаётся локальным), но `--lan` без передачи аргумента означает, что **включить LAN из GUI нельзя вообще** — флаг печатает предупреждение и всё равно не поднимает слушатель. Тот же вызов в `App.start_gateway` (`gui.py:916`) нужен для кнопки «запустить снова»: он берёт `self.gateway_bind`, поэтому `lan` и `interface` надо сохранять в этом словаре рядом с `host`/`port` (`gui.py:2484`).
+
+**Про текст ошибки.** Сообщение `Bind.__post_init__` называет внутреннее имя аргумента (`bind.lan=True`). Для CLI это бесполезно (см. §1.4); прошу в точке вызова ловить `ValueError` и печатать своё, пользовательское сообщение, а внутреннюю формулировку оставить для разработчика.
 
 **Что НЕ ломается:** `--no-gateway`, локальный режим, печать адреса и QR. `api.is_loopback` импортируется как раньше.
 
-### 1.2 `proxy_workbench/gui.py`: `gateway_state()` — показать новое состояние (F16)
+### 1.2 `proxy_workbench/gui.py`: выбор интерфейса и видимое состояние (F16, дефект 18)
 
-**Где:** `gui.py:299-320` (`App.gateway_state`).
+**Где:** `App.gateway_state` (`gui.py`).
 
-Сейчас возвращаются `snapshot`, `address`, `copy_address`, `bind_host`, `mobile_ready`, `username`, `password`, `proxies`.
-`runner.server.gateway.pool.snapshot(top=5)` продолжает работать (теперь без файлового ввода-вывода), но в ответе не хватает:
+`runner.server.gateway.pool.snapshot(top=5)` продолжает работать (файлов не читает), но в ответе не хватает:
 
 ```python
 state = dict(snapshot)
@@ -97,76 +85,88 @@ state.update(
 )
 ```
 
-**Почему:** F16 требует видимого состояния привязки и «понятной политики» для долгих соединений и shutdown; CONTRACTS §4.3/§4.4 требуют, чтобы причина отказа была видна пользователю, а не молчала.
+`--gateway-interface` из §1.1 и поле `interface` в `gateway_bind` — часть этого: без выбора интерфейса на машине с несколькими адаптерами QR указывает адрес, по которому телефон не дойдёт.
 
-**Секреты:** `state()` и `snapshot()` не содержат значения пароля — это проверено тестом `test_gateway_bind.py::test_gateway_state_exposes_no_password`. В `gateway_state()` пароль уже кладётся в `copy_address`/`password` намеренно (это телефонное подключение, не управление), и он остаётся паролем **шлюза**, а не GUI.
+**Секреты:** `state()` и `snapshot()` не содержат значения пароля — проверено тестом `tests/test_gateway_bind.py::test_gateway_state_exposes_no_password`.
 
 ### 1.3 `proxy_workbench/gui.py`: кнопка «запретить» — отзыв, а не только запрет вперёд (дефект 19, R13)
 
-**Где:** место, где GUI сохраняет `denylist.txt` (`gui.py:272`, `core.atomic(self.data/'denylist.txt', ...)`).
+**Где:** место, где GUI сохраняет `denylist.txt`.
 
-**Прошу:** после записи файла, если запрос шёл из массовой операции «запретить выбранные», сказать об этом пользователю явно, потому что теперь есть **два разных действия**:
+**Прошу** после записи файла сказать пользователю явно, потому что теперь **два разных действия**:
 
 - **запретить впредь** — правило попадёт в `data/denylist.txt`, шлюз подхватит его при следующем обновлении пула (`refresh_interval`, по умолчанию 2 с) и **отзовёт новые допуски**;
-- **отозвать из активного пула** — дополнительно вызвать `gateway.set_denylist(...)` у живого `Background`, чтобы отзыв был немедленным, а не по таймеру.
+- **отозвать из активного пула** — дополнительно вызвать `gateway.set_denylist(...)` у живого `Background`, чтобы отзыв был немедленным.
 
-Публичный API для этого уже есть и не требует правок шлюза:
 ```python
 closed = server.app.gateway.set_denylist(Denylist.from_file(path, normalizer=core.normalize))
 # closed — список прокси, чьи открытые потоки закрыты; пусто при on_deny='keep'
 ```
 
-**Судьба уже открытых потоков — отдельная и явная настройка** `on_deny`:
-- `'keep'` (по умолчанию) — открытый поток не рвётся: байты уже в проводе, и обрывать его должен пользователь, а не побочный эффект добавления правила;
+Судьба уже открытых потоков — отдельная явная настройка `on_deny`:
+- `'keep'` (по умолчанию) — открытый поток не рвётся: байты уже в проводе, обрывать его должен пользователь;
 - `'close'` — шлюз закрывает потоки запрещённых адресов и возвращает их список.
 
-**Почему:** R13 требует различить «запретить впредь» и «отозвать», и говорит, что закрытие уже существующих потоков — отдельная явно выбранная политика. Текущий текст кнопки обещает только будущие проверки; теперь можно обещать и отзыв.
+**Что изменилось с прошлой редакции:** правило обратимо. Раньше `Pool.rows` вычитался на месте, и удалённое правило **не возвращало** прокси до следующей публикации. Теперь список выводится заново, поэтому «запретил — потом передумал — снял правило» работает, и кнопка «запретить» больше не может тихо и навсегда вычеркнуть адрес. Это стоит сказать в подписи кнопки явно: отзыв — это отмена правила, а не разовое действие.
 
-### 1.4 `proxy_workbench/proxytool.py`: отдельный токен в CLI (дефект 18)
+### 1.4 `proxy_workbench/proxytool.py`: отдельный токен в CLI (дефект 18, R12)
 
-**Где:** `proxytool.py:2076-2085` (флаги `serve`/`gateway`), `proxytool.py:2161-2172` (`run_gateway`).
+**Где:** `run_gateway` (`proxytool.py:3089-3118`) и подкоманда `gateway` (`proxytool.py:2820`).
 
-**Сейчас** один `--api-token` обслуживает и API, и шлюз.
+**Сейчас** один `--api-token` обслуживает и API, и шлюз:
 
-**Прошу:** добавить `--gateway-token` (и `PROXY_WORKBENCH_GATEWAY_TOKEN`) и передавать его в `gateway.start(..., token=args.gateway_token)`. Если флаг не задан, а адрес не loopback, шлюз сам сгенерирует себе пароль и напечатает его один раз в stdout — сейчас `start()` возвращает `server.gateway.token` и `server.gateway.token_origin`, этого достаточно:
+```python
+server = await gateway.start(args.data, args.host, port, args.api_token, filters, args.rotate,
+                             max(0, args.max_per_proxy), max(0.0, args.session_ttl) * 60)
+```
+
+**Прошу добавить** и передать в `gateway.start(...)`:
+
+| Флаг | Тип | Куда в `start()` | Зачем |
+| --- | --- | --- | --- |
+| `--gateway-token` (+ `PROXY_WORKBENCH_GATEWAY_TOKEN`) | строка | `token=` | отдельная identity; если не задан, шлюз сгенерирует свой и напечатает один раз |
+| `--gateway-lan` | флаг | `lan=` | без него не-loopback адрес отказывается (см. §1.1) |
+| `--gateway-interface` | строка | `bind=Bind(..., interface=...)` | выбор адаптера для QR |
+| `--gateway-sticky {failover,strict}` | выбор | `sticky=` | режимы прилипания сессии |
+| `--gateway-deny-open-streams {keep,close}` | выбор | `on_deny=` | судьба уже открытых потоков |
+| `--max-session` | float, секунды | `max_session=` | верхняя граница жизни одного соединения; сейчас из CLI недостижима вообще |
 
 ```python
 server = await gateway.start(args.data, args.host, port, args.gateway_token, filters, args.rotate,
                              max(0, args.max_per_proxy), max(0.0, args.session_ttl) * 60,
-                             sticky=args.gateway_sticky, on_deny=args.gateway_deny_open_streams)
+                             lan=args.gateway_lan, sticky=args.gateway_sticky,
+                             on_deny=args.gateway_deny_open_streams,
+                             max_session=args.max_session)
 if server.gateway.token_origin == 'generated':
-    print(tr(f'Пароль шлюза (показывается один раз): {server.gateway.token}', ...))
+    print(tr(f'Пароль шлюза (показывается один раз): {server.gateway.token}',
+             f'Gateway password (shown once): {server.gateway.token}'), flush=True)
 ```
 
-Также прошу добавить `--gateway-sticky {failover,strict}` и `--gateway-deny-open-streams {keep,close}`.
-
-**Почему:** R12 и CONTRACTS §5.1 — четыре разные identity, ни одна не подставляется вместо другой.
+**Единицы (CONTRACTS §5.5):** `--session-ttl` уже в минутах и домножается на 60 в вызове; `--max-session` прошу объявить **в секундах**, как `max_session` в коде, и не смешивать с минутами.
 
 ### 1.5 `proxy_workbench/apiv1.py`: маршруты шлюза (F16, F29)
 
-В `apiv1.py:1328-1356` уже объявлены `/v1/gateway/bindings`, `/v1/gateway/listeners`, `/v1/gateway/sessions`, `/v1/gateway/config`. Им не хватает данных, которые теперь есть:
+В `apiv1.py:1329-1346` уже объявлены `/v1/gateway/bindings`, `/v1/gateway/listeners`, `/v1/gateway/sessions`, `/v1/gateway/config` (включая `PATCH` для config и `POST` для bind). Им не хватает данных, которые теперь есть:
 
 | Маршрут | Что отдавать | Откуда |
 | --- | --- | --- |
 | `GET /v1/gateway/listeners` | `Bind.as_dict()` + `token_origin` + `authenticated` | `Background.bind`, `Background.state()` |
 | `GET /v1/gateway/bindings` | `pool_id, generation, profile_id, profile_revision, policy` | `Pool.state()['binding']`, `Pool.state()['bindings']` |
 | `GET /v1/gateway/config` | `strategies, sticky_modes, supported, revoke_policies, handshake_timeout, connect_timeout, idle_timeout, max_session, max_clients, on_deny` | `Gateway.state()` |
-| `GET /v1/gateway/sessions` | число и TTL, **без имён сессий** (имя сессии приходит от клиента) | `Pool.snapshot()['sessions']` |
+| `GET /v1/gateway/sessions` | число и TTL, **без имён сессий** (имя приходит от клиента) | `Pool.snapshot()['sessions']` |
 
-**Почему:** CONTRACTS §5.2/§5.3 — права `gateway.read`/`gateway.write` объявлены, но нечем наполнить; §5.4 — `E_GATEWAY_NO_UPSTREAM`, `E_GATEWAY_DEADLINE`, `E_GATEWAY_SLOT_UNAVAILABLE`, `E_GATEWAY_TRANSPORT_UNSUPPORTED` должны быть видимы клиенту. `Gateway.state()` уже отдаёт эти поля и **не содержит секретов**.
+**Почему:** CONTRACTS §5.2/§5.3 — права `gateway.read`/`gateway.write` объявлены, но нечем наполнить; §5.4 — коды причин должны быть видимы клиенту. `Gateway.state()` уже отдаёт эти поля и **не содержит секретов**.
 
-### 1.6 `proxy_workbench/diagnostics.py`: коды причин шлюза (CONTRACTS §5.4)
+### 1.6 `proxy_workbench/diagnostics.py`: два кода шлюза ещё не описаны (CONTRACTS §5.4)
 
-`diagnostics.py:356` и `:429` оставляют коды шлюза владельцу шлюза. Прошу добавить в справочник:
+`diagnostics.py:444-445` уже содержит весь набор §5.4 для шлюза: `E_GATEWAY_NO_UPSTREAM`, `E_GATEWAY_DEADLINE`, `E_GATEWAY_SLOT_UNAVAILABLE`, `E_GATEWAY_TRANSPORT_UNSUPPORTED`. **Этот пункт с прошлой редакции закрыт — прошу не переписывать.**
+
+Не хватает двух кодов, которые шлюз уже различает на практике, но сообщить о них нечем:
 
 | Код | Когда | Действие для пользователя |
 | --- | --- | --- |
-| `E_GATEWAY_NO_UPSTREAM` | пул пуст или все попытки исчерпаны | «запустите проверку» / «смените пул» |
-| `E_GATEWAY_SLOT_UNAVAILABLE` | `max_per_proxy` занят, свободного слота нет | «повторите позже» |
-| `E_GATEWAY_DEADLINE` | handshake не уложился в `handshake_timeout` | «проверьте прокси» |
-| `E_GATEWAY_TRANSPORT_UNSUPPORTED` | схема апстрима не из `SUPPORTED` | «выберите поддерживаемый протокол» |
-| `E_GATEWAY_DENIED` | адрес попал под denylist | «адрес запрещён правилом» |
-| `E_GATEWAY_SESSION_STRICT` | strict-сессия осталась без своего адреса | «сессия не может сменить адрес» |
+| `E_GATEWAY_DENIED` | адрес попал под denylist, поэтому допуска нет | «адрес запрещён правилом» |
+| `E_GATEWAY_SESSION_STRICT` | strict-сессия осталась без своего адреса и получила отказ вместо смены | «сессия не может сменить адрес» |
 
 Перевод — существующим `i18n.tr(ru, en)`, как требует §5.4.
 
@@ -199,16 +199,18 @@ Pool(data, filters=None, strategy='round-robin', max_failures=2, cooldown=300,
   .pick(...) -> str                  # без слота
   .reserve(...) -> Lease | None      # выбор + слот одним шагом
   .release(proxy) / .active_for(proxy)
+  .revoke_streams(force=None) -> list[str]   # источник правды о судьбе открытых потоков
   .connected(proxy, connect_ms=0)    # НЕ успех
   .outcome(proxy, kind, detail=None) # response|tunnel_bytes|upstream_unavailable|no_response|
                                      # handshake_failed|upstream_refused|closed_empty
-  .ok(proxy) / .failed(proxy)        # совместимые обёртки
+  .ok(proxy) / .failed(proxy)
   .health_score(proxy, now=None) -> float
   .report(proxy) -> dict
   .snapshot(top=20) -> dict          # без файлов, безопасно из любого потока
   await .asnapshot(top=20) -> dict
   .state() -> dict
   .binding_for(name=None) -> Binding  # 'default' всегда адресуем, иначе KeyError
+  # поля: .source_rows (что дал экспорт), .rows (минус denylist), .denied, .revoked
 
 # шлюз
 Gateway(pool, token=None, attempts=3, connect_timeout=8, idle_timeout=300, *,
@@ -236,8 +238,8 @@ Background(data, host='127.0.0.1', port=8899, token=None, **options)
 
 ### 2.3 Политика долгих соединений и shutdown
 
-- `idle_timeout` (по умолчанию 300 с) — бездействие в любую сторону;
-- `max_session` (0 = без предела) — верхняя граница жизни одного соединения;
+- `idle_timeout` (по умолчанию 300 с) — бездействие в любую сторону, счётчик `closed_idle`;
+- `max_session` (0 = без предела, **секунды, float**) — верхняя граница жизни одного соединения, счётчик `capped`. Значение **не округляется**: `0.5` остаётся `0.5` (закреплено тестом);
 - `handshake_timeout` — один **абсолютный** дедлайн на весь handshake: первый байт, разбор запроса, согласование SOCKS5 и туннель к апстриму;
 - `max_clients` — верхняя граница одновременных клиентских соединений, лишние получают `503`;
 - `shutdown(grace)` — сначала ждёт до `grace`, потом отменяет остаток и возвращает отчёт.
@@ -254,23 +256,26 @@ Background(data, host='127.0.0.1', port=8899, token=None, **options)
 | `closed_empty` | клиент говорил, в ответ тишина | отдых после `max_failures` |
 | `handshake_failed` | не соединился / отверг рукопожатие | отдых после `max_failures` |
 
-`connected()` (TCP+handshake) **не** является успехом и **не** снимает серию неудач: это и был исходный дефект.
+`connected()` (TCP+handshake) **не** является успехом и **не** снимает серию неудач. Повтор запроса после того, как хоть один байт ушёл в апстрим, невозможен конструктивно: `ReplayGuard.write_once` отказывает во второй записи, а `Gateway.connect` повторяет попытку, только пока ничего не записано.
 
 ---
 
-## 3. Тесты, которые пришлось переписать, и почему
+## 3. Тесты
 
-`tests/test_gateway.py` закреплял поведение, которое само было дефектом. По `CONTRACTS.ru.md` §8 п.3 такие тесты переписываются **под правильное поведение**, а не удаляются:
+`tests/gateway_support.py` — общие локальные фикстуры: фейковые апстримы (`socks4/4a/5/5h`, `http` в пяти режимах, HTTPS через локальный `openssl`), цель на 127.0.0.1 и ::1, экспорт поколения, и **`ScriptedClient`** — клиент, у которого `drain()` можно удержать на выбранном маркере. Он нужен для оконга между «туннель открыт» и «начался relay»: настоящий клиент пришлось бы race'ить, а этот позволяет отменить или истечь ровно в этом `await`. Ни одного обращения к публичному прокси, DNSBL или стороннему сервису.
 
-| Было | Стало | Причина |
-| --- | --- | --- |
-| `test_per_proxy_limit` — последовательные `pick`/`acquire` | `test_pick_needs_an_explicit_refresh_and_reservation_is_atomic` + `test_reserve_takes_the_slot_before_the_caller_awaits` + `tests/test_gateway_reservation.py` | последовательный тест не воспроизводит interleaving — прямое замечание R11 |
-| `test_pool_filters_and_skips_https_proxies` | `test_pool_keeps_every_supported_transport` | `https://` больше не отбрасывается, а обслуживается (F16) |
-| `test_client_options_parsing` (`(dict, str)`) | то же + третий элемент `pool` | изменился контракт `client_options` |
-| `Background(..., '0.0.0.0', token=...)` без LAN | `..., lan=True` | LAN стал явным opt-in (дефект 18) |
-| — | `test_lan_is_opt_in_and_the_default_stays_loopback` | новое поведение закреплено |
+Тесты, добавленные в этом проходе:
 
-`tests/gateway_support.py` — общие локальные фикстуры: фейковые апстримы (`socks4/4a/5/5h`, `http` в пяти режимах, HTTPS через локальный `openssl`), цель на 127.0.0.1 и ::1, экспорт поколения. Ни одного обращения к публичному прокси, DNSBL или стороннему сервису.
+| Тест | Что доказывает |
+| --- | --- |
+| `test_gateway_reservation.ReservationTests.test_a_cancelled_socks5_grant_gives_the_slot_back` | отмена при записи SOCKS5-гранта возвращает слот |
+| `...test_a_cancelled_connect_grant_gives_the_slot_back` | то же для HTTP CONNECT |
+| `...test_the_handshake_deadline_gives_the_granted_slot_back` | дедлайн handshake в этом же окне возвращает слот |
+| `test_gateway_denylist.DenylistTests.test_removing_a_rule_gives_the_address_back` | снятое правило возвращает адрес в ротацию |
+| `...test_an_explicit_empty_denylist_restores_everything` | `set_denylist(Denylist.empty())` отменяет и себя |
+| `...test_the_revoke_policy_lives_in_one_place` | решение «рвать ли поток» принимается в одном месте, `force` перекрывает политику |
+| `test_gateway_health.HealthTests.test_a_capped_long_connection_is_counted_apart_from_an_idle_one` | лимит сессии и простой считаются раздельно |
+| `...test_a_fractional_session_cap_is_not_truncated_into_no_cap` | дробный лимит не превращается в «без лимита» |
 
 ---
 
@@ -279,65 +284,57 @@ Background(data, host='127.0.0.1', port=8899, token=None, **options)
 Команды запускались из корня репозитория, каждая — свой модуль:
 
 ```
-.venv/bin/python -m unittest tests.test_gateway                → Ran 13 tests, OK
-.venv/bin/python -m unittest tests.test_gateway_reservation    → Ran  9 tests, OK
-.venv/bin/python -m unittest tests.test_gateway_health         → Ran 12 tests, OK
-.venv/bin/python -m unittest tests.test_gateway_bind           → Ran 12 tests, OK
-.venv/bin/python -m unittest tests.test_gateway_denylist       → Ran  8 tests, OK
-.venv/bin/python -m unittest tests.test_gateway_rotation       → Ran 22 tests, OK
-.venv/bin/python -m unittest tests.test_gateway_transports     → Ran 16 tests, OK
+.venv/bin/python -m unittest tests.test_gateway             → Ran 13 tests, OK
+.venv/bin/python -m unittest tests.test_gateway_reservation → Ran 12 tests, OK
+.venv/bin/python -m unittest tests.test_gateway_health      → Ran 14 tests, OK
+.venv/bin/python -m unittest tests.test_gateway_bind        → Ran 12 tests, OK
+.venv/bin/python -m unittest tests.test_gateway_denylist    → Ran 11 tests, OK
+.venv/bin/python -m unittest tests.test_gateway_rotation    → Ran 22 tests, OK
+.venv/bin/python -m unittest tests.test_gateway_transports  → Ran 16 tests, OK
 ```
 
 Соседние модули, чтобы убедиться, что правка шлюза ничего не сломала:
 
 ```
-.venv/bin/python -m unittest tests.test_api  → Ran  8 tests, OK
-.venv/bin/python -m unittest tests.test_gui  → Ran 24 tests, FAILED (failures=2)
-.venv/bin/python -m unittest tests.test_extras → Ran  5 tests, FAILED (failures=1)
+.venv/bin/python -m unittest tests.test_api         → Ran  8 tests, OK
+.venv/bin/python -m unittest tests.test_gui         → Ran 24 tests, OK
+.venv/bin/python -m unittest tests.test_extras      → Ran  5 tests, OK
+.venv/bin/python -m unittest tests.test_web_connect → Ran 24 tests, OK
 ```
 
-Три падения — **не мои и existed до правки**: `test_gui.GuiTests.test_collect_job_dedup_and_empty_profile_scan`,
-`test_gui.GuiTests.test_real_worker_checks_two_services_and_stop_button` и
-`test_extras.RecommendedTests.test_gui_recommended_sort`. Проверено подменой
-`proxy_workbench/gateway.py` на версию из HEAD (`git show HEAD:proxy_workbench/gateway.py`):
-все три падают точно так же и без моих изменений. Они относятся к экспорту и GUI-пути
-`proxytool.py`/`gui.py`, которыми я не владею.
+Три падения, которые предыдущая редакция этого handoff фиксировала как «не мои», на текущей ревизии **зелёные** — их починили поверхность `web` и интегратор; править их файлы мне не пришлось.
 
-**Отдельно про воспроизводимость interleaving.** Тест
-`test_gateway_reservation.py::test_parallel_handshakes_never_share_a_slot` запускался и
-против старой реализации `Gateway.connect` (pick → `await open_tunnel` → `acquire`),
-подставленной скриптом. Результат: **пиковая одновременная нагрузка на один апстрим — 3
-соединения при `max_per_proxy=1` и двух апстримах**, при этом `pool.active` оставался
-пустым всё время (слот вообще не резервировался). С новым кодом на том же сценарии —
-пик 2 соединения суммарно и никогда больше одного на апстрим.
+**Про воспроизводимость interleaving (R11).** Три новых теста запускались против поведения без починки, подставленного скриптом: `Gateway._discard = lambda lease, upstream: None` — то есть ровно то, что было до правки (окно без единого `release`). Результат:
+
+```
+FAIL: test_a_cancelled_socks5_grant_gives_the_slot_back
+AssertionError: False is not true : a slot reserved before the grant leaked on cancel: {'socks5://127.0.0.1:55291': 1}
+FAIL: test_a_cancelled_connect_grant_gives_the_slot_back
+AssertionError: False is not true : a slot reserved before the CONNECT reply leaked on cancel: {'socks5://127.0.0.1:55305': 1}
+FAIL: test_the_handshake_deadline_gives_the_granted_slot_back
+AssertionError: False is not true : the handshake deadline left a slot taken: {'socks5://127.0.0.1:55320': 1}
+Ran 3 tests in 15.361s
+FAILED (failures=3)
+```
+
+С починкой те же три теста зелёные. Это именно тот тест, которого не хватало: он не «последовательный pick/acquire», а три клиента, остановленные в одном и том же `await` внутри шлюза.
+
+Поведение CLI на не-loopback адресе проверено отдельно (см. §1.1): слушатель не открывается, печатается отказ, приложение продолжает работать.
 
 **Что осталось непрочитанным/непроверенным:**
-- Полный `unittest discover -s tests` не запускался — по условию задачи его гоняют другие
-  исполнители и интегратор.
+- Полный `unittest discover -s tests` не запускался — по условию задачи его гоняют другие исполнители и интегратор.
 - Реальная доставка (QR, выбор интерфейса в UI, firewall) не проверялась: это `gui.py`/`ui/*`.
-- HTTPS-апстрим проверяется сертификатом, который тест создаёт локально через `openssl`;
-  если `openssl` недоступен, четыре теста помечаются `skipTest`, а не проходят молча.
-  `test_https_upstream_verifies_the_proxy_host_name` (проверка `ssl=`/`server_hostname=`)
-  от `openssl` не зависит и выполняется всегда.
+- HTTPS-апстрим проверяется сертификатом, который тест создаёт локально через `openssl`; если `openssl` недоступен, четыре теста помечаются `skipTest`, а не проходят молча. `test_https_upstream_verifies_the_proxy_host_name` от `openssl` не зависит и выполняется всегда.
+- `access_revision` в привязке по-прежнему отсутствует (см. §5.3).
 
 ---
 
 ## 5. Открытые вопросы
 
-1. **Политика закрытия уже открытых потоков при добавлении правила.** Я сделал `'keep'` по
-   умолчанию и `'close'` по явному выбору, потому что R13 говорит, что это отдельная
-   политика. Если продукт решит, что массовое «запретить» в GUI обязано рвать и открытые
-   потоки, дефолт меняется одной строкой (`Pool(..., on_deny='close')`) и текст кнопки в §1.3.
-2. **Имя пула против привязки.** Сейчас binding — это `pool_id` + generation + profile +
-   policy поверх экспорта. `pools.py` уже умеет именованные пулы в БД (миграция 7), но у
-   них другая природа (desired-контроллер, а не снимок строк). Соединить их — работа
-   интегратора; шлюз к этому готов через `bindings=` и `Pool.state()['bindings']`.
-3. **`access_revision` в привязке.** CONTRACTS §1.2(1) требует, чтобы смена ревизии доступа
-   отзывала прошлое доказательство и в шлюзе. Сущности `access` ещё нет (`grep -rn
-   "access_revision" proxy_workbench/` даёт ноль совпадений на момент написания), поэтому в
-   `Binding` есть только `profile_id`/`profile_revision`. Когда появится `access`, нужен
-   ещё один компонент в `_bound_rows`; место для этого — тот же метод.
-4. **Таймаут ожидания ответа апстрима (`response_timeout`, 15 с).** Для CONNECT/SOCKS он не
-   применяется: там доказательство приходит с первыми байтами клиента. Если для длинных
-   CONNECT-запросов нужен свой лимит, это отдельная настройка, а не переиспользование
-   `response_timeout`.
+1. **Политика закрытия уже открытых потоков при добавлении правила.** Сделано `'keep'` по умолчанию и `'close'` по явному выбору, потому что R13 говорит, что это отдельная политика. Если продукт решит, что массовое «запретить» в GUI обязано рвать и открытые потоки, дефолт меняется одной строкой (`Pool(..., on_deny='close')`) и текстом кнопки в §1.3.
+
+2. **Имя пула против привязки.** Сейчас binding — это `pool_id` + generation + profile + policy поверх экспорта. `pools.py` уже умеет именованные пулы в БД (миграция 7), но у них другая природа (desired-контроллер, а не снимок строк). Соединить их — работа интегратора; шлюз к этому готов через `bindings=` и `Pool.state()['bindings']`.
+
+3. **`access_revision` в привязке.** CONTRACTS §1.2(1) требует, чтобы смена ревизии доступа отзывала прошлое доказательство и в шлюзе. Сущности `access` ещё нет (`grep -rn "access_revision" proxy_workbench/` — ноль совпадений на момент написания), поэтому в `Binding` есть только `profile_id`/`profile_revision`. Когда появится `access`, нужен ещё один компонент в `_bound_rows`; место для этого — тот же метод.
+
+4. **Таймаут ожидания ответа апстрима (`response_timeout`, 15 с).** Для CONNECT/SOCKS он не применяется: там доказательство приходит с первыми байтами клиента. Если для длинных CONNECT-запросов нужен свой лимит, это отдельная настройка, а не переиспользование `response_timeout`.

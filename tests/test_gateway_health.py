@@ -113,6 +113,39 @@ class HealthTests(GatewayCase):
         self.assertTrue(await self.wait_for(lambda: pool.report(silent.url).get('ok') == 1))
         await shutdown(writer)
 
+    async def test_a_capped_long_connection_is_counted_apart_from_an_idle_one(self):
+        # F16 asks for a legible policy on long connections.  A session cap and
+        # an idle timeout are both timeouts, but they mean different things, so
+        # they must not be reported as the same event: one is a deliberate
+        # bound, the other is a connection that went quiet.
+        up = await self.socks_upstream('socks5')
+        self.publish([up.url])
+        server, address = await self.start(max_session=0.3, idle_timeout=30)
+        pool = server.gateway.pool
+        granted, _reader, writer = await self.socks_client(address)
+        self.assertTrue(granted)
+        # The tunnel is up and both sides then stay quiet: only the session cap
+        # can end it, because the idle timeout is far away.
+        self.assertTrue(await self.wait_for(lambda: pool.stats['capped'] == 1),
+                        f'expected one capped session, stats={pool.stats}')
+        self.assertEqual(pool.stats['closed_idle'], 0, 'a capped session is not an idle close')
+        self.assertTrue(await self.wait_for(lambda: not pool.active), f'active={pool.active}')
+        self.assertEqual(pool.snapshot()['capped'], 1, 'the cap is visible to the GUI and the API')
+        await shutdown(writer)
+
+    async def test_a_fractional_session_cap_is_not_truncated_into_no_cap(self):
+        # Rounded to whole seconds, every sub-second cap became zero, and zero
+        # is the documented "no limit": a limit the user did set silently turned
+        # into the absence of one.
+        server, _ = await self.start(max_session=0.5)
+        self.assertEqual(server.gateway.max_session, 0.5)
+        self.assertEqual(server.gateway.state()['max_session'], 0.5,
+                         'the cap in force is the one the user set')
+        server, _ = await self.start(max_session=0)
+        self.assertEqual(server.gateway.max_session, 0.0, 'zero still means "no cap"')
+        server, _ = await self.start(max_session=90)
+        self.assertEqual(server.gateway.max_session, 90.0)
+
 
 class ReplayTests(GatewayCase):
     async def test_a_request_that_reached_an_upstream_is_never_sent_again(self):

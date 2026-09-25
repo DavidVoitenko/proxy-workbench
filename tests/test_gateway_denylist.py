@@ -128,6 +128,59 @@ class DenylistTests(GatewayCase):
         self.assertEqual(pool.available(), [up.url], 'a rule file that could not be read admits nothing away')
         self.assertEqual(pool.available(), [up.url])
 
+    async def test_removing_a_rule_gives_the_address_back(self):
+        # A denylist that can only subtract is a one-way ratchet: rows used to
+        # be edited in place, so a rule the user deleted left its proxy out of
+        # the rotation for the whole life of the generation.
+        denied = await self.socks_upstream('socks5')
+        kept = await self.socks_upstream('socks5')
+        self.publish([denied.url, kept.url])
+        self.deny(denied.url)
+        server, _ = await self.start(denylist_normalizer=self.local_normalizer)
+        pool = server.gateway.pool
+        self.assertEqual(pool.available(), [kept.url])
+
+        # The user deletes the rule, exactly as the GUI rewrites the file.
+        self.deny()
+        self.assertTrue(await self.wait_for(lambda: sorted(pool.available()) == sorted([denied.url, kept.url])),
+                        f'removing a rule must restore its address, got {pool.available()}')
+        self.assertEqual(pool.denied_proxies(), [])
+        self.assertEqual(pool.revoked, 1, 'the revocation is still counted, it is only not permanent')
+        lease = pool.reserve()
+        self.assertIsNotNone(lease)
+        lease.release()
+
+    async def test_an_explicit_empty_denylist_restores_everything(self):
+        up = await self.socks_upstream('socks5')
+        self.publish([up.url])
+        pool = gateway.Pool(self.home, denylist_normalizer=self.local_normalizer)
+        pool.refresh()
+        pool.set_denylist(reputation.Denylist(proxies=[up.url]))
+        self.assertEqual(pool.available(), [])
+        # The documented revoke entry point has to be able to undo itself, not
+        # only add: a GUI that offers "revoke from the active pool" needs both.
+        pool.set_denylist(reputation.Denylist.empty())
+        self.assertEqual(pool.available(), [up.url])
+        self.assertEqual(pool.pick(), up.url)
+
+    async def test_the_revoke_policy_lives_in_one_place(self):
+        up = await self.socks_upstream('socks5')
+        self.publish([up.url])
+        # 'keep' is the configured default, so the pool itself answers "no
+        # streams to cut"; Gateway.set_denylist() asks it rather than keeping a
+        # second copy of the decision.
+        keep = gateway.Pool(self.home, on_deny='keep')
+        keep.refresh()
+        keep.set_denylist(reputation.Denylist(proxies=[up.url]))
+        self.assertEqual(keep.revoke_streams(), [], 'keep must not cut a stream that is already open')
+        close = gateway.Pool(self.home, on_deny='close')
+        close.refresh()
+        close.set_denylist(reputation.Denylist(proxies=[up.url]))
+        self.assertEqual(close.revoke_streams(), [up.url])
+        # An explicit request overrides the configured policy for one call.
+        self.assertEqual(keep.revoke_streams(force=True), [up.url])
+        self.assertEqual(close.revoke_streams(force=False), [])
+
 
 if __name__ == '__main__':
     unittest.main()

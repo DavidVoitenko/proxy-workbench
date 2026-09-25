@@ -7,10 +7,16 @@ TCP and never finish their handshake, so the gateway is genuinely suspended in
 ``open_tunnel`` for several clients at once.
 """
 import asyncio
+import struct
 import time
 import unittest
 
-from tests.gateway_support import GatewayCase, shutdown
+from tests.gateway_support import GatewayCase, ScriptedClient, shutdown
+
+#: A complete SOCKS5 CONNECT for 127.0.0.1:target, after the ``\x05`` that
+#: ``Gateway.handle`` has already consumed.
+SOCKS5_CONNECT = b'\x02\x00\x02' + bytes([1, 0, 0]) + b'\x05\x01\x00\x01' \
+    + bytes([127, 0, 0, 1]) + struct.pack('>H', 80)
 
 
 class ReservationTests(GatewayCase):
@@ -158,6 +164,71 @@ class ReservationTests(GatewayCase):
         self.assertLessEqual(len(server.gateway.tasks), 2)
         for writer in writers:
             await shutdown(writer)
+
+    async def test_a_cancelled_socks5_grant_gives_the_slot_back(self):
+        up = await self.socks_upstream('socks5')
+        self.publish([up.url])
+        server, _ = await self.start(max_per_proxy=1)
+        pool = server.gateway.pool
+        # Suspend the gateway exactly where it is flushing the SOCKS5 grant:
+        # the tunnel is already open, so the slot is taken, and the relay that
+        # normally returns it has not started yet.
+        client = ScriptedClient(SOCKS5_CONNECT, block_on=b'\x05\x00\x00\x01')
+        task = asyncio.create_task(server.gateway.handle_socks5(client, client))
+        self.assertTrue(await self.wait_for(lambda: client.held.is_set()),
+                        'the gateway never reached the grant')
+        self.assertEqual(pool.active_for(up.url), 1, 'the slot is held while the grant is being written')
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        self.assertTrue(await self.wait_for(lambda: not pool.active),
+                        f'a slot reserved before the grant leaked on cancel: {pool.active}')
+        lease = pool.reserve()
+        self.assertIsNotNone(lease, 'max_per_proxy must be usable again after a cancelled grant')
+        lease.release()
+
+    async def test_a_cancelled_connect_grant_gives_the_slot_back(self):
+        up = await self.socks_upstream('socks5')
+        self.publish([up.url])
+        server, _ = await self.start(max_per_proxy=1)
+        pool = server.gateway.pool
+        # A CONNECT client through a SOCKS5 upstream: the grant the gateway
+        # flushes here is the client's, and the relay that would return the slot
+        # has not been entered yet.
+        client = ScriptedClient(
+            b'ONNECT 127.0.0.1:%d HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n' % self.target,
+            block_on=b'200 Connection established')
+        task = asyncio.create_task(server.gateway.handle_http(b'C', client, client))
+        self.assertTrue(await self.wait_for(lambda: client.held.is_set()),
+                        'the gateway never reached the CONNECT reply')
+        self.assertEqual(pool.active_for(up.url), 1)
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        self.assertTrue(await self.wait_for(lambda: not pool.active),
+                        f'a slot reserved before the CONNECT reply leaked on cancel: {pool.active}')
+        lease = pool.reserve()
+        self.assertIsNotNone(lease)
+        lease.release()
+
+    async def test_the_handshake_deadline_gives_the_granted_slot_back(self):
+        up = await self.socks_upstream('socks5')
+        self.publish([up.url])
+        server, _ = await self.start(max_per_proxy=1, handshake_timeout=0.3)
+        pool = server.gateway.pool
+        client = ScriptedClient(SOCKS5_CONNECT, block_on=b'\x05\x00\x00\x01')
+        # Gateway.handle wraps the handler in wait_for(..., _left(deadline)); the
+        # same cancellation is produced here while the grant is still being
+        # flushed.  The window between "tunnel open" and "relay started" is part
+        # of the handshake, so expiring in it must not leave a slot taken.
+        with self.assertRaises(asyncio.TimeoutError):
+            await asyncio.wait_for(server.gateway.handle_socks5(client, client),
+                                   server.gateway.handshake_timeout)
+        self.assertTrue(await self.wait_for(lambda: not pool.active),
+                        f'the handshake deadline left a slot taken: {pool.active}')
+        lease = pool.reserve()
+        self.assertIsNotNone(lease)
+        lease.release()
 
     async def test_max_per_proxy_applies_to_parallel_plain_http_requests(self):
         first = await self.http_upstream('relay', head_delay=1.0)
