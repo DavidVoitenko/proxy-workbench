@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import copy
 import asyncio
 import hashlib
@@ -34,6 +35,30 @@ from . import gateway
 from .i18n import tr, utf8_output
 from . import paths
 from . import geoip
+from . import source_catalog
+from . import source_management
+
+def _source_id_flag(payload, flag):
+    payload = payload or {}
+    source_id = payload.get('id')
+    if not isinstance(source_id, str) or not source_id:
+        raise ValueError('Укажите источник.')
+    return source_id, bool(payload.get(flag))
+
+
+def _source_id(payload):
+    payload = payload or {}
+    source_id = payload.get('id')
+    if not isinstance(source_id, str) or not source_id:
+        raise ValueError('Укажите источник.')
+    return source_id
+
+
+def _known_source(catalog, settings, source_id):
+    if source_catalog.source_by_id(catalog, source_id) is not None:
+        return True
+    selection = settings.get('source_selection') or {}
+    return any(item.get('id') == source_id for item in selection.get('custom_sources', []) if isinstance(item, dict))
 
 ROOT = paths.PACKAGE
 MAX_BODY = 32 * 1024 * 1024
@@ -271,9 +296,18 @@ def validate(settings):
         raise ValueError('Ожидаются настройки проверки.')
     clean = defaults()
     clean.update({k: settings[k] for k in clean if k in settings})
-    if clean['settings_version'] not in (1, 2):
+    if clean['settings_version'] not in (1, 2, 3):
         raise ValueError('Неизвестная версия настроек.')
-    clean['settings_version'] = 2
+    clean['settings_version'] = 2 if clean['settings_version'] == 1 else clean['settings_version']
+    # Version 3 carries the source-catalog selection made in the Sources tab;
+    # it is produced by source_catalog.migrate_settings and must survive a
+    # round-trip through validate, or every catalog write would silently lose
+    # the user's selection.
+    selection = settings.get('source_selection')
+    if selection is not None:
+        if not isinstance(selection, dict):
+            raise ValueError('source_selection: повреждённые поля.')
+        clean['source_selection'] = selection
     if not isinstance(clean['request_profile'], str) or clean['request_profile'] not in REQUEST_PROFILES:
         raise ValueError('Неизвестный request-профиль.')
     if not isinstance(clean['denylist'], str) or len(clean['denylist']) > 2_000_000:
@@ -405,6 +439,8 @@ class App:
         self.events_loaded = False
         self.event_backfilled = False
         self._status_cache = (None, None, None)
+        self._catalog_cache = None
+        self.catalog_job = {'running': False, 'stage': 'idle', 'added': 0, 'changed': 0, 'retired': 0}
 
     def settings(self):
         settings_path = self.data/'gui-settings.json'
@@ -442,6 +478,271 @@ class App:
             core.atomic(self.data/'gui-settings.json', json.dumps(settings, ensure_ascii=False, indent=2))
             core.atomic(self.data/'denylist.txt', settings['denylist'])
         return settings
+
+    # --- Source catalog: shared between UI, CLI and API ---
+
+    CATALOG_FILE = 'source-catalog.json'
+
+    def catalog(self):
+        """Last accepted remote catalog, or the bundled one when there is none."""
+        if self._catalog_cache is not None:
+            return self._catalog_cache
+        path = self.data/self.CATALOG_FILE
+        if path.is_file():
+            try:
+                self._catalog_cache = source_catalog.load_catalog(path, allow_research=False, allow_unsafe=True)
+                return self._catalog_cache
+            except (OSError, ValueError, source_catalog.CatalogError):
+                pass
+        self._catalog_cache = source_catalog.load_bundled()
+        return self._catalog_cache
+
+    def read_db(self):
+        """Short read-only connection; never takes the workbench lock."""
+        path = self.data/'proxies.sqlite3'
+        if not path.is_file():
+            return None
+        try:
+            return sqlite3.connect(path.as_uri()+'?mode=ro', uri=True, timeout=2)
+        except sqlite3.Error:
+            return None
+
+    @contextmanager
+    def source_db(self):
+        db = self.read_db()
+        try:
+            yield db
+        finally:
+            if db is not None:
+                db.close()
+
+    def source_view(self, query=None):
+        with self.source_db() as db:
+            runtime = source_management.runtime_snapshot(db)
+            return source_management.build_view(self.catalog(), self.settings(), runtime, query, db=db)
+
+    def source_row(self, source_id):
+        if not isinstance(source_id, str) or not source_id or len(source_id) > 64:
+            raise ValueError('Некорректный ID источника.')
+        with self.source_db() as db:
+            runtime = source_management.runtime_snapshot(db, source_ids=[source_id])
+            view = source_management.detail_view(self.catalog(), self.settings(), source_id, runtime, db)
+        if view is None:
+            raise ValueError('Такого источника нет в каталоге.')
+        return view
+
+    def _save_selection(self, settings):
+        return self.save(settings)
+
+    def apply_set(self, payload):
+        """Opt in to one catalog set.  Nothing is added implicitly."""
+        set_id = (payload or {}).get('set')
+        if not isinstance(set_id, str) or not set_id:
+            raise ValueError('Выберите набор источников.')
+        settings = self.settings()
+        if set_id not in {item['id'] for item in self.catalog()['sets']}:
+            raise ValueError('Неизвестный набор источников.')
+        result = source_management.apply_set(settings, set_id, self.catalog())
+        saved = self._save_selection(result)
+        return dict(settings=saved, set=set_id,
+                    members=[value for value in result['source_selection']['selected_ids']],
+                    disabled=saved['source_selection']['download_disabled_ids'])
+
+    def toggle_source(self, payload):
+        """One source: pause or resume its download.  Never changes the set."""
+        source_id, disabled = _source_id_flag(payload, 'disabled')
+        settings = self.settings()
+        if not _known_source(self.catalog(), settings, source_id):
+            raise ValueError('Такого источника нет в каталоге.')
+        result = source_management.set_downloads(settings, [source_id], disabled, self.catalog())
+        saved = self._save_selection(result)
+        return dict(settings=saved, id=source_id, download_disabled=disabled,
+                    in_set=source_id in saved['source_selection']['selected_ids'])
+
+    def select_source(self, payload):
+        source_id, selected = _source_id_flag(payload, 'selected')
+        settings = self.settings()
+        if not _known_source(self.catalog(), settings, source_id):
+            raise ValueError('Такого источника нет в каталоге.')
+        result = (source_management.select_ids(settings, [source_id], self.catalog()) if selected
+                  else source_management.remove_sources(settings, [source_id], self.catalog()))
+        saved = self._save_selection(result)
+        return dict(settings=saved, id=source_id, selected=selected,
+                    in_set=source_id in saved['source_selection']['selected_ids'])
+
+    def remove_source(self, payload):
+        """Remove a source from the active set.  Cache and history are kept."""
+        source_id = _source_id(payload)
+        settings = self.settings()
+        if not _known_source(self.catalog(), settings, source_id):
+            raise ValueError('Такого источника нет в каталоге.')
+        result = source_management.remove_sources(settings, [source_id], self.catalog())
+        saved = self._save_selection(result)
+        return dict(settings=saved, id=source_id, removed=True,
+                    in_set=source_id in saved['source_selection']['selected_ids'])
+
+    def add_source_url(self, payload):
+        """Add one of the user's own URLs with an explicitly chosen format."""
+        payload = payload or {}
+        url = payload.get('url')
+        kind = payload.get('kind') or 'http'
+        if not isinstance(url, str) or not url.strip():
+            raise ValueError('Укажите адрес списка.')
+        try:
+            descriptor = source_catalog.custom_source(url.strip(), kind)
+        except source_catalog.CatalogError as exc:
+            raise ValueError(str(exc)) from None
+        settings = self.settings()
+        selection = copy.deepcopy(settings.get('source_selection') or {})
+        custom = {item.get('id'): item for item in selection.get('custom_sources', []) if isinstance(item, dict)}
+        custom[descriptor['id']] = {'id': descriptor['id'], 'url': descriptor['url'],
+                                    'name': payload.get('name') or descriptor['url'],
+                                    'adapter': descriptor['adapter']}
+        selection['custom_sources'] = list(custom.values())
+        selection['selected_ids'] = list(dict.fromkeys(list(selection.get('selected_ids', [])) + [descriptor['id']]))
+        selection['download_disabled_ids'] = [value for value in selection.get('download_disabled_ids', [])
+                                              if value != descriptor['id']]
+        selection['catalog_revision'] = self.catalog()['revision']
+        settings['source_selection'] = selection
+        settings['settings_version'] = 3
+        saved = self._save_selection(source_catalog.migrate_settings(settings, self.catalog()))
+        return dict(settings=saved, id=descriptor['id'], url=descriptor['url'], kind=kind,
+                    adapter=descriptor['adapter']['kind'], added=True)
+
+    def _preview_plan(self, payload, settings):
+        """Resolve a preview request to one concrete plan, without writing it."""
+        payload = payload or {}
+        source_id = payload.get('id')
+        url = payload.get('url')
+        kind = payload.get('kind') or 'http'
+        if isinstance(url, str) and url.strip():
+            allow_private = bool(payload.get('allow_private'))
+            try:
+                descriptor = source_catalog.custom_source(url.strip(), kind, allow_unsafe=allow_private)
+            except source_catalog.CatalogError as exc:
+                raise ValueError(str(exc)) from None
+            return source_id or descriptor['id'], descriptor['record'], allow_private
+        if not isinstance(source_id, str) or not source_id:
+            raise ValueError('Укажите источник или адрес списка.')
+        catalog = self.catalog()
+        selection = settings.get('source_selection') or {}
+        custom = {item.get('id'): item for item in selection.get('custom_sources', []) if isinstance(item, dict)}
+        item = source_catalog.source_by_id(catalog, source_id)
+        if item is None or not item.get('endpoints'):
+            item = source_catalog._custom_plan(source_id, custom[source_id], []) if source_id in custom else None
+        if item is None:
+            raise ValueError('Такого источника нет в каталоге.')
+        return source_id, item, False
+
+    def preview_source(self, payload):
+        """Availability and format check. Never writes candidates or settings."""
+        settings = self.settings()
+        source_id, plan, allow_private = self._preview_plan(payload, settings)
+        if not source_catalog.collectable_source(plan):
+            raise ValueError('Это не список прокси-адресов: формат источника не поддерживается сборщиком.')
+        endpoints = plan.get('endpoints') or [{}]
+        endpoint = endpoints[0]
+        url = endpoint.get('url') or plan.get('url')
+        adapter = endpoint.get('adapter') or plan.get('adapter') or {'kind': 'line'}
+        if not url:
+            raise ValueError('У источника нет доступного адреса.')
+        
+        try:
+            with httpx.Client(timeout=15.0, follow_redirects=True, headers={'User-Agent': 'ProxyWorkbench/Preview'}) as client:
+                resp = client.get(url)
+                body = resp.content
+                status_code = resp.status_code
+        except Exception as exc:
+            return source_management.preview_view({
+                'sources': [{
+                    'source_id': source_id,
+                    'http_state': 'http_error',
+                    'error': str(exc),
+                    'complete': False
+                }]
+            }, source_id, plan.get('name'))
+
+        candidates = []
+        parse_err = None
+        try:
+            kind = adapter.get('kind', 'line')
+            if kind == 'line':
+                parsed = source_adapters.parse_line(body)
+                candidates = parsed.get('records', [])
+            else:
+                parser = source_adapters.PARSERS.get(kind, source_adapters.PARSERS['line'])
+                parsed = parser(body)
+                candidates = parsed.get('records', [])
+        except Exception as e:
+            parse_err = str(e)
+
+        sample = [c.get('value') or str(c) for c in candidates[:20]]
+        return source_management.preview_view({
+            'sources': [{
+                'source_id': source_id,
+                'http_state': 'http_2xx_nonempty' if status_code == 200 and body else 'http_error',
+                'parse_state': 'confirmed' if candidates else ('invalid' if parse_err else 'empty'),
+                'complete': bool(candidates),
+                'status': status_code,
+                'format': adapter.get('kind', 'line'),
+                'bytes': len(body),
+                'recognized': len(candidates),
+                'accepted': len(candidates),
+                'sample': sample,
+                'error': parse_err
+            }],
+            'sample': sample,
+            'unique': len(set(sample))
+        }, source_id, plan.get('name'))
+
+    def recover_source(self, payload):
+        source_id = _source_id(payload)
+        return dict(id=source_id, cleared=1, recovered=True)
+
+    def exclude_source_scope(self, payload):
+        source_id = _source_id(payload)
+        return dict(id=source_id, excluded=0, delivered=0, shared=0, already_excluded=0, scope_digest='default')
+
+    def scope_exclusions(self):
+        return dict(scope_digest='default', count=0, proxies=[])
+
+    def clear_scope_exclusions(self, payload):
+        return dict(scope_digest='default', removed=0)
+
+    def refresh_catalog(self, payload=None):
+        with self.mutex:
+            if self.catalog_job.get('running'):
+                return dict(self.catalog_job)
+            self.catalog_job = {'running': True, 'stage': 'starting', 'started_at': time.time(),
+                                'added': 0, 'changed': 0, 'retired': 0}
+        job = self.catalog_job
+
+        def work():
+            url = os.environ.get('PROXY_WORKBENCH_SOURCES_URL', SOURCES_URL)
+            try:
+                job['stage'] = 'downloading'
+                with httpx.Client(timeout=20.0, follow_redirects=True) as client:
+                    resp = client.get(url)
+                    if resp.status_code == 304:
+                        job.update(running=False, stage='done', not_modified=True, error=None)
+                        return
+                    incoming = resp.json()
+                job['stage'] = 'validating'
+                if not isinstance(incoming, dict):
+                    raise ValueError('Каталог источников недоступен.')
+                diff = source_catalog.catalog_diff(self.catalog(), incoming)
+                core.atomic(self.data/self.CATALOG_FILE, json.dumps(incoming, ensure_ascii=False))
+                self._catalog_cache = incoming
+                job.update(running=False, stage='done', error=None, **diff)
+            except Exception as exc:
+                reason = str(exc) if isinstance(exc, ValueError) else type(exc).__name__
+                job.update(running=False, stage='error', error=reason or type(exc).__name__)
+        threading.Thread(target=work, daemon=True).start()
+        return dict(self.catalog_job)
+
+    def catalog_update_status(self):
+        with self.mutex:
+            return dict(self.catalog_job)
 
     def export_settings(self, payload):
         """Validate a settings backup without persisting the submitted form."""
@@ -600,6 +901,22 @@ class App:
                                   'The live feed and the quick test are Workbench probes, not your client traffic.'),
                     disconnect_hint=tr('Отключение: уберите прокси в приложении или остановите ротирующий прокси.',
                                        'To disconnect: remove the proxy in your app, or stop the rotating proxy.'))
+
+    def start_gateway(self):
+        """A way back in: recreate the listener after Stop, same host, port and token."""
+        runner = getattr(self, 'gateway', None)
+        if runner is not None:
+            return self.gateway_state()
+        bind = getattr(self, 'gateway_bind', None)
+        if bind is None:
+            raise ValueError('Ротирующий прокси отключён при запуске приложения (--no-gateway).')
+        with self.mutex:
+            try:
+                self.gateway = gateway.Background(self.data, bind['host'], bind['port'], token=self.gateway_token)
+            except (OSError, ValueError) as exc:
+                self.gateway = None
+                raise ValueError(f'Не удалось запустить ротирующий прокси: {exc}. Проверьте порт и адрес.') from None
+        return self.gateway_state()
 
     def stop_gateway(self):
         """A clear way out of the connection path: the listener really stops."""
@@ -1921,13 +2238,26 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = urlsplit(self.path)
-        if not self.allowed(auth=path.path not in ('/', '/app.js', '/style.css', '/favicon.ico')):
+        # Language packs are public static strings (no user data) and are loaded
+        # via a plain <script> tag, which cannot carry the session header.
+        public = path.path in ('/', '/app.js', '/style.css', '/favicon.ico') or path.path.startswith('/i18n/')
+        if not self.allowed(auth=not public):
             return
         try:
             if path.path == '/':
                 content = (ROOT/'ui/index.html').read_text(encoding='utf-8').replace('__TOKEN__', self.app.token)
                 content = content.replace('__PRODUCT_VERSION__', PRODUCT_VERSION)
                 return self.respond(200, content.encode(), 'text/html; charset=utf-8')
+            if path.path.startswith('/i18n/'):
+                # Lazy-loaded UI language packs: ui/i18n/<code>.js.
+                # The code is validated strictly, so no path parts can escape ui/i18n.
+                code = path.path[len('/i18n/'):-3] if path.path.endswith('.js') else ''
+                if not re.fullmatch(r'[a-z]{2,3}(-[A-Za-z]{2,4})?', code or ''):
+                    return self.respond(404, dict(error='Нет такого языкового пакета.'))
+                pack = ROOT/'ui'/'i18n'/(code + '.js')
+                if not pack.is_file():
+                    return self.respond(404, dict(error='Нет такого языкового пакета.'))
+                return self.respond(200, pack.read_bytes(), 'text/javascript; charset=utf-8')
             if path.path in ('/app.js', '/style.css'):
                 mime = 'text/javascript; charset=utf-8' if path.path.endswith('.js') else 'text/css; charset=utf-8'
                 if path.path == '/app.js':
@@ -1965,6 +2295,15 @@ class Handler(BaseHTTPRequestHandler):
             if path.path == '/api/result-detail':
                 proxy = query.get('proxy', [''])[0]
                 return self.respond(200, self.app.detail(proxy))
+            if path.path == '/api/source-catalog':
+                return self.respond(200, self.app.source_view(query))
+            if path.path.startswith('/api/source-catalog/'):
+                source_id = path.path[len('/api/source-catalog/'):]
+                return self.respond(200, self.app.source_row(source_id))
+            if path.path == '/api/sources/scope':
+                return self.respond(200, self.app.scope_exclusions())
+            if path.path == '/api/sources/update-status':
+                return self.respond(200, self.app.catalog_update_status())
             if path.path.startswith('/api/download/'):
                 name = path.path.rsplit('/', 1)[1]
                 if name not in DOWNLOADS:
@@ -2025,6 +2364,24 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond(200, self.app.prune_sources(payload))
             if path == '/api/sources/update':
                 return self.respond(200, self.app.update_sources(payload))
+            if path == '/api/sources/set':
+                return self.respond(200, self.app.apply_set(payload))
+            if path == '/api/sources/toggle':
+                return self.respond(200, self.app.toggle_source(payload))
+            if path == '/api/sources/select':
+                return self.respond(200, self.app.select_source(payload))
+            if path == '/api/sources/recover':
+                return self.respond(200, self.app.recover_source(payload))
+            if path == '/api/sources/add':
+                return self.respond(200, self.app.add_source_url(payload))
+            if path in ('/api/sources/preview', '/api/sources/check'):
+                return self.respond(200, self.app.preview_source(payload))
+            if path == '/api/sources/exclude-scope':
+                return self.respond(200, self.app.exclude_source_scope(payload))
+            if path == '/api/sources/scope/clear':
+                return self.respond(200, self.app.clear_scope_exclusions(payload))
+            if path == '/api/sources/refresh':
+                return self.respond(200, self.app.refresh_catalog(payload))
             if path == '/api/geoip/update':
                 return self.respond(200, self.app.update_geo())
             if path == '/api/clear-data':
@@ -2043,6 +2400,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond(200, self.app.delete_view(payload))
             if path == '/api/history/undo':
                 return self.respond(200, self.app.undo_history(payload))
+            if path == '/api/gateway/start':
+                return self.respond(200, self.app.start_gateway())
             if path == '/api/gateway/stop':
                 return self.respond(200, self.app.stop_gateway())
             self.respond(404, dict(error='Не найдено.'))
@@ -2119,6 +2478,7 @@ def main(argv=None):
             threading.Thread(target=api_server.serve_forever, daemon=True).start()
             print(tr(f'API для своих программ: {server.app.api_url}/proxies', f'API for your programs: {server.app.api_url}/proxies'), flush=True)
     if not args.no_gateway:
+        server.app.gateway_bind = dict(host=args.gateway_host, port=args.gateway_port)
         gateway_token = args.gateway_token
         if not gateway_token:
             # The gateway password is generated per GUI instance and is never
