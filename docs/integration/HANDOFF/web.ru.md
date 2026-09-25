@@ -12,14 +12,14 @@
 ### 1.1 `proxy_workbench/proxytool.py` — интегратор
 
 1. **`store()` (`proxytool.py:1380-1391`) — события измерений.** Сейчас живую ленту интерфейса я строю сам: `App.collect_events()` читает таблицу `results` по `checked_at` и превращает каждое завершённое измерение в событие (`item.observation`, `code`, `data.proxy/latency_ms/reliability/error`) в `data/gui-events.jsonl`, курсор — `(stream_id, seq)` по §5.7. Это честный поток измерений, но источник — хвост таблицы, а не журнал задания.
-   **Прошу:** после записи измерения в `store()` вызывать `JobStore._emit(job_id, 'item.observation', code, data)` (`jobs.py:607`). Тогда `/api/events` в `gui.py:1861` переключается на `JobStore.events(job_id, after_seq=...)` — API уже умеет отдавать SSE по той же схеме курсора, и лента, API и `/v1/events` читают один поток.
+   **Прошу:** после записи измерения в `store()` вызывать `JobStore._emit(job_id, 'item.observation', code, data)` (`jobs.py:607`). Тогда `/api/events` в `gui.py:1952` переключается на `JobStore.events(job_id, after_seq=...)` — API уже умеет отдавать SSE по той же схеме курсора, и лента, API и `/v1/events` читают один поток.
    Пока это не сделано, события ленты живут в `data/gui-events.jsonl`; файл очищается в `App.clear_data()`.
 
-2. **`export()` (`proxytool.py:1651-1932`) — дефект 7, `kind='selection'`.** Кнопки «Download Selected» и «Download scope» идут у меня через `POST /api/results/bulk` → `App.start({'action': 'export', 'selection': [...]})` (`gui.py:640`). Это по-прежнему публикующая публикация, поэтому таблица и пул всё ещё переключаются. Прошу реализовать `kind='selection'` по §4.5: отдельный артефакт, `current.json` и `last-profile.txt` не трогаются. Пункт приёмки F19 «выделенное не меняет активный пул» закрывается только на вашей стороне.
+2. **`export()` (`proxytool.py:1651-1932`) — дефект 7, `kind='selection'`.** Кнопки «Download Selected» и «Download scope» идут у меня через `POST /api/results/bulk` → `App.start({'action': 'export', 'selection': [...]})` (`gui.py:665`). Это по-прежнему публикующая публикация, поэтому таблица и пул всё ещё переключаются. Прошу реализовать `kind='selection'` по §4.5: отдельный артефакт, `current.json` и `last-profile.txt` не трогаются. Пункт приёмки F19 «выделенное не меняет активный пул» закрывается только на вашей стороне.
 
-3. **`run_scan` + watch (`proxytool.py:2464-2511`) — дефект 12 и §1.2 (4).** `App.start()` пишет `scope` в `gui-job.json` (`gui.py:751`) — `action`, `selection_requested`, цели, профиль запроса. Прошу добавить в этот файл `scope_digest` и `input_digest`, а в `resume` — запрет расширения scope (§6.2).
+3. **`run_scan` + watch (`proxytool.py:2464-2511`) — дефект 12 и §1.2 (4).** `App.start()` пишет `scope` в `gui-job.json` (`gui.py:786`) — `action`, `selection_requested`, цели, профиль запроса. Прошу добавить в этот файл `scope_digest` и `input_digest`, а в `resume` — запрет расширения scope (§6.2).
 
-4. **Порог допуска из ревизии профиля, а не из аргумента чтения (§2.3).** `App.result_policy()` (`gui.py:1096`) собирает один `core.Policy` и зовёт `core.admit` для каждой строки — это тот же контракт, что у `api.select`. Но `min_success`, `max_latency`, `countries`, `min_anonymity` пока приходят из query string (их задаёт форма), потому что так работала старая таблица. Прошу, когда `profiles.py` будет подключён, брать эти значения из `profile_revision`, а query-параметры трактовать как сужение в пределах ревизии. Тогда `tests.test_parity` (сравнение `api.select` / CLI / `App.results`) станет достижим.
+4. **Порог допуска из ревизии профиля, а не из аргумента чтения (§2.3).** `App.result_policy()` (`gui.py:1011`) собирает один `core.Policy` и зовёт `core.admit` для каждой строки — это тот же контракт, что у `api.select`. Но `min_success`, `max_latency`, `countries`, `min_anonymity` пока приходят из query string (их задаёт форма), потому что так работала старая таблица. Прошу, когда `profiles.py` будет подключён, брать эти значения из `profile_revision`, а query-параметры трактовать как сужение в пределах ревизии. Тогда `tests.test_parity` (сравнение `api.select` / CLI / `App.results`) станет достижим.
 
 5. **`max_age_seconds` в снимке.** `App.snapshot_policy()` (`gui.py:459`) читает `status['max_age_seconds']`; при отсутствии берёт `core.DEFAULT_MAX_AGE_SECONDS`. Как только `export()` начнёт писать `max_age_seconds` (§4.3), интерфейс подхватит это без правок.
 
@@ -27,23 +27,23 @@
 
 6. **`api.py:181-182` — дефект 3 в API и шлюзе.** `Exports.load()` обнуляет `rows`, когда истёк общий `status['valid_until']`. Я перестал использовать `Exports.load()` в своей таблице и читаю поколение сам (`gui.py:read_snapshot`, `App.export_status` — построчная свежесть через `core.select`), поэтому интерфейс дефект 3 не воспроизводит: смешанный набор даёт `state='partial'`, `expired_count=1`, `stale=False`, и свежие строки остаются в таблице. **Прошу то же самое сделать в `Exports` и в шлюзе** — иначе API и GUI будут описывать одно и то же поколение разным числом строк, а это ровно тот разрыв, который запрещает §2.3.
 
-7. **Дефект 8 — фиксация поколения у потребителя (§1.2 (3)).** `App.snapshot()` (`gui.py:read_snapshot`) фиксирует поколение один раз на запрос и больше указатель не перечитывает; `/api/download/*` открывает файл именно этой generation (`gui.py:1929`). В API и шлюзе нужно то же: `generation` в курсоре/состоянии, а не глобальный `current.json` на каждое чтение.
+7. **Дефект 8 — фиксация поколения у потребителя (§1.2 (3)).** `App.snapshot()` (`gui.py:read_snapshot`) фиксирует поколение один раз на запрос и больше указатель не перечитывает; `/api/download/*` открывает файл именно этой generation (`gui.py:1968`). В API и шлюзе нужно то же: `generation` в курсоре/состоянии, а не глобальный `current.json` на каждое чтение.
 
 ### 1.3 `proxy_workbench/gateway.py` — поверхность `gateway`
 
 8. **Контроль маршрута (F17).** Сейчас страница «Путь подключения» говорит правду, но показать, какой именно прокси обслужил последнее соединение, и закрепить выбранный адрес она не может: у `gateway.Gateway` (`gateway.py:320`) и `Pool` (`gateway.py:85`) нет такого поля. **Прошу** добавить в снимок пула `last_proxy` и `last_used_at` и (по возможности) `pin`/`unpin` на адрес, чтобы шаг «4. Контроль маршрута» был не только текстом. Место для показа уже готово: `gui.py:gateway_state()` возвращает `binding`, страница рисует его в `#connect-generation` и `#connect-pool`.
    Пункт «понятное отключение» закрыт на моей стороне: `POST /api/gateway/stop` вызывает существующий `Background.close()` (`gateway.py:558`).
 
-9. **`Pool.snapshot()` — generation.** `App.gateway_state()` (`gui.py:432`) берёт generation из `App.export_status()`, то есть из публикации, а не из того снимка, который реально держит шлюз. Прошу вернуть в `Pool.snapshot()` имя поколения и `expires_at`, чтобы страница показывала binding пула, а не binding публикации.
+9. **`Pool.snapshot()` — generation.** `App.gateway_state()` (`gui.py:565`) берёт generation из `App.export_status()`, то есть из публикации, а не из того снимка, который реально держит шлюз. Прошу вернуть в `Pool.snapshot()` имя поколения и `expires_at`, чтобы страница показывала binding пула, а не binding публикации.
 
 ### 1.4 `proxy_workbench/maintenance.py` — исполнитель `desktop.py`
 
-10. **Runtime-файл `gui-events.jsonl`.** Поток событий измерений — машинные runtime-данные, и `App.clear_data()` (`gui.py:1103`) удаляет его сам. Прошу добавить `EVENTS_FILE = 'gui-events.jsonl'` в `RUNTIME_FILES`, чтобы очистка из CLI совпадала с очисткой из интерфейса.
+10. **Runtime-файл `gui-events.jsonl`.** Поток событий измерений — машинные runtime-данные, и `App.clear_data()` (`gui.py:876`) удаляет его сам. Прошу добавить `EVENTS_FILE = 'gui-events.jsonl'` в `RUNTIME_FILES`, чтобы очистка из CLI совпадала с очисткой из интерфейса.
     Чего делать **не** надо: `gui-annotations.json`, `gui-views.json`, `gui-history.json` — пользовательские документы (теги, избранное, заметки, представления, история отмен). Они переживают очистку, как настройки и denylist, и в `RUNTIME_FILES` не попадают.
 
 ### 1.5 `proxy_workbench/core.py` / `jobs.py`
 
-11. Ничего не прошу. `core.admit`, `core.select`, `core.Policy` и `core.Scope` я использую как есть, ничего не дублирую; собственный `freshness_of()` (`gui.py:228`) — это раскладка уже вынесенного `Admission` по четырём представлениям интерфейса, а не второй контракт допуска.
+11. Ничего не прошу. `core.admit`, `core.select`, `core.Policy` и `core.Scope` я использую как есть, ничего не дублирую; собственный `freshness_of()` (`gui.py:158`) — это раскладка уже вынесенного `Admission` по четырём представлениям интерфейса, а не второй контракт допуска.
 
 ---
 
@@ -53,17 +53,17 @@
 
 | Что | Где | Что даёт потребителям |
 | --- | --- | --- |
-| `read_snapshot(data)` → `Snapshot` | `gui.py:262` | Поколение, прочитанное без writer-lock; `state ∈ {ok, legacy, broken, missing}`. `broken` никогда не откатывается к строкам БД (дефект 9). |
-| `App.export_status()` | `gui.py:466` | Статус поколения с построчной свежестью: `state`, `state_detail`, `available`, `expired_count`, `expires_at`, `stale` только когда истекли **все**. |
-| `App.result_plan(query)` | `gui.py:975` | Валидированный план области + `scope_digest`. От него зависят таблица, матрица и любая массовая операция. |
-| `App.results(query)` | `gui.py:1155` | Страница строк: `rows`, `total`, `counts`, `view`, `scope_digest`, `columns`, `snapshot_state`. `view ∈ fresh/stale/failed/unknown/all`. |
-| `App.matrix(query)` | `gui.py:1188` | Матрица proxy × target по текущей странице. |
-| `App.bulk(payload)` | `gui.py:1641` | `op ∈ recheck/export/copy/tag/untag/note/favorite/unfavorite/exclude/include/denylist`, `scope ∈ page/selected/all_matching`. Для `all_matching` браузер шлёт фильтр, а не строки. |
-| `App.test_proxy(payload)` | `gui.py:1257` | Ответ с `scope` (объём клика, что не измерялось, `whole_deadline_s`, `recheck_action`) и `stored=False`. |
-| `App.events(query)` | `gui.py:1985` | События измерений с курсором `stream:seq`, `source='measurements'`. |
-| `App.gateway_state()` | `gui.py:432` | `address`, `binding`, `transport`, `probe_note`, `disconnect_hint`; **никогда** `app.token`. |
-| `App.stop_gateway()` | `gui.py:487` | Понятное отключение: слушатель действительно останавливается. |
-| `i18n.code_text(code, lang)`, `i18n.code_lines(*codes)` | `i18n.py:52` | Перевод канонических кодов; неизвестный код возвращается как есть. |
+| `read_snapshot(data)` → `Snapshot` | `gui.py:215` | Поколение, прочитанное без writer-lock; `state ∈ {ok, legacy, broken, missing}`. `broken` никогда не откатывается к строкам БД (дефект 9). |
+| `App.export_status()` | `gui.py:459` | Статус поколения с построчной свежестью: `state`, `state_detail`, `available`, `expired_count`, `expires_at`, `stale` только когда истекли **все**. |
+| `App.result_plan(query)` | `gui.py:978` | Валидированный план области + `scope_digest`. От него зависят таблица, матрица и любая массовая операция. |
+| `App.results(query)` | `gui.py:1165` | Страница строк: `rows`, `total`, `counts`, `view`, `scope_digest`, `columns`, `snapshot_state`. `view ∈ fresh/stale/failed/unknown/all`. |
+| `App.matrix(query)` | `gui.py:1205` | Матрица proxy × target по текущей странице. |
+| `App.bulk(payload)` | `gui.py:1609` | `op ∈ recheck/export/copy/tag/untag/note/favorite/unfavorite/exclude/include/denylist`, `scope ∈ page/selected/all_matching`. Для `all_matching` браузер шлёт фильтр, а не строки. |
+| `App.test_proxy(payload)` | `gui.py:1296` | Ответ с `scope` (объём клика, что не измерялось, `whole_deadline_s`, `recheck_action`) и `stored=False`. |
+| `App.events(query)` | `gui.py:1812` | События измерений с курсором `stream:seq`, `source='measurements'`. |
+| `App.gateway_state()` | `gui.py:565` | `address`, `binding`, `transport`, `probe_note`, `disconnect_hint`; **никогда** `app.token`. |
+| `App.stop_gateway()` | `gui.py:604` | Понятное отключение: слушатель действительно останавливается. |
+| `i18n.code_text(code, lang)`, `i18n.code_lines(*codes)` | `i18n.py:84` | Перевод канонических кодов; неизвестный код возвращается как есть. |
 
 Маршруты: `GET /api/results`, `/api/results/matrix`, `/api/result-detail`, `/api/events`, `/api/annotations`, `/api/views`, `/api/history`, `/api/download/*`; `POST /api/results/bulk`, `/api/views`, `/api/views/delete`, `/api/history/undo`, `/api/gateway/stop`, `/api/test-proxy` (прежний), `/api/denylist/add` (прежний).
 
