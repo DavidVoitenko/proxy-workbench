@@ -21,3 +21,6 @@ htmlcov/
 dist/
 build/
 *.egg-info/
+
+# Editor and workflow runtime state
+.zcode/
