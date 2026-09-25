@@ -28,7 +28,23 @@ proxy_workbench = ["sources.json", "ui/*", "data/service_sets.json"]
 
 **Почему:** `load_catalog()` читает `Path(__file__).with_name('data') / 'service_sets.json'`. Без этой строки каталог есть в дереве и в editable-установке, но отсутствует в wheel/sdist, и `load_catalog()` начнёт падать с `CatalogError` только у пользователя после установки. Это ровно тот класс отказа, который CONTRACTS §4.6 запрещает прятать (fail-closed должен быть явным сообщением, а не `FileNotFoundError` у неподготовленного пользователя).
 
-### 1.2 `proxy_workbench/ui/app.js` → владелец поверхность `web`
+### 1.2 `.gitignore` → владелец интегратор
+
+Первая строка файла — `data/`. Паттерн без ведущего слэша совпадает с каталогом
+`data` на любом уровне, поэтому `proxy_workbench/data/service_sets.json` оказался
+невидимым для `git add` и был закоммичен принудительно (`git add -f`).
+
+Файл в ревизии уже отслеживается и обычными операциями не потеряется, но
+`git clean -X` или пересоздание клона его уберут. Прошу добавить в `.gitignore`:
+
+```
+!proxy_workbench/data/
+```
+
+Это правка чужого файла, поэтому я её не делал и коммит принудительного добавления
+делал только для своего файла.
+
+### 1.3 `proxy_workbench/ui/app.js` → владелец поверхность `web`
 
 Два места, оба найдены чтением, номера строк указаны по текущей dirty-ревизии.
 
@@ -58,16 +74,16 @@ applied = servicecatalog.apply_scenario(current_settings, pinned.scenario,
 
 **Почему здесь:** единственный writer на `ui/app.js` — поверхность `web` (HANDOFF §1.3); правку чужого файла я не делаю.
 
-### 1.3 `proxy_workbench/gui.py` → владелец поверхность `web`
+### 1.4 `proxy_workbench/gui.py` → владелец поверхность `web`
 
 Две точки, по одной на каждое направление:
 
 - **чтение каталога для UI**: добавить в существующий dispatch `GET`-маршрут ответ `servicecatalog.load_catalog().summary()` и `servicecatalog.search_presets(...)` по `q`/`category`/`capability`. Структура ответа уже готова (`Catalog.summary()`, `Preset.to_dict()`), отдельного формата не нужно.
 - **сохранение ревизии профиля**: `App.start`/сохранение настроек должны писать в конфиг профиля `servicecatalog.pin_set(catalog, set_id).to_dict()` целиком, а не только `set_id`. `PinnedSet.from_dict()` читает его обратно.
 
-**Почему:** `PinnedSet` самодостаточен (см. §2), и только такая запись даёт F06 «обновление presets не меняет молча уже сохранённый profile revision». `profiles.py` (см. 1.4) тоже это требует — нужно одно поле, а не два.
+**Почему:** `PinnedSet` самодостаточен (см. §2), и только такая запись даёт F06 «обновление presets не меняет молча уже сохранённый profile revision». `profiles.py` (см. 1.5) тоже это требует — нужно одно поле, а не два.
 
-### 1.4 `proxy_workbench/profiles.py` → владелец исполнитель `profiles.py`
+### 1.5 `proxy_workbench/profiles.py` → владелец исполнитель `profiles.py`
 
 Колонки/поле для снимка каталога в ревизии профиля. По CONTRACTS §3.3 миграция 9 добавляет в `profiles` `name/revision/parent_id/digest/created_at/archived_at/is_default` — места под полный снимок там нет.
 
@@ -75,11 +91,11 @@ applied = servicecatalog.apply_scenario(current_settings, pinned.scenario,
 
 - почему не в `config` как есть: `config` участвует в `profile = sha256(json.dumps(config, sort_keys=True))[:20]` (`proxytool.py:1298-1299`), то есть снимок входит в `profile_id` и не будет молча меняться — это плюс; минус в том, что любой новый снимок меняет `profile_id` и инвалидирует строки результатов. Решение за владельцем `profiles.py`, я не настаиваю на конкретном варианте, но не предлагаю хранить только `set_id` + `version`: этого недостаточно, снимок нужен, чтобы доказательство воспроизводилось без каталога.
 
-### 1.5 `proxy_workbench/proxytool.py` → владелец интегратор
+### 1.6 `proxy_workbench/proxytool.py` → владелец интегратор
 
 Изменений DDL и валидатора **не требуется**, это проверено тестом `test_generated_targets_pass_the_real_scanner_validator` (`tests/test_servicecatalog_catalog.py`): каждый target, который строит `PinnedSet.targets()`, принимается существующим `core.validate_targets` без послаблений.
 
-Требуется только **вызов** при сборке конфига скана: брать `targets` из сохранённого `PinnedSet`, а не из массива в JS. Сейчас путь единственный — `target_config()` (`proxytool.py:893`), он читает `config['targets']`; то есть после 1.3 достаточно положить `targets` в настройки, и CLI/GUI/API получат один и тот же список (F18).
+Требуется только **вызов** при сборке конфига скана: брать `targets` из сохранённого `PinnedSet`, а не из массива в JS. Сейчас путь единственный — `target_config()` (`proxytool.py:893`), он читает `config['targets']`; то есть после 1.4 достаточно положить `targets` в настройки, и CLI/GUI/API получат один и тот же список (F18).
 
 ---
 
