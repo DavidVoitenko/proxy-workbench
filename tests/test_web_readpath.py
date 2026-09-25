@@ -142,6 +142,42 @@ class ReadPathTests(unittest.TestCase):
         download = self.fixture.client.get('/api/download/proxies.txt')
         self.assertEqual(download.status_code, 409)
 
+    def test_the_reason_travels_to_the_page_in_words_and_as_a_code(self):
+        """CONTRACTS §5.4: ``state_detail`` is translated, the code stays."""
+        from proxy_workbench import i18n
+        answer = self.get('/api/results', min_success=0, view='all')
+        self.assertIn(answer['state_detail'], i18n.STATE_DETAILS)
+        self.assertEqual(answer['state_detail_label'], i18n.state_detail_text(answer['state_detail']))
+
+        # A publication where everything expired, and one where nothing matched,
+        # must be readable as two different situations.
+        now = time.time()
+        # One generation where every row left the set through its deadline, and
+        # one where the row is inside the deadline but fails the policy.  Those
+        # are the two situations a user must be able to tell apart.
+        expired_row = ws.measurement('http://11.2.0.1:8080', age=7200, valid_for=900, now=now)
+        weak_row = ws.measurement('http://11.2.0.2:8080', age=5, reliability=0.1, now=now)
+        cases = (
+            ('.generation-allgone', [expired_row], 'all_expired'),
+            ('.generation-nomatch', [weak_row], 'empty_no_match'),
+        )
+        labels = {}
+        for name, rows, expected in cases:
+            home = ws.build_data(rows, now=now)
+            ws.publish_generation(home, rows, ws.profile_id(), now=now, name=name,
+                                  extra={'state': 'complete', 'min_success': 0.5})
+            fixture = ws.ServerFixture(home)
+            try:
+                answer = fixture.client.get('/api/results', params={'view': 'all', 'min_success': 0.5}).json()
+                self.assertEqual(answer['state_detail'], expected, answer['state_detail'])
+                self.assertNotEqual(answer['state_detail_label'], expected)
+                self.assertTrue(answer['state_detail_label'].strip())
+                labels[expected] = answer['state_detail_label']
+            finally:
+                fixture.close()
+        self.assertNotEqual(labels['all_expired'], labels['empty_no_match'],
+                            'expired and empty must not read the same to a user')
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -32,7 +32,7 @@ from . import anonymity
 from . import api
 from . import core as admission
 from . import gateway
-from .i18n import tr, utf8_output
+from .i18n import tr, utf8_output, state_detail_text
 from . import paths
 from . import geoip
 from . import source_catalog
@@ -890,6 +890,7 @@ class App:
                        published_at=published.get('published_at') or published.get('generated_at'),
                        expires_at=published.get('expires_at'),
                        state=published.get('state'), state_detail=published.get('state_detail'),
+                       state_detail_label=state_detail_text(published.get('state_detail')),
                        scope=published.get('scope') or {},
                        available=published.get('available', 0))
         return dict(snapshot, address=address, copy_address=copy_address, bind_host=bind_host,
@@ -1488,6 +1489,7 @@ class App:
                         generation=plan['generation'], published=plan['published'],
                         state=(plan.get('status') or {}).get('state'),
                         state_detail=(plan.get('status') or {}).get('state_detail'),
+                        state_detail_label=state_detail_text((plan.get('status') or {}).get('state_detail')),
                         counts={}, columns=list(COMPACT_COLUMNS), snapshot_state=plan['snapshot'].state)
         rows, total, _, cfg = self.scoped_rows(plan)
         window = rows[plan['offset']:plan['offset'] + plan['limit']]
@@ -1500,6 +1502,7 @@ class App:
                     published=plan['published'], snapshot_state=plan['snapshot'].state,
                     state=(plan.get('status') or {}).get('state'),
                     state_detail=(plan.get('status') or {}).get('state_detail'),
+                    state_detail_label=state_detail_text((plan.get('status') or {}).get('state_detail')),
                     counts=counts, columns=list(COMPACT_COLUMNS),
                     request_profile=cfg.get('request_profile', 'workbench'),
                     reputation_policy=cfg.get('reputation', {}), anonymity=bool(cfg.get('anonymity')),

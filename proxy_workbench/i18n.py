@@ -94,6 +94,39 @@ def code_text(code, lang=None):
     return entry[0] if language == 'ru' else entry[1]
 
 
+# ``state_detail`` of a published set (CONTRACTS §4.3).  It answers the one
+# question a user actually has when a list is empty: "nothing matched" and
+# "everything expired" are different reasons (defect 3), so they get different
+# words.  The values come from ``core.STATE_DETAILS`` plus the two reader
+# states the interface adds when the pointer cannot be read at all.
+STATE_DETAILS = {
+    'ok': ('набор собран и принят', 'the set was built and accepted'),
+    'rejected': ('строки отклонены политикой', 'rows were rejected by the policy'),
+    'all_expired': ('все строки истекли; нужна новая проверка', 'every row expired; a new check is needed'),
+    'all_untrusted': ('нет строк с подтверждённой чистотой', 'no row has confirmed cleanliness'),
+    'all_failed': ('все строки провалили измерение', 'every row failed its measurement'),
+    'nothing_in_scope': ('в области нет ни одного адреса', 'the scope holds no address at all'),
+    'empty_no_match': ('ничего не подошло под фильтры', 'nothing matched the filters'),
+    'no_snapshot': ('публикации ещё нет', 'nothing has been published yet'),
+    'pointer_unreadable': ('указатель публикации не читается', 'the publication pointer cannot be read'),
+}
+
+
+def state_detail_text(detail, lang=None):
+    """Human text for a ``state_detail`` value, or the value itself.
+
+    Same rule as :func`code_text`: an unknown value is returned unchanged, so a
+    new reason from the engine is visible as a reason instead of disappearing.
+    """
+    if not detail:
+        return ''
+    language = LANG if lang is None else lang
+    entry = STATE_DETAILS.get(str(detail))
+    if not entry:
+        return str(detail)
+    return entry[0] if language == 'ru' else entry[1]
+
+
 def code_lines(*codes, lang=None):
     """``code — text`` pairs for logs, JSON reports and the terminal.
 
