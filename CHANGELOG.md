@@ -4,6 +4,18 @@
 
 ## [Unreleased]
 
+## [2.2.1] — 2026-09-25
+
+### Fixed
+
+- **Collecting from public sources returned nothing.** The transport that pins a source to its checked IP sent two `Host` headers, so every hostname-based list failed with `LocalProtocolError`. Tests only used IP-literal sources, which skip that path; new tests cover hostname sources.
+- **A proxy with a malformed SOCKS5 reply stopped the whole scan.** socksio's parse error escaped as an `ExceptionGroup`. Any error of a single proxy is now recorded as that proxy's failure.
+- Speed tests use a high-resolution timer; on Windows very fast downloads could lose their Mbit/s value.
+
+### Changed
+
+- Default per-source limits are 32 MiB and 500,000 candidates, so the largest public lists are no longer cut off.
+
 ## [2.2.0] — 2026-09-24
 
 ### Added
