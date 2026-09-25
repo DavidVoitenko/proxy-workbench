@@ -11,6 +11,7 @@ import unittest
 from unittest import mock
 
 import httpx
+from tests.workbench_support import add_candidate, add_candidates, store_result  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from proxy_workbench import geoip
 from proxy_workbench import gui
@@ -109,7 +110,7 @@ class ScanSelectionTests(unittest.IsolatedAsyncioTestCase):
         self.home = Path(self.temp.name)
         self.db = p.open_db(self.home / 'test.sqlite3')
         proxies = [f'http://11.0.0.{i}:80' for i in range(10)] + [f'socks5://11.0.1.{i}:1080' for i in range(10)]
-        self.db.executemany('INSERT INTO candidates VALUES (?)', ((proxy,) for proxy in proxies))
+        add_candidates(self.db, ((proxy,) for proxy in proxies))
         self.db.commit()
         rows = [(geoip.ipaddress.ip_address('11.0.0.0'), geoip.ipaddress.ip_address('11.0.0.255'), 'DE'),
                 (geoip.ipaddress.ip_address('11.0.1.0'), geoip.ipaddress.ip_address('11.0.1.255'), 'NL')]
@@ -163,7 +164,7 @@ class ScanSelectionTests(unittest.IsolatedAsyncioTestCase):
         other = dict(config(), attempts=2)
         for proxy in ('http://11.0.0.9:80', 'socks5://11.0.1.9:1080'):
             row = good(proxy, other)
-            self.db.execute('INSERT INTO results VALUES (?,?,?)', ('older', proxy, json.dumps(row)))
+            store_result(self.db, ('older', proxy, json.dumps(row)))
         self.db.commit()
         seen = await self.run_scan(want=2)
         self.assertEqual(sorted(seen[:2]), ['http://11.0.0.9:80', 'socks5://11.0.1.9:1080'])
@@ -180,9 +181,9 @@ class ScanSelectionTests(unittest.IsolatedAsyncioTestCase):
 
     def test_export_by_country(self):
         cfg = config()
-        self.db.execute('INSERT INTO profiles VALUES (?,?)', ('fx', json.dumps(cfg)))
+        self.db.execute('INSERT INTO profiles(id, config) VALUES (?, ?)', ('fx', json.dumps(cfg)))
         for proxy in ('http://11.0.0.1:80', 'socks5://11.0.1.1:1080'):
-            self.db.execute('INSERT INTO results VALUES (?,?,?)', ('fx', proxy, json.dumps(good(proxy, cfg))))
+            store_result(self.db, ('fx', proxy, json.dumps(good(proxy, cfg))))
         self.db.execute("INSERT INTO candidate_meta(proxy, country) VALUES ('http://11.0.0.1:80', 'FR')")
         self.db.commit()
         country_of = p.country_resolver(self.db, None)
@@ -199,11 +200,12 @@ class GuiGeoTests(unittest.TestCase):
         self.home = Path(self.temp.name)
         db = p.open_db(self.home / 'proxies.sqlite3')
         cfg = config()
-        db.execute('INSERT INTO profiles VALUES (?,?)', ('fx', json.dumps(cfg)))
+        db.execute('INSERT INTO profiles(id, config) VALUES (?, ?)', ('fx', json.dumps(cfg)))
         for proxy in ('http://11.0.0.1:80', 'socks5://11.0.1.1:1080'):
-            db.execute('INSERT INTO candidates VALUES (?)', (proxy,))
-            db.execute('INSERT INTO results VALUES (?,?,?)', ('fx', proxy, json.dumps(good(proxy, cfg))))
+            add_candidate(db, (proxy))
+            store_result(db, ('fx', proxy, json.dumps(good(proxy, cfg))))
         db.commit()
+        p.export(db, 'fx', self.home / 'exports', min_success=1)
         db.close()
         (self.home / 'last-profile.txt').write_text('fx')
         self.server = gui.make_server(self.home)

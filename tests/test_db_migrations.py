@@ -7,7 +7,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from proxy_workbench import db
-from proxy_workbench import proxytool as proxytool_module
+from tests.workbench_support import legacy_database as legacy_file  # noqa: E402
 
 #: Every table CONTRACTS §3.3 declares, including the five pre-versioning ones.
 CONTRACT_TABLES = (
@@ -26,8 +26,12 @@ LEGACY_ROWS = (
 
 
 def legacy_database(path, *, results=True):
-    """A database written by the unversioned `proxytool.open_db`, with real rows."""
-    conn = proxytool_module.open_db(Path(path))
+    """A database written by the unversioned engine, with real rows.
+
+    The engine no longer creates this shape itself -- it migrates instead -- so
+    the fixture builds the pre-versioning file directly.
+    """
+    conn = legacy_file(Path(path))
     for proxy in LEGACY_ROWS:
         conn.execute("INSERT INTO candidates VALUES (?)", (proxy,))
         conn.execute("INSERT INTO candidate_seen VALUES (?, ?)", (proxy, "list-1"))

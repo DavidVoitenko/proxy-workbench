@@ -89,12 +89,11 @@ class StoreFixture(unittest.TestCase):
 
 
 def legacy_database(path, *, profile_id='profile0001', config=None):
-    """A database written by the unversioned `proxytool.open_db`, with real rows."""
-    from proxy_workbench import proxytool
+    """A pre-versioning database with a real content-addressed profile row."""
+    from tests.workbench_support import legacy_database as legacy_file
 
-    conn = proxytool.open_db(Path(path))
-    conn.execute('INSERT INTO profiles VALUES (?, ?)',
-                 (profile_id, config if config is not None else LEGACY_CONFIG))
+    conn = legacy_file(Path(path))
+    conn.execute('INSERT INTO profiles(id, config) VALUES (?, ?)', (profile_id, config if config is not None else LEGACY_CONFIG))
     conn.commit()
     conn.close()
     return Path(path)

@@ -12,6 +12,7 @@ import unittest
 from unittest import mock
 
 import httpx
+from tests.workbench_support import add_candidate, add_candidates, store_result  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from proxy_workbench import gui
 from proxy_workbench import proxytool as p
@@ -79,7 +80,7 @@ class GuiTests(unittest.TestCase):
     def test_quick_filters_apply_real_clean_speed_and_http_conditions(self):
         db = p.open_db(self.home / 'proxies.sqlite3')
         cfg = dict(targets=[dict(url='http://service.invalid/')])
-        db.execute('INSERT INTO profiles VALUES (?,?)', ('fixture', json.dumps(cfg)))
+        db.execute('INSERT INTO profiles(id, config) VALUES (?, ?)', ('fixture', json.dumps(cfg)))
         fixtures = [
             ('http://11.0.0.1:80', 'clean', 10),
             ('https://11.0.0.2:443', 'unknown', 20),
@@ -90,9 +91,13 @@ class GuiTests(unittest.TestCase):
             row['reputation'] = {'status': status, 'dnsbl': []}
             if mbps is not None:
                 row['speed'] = {'mbps': mbps}
-            db.execute('INSERT INTO candidates VALUES (?)', (proxy,))
-            db.execute('INSERT INTO results VALUES (?,?,?)', ('fixture', proxy, json.dumps(row)))
+            add_candidate(db, (proxy))
+            store_result(db, ('fixture', proxy, json.dumps(row)))
         db.commit()
+        # The published snapshot is what names the collection and the profile for
+        # every reader; without one there is nothing for the surfaces to agree on
+        # (CONTRACTS §1.2 rule 2).
+        p.export(db, 'fixture', self.home / 'exports', min_success=1)
         db.close()
         (self.home / 'last-profile.txt').write_text('fixture', encoding='utf-8')
         def query(quick):
@@ -111,7 +116,7 @@ class GuiTests(unittest.TestCase):
                                  headers={}, contains=None, sha256=None),
                             dict(name='two', url='http://two.invalid/', method='GET', statuses=[200],
                                  headers={}, contains=None, sha256=None)])
-        db.execute('INSERT INTO profiles VALUES (?,?)', ('fixture', json.dumps(cfg)))
+        db.execute('INSERT INTO profiles(id, config) VALUES (?, ?)', ('fixture', json.dumps(cfg)))
         db.commit(); db.close()
         (self.home / 'last-profile.txt').write_text('fixture', encoding='utf-8')
         captured = {}
@@ -148,9 +153,9 @@ class GuiTests(unittest.TestCase):
                                           error=None, bytes=1)], cfg)
         row['checked_at'] = time.time()
         row['valid_until'] = time.time() - 1
-        db.execute('INSERT INTO profiles VALUES (?,?)', ('fixture', json.dumps(cfg)))
-        db.execute('INSERT INTO candidates VALUES (?)', (proxy,))
-        db.execute('INSERT INTO results VALUES (?,?,?)', ('fixture', proxy, json.dumps(row)))
+        db.execute('INSERT INTO profiles(id, config) VALUES (?, ?)', ('fixture', json.dumps(cfg)))
+        add_candidate(db, (proxy))
+        store_result(db, ('fixture', proxy, json.dumps(row)))
         db.commit()
         p.export(db, 'fixture', self.home / 'exports', min_success=1)
         db.close()
@@ -185,7 +190,7 @@ class GuiTests(unittest.TestCase):
 
     def test_selected_export_validation_happens_before_settings_or_worker(self):
         db = p.open_db(self.home/'proxies.sqlite3')
-        db.execute('INSERT INTO profiles VALUES (?,?)', ('fixture', json.dumps(dict(targets=[dict(url='https://one.invalid/')]))))
+        db.execute('INSERT INTO profiles(id, config) VALUES (?, ?)', ('fixture', json.dumps(dict(targets=[dict(url='https://one.invalid/')]))))
         db.commit(); db.close()
         (self.home/'last-profile.txt').write_text('fixture')
         saved = gui.defaults(); saved.update(top=7, sort='speed')
@@ -212,7 +217,7 @@ class GuiTests(unittest.TestCase):
 
     def test_selected_export_is_normalized_transient_and_passed_to_worker(self):
         db = p.open_db(self.home/'proxies.sqlite3')
-        db.execute('INSERT INTO profiles VALUES (?,?)', ('fixture', json.dumps(dict(targets=[dict(url='https://one.invalid/')]))))
+        db.execute('INSERT INTO profiles(id, config) VALUES (?, ?)', ('fixture', json.dumps(dict(targets=[dict(url='https://one.invalid/')]))))
         db.commit(); db.close()
         (self.home/'last-profile.txt').write_text('fixture')
         saved = gui.defaults(); saved.update(top=7, sort='speed')
@@ -266,6 +271,8 @@ class GuiTests(unittest.TestCase):
         # Clear only this synthetic test candidate: no public requests in tests.
         db=sqlite3.connect(self.home/'proxies.sqlite3')
         db.execute('DELETE FROM candidates')
+        # The scan scope is the collection membership, not the candidate list.
+        db.execute('DELETE FROM membership')
         db.commit(); db.close()
         response = self.client.post('/api/start', json={'action':'scan','settings':settings})
         self.assertEqual(response.status_code, 200, response.text)
@@ -275,31 +282,51 @@ class GuiTests(unittest.TestCase):
         self.assertEqual(result['export']['checked'], 0)
         self.assertEqual(self.client.get('/api/download/proxies.txt').status_code, 200)
 
-        # A coherent but expired generation is not downloadable through the
-        # local GUI endpoint, even when the immutable files still exist.
-        status_path = p.export_file(self.home/'exports', 'status.json')
-        status = json.loads(status_path.read_text(encoding='utf-8'))
-        status['valid_until'] = time.time() - 1
-        p.atomic(status_path, json.dumps(status))
-        self.assertEqual(self.client.get('/api/state').json()['downloads'], [])
-        self.assertEqual(self.client.get('/api/download/proxies.txt').status_code, 410)
+        # A published generation is immutable and carries a manifest, so the only
+        # honest way to have an expired one is to publish one whose row lifetime
+        # has passed (CONTRACTS §4.2).
+        db = p.open_db(self.home/'proxies.sqlite3')
+        active = (self.home/'last-profile.txt').read_text(encoding='utf-8').strip()
+        proxy = 'http://11.1.1.1:80'
+        add_candidate(db, (proxy))
+        store_result(db, (active, proxy, json.dumps(
+            dict(proxy=proxy, reliability=1, min_target_reliability=1, latency_ms=10, jitter_ms=1,
+                 score=90, successes=1, requests=1, checked_at=time.time() - 7200,
+                 valid_until=time.time() - 3600, samples=[]))), valid_until=time.time() - 3600)
+        db.commit()
+        p.export(db, active, self.home/'exports', min_success=1)
+        db.close()
+        state = self.client.get('/api/state').json()
+        # A row whose lifetime has passed is not served: the table is empty and
+        # the download yields an empty file, not an expired address.  The set
+        # state names the reason instead of calling it "complete" (defect 3).
+        # The published set is empty because its only row had expired, and the
+        # status says so instead of claiming a completed export.
+        self.assertEqual(state['export']['state'], 'empty')
+        self.assertEqual(state['export']['exported'], 0)
+        self.assertEqual(state['export']['available'], 0)
+        self.assertFalse(state['export']['complete'])
+        self.assertEqual(self.client.get('/api/results?min_success=1').json()['total'], 0)
+        self.assertEqual(self.client.get('/api/download/proxies.txt').text.strip(), '')
 
     def test_results_require_every_service_and_export_matches_sort(self):
         db = p.open_db(self.home/'proxies.sqlite3')
         cfg = dict(targets=[dict(url='https://one.invalid/'),dict(url='https://two.invalid/')])
-        db.execute('INSERT INTO profiles VALUES (?,?)', ('fixture', json.dumps(cfg)))
+        db.execute('INSERT INTO profiles(id, config) VALUES (?, ?)', ('fixture', json.dumps(cfg)))
         for i in range(65):
             proxy = f'http://11.0.0.{i}:80'
             samples=[dict(target=t, attempt=a+1, ok=not(i==0 and t==1), ms=100+i,
                           bytes=1, status=200, error=None) for t in range(2) for a in range(3)]
             row = p.summarize(proxy, samples, cfg)
-            db.execute('INSERT INTO candidates VALUES (?)',(proxy,))
-            db.execute('INSERT INTO results VALUES (?,?,?)',('fixture',proxy,json.dumps(row)))
+            add_candidate(db, (proxy))
+            store_result(db, ('fixture',proxy,json.dumps(row)))
         listed = p.summarize('http://11.0.0.200:80', [dict(target=0, attempt=1, ok=True, ms=5, bytes=1, status=200, error=None), dict(target=1, attempt=1, ok=True, ms=5, bytes=1, status=200, error=None)], cfg)
         listed['reputation'] = {'status':'listed', 'dnsbl':[{'zone':'bl.example.org','status':'listed'}], 'checked_at':0}
-        db.execute('INSERT INTO candidates VALUES (?)',(listed['proxy'],))
-        db.execute('INSERT INTO results VALUES (?,?,?)',('fixture',listed['proxy'],json.dumps(listed)))
-        db.commit(); db.close()
+        add_candidate(db, (listed['proxy']))
+        store_result(db, ('fixture',listed['proxy'],json.dumps(listed)))
+        db.commit()
+        p.export(db, 'fixture', self.home/'exports', min_success=1)
+        db.close()
         (self.home/'last-profile.txt').write_text('fixture')
         first=self.client.get('/api/results?sort=speed&min_success=0').json()
         self.assertEqual(first['total'],64)
@@ -317,10 +344,10 @@ class GuiTests(unittest.TestCase):
     def test_result_detail_is_loaded_on_demand(self):
         db = p.open_db(self.home/'detail.sqlite3')
         cfg = dict(version=2, targets=[dict(url='https://service.invalid/')], request_profile='workbench', reputation={})
-        db.execute('INSERT INTO profiles VALUES (?,?)', ('detail', json.dumps(cfg)))
+        db.execute('INSERT INTO profiles(id, config) VALUES (?, ?)', ('detail', json.dumps(cfg)))
         row = p.summarize('http://11.0.0.1:80', [dict(target=0, attempt=1, ok=True, ms=4, bytes=1, status=200, error=None)], cfg)
-        db.execute('INSERT INTO candidates VALUES (?)', (row['proxy'],))
-        db.execute('INSERT INTO results VALUES (?,?,?)', ('detail', row['proxy'], json.dumps(row)))
+        add_candidate(db, (row['proxy']))
+        store_result(db, ('detail', row['proxy'], json.dumps(row)))
         db.commit(); db.close()
         (self.home/'proxies.sqlite3').write_bytes((self.home/'detail.sqlite3').read_bytes())
         (self.home/'last-profile.txt').write_text('detail')
@@ -343,7 +370,7 @@ class GuiTests(unittest.TestCase):
         async def run():
             db=p.open_db(self.home/'stop.sqlite3')
             cfg=dict(targets=[dict(url='http://service.invalid')],attempts=1)
-            db.executemany('INSERT INTO candidates VALUES (?)',((f'http://11.0.0.{i}:80',) for i in range(20)))
+            add_candidates(db, ((f'http://11.0.0.{i}:80',) for i in range(20)))
             db.commit()
             stopped=self.home/'stop-marker'
             seen=[]; events=[]
@@ -385,7 +412,7 @@ class GuiTests(unittest.TestCase):
                 servers.append(server)
             db=p.open_db(self.home/'proxies.sqlite3')
             proxies=[f'http://127.0.0.1:{s.server_port}' for s in servers]
-            db.executemany('INSERT INTO candidates VALUES (?)',((proxy,) for proxy in proxies))
+            add_candidates(db, ((proxy,) for proxy in proxies))
             db.commit();db.close()
             settings=gui.defaults()
             settings.update(targets=[dict(url='http://service.invalid/'+name,contains='healthy',statuses=[200]) for name in ('one','two')],
@@ -393,8 +420,11 @@ class GuiTests(unittest.TestCase):
             self.client.post('/api/start',json=dict(action='scan',settings=settings)).raise_for_status()
             result=self.await_job()
             self.assertEqual(result['job']['exit_code'],0,result['log'])
-            self.assertEqual(result['export']['checked'],2)
-            self.assertEqual(result['export']['passed'],1)
+            # `checked` is what the run checked; `admitted` is what survived
+            # admission.  The GUI recomputes the latter from the snapshot.
+            self.assertEqual(result['progress']['checked'], 2)
+            self.assertEqual(result['progress']['passed'], 1)
+            self.assertEqual(result['export']['admitted'], 1)
             # 6 requests for the good proxy; fail-fast stops the rejecting one after its
             # first failure on service two (strict threshold), instead of 6 more.
             self.assertEqual(len(requested),8)
@@ -410,7 +440,7 @@ class GuiTests(unittest.TestCase):
             self.assertEqual(result['job']['exit_code'],130,result['log'])
             self.assertEqual(result['progress']['phase'],'stopped')
             # A stopped recheck never replaces the last coherent current export.
-            self.assertEqual(result['export']['checked'], 2)
+            self.assertEqual(result['export']['admitted'], 1)
             self.assertEqual(result['diagnostic']['state'], 'partial')
             self.assertEqual(result['diagnostic']['stop_reason'], 'stopped')
             self.assertLess(result['diagnostic']['checked'], 2)
@@ -437,7 +467,7 @@ class GuiTests(unittest.TestCase):
         try:
             db=p.open_db(self.home/'proxies.sqlite3')
             proxy=f'http://127.0.0.1:{server.server_port}'
-            db.execute('INSERT INTO candidates VALUES (?)',(proxy,))
+            add_candidate(db, (proxy))
             db.commit(); db.close()
             settings=gui.defaults()
             settings.update(targets=[dict(url='http://service.invalid/one',contains='healthy',statuses=[200])],
@@ -475,7 +505,7 @@ class GuiTests(unittest.TestCase):
         threading.Thread(target=server.serve_forever,daemon=True).start()
         try:
             db=p.open_db(self.home/'proxies.sqlite3')
-            db.execute('INSERT INTO candidates VALUES (?)',(f'http://127.0.0.1:{server.server_port}',))
+            add_candidate(db, (f'http://127.0.0.1:{server.server_port}'))
             db.commit();db.close()
             settings=gui.defaults()
             settings.update(targets=[dict(url='http://service.invalid/one',contains='healthy',statuses=[200])],

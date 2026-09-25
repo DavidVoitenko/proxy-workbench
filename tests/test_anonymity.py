@@ -4,14 +4,20 @@ import json
 from pathlib import Path
 import sys
 import tempfile
+import time
 import unittest
 from types import SimpleNamespace
 
+from tests.workbench_support import add_candidate, store_result  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from proxy_workbench import anonymity
 from proxy_workbench import gui
 from proxy_workbench import proxytool as p
 from proxy_workbench.reputation import result_allowed
+
+#: A result fixture describes a measurement that just happened; the
+#: admission contract has no "fresh forever" state (CONTRACTS §2.4).
+_NOW = time.time()
 
 # Synthetic public address standing in for "this machine"; no traffic leaves loopback.
 OWN_IP = '93.184.216.34'
@@ -33,7 +39,7 @@ def scan_config(judge=JUDGE):
 
 def result_row(proxy, level=None):
     row = dict(proxy=proxy, reliability=1, min_target_reliability=1, latency_ms=10, jitter_ms=1,
-               score=90, successes=2, requests=2, checked_at=0, samples=[])
+               score=90, successes=2, requests=2, checked_at=_NOW, samples=[])
     if level:
         row['anonymity'] = {'level': level, 'signals': []}
     return row
@@ -177,10 +183,10 @@ class ExportTests(unittest.TestCase):
         self.temp.cleanup()
 
     def store(self, profile, cfg, rows):
-        self.db.execute('INSERT INTO profiles VALUES (?,?)', (profile, json.dumps(cfg)))
+        self.db.execute('INSERT INTO profiles(id, config) VALUES (?, ?)', (profile, json.dumps(cfg)))
         for row in rows:
-            self.db.execute('INSERT OR IGNORE INTO candidates VALUES (?)', (row['proxy'],))
-            self.db.execute('INSERT INTO results VALUES (?,?,?)', (profile, row['proxy'], json.dumps(row)))
+            add_candidate(self.db, (row['proxy']))
+            store_result(self.db, (profile, row['proxy'], json.dumps(row)))
         self.db.commit()
 
     def test_min_anonymity_and_protocol_files(self):

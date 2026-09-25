@@ -4,12 +4,18 @@ import json
 from pathlib import Path
 import sys
 import tempfile
+import time
 import unittest
 from types import SimpleNamespace
 
+from tests.workbench_support import add_candidate, store_result  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from proxy_workbench import api, gui
 from proxy_workbench import proxytool as p
+
+#: A result fixture describes a measurement that just happened; the
+#: admission contract has no "fresh forever" state (CONTRACTS §2.4).
+_NOW = time.time()
 
 BIG = 400_000
 
@@ -84,14 +90,14 @@ class BandwidthSelectionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             home = Path(temp)
             db = p.open_db(home / 'db.sqlite3')
-            db.execute('INSERT INTO profiles VALUES (?,?)', ('fx', json.dumps(dict(targets=[dict(url='https://one.invalid/')]))))
+            db.execute('INSERT INTO profiles(id, config) VALUES (?, ?)', ('fx', json.dumps(dict(targets=[dict(url='https://one.invalid/')]))))
             for index, mbps in enumerate((2.5, None, 40.0)):
                 row = dict(proxy=f'http://11.0.0.{index}:80', reliability=1, min_target_reliability=1, latency_ms=100 + index,
-                           jitter_ms=1, score=90 - index, successes=1, requests=1, checked_at=0, samples=[])
+                           jitter_ms=1, score=90 - index, successes=1, requests=1, checked_at=_NOW, samples=[])
                 if mbps is not None:
                     row['speed'] = {'mbps': mbps}
-                db.execute('INSERT INTO candidates VALUES (?)', (row['proxy'],))
-                db.execute('INSERT INTO results VALUES (?,?,?)', ('fx', row['proxy'], json.dumps(row)))
+                add_candidate(db, (row['proxy']))
+                store_result(db, ('fx', row['proxy'], json.dumps(row)))
             db.commit()
             p.export(db, 'fx', home / 'exports', min_success=1, sort='bandwidth')
             db.close()

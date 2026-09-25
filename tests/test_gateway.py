@@ -17,8 +17,15 @@ from proxy_workbench import gateway
 
 
 def row(proxy, latency=100, country=None):
+    """A published row as the engine writes it, with a real measurement time.
+
+    ``checked_at=0`` is an *unknown* measurement time under the admission
+    contract, and a row the engine can never produce; the gateway is right to
+    refuse it (CONTRACTS §2.4).
+    """
+    now = time.time()
     return dict(proxy=proxy, reliability=1, min_target_reliability=1, latency_ms=latency, jitter_ms=1, score=90,
-                successes=3, requests=3, checked_at=0, samples=[], country=country)
+                successes=3, requests=3, checked_at=now, valid_until=now + 3600, samples=[], country=country)
 
 
 async def close(writer):
@@ -219,7 +226,7 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
 
     def test_pool_drops_expired_generation_rows_and_missing_file(self):
         exports = self.home / 'exports'
-        generation = exports / 'generations' / '.generation-test'
+        generation = exports / 'generations' / '.generation-test8888'
         generation.mkdir(parents=True)
         proxy = 'http://11.0.0.1:80'
         current = dict(proxy=proxy, reliability=1, min_target_reliability=1, latency_ms=100,

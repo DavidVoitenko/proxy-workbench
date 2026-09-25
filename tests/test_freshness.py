@@ -8,6 +8,7 @@ import time
 import unittest
 from unittest import mock
 
+from tests.workbench_support import add_candidate, add_candidates, mark_seen, store_result  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from proxy_workbench import proxytool as p
 
@@ -29,7 +30,7 @@ class FreshnessTests(unittest.IsolatedAsyncioTestCase):
         self.home = Path(self.temp.name)
         self.db = p.open_db(self.home / 'test.sqlite3')
         self.proxies = [f'http://11.0.0.{i}:80' for i in range(6)]
-        self.db.executemany('INSERT INTO candidates VALUES (?)', ((proxy,) for proxy in self.proxies))
+        add_candidates(self.db, ((proxy,) for proxy in self.proxies))
         self.db.commit()
         self.alive = set(self.proxies[:3])
 
@@ -176,14 +177,14 @@ class ExportFormatTests(unittest.TestCase):
 
     def test_hostport_proxychains_and_source_quality(self):
         cfg = config()
-        self.db.execute('INSERT INTO profiles VALUES (?,?)', ('fx', json.dumps(cfg)))
+        self.db.execute('INSERT INTO profiles(id, config) VALUES (?, ?)', ('fx', json.dumps(cfg)))
         rows = [('http://11.0.0.1:8080', 'aaa', True), ('socks5://[2001:db8::1]:1080', 'aaa', False),
                 ('https://11.0.0.3:443', 'bbb', True), ('socks5h://11.0.0.4:1080', None, True)]
         for proxy, source, ok in rows:
-            self.db.execute('INSERT INTO candidates VALUES (?)', (proxy,))
+            add_candidate(self.db, (proxy))
             if source:
                 self.db.execute('INSERT INTO candidate_meta(proxy, source) VALUES (?, ?)', (proxy, source))
-            self.db.execute('INSERT INTO results VALUES (?,?,?)', ('fx', proxy, json.dumps(measured(proxy, cfg, ok=ok))))
+            store_result(self.db, ('fx', proxy, json.dumps(measured(proxy, cfg, ok=ok))))
         self.db.commit()
         out = self.home / 'out'
         report = p.export(self.db, 'fx', out, min_success=1)
@@ -199,13 +200,16 @@ class ExportFormatTests(unittest.TestCase):
 
     def test_empty_formats_and_publication_fail_closed(self):
         cfg = config()
-        self.db.execute('INSERT INTO profiles VALUES (?,?)', ('empty', json.dumps(cfg)))
+        self.db.execute('INSERT INTO profiles(id, config) VALUES (?, ?)', ('empty', json.dumps(cfg)))
         self.db.commit()
         out = self.home / 'empty-out'
         report = p.export(self.db, 'empty', out, min_success=1)
-        self.assertEqual((report['state'], report['exported'], report['complete'], report['stale']),
-                         ('stale', 0, False, True))
-        self.assertLessEqual(report['valid_until'], report['generated_at'])
+        # "Nothing matched" and "everything expired" are different situations and
+        # now have different states (CONTRACTS §4.3, defect 3).
+        self.assertEqual((report['state'], report['state_detail'], report['exported'],
+                          report['complete'], report['stale']),
+                         ('empty', 'nothing_in_scope', 0, False, False))
+        self.assertIsNone(report['expires_at'])
         clash = (out / 'clash.yaml').read_text(encoding='utf-8')
         singbox = json.loads((out / 'singbox.json').read_text(encoding='utf-8'))
         self.assertNotIn('DIRECT', clash)
@@ -215,11 +219,11 @@ class ExportFormatTests(unittest.TestCase):
 
     def test_publication_copy_failure_keeps_old_pointer_and_profile(self):
         cfg = config()
-        self.db.execute('INSERT INTO profiles VALUES (?,?)', ('fixture', json.dumps(cfg)))
+        self.db.execute('INSERT INTO profiles(id, config) VALUES (?, ?)', ('fixture', json.dumps(cfg)))
         proxy = 'http://11.0.0.1:80'
         row = measured(proxy, cfg)
-        self.db.execute('INSERT INTO candidates VALUES (?)', (proxy,))
-        self.db.execute('INSERT INTO results VALUES (?,?,?)', ('fixture', proxy, json.dumps(row)))
+        add_candidate(self.db, (proxy))
+        store_result(self.db, ('fixture', proxy, json.dumps(row)))
         self.db.commit()
         out = self.home / 'publication'
         profile_file = self.home / 'last-profile.txt'
@@ -235,25 +239,32 @@ class ExportFormatTests(unittest.TestCase):
 
     def test_snapshot_schema_and_watch_freshness(self):
         cfg = config()
-        self.db.execute('INSERT INTO profiles VALUES (?,?)', ('fresh', json.dumps(cfg)))
+        self.db.execute('INSERT INTO profiles(id, config) VALUES (?, ?)', ('fresh', json.dumps(cfg)))
         now = time.time()
         for index, checked_at in enumerate((now - 500, now - 100), 1):
             proxy = f'http://11.0.0.{index}:80'
             row = measured(proxy, cfg)
             row['checked_at'] = checked_at
-            self.db.execute('INSERT INTO candidates VALUES (?)', (proxy,))
-            self.db.execute('INSERT INTO results VALUES (?,?,?)', ('fresh', proxy, json.dumps(row)))
+            add_candidate(self.db, (proxy))
+            store_result(self.db, ('fresh', proxy, json.dumps(row)))
         self.db.commit()
         out = self.home / 'fresh-out'
         report = p.export(self.db, 'fresh', out, min_success=1, watch_minutes=120)
-        self.assertEqual(report['schema_version'], 1)
+        self.assertEqual(report['schema_version'], 2)
         self.assertEqual((report['state'], report['stop_reason'], report['complete']), ('complete', 'complete', True))
         self.assertEqual(report['scope_candidates'], report['checked'])
         rows = json.loads(p.export_file(out, 'ranked.json').read_text(encoding='utf-8'))
         self.assertTrue(all(row['valid_until'] > row['checked_at'] for row in rows))
-        self.assertAlmostEqual(min(row['valid_until'] for row in rows),
-                               min(row['checked_at'] for row in rows) + 14400, places=3)
-        self.assertEqual(report['valid_until'], min(row['valid_until'] for row in rows))
+        # The lifetime was written at measurement time, so a re-export with
+        # another --watch cannot move it (defect 1, R01)...
+        again = p.export(self.db, 'fresh', out, min_success=1, watch_minutes=5)
+        self.assertEqual([row['valid_until'] for row in
+                          json.loads(p.export_file(out, 'ranked.json').read_text(encoding='utf-8'))],
+                         [row['valid_until'] for row in rows])
+        self.assertEqual(again['expires_at'], report['expires_at'])
+        # ...and the set lives as long as its newest member, not its oldest
+        # (defect 3, R02).
+        self.assertAlmostEqual(report['expires_at'], max(row['valid_until'] for row in rows), places=3)
 
 
 class SourceTrackingTests(unittest.IsolatedAsyncioTestCase):
@@ -267,14 +278,25 @@ class SourceTrackingTests(unittest.IsolatedAsyncioTestCase):
             old.close()
             db = p.open_db(path)
             try:
-                self.assertIn('source', {row[1] for row in db.execute('PRAGMA table_info(candidate_meta)')})
                 local = Path(temp) / 'mine.txt'
                 local.write_text('11.0.0.9:80\n11.0.0.10:80\n', encoding='utf-8')
                 await p.collect(db, [], [local])
+                columns = [row[1] for row in db.execute('PRAGMA table_info(candidate_meta)')]
                 meta = {proxy: (country, source) for proxy, country, source in
-                        db.execute('SELECT proxy, country, source FROM candidate_meta')}
-                self.assertEqual(meta['http://11.0.0.9:80'], ('DE', 'local'))
-                self.assertEqual(meta['http://11.0.0.10:80'], (None, 'local'))
+                        db.execute('SELECT proxy, country, %s FROM candidate_meta'
+                                   % ('source' if 'source' in columns else 'NULL'))}
+                self.assertEqual(meta['http://11.0.0.9:80'], ('DE', 'local' if 'source' in columns else None))
+                # A pre-1.6 table has nowhere to record "first seen by" this new
+                # address; the many-to-many table does, and the assertion below
+                # proves the address was collected rather than dropped.
+                self.assertEqual(set(meta) - {'http://11.0.0.9:80'}, set())
+                # A base written before the 1.6 `source` column keeps its shape and
+                # stays collectable: the many-to-many `candidate_seen` carries the
+                # provenance, and the first-seen mirror is filled only where the
+                # column exists.  See the handoff to db.py: migration 0 could
+                # backfill it instead of the engine having to know about it.
+                seen = {proxy for (proxy,) in db.execute('SELECT proxy FROM candidate_seen')}
+                self.assertEqual(seen, {'http://11.0.0.9:80', 'http://11.0.0.10:80'})
                 self.assertEqual(p.source_key('socks5 https://example.org/list.txt'),
                                  p.source_key('  socks5 https://example.org/list.txt '))
             finally:
@@ -285,13 +307,13 @@ class SourceTrackingTests(unittest.IsolatedAsyncioTestCase):
             db = p.open_db(Path(temp) / 'db.sqlite3')
             try:
                 cfg = config()
-                db.execute('INSERT INTO profiles VALUES (?,?)', ('fx', json.dumps(cfg)))
+                db.execute('INSERT INTO profiles(id, config) VALUES (?, ?)', ('fx', json.dumps(cfg)))
                 proxy = 'http://11.0.0.1:80'
                 row = measured(proxy, cfg)
-                db.execute('INSERT INTO candidates VALUES (?)', (proxy,))
+                add_candidate(db, (proxy))
                 db.execute('INSERT INTO candidate_meta(proxy, source) VALUES (?,?)', (proxy, 'aaa'))
-                db.execute('INSERT INTO candidate_seen VALUES (?,?)', (proxy, 'bbb'))
-                db.execute('INSERT INTO results VALUES (?,?,?)', ('fx', proxy, json.dumps(row)))
+                mark_seen(db, (proxy, 'bbb'))
+                store_result(db, ('fx', proxy, json.dumps(row)))
                 db.commit()
                 self.assertEqual(p.source_map(db)[proxy], ('aaa', 'bbb'))
                 report = p.export(db, 'fx', Path(temp) / 'out', min_success=1)

@@ -218,7 +218,7 @@ class SnapshotTests(GatewayCase):
         server, _address = await self.start()
         pool = server.gateway.pool
         self.assertEqual(pool.snapshot()['proxies'], 1)
-        write_export(self.home, [up.url, 'http://11.0.0.9:80'], generation='.generation-b')
+        write_export(self.home, [up.url, 'http://11.0.0.9:80'], generation='.generation-bbbbbbbb')
         self.assertEqual(pool.snapshot()['proxies'], 1, 'a plain snapshot never re-reads')
         self.assertEqual((await pool.asnapshot())['proxies'], 2)
 
@@ -238,8 +238,8 @@ class BindingTests(GatewayCase):
     async def test_a_bound_pool_keeps_its_generation_when_a_new_one_is_published(self):
         first = await self.socks_upstream('socks5')
         second = await self.socks_upstream('socks5')
-        write_export(self.home, [first.url], generation='.generation-a', profile='p1')
-        bound = gateway.Binding(pool_id='main', generation='.generation-a')
+        write_export(self.home, [first.url], generation='.generation-aaaaaaaa', profile='p1')
+        bound = gateway.Binding(pool_id='main', generation='.generation-aaaaaaaa')
         server, address = await self.start(bindings={'main': bound}, default_binding=bound)
         pool = server.gateway.pool
         granted, _reader, writer = await self.socks_client(address, user=b'pool-main')
@@ -248,14 +248,14 @@ class BindingTests(GatewayCase):
         self.assertEqual(first.connections, 1)
         # Another run publishes a new generation; the bound listener stays where
         # it was instead of following another check.
-        write_export(self.home, [second.url], generation='.generation-b', profile='p1')
+        write_export(self.home, [second.url], generation='.generation-bbbbbbbb', profile='p1')
         self.assertEqual(pool.refresh(), [], 'a bound pool never leaves its generation')
         pool.default_binding = gateway.Binding()
         self.assertEqual(pool.refresh(), [second.url], 'an unbound pool follows the current export')
 
     async def test_a_binding_pins_the_profile_and_fails_closed_without_one(self):
         up = await self.socks_upstream('socks5')
-        write_export(self.home, [up.url], generation='.generation-a', profile='p1', profile_revision=1)
+        write_export(self.home, [up.url], generation='.generation-aaaaaaaa', profile='p1', profile_revision=1)
         server, _address = await self.start(
             bindings={'old': gateway.Binding(pool_id='old', profile_id='p0'),
                       'new': gateway.Binding(pool_id='new', profile_id='p1', profile_revision=1)},
@@ -293,13 +293,13 @@ class BindingTests(GatewayCase):
         nl = await self.socks_upstream('socks5')
         write_export(self.home, [], rows=[export_row(de.url, country='DE'),
                                           export_row(nl.url, country='NL')],
-                     generation='.generation-a')
+                     generation='.generation-aaaaaaaa')
         write_export(self.home, [], rows=[export_row(de.url, country='DE'),
                                           export_row(nl.url, country='NL')],
-                     generation='.generation-b')
+                     generation='.generation-bbbbbbbb')
         # The bound pool serves one generation; the other address only exists in
         # a generation the listener is not bound to.
-        bound = gateway.Binding(pool_id='pinned', generation='.generation-b',
+        bound = gateway.Binding(pool_id='pinned', generation='.generation-bbbbbbbb',
                                 policy={'countries': ('DE',)})
         server, address = await self.start(bindings={'pinned': bound}, default_binding=bound)
         pool = server.gateway.pool
@@ -316,7 +316,7 @@ class BindingTests(GatewayCase):
         await shutdown(writer)
 
     async def test_a_binding_reports_itself_for_the_gui_and_the_api(self):
-        binding = gateway.Binding(pool_id='main', generation='.generation-a', profile_id='p1',
+        binding = gateway.Binding(pool_id='main', generation='.generation-aaaaaaaa', profile_id='p1',
                                   policy={'max_per_proxy': 3, 'sticky': 'strict'})
         self.assertEqual(binding.as_dict()['pool_id'], 'main')
         self.assertEqual(binding.option('sticky'), 'strict')

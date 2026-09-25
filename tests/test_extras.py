@@ -6,18 +6,24 @@ from pathlib import Path
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from unittest import mock
 
 import httpx
+from tests.workbench_support import add_candidate, mark_seen, store_result  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from proxy_workbench import formats, gui
 from proxy_workbench import proxytool as p
 
+#: A result fixture describes a measurement that just happened; the
+#: admission contract has no "fresh forever" state (CONTRACTS §2.4).
+_NOW = time.time()
+
 
 def result_row(proxy, score=90, passes=1, checks=1):
     return dict(proxy=proxy, reliability=1, min_target_reliability=1, latency_ms=100, jitter_ms=1, score=score,
-                successes=1, requests=1, checked_at=0, samples=[],
+                successes=1, requests=1, checked_at=_NOW, samples=[],
                 history=dict(checks=checks, passes=passes, first_checked=0, last_ok=0))
 
 
@@ -26,16 +32,19 @@ class RecommendedTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.home = Path(self.temp.name)
         self.db = p.open_db(self.home / 'proxies.sqlite3')
-        self.db.execute('INSERT INTO profiles VALUES (?,?)', ('fx', json.dumps(dict(targets=[dict(url='https://one.invalid/')]))))
+        self.db.execute('INSERT INTO profiles(id, config) VALUES (?, ?)', ('fx', json.dumps(dict(targets=[dict(url='https://one.invalid/')]))))
         # crowded: same score but offered by five lists; rare: one niche list with a good record.
         rows = [result_row('http://11.0.0.1:80', score=90), result_row('http://11.0.0.2:80', score=85)]
         for row in rows:
-            self.db.execute('INSERT INTO candidates VALUES (?)', (row['proxy'],))
-            self.db.execute('INSERT INTO results VALUES (?,?,?)', ('fx', row['proxy'], json.dumps(row)))
+            add_candidate(self.db, (row['proxy']))
+            store_result(self.db, ('fx', row['proxy'], json.dumps(row)))
         for source in 'abcde':
-            self.db.execute('INSERT INTO candidate_seen VALUES (?,?)', ('http://11.0.0.1:80', source))
-        self.db.execute('INSERT INTO candidate_seen VALUES (?,?)', ('http://11.0.0.2:80', 'niche'))
-        self.db.executemany('INSERT INTO candidate_meta(proxy, source) VALUES (?,?)',
+            mark_seen(self.db, ('http://11.0.0.1:80', source))
+        mark_seen(self.db, ('http://11.0.0.2:80', 'niche'))
+        # The first source that delivered an address keeps the credit, the same
+        # rule the collector applies.
+        self.db.executemany('''INSERT INTO candidate_meta(proxy, source) VALUES (?,?)
+            ON CONFLICT(proxy) DO UPDATE SET source=excluded.source''',
                             [('http://11.0.0.1:80', 'a'), ('http://11.0.0.2:80', 'niche')])
         self.db.commit()
 

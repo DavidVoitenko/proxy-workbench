@@ -194,7 +194,7 @@ class TransportTests(GatewayCase):
         for scheme, mode in expected.items():
             with self.subTest(scheme=scheme):
                 up = await self.socks_upstream(scheme)
-                self.publish([up.url], generation=f'.generation-{scheme}')
+                self.publish([up.url], generation=f'.generation-{scheme}8888')
                 _server, address = await self.start()
                 target = 'localhost' if scheme in ('socks4a', 'socks5h') else '127.0.0.1'
                 granted, _reader, writer = await self.socks_client(address, target_host=target)
