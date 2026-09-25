@@ -3953,6 +3953,9 @@ def main(argv=None):
     update_progress(dict(phase='starting', checked=0, candidates=0))
 
     def export_now(*, run_state=None, diagnostic=False, selected=None):
+        # The published generation is a statement about one scope (F02): a row
+        # measured in another collection is not part of it.  Without
+        # ``--collection`` the scope is the public base, exactly as before.
         return export(db, profile, args.data / 'exports', top=args.top,
                       sort=args.sort, min_success=args.min_success, denylist=denylist,
                       local_override=args.local_denylist, min_anonymity=args.min_anonymity,
@@ -3961,6 +3964,7 @@ def main(argv=None):
                       exclude_hosting=args.no_hosting or args.export_hosting == 'hide',
                       provider_of=provider_of, watch_minutes=args.watch, query=export_query, quick=export_quick,
                       allowed_proxies=selected, run_state=run_state, diagnostic=diagnostic,
+                      collection_id=args.collection or None,
                       active_profile_path=None if diagnostic else args.data / 'last-profile.txt')
 
     try:

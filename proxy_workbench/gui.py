@@ -12,7 +12,7 @@ import math
 import os
 import threading
 import time
-from contextlib import contextmanager, suppress
+from contextlib import closing, contextmanager, suppress
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import secrets
@@ -37,6 +37,8 @@ from . import paths
 from . import geoip
 from . import source_catalog
 from . import source_management
+from . import db as schema
+from . import servicecatalog
 
 def _source_id_flag(payload, flag):
     payload = payload or {}
@@ -83,6 +85,15 @@ HISTORY_FILE = 'gui-history.json'
 HISTORY_LIMIT = 50
 EVENTS_FILE = 'gui-events.jsonl'
 EVENT_RETENTION = 2000
+# The user's own service sets (F06).  A pinned set is a snapshot of definitions
+# the catalog published once: later catalog updates must not change it silently,
+# so the pin lives beside the user's other documents, not in the worker runtime.
+SERVICE_SETS_FILE = 'gui-service-sets.json'
+SERVICE_SET_LIMIT = 64
+SERVICE_SET_PAGE = 200
+# One paste into a personal list is bounded: the interface never reads a file
+# the size of a public source dump on behalf of a membership edit.
+MAX_COLLECTION_MEMBERS = 20_000
 # Bulk actions that change stored state can be undone; a scan cannot.
 RECOVERABLE_OPS = frozenset({'tag', 'untag', 'note', 'favorite', 'unfavorite', 'exclude', 'include', 'denylist'})
 BULK_OPS = frozenset({'recheck', 'export', 'copy', 'tag', 'untag', 'note', 'favorite',
@@ -288,7 +299,8 @@ def defaults():
                                 timeout=2.5, strict=False),
                 anonymity=dict(judge_url=''), min_anonymity='any',
                 connect_timeout=4, fail_fast=True, protocol='all', max_latency=0, countries='', want=0,
-                detect_protocols=False, watch=0, prefilter=512, exclude_hosting=False, speedtest=dict(url='', max_bytes=core.SPEEDTEST_BYTES))
+                detect_protocols=False, watch=0, prefilter=512, exclude_hosting=False, speedtest=dict(url='', max_bytes=core.SPEEDTEST_BYTES),
+                collection='')
 
 
 def validate(settings):
@@ -396,6 +408,14 @@ def validate(settings):
     if not isinstance(clean['countries'], str) or len(clean['countries']) > 1000:
         raise ValueError('Страны: используйте двухбуквенные ISO-коды, например DE,NL.')
     clean['countries'] = ','.join(geoip.parse_countries(clean['countries']))
+    # F02: the scope of a check is one collection id, or empty for the public
+    # base.  Existence is decided by the local database when it is used; here
+    # only the shape is checked, so a stored setting survives a data folder
+    # that has not been opened yet.
+    if not isinstance(clean['collection'], str) or len(clean['collection']) > 128 \
+            or (clean['collection'] and not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._:-]{0,127}',
+                                                         clean['collection'])):
+        raise ValueError('Коллекция: ожидается идентификатор коллекции.')
     return clean
 
 
@@ -431,6 +451,7 @@ class App:
         self.annotations = Sidecar(self.data/ANNOTATIONS_FILE, {'entries': {}})
         self.views = Sidecar(self.data/VIEWS_FILE, {'views': []})
         self.history = Sidecar(self.data/HISTORY_FILE, {'entries': []})
+        self.service_sets = Sidecar(self.data/SERVICE_SETS_FILE, {'sets': {}, 'pinned': None})
         self.events_path = self.data/EVENTS_FILE
         self.event_seq = {}
         self.event_floor = 0
@@ -440,6 +461,7 @@ class App:
         self.event_backfilled = False
         self._status_cache = (None, None, None)
         self._catalog_cache = None
+        self._service_catalog = None
         self.catalog_job = {'running': False, 'stage': 'idle', 'added': 0, 'changed': 0, 'retired': 0}
 
     def settings(self):
@@ -1050,6 +1072,18 @@ class App:
                 settings = self.save(self.settings() if submitted is None else submitted)
             if action in ('run', 'collect') and not settings['proxies'].strip() and (not settings['use_sources'] or not settings['sources']):
                 raise ValueError('Включите источники или добавьте свой список прокси.')
+            # F02: the scope of the check is decided before the worker starts,
+            # and an unknown collection is refused here instead of becoming a
+            # scan of something else.  The publication carries the same scope,
+            # so the results table and the export agree with the check.
+            scope_collection = ''
+            if settings['collection']:
+                conn = self.read_connection()
+                if conn is not None:
+                    try:
+                        scope_collection = self.require_collection(conn, settings['collection'])
+                    finally:
+                        conn.close()
 
             selection_path = self.data/'gui-selection.json'
             selection_path.unlink(missing_ok=True)
@@ -1070,7 +1104,15 @@ class App:
                        '--progress-file', str(self.progress_path), '--stop-file', str(self.stop_path))
             if selection is not None:
                 command.extend(['--selection-file', str(selection_path)])
+            if scope_collection and action in ('run', 'scan', 'recheck', 'recheck_passing'):
+                # A check is a measurement of one collection; the worker reads
+                # membership as the candidate set (F02, CONTRACTS §1.2).
+                command.extend(['--collection', scope_collection])
             if action == 'export':
+                if scope_collection:
+                    # The published generation is a statement about the same
+                    # collection the check measured (F02).
+                    command.extend(['--collection', scope_collection])
                 if 'q' in payload:
                     command.extend(['--export-query', export_query])
                 if 'hosting' in payload:
@@ -1106,6 +1148,7 @@ class App:
                             min_success=settings['min_success'], sort=settings['sort'], top=settings['top'],
                             request_profile=settings['request_profile'], reputation=reputation,
                             anonymity=bool(settings['anonymity']['judge_url']), min_anonymity=settings['min_anonymity'],
+                            collection=scope_collection or schema.PUBLIC_COLLECTION_ID,
                             selection_requested=len(selection) if selection is not None else 0)
             if self.log_handle:
                 self.log_handle.close()
@@ -1242,6 +1285,473 @@ class App:
                 state['log'] = ''
             return state
 
+    # -- collections (F02) -------------------------------------------------
+    #
+    # A collection is the scope of a check: the public base, the migrated
+    # legacy list and a personal list are different rows of the same table, so
+    # choosing one cannot show the others.  Membership is the scope, and a
+    # collection with no members yields nothing rather than falling back to
+    # every address ever collected (defect 11).
+
+    def collection_items(self, conn):
+        """Every collection with the number of its own members.
+
+        The read connection of the interface is a plain one without a row
+        factory, so the columns are read by position.  The SQL is the one the
+        schema uses: this is not a second definition of a collection.
+        """
+        items = []
+        for identifier, name, kind, archived_at in conn.execute(
+                'SELECT id, name, kind, archived_at FROM collections ORDER BY kind, name'):
+            items.append(dict(id=identifier, name=name, kind=kind, archived=bool(archived_at),
+                              members=len(self.collection_member_rows(conn, identifier))))
+        items.sort(key=lambda item: (item['archived'], item['kind'], item['name']))
+        return items
+
+    @staticmethod
+    def collection_member_rows(conn, collection_id):
+        """``(endpoint_id, canonical, origin, added_at)`` of exactly one collection."""
+        return conn.execute(
+            'SELECT e.id, e.canonical, m.origin, m.added_at FROM membership m '
+            'JOIN endpoints e ON e.id = m.endpoint_id WHERE m.collection_id = ? '
+            'ORDER BY e.canonical', (collection_id,)).fetchall()
+
+    @staticmethod
+    def collection_row(conn, collection_id):
+        """One collection as a plain row, or None."""
+        return conn.execute('SELECT id, name, kind, archived_at FROM collections WHERE id = ?',
+                            (collection_id,)).fetchone()
+
+    def collections(self, query=None):
+        """The list the interface needs to offer an explicit scope (F02)."""
+        selected = str((query or {}).get('selected', [''])[0] or '').strip()
+        conn = self.read_connection()
+        if conn is None:
+            return dict(collections=[], selected='', default_id=schema.PUBLIC_COLLECTION_ID)
+        try:
+            items = self.collection_items(conn)
+            if selected and not any(item['id'] == selected for item in items):
+                raise ValueError(f'Коллекция не найдена: {selected}')
+        finally:
+            conn.close()
+        return dict(collections=items, selected=selected,
+                    default_id=schema.PUBLIC_COLLECTION_ID)
+
+    def require_collection(self, conn, collection_id):
+        """One existing, not archived collection or an honest refusal."""
+        wanted = str(collection_id or '').strip()
+        if not wanted:
+            wanted = schema.PUBLIC_COLLECTION_ID
+        row = self.collection_row(conn, wanted)
+        if row is None or row[3] is not None:
+            raise ValueError(f'Коллекция не найдена: {wanted}')
+        return wanted
+
+    def collection_members(self, payload):
+        """Members of one collection, with the collections each address is in."""
+        payload = payload or {}
+        conn = self.read_connection()
+        if conn is None:
+            raise ValueError('Локальная база ещё не создана. Сначала соберите адреса.')
+        try:
+            wanted = self.require_collection(conn, payload.get('collection'))
+            rows = [{'proxy': canonical, 'origin': origin, 'added_at': added_at,
+                     'collections': [row[0] for row in conn.execute(
+                         'SELECT collection_id FROM membership WHERE endpoint_id = ? '
+                         'ORDER BY collection_id', (endpoint,))]}
+                    for endpoint, canonical, origin, added_at
+                    in self.collection_member_rows(conn, wanted)]
+        finally:
+            conn.close()
+        return dict(collection=wanted, members=rows, total=len(rows))
+
+    def create_collection(self, payload):
+        """Create a personal list. It starts empty and stays separate (defect 11)."""
+        payload = payload or {}
+        name = payload.get('name')
+        if not isinstance(name, str) or not name.strip() or len(name) > 160:
+            raise ValueError('Название коллекции: от 1 до 160 символов.')
+        kind = payload.get('kind') or 'private'
+        if kind not in schema.COLLECTION_KINDS:
+            raise ValueError(f'Неизвестный вид коллекции: {kind}')
+        with self.collection_write() as conn:
+            try:
+                identifier = schema.create_collection(conn, name, kind=kind)
+                conn.commit()
+            except schema.DbError as exc:
+                raise ValueError(f'Не удалось создать коллекцию: {exc}') from None
+        return dict(collection=identifier, name=name.strip(), kind=kind, members=0,
+                    collections=self.collections().get('collections', []))
+
+    def add_collection_members(self, payload):
+        """Add addresses to one collection only, skipping repeats and bad lines."""
+        payload = payload or {}
+        raw = payload.get('proxies')
+        if isinstance(raw, str):
+            values = [line.strip() for line in raw.splitlines()]
+        elif isinstance(raw, list):
+            values = [str(line).strip() for line in raw]
+        else:
+            raise ValueError('Список адресов ожидается текстом или массивом.')
+        # A paste is bounded, and the bound is reported: dropping addresses
+        # without saying so is the silent parameter loss F07 forbids.
+        values = [value for value in values if value]
+        dropped = max(0, len(values) - MAX_COLLECTION_MEMBERS)
+        values = values[:MAX_COLLECTION_MEMBERS]
+        with self.collection_write() as conn:
+            try:
+                wanted = self.require_collection(conn, payload.get('collection'))
+                added, rejected, known = 0, [], 0
+                for value in values:
+                    # A user list may name a private or hostname endpoint, the
+                    # same rule the own-list field follows (validate()).
+                    canonical = core.normalize_custom(value)
+                    if canonical is None:
+                        rejected.append(value[:120])
+                        continue
+                    endpoint = schema.upsert_endpoint(conn, canonical)
+                    member = conn.execute(
+                        'SELECT 1 FROM membership WHERE collection_id=? AND endpoint_id=?',
+                        (wanted, endpoint)).fetchone()
+                    if member is not None:
+                        known += 1
+                        continue
+                    schema.add_member(conn, wanted, endpoint, origin='manual')
+                    added += 1
+                conn.commit()
+            except (schema.DbError, sqlite3.Error) as exc:
+                raise ValueError(f'Не удалось изменить коллекцию: {exc}') from None
+        return dict(collection=wanted, added=added, already=known, rejected=rejected[:20],
+                    rejected_total=len(rejected), dropped=dropped,
+                    members=self.collection_members({'collection': wanted}))
+
+    def remove_collection_member(self, payload):
+        """Drop one address from one collection; every other list keeps it (F02)."""
+        payload = payload or {}
+        value = payload.get('proxy')
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError('Укажите адрес прокси.')
+        canonical = core.normalize_custom(value)
+        if canonical is None:
+            raise ValueError('Нужен адрес прокси в виде host:port или protocol://host:port.')
+        with self.collection_write() as conn:
+            try:
+                wanted = self.require_collection(conn, payload.get('collection'))
+                removed = schema.remove_member(conn, wanted, schema.endpoint_id(canonical))
+                conn.commit()
+            except (schema.DbError, sqlite3.Error) as exc:
+                raise ValueError(f'Не удалось изменить коллекцию: {exc}') from None
+        if not removed:
+            raise ValueError(f'Адреса {canonical} нет в коллекции {wanted}.')
+        return dict(collection=wanted, removed=1, proxy=canonical,
+                    members=self.collection_members({'collection': wanted}))
+
+    def writable_connection(self):
+        """A writing connection under the data lock; never used by a read path.
+
+        The file is created through the one migrator the worker uses, so a
+        personal list can be prepared before the first collection instead of
+        being refused for a database that does not exist yet.
+        """
+        if self.running():
+            raise ValueError('Проверка идёт и держит базу. Дождитесь окончания или остановите её.')
+        try:
+            conn, _report = schema.open_db(self.data/'proxies.sqlite3',
+                                           app_version=PRODUCT_VERSION)
+        except schema.DbError as exc:
+            raise ValueError(f'Не удалось открыть локальную базу: {exc}') from None
+        return closing(conn)
+
+    @contextmanager
+    def collection_write(self):
+        """Membership writes take the same lock a check takes, never a side door."""
+        with self.data_lock():
+            with self.writable_connection() as conn:
+                yield conn
+
+    def collection_scope(self, plan):
+        """Addresses of the collection this plan is about, or None for all."""
+        wanted = plan.get('collection')
+        if not wanted:
+            return None
+        conn = self.read_connection()
+        if conn is None:
+            return frozenset()
+        try:
+            return frozenset(row[1] for row in self.collection_member_rows(conn, wanted))
+        finally:
+            conn.close()
+
+    # -- service catalog (F06) ---------------------------------------------
+    #
+    # The catalog is a shipped manifest with an id, a version, a maintainer and
+    # a real pass condition per service.  A set is a combination of services
+    # with a rule, and applying one writes a complete field inventory, so no
+    # judge or threshold of the previous set survives the switch (defect 24).
+
+    def catalog(self, query=None):
+        """Categories, services and sets, with search and multi-selection."""
+        query = query or {}
+        one = lambda key, default='': str((query.get(key) or [default])[0] or default)
+        try:
+            catalog = self.service_catalog()
+            found = servicecatalog.search_presets(
+                catalog, one('q')[:100], one('category') or None, one('capability') or None)
+        except servicecatalog.CatalogError as exc:
+            raise ValueError(str(exc)) from None
+        presets = [self.preset_view(catalog, preset) for preset in found]
+        stored = self.service_sets.read()
+        user_sets = stored.get('sets') or {}
+        pinned = stored.get('pinned') or None
+        sets = []
+        for item in catalog.service_sets:
+            try:
+                snapshot = catalog.resolve(item.set_id).to_dict()
+            except servicecatalog.CatalogError:
+                continue
+            sets.append(self.pinned_view(snapshot, applied=bool(pinned and pinned.get('set_id') == item.set_id)))
+        for set_id, snapshot in sorted(user_sets.items()):
+            sets.append(self.pinned_view(snapshot, applied=bool(pinned and pinned.get('set_id') == set_id)))
+        selected = [key for key in str(one('selected') or '').split(',') if key]
+        # The cost line is a preview: a service the catalog no longer lists is
+        # left out of it instead of turning the whole catalog view into an error.
+        known = [key for key in selected if key in catalog.preset_index]
+        return dict(catalog=catalog.summary(),
+                    presets=presets, total=len(presets), sets=sets,
+                    pinned_id=(pinned or {}).get('set_id'),
+                    pinned_digest=(pinned or {}).get('set_digest'),
+                    selected=known,
+                    combinations=list(servicecatalog.COMBINATION_IDS),
+                    cost=servicecatalog.estimated_cost(
+                        servicecatalog.select_presets(catalog, known)) if known else None)
+
+    def service_catalog(self, path=None):
+        """The validated manifest, loaded once per process: it cannot change."""
+        cached = self._service_catalog
+        if cached is None:
+            cached = self._service_catalog = servicecatalog.load_catalog(path)
+        return cached
+
+    @staticmethod
+    def preset_view(catalog, preset):
+        """One service as the interface shows it: what it proves and what it does not."""
+        payload = preset.to_dict()
+        payload['capability_title'] = catalog.capability(preset.capability).title_ru
+        payload['probes'] = [dict(probe.to_dict(), pass_condition=probe.pass_condition_ru())
+                             for probe in preset.probes]
+        payload['in_sets'] = [item.set_id for item in catalog.service_sets
+                              if preset.preset_id in item.preset_ids]
+        return payload
+
+    @staticmethod
+    def pinned_view(snapshot, *, applied=False):
+        """A user set or a catalog set in one shape, ready for the interface.
+
+        ``id``/``title``/``digest`` are the same three names the catalog uses,
+        so a saved set and a shipped set render through one code path.
+        """
+        presets = snapshot.get('presets')
+        if isinstance(presets, dict):
+            probes = sum(len((value or {}).get('probes') or []) for value in presets.values())
+        else:
+            probes = sum(len((value or {}).get('probes') or []) for value in (presets or []))
+        return dict(id=snapshot.get('set_id'), title=snapshot.get('title_ru'),
+                    description=snapshot.get('description_ru') or '',
+                    version=snapshot.get('set_version'),
+                    digest=snapshot.get('set_digest'), origin=snapshot.get('origin') or 'catalog',
+                    required=list(snapshot.get('required') or []),
+                    optional=list(snapshot.get('optional') or []),
+                    combination=snapshot.get('combination'),
+                    min_passes=snapshot.get('min_passes') or 0,
+                    probes=probes, applied=applied)
+
+    def pinned_set(self):
+        """The snapshot the current form was built from, if it is still readable."""
+        stored = self.service_sets.read()
+        pinned = stored.get('pinned')
+        if not isinstance(pinned, dict):
+            return None
+        try:
+            return servicecatalog.PinnedSet.from_dict(pinned)
+        except (servicecatalog.CatalogError, TypeError, ValueError):
+            return None
+
+    def service_set_detail(self, payload):
+        """One set with its services, their probes, and the update diff."""
+        payload = payload or {}
+        set_id = str(payload.get('set') or '').strip()
+        if not set_id:
+            raise ValueError('Укажите набор сервисов.')
+        pinned = None
+        for snapshot in (self.service_sets.read().get('sets') or {}).values():
+            if isinstance(snapshot, dict) and snapshot.get('set_id') == set_id:
+                try:
+                    pinned = servicecatalog.PinnedSet.from_dict(snapshot)
+                except (servicecatalog.CatalogError, TypeError, ValueError):
+                    pinned = None
+                break
+        if pinned is None:
+            try:
+                pinned = self.service_catalog().resolve(set_id)
+            except servicecatalog.CatalogError as exc:
+                raise ValueError(str(exc)) from None
+        detail = dict(pinned.summary(), set=self.pinned_view(pinned.to_dict()),
+                      applied=bool((self.service_sets.read().get('pinned') or {}).get('set_id') == set_id),
+                      presets=[self.preset_view(self.service_catalog(), preset)
+                               for preset in pinned.ordered_presets()])
+        try:
+            preview = servicecatalog.preview_update(self.service_catalog(), pinned)
+            detail['update'] = preview.to_dict()
+        except servicecatalog.CatalogError as exc:
+            detail['update'] = {'error': str(exc), 'changes': []}
+        return detail
+
+    def apply_service_set(self, payload):
+        """Apply a set: its complete field inventory plus the targets it measures."""
+        payload = payload or {}
+        set_id = str(payload.get('set') or '').strip()
+        if not set_id:
+            raise ValueError('Укажите набор сервисов.')
+        catalog = self.service_catalog()
+        try:
+            pinned = self.resolve_set(catalog, set_id, payload)
+            targets = pinned.targets()
+            applied = servicecatalog.apply_scenario(self.settings(), pinned.scenario,
+                                                    catalog.user_fields(), targets)
+        except servicecatalog.CatalogError as exc:
+            raise ValueError(str(exc)) from None
+        settings = validate(applied.settings)
+        with self.data_lock():
+            stored = self.service_sets.read()
+            stored['pinned'] = pinned.to_dict()
+            self.service_sets.write(stored)
+        return dict(settings=settings, report=applied.report(), set=self.pinned_view(pinned.to_dict()),
+                    cost=servicecatalog.estimated_cost(pinned.ordered_presets()))
+
+    def resolve_set(self, catalog, set_id, payload):
+        """A catalog set, a saved set, or a multi-selection the user named."""
+        stored = self.service_sets.read()
+        snapshot = (stored.get('sets') or {}).get(set_id)
+        if isinstance(snapshot, dict):
+            try:
+                return servicecatalog.PinnedSet.from_dict(snapshot)
+            except (servicecatalog.CatalogError, TypeError, ValueError):
+                pass
+        try:
+            return catalog.resolve(set_id)
+        except servicecatalog.CatalogError:
+            pass
+        # A selection that has no name yet is a set the user is building here.
+        wanted = payload.get('preset_ids') or []
+        return servicecatalog.new_user_set(
+            catalog, set_id, str(payload.get('title') or set_id),
+            str(payload.get('title') or set_id), wanted,
+            combination=str(payload.get('combination') or 'any'),
+            min_passes=int(payload.get('min_passes') or 1),
+            required_ids=payload.get('required_ids'))
+
+    def save_service_set(self, payload):
+        """Save the current selection as the user's own set (F06)."""
+        payload = payload or {}
+        set_id = str(payload.get('id') or '').strip()
+        title = str(payload.get('title') or '').strip()
+        if not re.fullmatch(r'[a-z0-9][a-z0-9._-]{0,63}', set_id or ''):
+            raise ValueError('Идентификатор набора: строчные латинские буквы, цифры, точка и дефис.')
+        if not title or len(title) > 120:
+            raise ValueError('Название набора: от 1 до 120 символов.')
+        catalog = self.service_catalog()
+        try:
+            pinned = servicecatalog.new_user_set(
+                catalog, set_id, title, str(payload.get('title_en') or title),
+                payload.get('preset_ids') or [],
+                combination=str(payload.get('combination') or 'any'),
+                min_passes=int(payload.get('min_passes') or 1),
+                required_ids=payload.get('required_ids'),
+                description_ru=str(payload.get('description') or ''))
+        except (servicecatalog.CatalogError, TypeError, ValueError) as exc:
+            raise ValueError(str(exc) if isinstance(exc, servicecatalog.CatalogError)
+                             else 'Неверные параметры набора.') from None
+        with self.data_lock():
+            stored = self.service_sets.read()
+            saved = dict(stored.get('sets') or {})
+            if set_id not in saved and len(saved) >= SERVICE_SET_LIMIT:
+                raise ValueError(f'Уже сохранено {SERVICE_SET_LIMIT} наборов. Удалите лишние.')
+            saved[set_id] = pinned.to_dict()
+            self.service_sets.write(dict(stored, sets=saved))
+        return dict(set=self.pinned_view(pinned.to_dict()), saved=len(saved))
+
+    def stored_set(self, set_id):
+        """The user's saved snapshot of one set, or None."""
+        snapshot = (self.service_sets.read().get('sets') or {}).get(set_id)
+        if not isinstance(snapshot, dict):
+            return None
+        try:
+            return servicecatalog.PinnedSet.from_dict(snapshot)
+        except (servicecatalog.CatalogError, TypeError, ValueError):
+            raise ValueError(f'Набор {set_id} повреждён; сохраните его заново.') from None
+
+    def update_service_set(self, payload):
+        """Show the diff first, then apply it: a definition never changes silently."""
+        payload = payload or {}
+        set_id = str(payload.get('set') or '').strip()
+        pinned = self.stored_set(set_id) if set_id else None
+        if payload.get('apply'):
+            pinned = pinned or self.pinned_set()
+            if pinned is None:
+                raise ValueError('Нет сохранённого набора для обновления.')
+            if not set_id:
+                set_id = pinned.set_id
+            try:
+                catalog = self.service_catalog()
+                preview = servicecatalog.preview_update(catalog, pinned)
+                upgraded = servicecatalog.upgrade_set(catalog, preview)
+            except servicecatalog.CatalogError as exc:
+                raise ValueError(str(exc)) from None
+            if set_id != upgraded.set_id:
+                raise ValueError(f'Обновление меняет набор на {upgraded.set_id}, а выбран {set_id}.')
+            with self.data_lock():
+                stored = self.service_sets.read()
+                saved = dict(stored.get('sets') or {})
+                saved[set_id] = upgraded.to_dict()
+                self.service_sets.write(dict(stored, sets=saved, pinned=upgraded.to_dict()))
+            return dict(set=self.pinned_view(upgraded.to_dict()),
+                        changes=[change.to_dict() for change in preview.changes],
+                        applied=len([change for change in preview.changes
+                                     if change.state != 'unchanged']))
+        if pinned is None:
+            pinned = self.pinned_set()
+        if pinned is None and set_id:
+            # A shipped set that was never saved is diffed against itself, so
+            # the answer is an honest "already current" instead of a refusal.
+            try:
+                pinned = self.service_catalog().resolve(set_id)
+            except servicecatalog.CatalogError as exc:
+                raise ValueError(str(exc)) from None
+        if pinned is None:
+            raise ValueError('Сначала примените набор: обновлять нечего.')
+        try:
+            preview = servicecatalog.preview_update(self.service_catalog(), pinned)
+        except servicecatalog.CatalogError as exc:
+            raise ValueError(str(exc)) from None
+        return dict(set_id=preview.set_id, update=preview.to_dict(),
+                    changes=[change.to_dict() for change in preview.changes],
+                    applied=len([change for change in preview.changes
+                                 if change.state != 'unchanged']))
+
+    def delete_service_set(self, payload):
+        """Forget one of the user's own sets; the catalog is never touched."""
+        set_id = str((payload or {}).get('set') or '').strip()
+        with self.data_lock():
+            stored = self.service_sets.read()
+            saved = dict(stored.get('sets') or {})
+            if set_id not in saved:
+                raise ValueError(f'Сохранённого набора {set_id} нет.')
+            saved.pop(set_id)
+            pinned = stored.get('pinned')
+            self.service_sets.write(dict(stored, sets=saved,
+                                         pinned=None if (pinned or {}).get('set_id') == set_id else pinned))
+        return dict(set=set_id, saved=len(saved))
+
     # -- result scope -----------------------------------------------------
     #
     # The table, the row details, the matrix and every bulk action resolve the
@@ -1281,6 +1791,10 @@ class App:
             search = query.get('q', [''])[0].strip().lower()[:100]
             countries = frozenset(geoip.parse_countries(query.get('country', [''])[0][:1000]))
             hide_hosting = normalize_hosting_filter(query.get('hosting', [''])[0]) == 'hide'
+            # F02: the table can be about one collection.  An empty value is
+            # every collection the profile measured, which is what the scope
+            # was before collections were selectable here.
+            collection = query.get('collection', [''])[0].strip()[:128]
         except ValueError:
             raise ValueError('Неверные параметры рейтинга.') from None
         if (not 0 <= threshold <= 1 or order is None or protocol not in core.PROTOCOLS
@@ -1291,11 +1805,15 @@ class App:
         limit = max(1, min(limit, PAGE_SIZE_MAX))
         return dict(sort=sort, order=order, view=view, min_success=threshold, offset=offset, limit=limit,
                     min_anonymity=min_anonymity, protocol=protocol, quick=quick, max_latency=max_latency,
-                    search=search, countries=countries, hide_hosting=hide_hosting)
+                    search=search, countries=countries, hide_hosting=hide_hosting, collection=collection)
 
     def result_plan(self, query):
         """One validated description of "which rows the table is about"."""
         parsed = self.parse_results_query(query)
+        # A collection that does not exist is refused, not answered with an
+        # empty table: an empty table would read as "nothing passed here".
+        if parsed['collection']:
+            self.collections({'selected': [parsed['collection']]})
         snapshot = self.snapshot()
         status = self.export_status(snapshot)
         published = bool(status.get('published')) and status.get('state') != 'error'
@@ -1317,10 +1835,12 @@ class App:
         digest = digest_of('results-v1', profile, snapshot.generation, parsed['view'], parsed['sort'],
                            round(parsed['min_success'], 6), parsed['min_anonymity'], parsed['protocol'],
                            parsed['quick'], int(parsed['max_latency'] or 0), parsed['search'],
-                           sorted(parsed['countries']), parsed['hide_hosting'], published)
+                           sorted(parsed['countries']), parsed['hide_hosting'], published,
+                           parsed['collection'])
         parsed.update(profile=profile, generation=snapshot.generation, snapshot=snapshot, status=status,
-                      published=published, visible=visible, digest=digest, available=bool(
-                          (self.data/'proxies.sqlite3').is_file()))
+                      published=published, visible=visible, digest=digest,
+                      measured_collection=(status.get('collection_id') or ''),
+                      available=bool((self.data/'proxies.sqlite3').is_file()))
         return parsed
 
     def provider_resolver(self):
@@ -1416,6 +1936,7 @@ class App:
                                                core.listed_counts(conn), source_keys, plan['min_success'])
             if plan['quick'] == 'clean':
                 pass
+            members = self.collection_scope(plan)
             for (payload,) in conn.execute('SELECT payload FROM results WHERE '+condition+' ORDER BY '+plan['order'], params):
                 try:
                     row = json.loads(payload)
@@ -1423,6 +1944,9 @@ class App:
                     continue
                 proxy = row.get('proxy', '')
                 if plan['visible'] is not None and proxy not in plan['visible']:
+                    continue
+                if members is not None and proxy not in members:
+                    # F02: another collection's rows are not this table's rows.
                     continue
                 verdict = admission.admit(row, self.snapshot_scope(plan.get('status') or {}),
                                           self.snapshot_access(), policy, now,
@@ -1483,10 +2007,11 @@ class App:
     def results(self, query):
         """One page of the current scope, with a digest the client must reuse."""
         plan = self.result_plan(query)
+        scope = dict(collection=plan['collection'], measured_collection=plan.get('measured_collection') or '')
         if not plan['profile'] or not plan['available']:
             return dict(rows=[], total=0, targets=[], profile=plan['profile'], offset=plan['offset'],
                         limit=plan['limit'], view=plan['view'], scope_digest=plan['digest'],
-                        generation=plan['generation'], published=plan['published'],
+                        generation=plan['generation'], published=plan['published'], **scope,
                         state=(plan.get('status') or {}).get('state'),
                         state_detail=(plan.get('status') or {}).get('state_detail'),
                         state_detail_label=state_detail_text((plan.get('status') or {}).get('state_detail')),
@@ -1499,7 +2024,7 @@ class App:
         return dict(rows=window, total=total, targets=targets, profile=plan['profile'],
                     offset=plan['offset'], limit=plan['limit'], view=plan['view'],
                     scope_digest=plan['digest'], generation=plan['generation'],
-                    published=plan['published'], snapshot_state=plan['snapshot'].state,
+                    published=plan['published'], snapshot_state=plan['snapshot'].state, **scope,
                     state=(plan.get('status') or {}).get('state'),
                     state_detail=(plan.get('status') or {}).get('state_detail'),
                     state_detail_label=state_detail_text((plan.get('status') or {}).get('state_detail')),
@@ -2300,6 +2825,16 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond(200, self.app.detail(proxy))
             if path.path == '/api/source-catalog':
                 return self.respond(200, self.app.source_view(query))
+            if path.path == '/api/collections':
+                return self.respond(200, self.app.collections(query))
+            if path.path == '/api/collections/members':
+                return self.respond(200, self.app.collection_members(
+                    {'collection': query.get('collection', [''])[0]}))
+            if path.path == '/api/service-catalog':
+                return self.respond(200, self.app.catalog(query))
+            if path.path == '/api/service-catalog/set':
+                return self.respond(200, self.app.service_set_detail(
+                    {'set': query.get('set', [''])[0]}))
             if path.path.startswith('/api/source-catalog/'):
                 source_id = path.path[len('/api/source-catalog/'):]
                 return self.respond(200, self.app.source_row(source_id))
@@ -2365,6 +2900,20 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond(200, self.app.start(payload))
             if path == '/api/sources/prune':
                 return self.respond(200, self.app.prune_sources(payload))
+            if path == '/api/collections':
+                return self.respond(200, self.app.create_collection(payload))
+            if path == '/api/collections/members':
+                return self.respond(200, self.app.add_collection_members(payload))
+            if path == '/api/collections/member-remove':
+                return self.respond(200, self.app.remove_collection_member(payload))
+            if path == '/api/service-catalog/apply':
+                return self.respond(200, self.app.apply_service_set(payload))
+            if path == '/api/service-catalog/save':
+                return self.respond(200, self.app.save_service_set(payload))
+            if path == '/api/service-catalog/delete':
+                return self.respond(200, self.app.delete_service_set(payload))
+            if path == '/api/service-catalog/update':
+                return self.respond(200, self.app.update_service_set(payload))
             if path == '/api/sources/update':
                 return self.respond(200, self.app.update_sources(payload))
             if path == '/api/sources/set':

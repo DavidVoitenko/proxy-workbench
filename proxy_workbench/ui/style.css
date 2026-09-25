@@ -8799,6 +8799,187 @@ td.empty {
   }
 }
 
+/* Service catalog (F06) and collections (F02).
+   Same tokens, same density and the same catalog shapes as the source catalog
+   above: a service row is a list row, and a definition diff is a table. */
+.service-catalog-card .catalog-filters {
+  grid-template-columns: minmax(200px, 2fr) minmax(140px, 1fr) minmax(160px, 1fr);
+}
+
+.svc-selection {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  font-size: 11.5px;
+  color: var(--ink-secondary);
+}
+
+.svc-selected-count {
+  font-weight: 650;
+  color: var(--ink);
+}
+
+.svc-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 520px;
+  overflow-y: auto;
+}
+
+.svc-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  border-bottom: 1px solid var(--line);
+  padding: 9px 4px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.svc-row:hover {
+  background: var(--bg-surface);
+}
+
+.svc-row.selected {
+  background: var(--teal-pale, rgba(20, 184, 166, 0.08));
+}
+
+.svc-row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+  color: var(--ink-secondary);
+}
+
+.svc-row-main strong {
+  color: var(--ink);
+  font-size: 12.5px;
+}
+
+.svc-check {
+  margin-top: 3px;
+}
+
+.svc-save {
+  margin: 10px 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md, 10px);
+  background: var(--bg-surface);
+}
+
+.svc-detail-preset {
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.svc-detail-preset h4 {
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 6px 0 0;
+  font-weight: 700;
+}
+
+.svc-probe {
+  font-size: 11.5px;
+  padding: 6px 0;
+  border-bottom: 1px dashed var(--line);
+}
+
+.svc-probe code {
+  font-family: var(--font-mono);
+  color: var(--teal);
+  word-break: break-all;
+}
+
+.svc-diff {
+  width: 100%;
+  font-size: 11.5px;
+  border-collapse: collapse;
+  margin-top: 8px;
+}
+
+.svc-diff th,
+.svc-diff td {
+  border-bottom: 1px solid var(--line);
+  padding: 5px 8px;
+  text-align: left;
+}
+
+.svc-diff code {
+  font-family: var(--font-mono);
+  word-break: break-all;
+}
+
+.collection-row {
+  grid-template-columns: minmax(200px, 2.2fr) minmax(120px, 1fr) minmax(120px, 1fr) minmax(240px, 2fr);
+}
+
+.collection-row .catalog-cell strong {
+  color: var(--ink);
+  font-size: 12.5px;
+}
+
+.collection-members {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.collection-members-head {
+  position: sticky;
+  top: 0;
+  background: var(--bg-card);
+  padding-bottom: 4px;
+}
+
+.collection-member {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 11.5px;
+  border-bottom: 1px solid var(--line);
+  padding: 5px 2px;
+}
+
+.collection-member code {
+  font-family: var(--font-mono);
+  color: var(--ink);
+  word-break: break-all;
+}
+
+.collection-member .text-muted {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  flex: 1;
+  min-width: 120px;
+  word-break: break-all;
+}
+
+@media (max-width: 1080px) {
+  .collection-row {
+    grid-template-columns: 1fr;
+  }
+}
+
 @media (max-width: 540px) {
   .catalog-list {
     max-height: none;
