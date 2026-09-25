@@ -234,8 +234,13 @@ def _adapter(value, raw):
         result["config"].setdefault("legacy_kind", result["legacy_kind"])
         if result["legacy_kind"] in ("http", "https", "socks4", "socks5", "socks5h"):
             result["config"].setdefault("default_protocol", "socks5" if result["legacy_kind"] == "socks5h" else result["legacy_kind"])
-    if not result["config"]:
-        result["config"] = _adapter_config(str(raw.get("id", "")), kind)
+    # Kind defaults fill in whatever the record did not state, so a config that
+    # only carries a legacy kind still gets its pagination and field mapping.
+    defaults = _adapter_config(str(raw.get("id", "")), kind)
+    if isinstance(defaults, dict) and defaults:
+        merged = dict(defaults)
+        merged.update(result["config"])
+        result["config"] = merged
     if not isinstance(result["profile"], str) or not result["profile"]:
         raise CatalogError("adapter.profile: ожидается непустая строка")
     if not isinstance(result["config"], dict):

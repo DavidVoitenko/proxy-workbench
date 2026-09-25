@@ -1062,6 +1062,25 @@ def _catalog_cached():
 _BUNDLED_CATALOG = None
 
 
+def resolve_collect_sources(args):
+    """What ``collect`` and ``run`` actually fetch.
+
+    An explicit ``--sources`` file stays authoritative.  Otherwise the user's
+    own selection wins: whatever was chosen with ``sources set`` is what gets
+    collected, with each source's own adapter and limits.  Only a user who has
+    never chosen anything keeps the pre-catalog behaviour, so the app never
+    changes what it downloads behind someone's back.
+    """
+    bundled = args.sources.resolve() == (ROOT / 'sources.json').resolve()
+    if getattr(args, 'no_sources', False):
+        return []
+    settings = source_management.read_settings(args.data)
+    selection = source_management.selection_of(settings or {})
+    if bundled and selection.get('selected_ids'):
+        return source_catalog.materialize_selection(settings)
+    return resolve_sources_file(args.sources, bundled=bundled)
+
+
 def resolve_sources_file(path, *, bundled=False):
     """Read the collector's source list while accepting both catalog shapes.
 
@@ -3996,8 +4015,7 @@ def main(argv=None):
                 collect_denylist = Denylist.empty()
             profile = hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()[:20]
         if args.command in ('collect', 'run'):
-            urls = [] if args.no_sources else resolve_sources_file(
-                args.sources, bundled=(args.sources.resolve() == (ROOT / 'sources.json').resolve()))
+            urls = [] if args.no_sources else resolve_collect_sources(args)
             if not isinstance(urls, list):
                 raise ValueError('sources: ожидается JSON-массив http(s) URL')
             report = asyncio.run(stoppable(collect(
