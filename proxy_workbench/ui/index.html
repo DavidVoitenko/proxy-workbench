@@ -148,6 +148,7 @@
     </header>
 
     <div id="toast" role="status" hidden></div>
+    <div id="lang-menu" class="lang-menu hidden" role="menu" aria-label="Language"></div>
 
     <!-- Page: Scan -->
 
@@ -171,8 +172,8 @@
           <span class="scenarios-title" data-i18n="scenario.title">One-Click Quick Scenarios</span>
           <span class="scenarios-sub" data-i18n="scenario.subtitle">Preconfigured smart templates for popular workflows</span>
         </div>
-        <div class="scenarios-grid one-line-grid">
-          <div class="scenario-card" data-scenario="telegram" title="Checks that the public web page of the service answers through the proxy. Calls and the app protocol are not measured.">
+        <div class="scenarios-grid one-line-grid card-stagger">
+          <div class="scenario-card" data-scenario="telegram" data-i18n-title="scenario.telegramHint" title="Checks that the public web page of the service answers through the proxy. Calls and the app protocol are not measured.">
             <span class="scenario-icon">✈️</span>
             <div class="scenario-meta">
               <strong data-i18n="scenario.telegram">Telegram web page</strong>
@@ -180,7 +181,7 @@
             <span class="scenario-tag">SOCKS5</span>
           </div>
 
-          <div class="scenario-card" data-scenario="youtube" title="Checks that the page answers and measures a separate download sample in Mbit/s. Video quality is not guaranteed by this number.">
+          <div class="scenario-card" data-scenario="youtube" data-i18n-title="scenario.youtubeHint" title="Checks that the page answers and measures a separate download sample in Mbit/s. Video quality is not guaranteed by this number.">
             <span class="scenario-icon">🎬</span>
             <div class="scenario-meta">
               <strong data-i18n="scenario.youtube">YouTube page + speed</strong>
@@ -188,7 +189,7 @@
             <span class="scenario-tag">Mbit/s</span>
           </div>
 
-          <div class="scenario-card" data-scenario="anon" title="Screens the exit address with a judge and DNSBL zones and keeps only the rows you asked for.">
+          <div class="scenario-card" data-scenario="anon" data-i18n-title="scenario.anonHint" title="Screens the exit address with a judge and DNSBL zones and keeps only the rows you asked for.">
             <span class="scenario-icon">🛡️</span>
             <div class="scenario-meta">
               <strong data-i18n="scenario.anon">Anonymity screening</strong>
@@ -196,7 +197,7 @@
             <span class="scenario-tag">Elite</span>
           </div>
 
-          <div class="scenario-card" data-scenario="scrape" title="256 workers, 2s connect timeout, prefiltering for big lists. No anonymity judge and no speed test.">
+          <div class="scenario-card" data-scenario="scrape" data-i18n-title="scenario.scrapeHint" title="256 workers, 2s connect timeout, prefiltering for big lists. No anonymity judge and no speed test.">
             <span class="scenario-icon">⚡</span>
             <div class="scenario-meta">
               <strong data-i18n="scenario.scrape">High-throughput sweep</strong>
@@ -204,7 +205,7 @@
             <span class="scenario-tag">256 Thr</span>
           </div>
 
-          <div class="scenario-card active" data-scenario="custom" title="Manual control over all check, identity and export parameters">
+          <div class="scenario-card active" data-scenario="custom" data-i18n-title="scenario.customHint" title="Manual control over all check, identity and export parameters">
             <span class="scenario-icon">⚙️</span>
             <div class="scenario-meta">
               <strong data-i18n="scenario.custom">Custom Pro</strong>
@@ -470,9 +471,9 @@
                       <span class="check-headline" data-i18n="check.failFast">Stop early when proxy cannot pass</span>
                     </div>
                   </label>
-                  <div style="display: flex; align-items: center; gap: 8px;">
-                    <span style="font-size: 11.5px; font-weight: 600; color: var(--ink);" data-i18n="identity.profile">Profile:</span>
-                    <select id="request-profile" style="height: 28px; font-size: 11px;">
+                  <div class="hstack-8">
+                    <span id="request-profile-label" style="font-size: 11.5px; font-weight: 600; color: var(--ink);" data-i18n="identity.profile">Profile:</span>
+                    <select id="request-profile" aria-labelledby="request-profile-label" style="height: 28px; font-size: 11px;">
                       <option value="workbench" data-i18n="profile.workbench">Workbench profile</option>
                       <option value="standard" data-i18n="profile.standard">Standard</option>
                       <option value="minimal" data-i18n="profile.minimal">Minimal</option>
@@ -693,11 +694,11 @@
         </div>
         <div class="results-compact-actions">
           <div class="view-tabs" id="results-view-tabs" role="tablist" data-i18n-aria-label="view.label" aria-label="View">
-            <button type="button" class="view-tab active" data-view="fresh" aria-pressed="true" data-i18n="view.fresh">Fresh <span class="view-count">0</span></button>
-            <button type="button" class="view-tab" data-view="stale" aria-pressed="false" data-i18n="view.stale">Expired <span class="view-count">0</span></button>
-            <button type="button" class="view-tab" data-view="failed" aria-pressed="false" data-i18n="view.failed">Failed <span class="view-count">0</span></button>
-            <button type="button" class="view-tab" data-view="unknown" aria-pressed="false" data-i18n="view.unknown">Unknown <span class="view-count">0</span></button>
-            <button type="button" class="view-tab" data-view="all" aria-pressed="false" data-i18n="view.all">All <span class="view-count">0</span></button>
+            <button type="button" class="view-tab active" data-view="fresh" aria-pressed="true"><span data-i18n="view.fresh">Fresh</span> <span class="view-count">0</span></button>
+            <button type="button" class="view-tab" data-view="stale" aria-pressed="false"><span data-i18n="view.stale">Expired</span> <span class="view-count">0</span></button>
+            <button type="button" class="view-tab" data-view="failed" aria-pressed="false"><span data-i18n="view.failed">Failed</span> <span class="view-count">0</span></button>
+            <button type="button" class="view-tab" data-view="unknown" aria-pressed="false"><span data-i18n="view.unknown">Unknown</span> <span class="view-count">0</span></button>
+            <button type="button" class="view-tab" data-view="all" aria-pressed="false"><span data-i18n="view.all">All</span> <span class="view-count">0</span></button>
           </div>
           <div class="view-tools">
             <select id="saved-views" class="compact-select" data-i18n-aria-label="results.views" aria-label="Saved views"></select>
@@ -708,7 +709,7 @@
               <div class="columns-menu hidden" id="columns-menu" role="group" data-i18n-aria-label="results.columns" aria-label="Columns"></div>
             </div>
             <button type="button" class="button light chip" id="open-matrix" data-i18n="results.matrix">Targets matrix</button>
-            <button class="button light" id="refresh-results" data-i18n="results.refresh" style="height: 32px; font-size: 12px; padding: 0 10px;">
+            <button class="button light compact" id="refresh-results">
               <span>↻</span> <span data-i18n="results.refresh">Refresh</span>
             </button>
           </div>
@@ -897,21 +898,22 @@
             <option value="all_matching" data-i18n="scope.allMatching">All matching</option>
           </select>
         </label>
+        <button type="button" class="button light chip" id="select-all-matching" data-i18n="results.selectAllMatching">Use all matching</button>
         <div class="selection-actions">
-          <button type="button" class="button light chip" id="action-copy-selected" data-i18n="results.copySelected">Copy Selected</button>
+          <button type="button" class="button light chip selection-only" id="action-copy-selected" data-i18n="results.copySelected">Copy Selected</button>
           <button type="button" class="button light chip" id="bulk-copy" data-i18n="results.copySelected">Copy scope</button>
-          <button type="button" class="button light chip" id="action-export-selected" data-i18n="results.exportSelected">Download Selected</button>
+          <button type="button" class="button light chip selection-only" id="action-export-selected" data-i18n="results.exportSelected">Download Selected</button>
           <button type="button" class="button light chip" id="bulk-export" data-i18n="results.exportSelected">Download scope</button>
           <button type="button" class="button light chip" id="bulk-recheck" data-i18n="results.bulkRecheck" title="Full re-check">Re-check</button>
-          <input type="text" id="bulk-tag-input" class="compact-input" data-i18n-placeholder="results.tagInput" placeholder="Tag" maxlength="40">
+          <input type="text" id="bulk-tag-input" class="compact-input" data-i18n-placeholder="results.tagInput" data-i18n-aria-label="results.tag" aria-label="Tag" placeholder="Tag" maxlength="40">
           <button type="button" class="button light chip" id="bulk-tag" data-i18n="results.tag">Tag</button>
           <button type="button" class="button light chip" id="bulk-unfavorite" data-i18n="results.unfavorite">Unfavourite</button>
-          <input type="text" id="bulk-note-input" class="compact-input wide" data-i18n-placeholder="results.noteInput" placeholder="Note" maxlength="2000">
+          <input type="text" id="bulk-note-input" class="compact-input wide" data-i18n-placeholder="results.noteInput" data-i18n-aria-label="results.note" aria-label="Note" placeholder="Note" maxlength="2000">
           <button type="button" class="button light chip" id="bulk-note" data-i18n="results.note">Note</button>
           <button type="button" class="button light chip" id="bulk-exclude" data-i18n="results.exclude">Exclude</button>
           <button type="button" class="button light chip" id="bulk-include" data-i18n="results.include">Return</button>
-          <button type="button" class="button danger chip" id="action-ban-selected" data-i18n="results.banSelected">Add to Denylist</button>
-          <button type="button" class="button text chip" id="action-clear-selection" data-i18n="results.clearSelection">Clear</button>
+          <button type="button" class="button danger chip selection-only" id="action-ban-selected" data-i18n="results.banSelected">Add to Denylist</button>
+          <button type="button" class="button text chip selection-only" id="action-clear-selection" data-i18n="results.clearSelection">Clear</button>
         </div>
       </div>
 
@@ -959,7 +961,14 @@
               </tr>
             </thead>
             <tbody id="result-rows">
-              <tr><td colspan="15" class="empty">No results yet. Start a check on the first tab.</td></tr>
+              <tr>
+                <td colspan="15" class="empty">
+                  <div class="empty-table-state">
+                    <div class="empty-table-icon">🔍</div>
+                    <div class="empty-table-title" data-i18n="results.noneYet">No results yet. Start a check on the first tab.</div>
+                  </div>
+                </td>
+              </tr>
             </tbody>
           </table>
         </div>
@@ -996,8 +1005,8 @@
         <div class="gateway-top-bar">
           <div style="display: flex; align-items: center; gap: 14px; flex-wrap: wrap;">
             <div class="gw-live-status-pill">
-              <span class="status-pulse-large" style="width: 10px; height: 10px;"></span>
-              <span class="gateway-status-badge" data-i18n="gateway.online">Online</span>
+              <span class="status-pulse-large" style="width: 10px; height: 10px; display: none;"></span>
+              <span class="gateway-status-badge offline" data-i18n="gateway.offline">Offline</span>
             </div>
             <div class="gw-endpoint-box">
               <code id="gateway-address">—</code>
@@ -1079,7 +1088,7 @@
 
             <!-- Tab: Telegram -->
             <div class="gw-tab-content active" id="gw-tab-tg">
-              <div style="display: flex; flex-direction: column; gap: 10px;">
+              <div class="vstack-10">
                 <p data-i18n="gateway.hint">Set 127.0.0.1:8899 as an HTTP or SOCKS5 proxy anywhere. Every TCP connection automatically rotates through the best working proxy; UDP is not supported.</p>
                 <div>
                   <a class="button primary tg-connect-big" id="gw-tg-link" target="_blank" rel="noopener" aria-disabled="true">
@@ -1094,9 +1103,9 @@
 
             <!-- Tab: sing-box -->
             <div class="gw-tab-content" id="gw-tab-singbox">
-              <div style="display: flex; flex-direction: column; gap: 10px;">
+              <div class="vstack-10">
                 <p data-i18n="mobile.singboxDesc">Client config with automatic proxy group and URLTest health checks.</p>
-                <div style="display: flex; gap: 8px;">
+                <div class="hstack-8">
                   <button class="button primary" id="btn-copy-singbox" data-i18n="mobile.copyConfig">Copy Config</button>
                   <button class="button light download-chip" data-download="singbox.json" disabled data-i18n="mobile.downloadConfig">Download File</button>
                 </div>
@@ -1105,9 +1114,9 @@
 
             <!-- Tab: Clash -->
             <div class="gw-tab-content" id="gw-tab-clash">
-              <div style="display: flex; flex-direction: column; gap: 10px;">
+              <div class="vstack-10">
                 <p data-i18n="mobile.clashDesc">Fail-closed URLTest group with fastest-latency selection.</p>
-                <div style="display: flex; gap: 8px;">
+                <div class="hstack-8">
                   <button class="button primary" id="btn-copy-clash" data-i18n="mobile.copyConfig">Copy Config</button>
                   <button class="button light download-chip" data-download="clash.yaml" disabled data-i18n="mobile.downloadConfig">Download File</button>
                 </div>
@@ -1378,6 +1387,89 @@ with httpx.Client(proxy="socks5://127.0.0.1:8899") as client:
           <button class="button primary" id="collect" data-i18n="own.collect">Collect addresses only</button>
         </section>
       </div>
+
+      <!-- Source catalog -->
+      <section class="card catalog-card" id="catalog">
+        <div class="card-title">
+          <div class="geo-title-wrap">
+            <span class="code-editor-badge">CATALOG</span>
+            <h2 data-i18n="cat.title">Source catalog</h2>
+          </div>
+          <div class="catalog-head-meta">
+            <span id="catalog-revision" class="badge subtle">—</span>
+            <button class="button light" id="catalog-refresh">
+              <span class="btn-spinner hidden" aria-hidden="true"></span>
+              <span class="btn-label" data-i18n="cat.update">Update catalog</span>
+            </button>
+          </div>
+        </div>
+        <p class="hint" data-i18n="cat.rules">Five statuses stay separate.</p>
+        <p class="hint" id="catalog-update-note" hidden></p>
+
+        <div class="catalog-section">
+          <h3 data-i18n="cat.sets">Sets</h3>
+          <p class="hint" data-i18n="cat.setsHint">A set is a snapshot.</p>
+          <div class="catalog-sets" id="catalog-sets"></div>
+        </div>
+
+        <div class="catalog-section">
+          <h3 data-i18n="cat.conditions">Access conditions</h3>
+          <p class="hint" data-i18n="cat.conditionsHint">Providers by their own terms.</p>
+          <div class="catalog-groups" id="catalog-groups"></div>
+        </div>
+
+        <div class="catalog-filters">
+          <input id="catalog-q" type="search" class="catalog-search" data-i18n-placeholder="cat.search" data-i18n-aria-label="cat.search" aria-label="Search" placeholder="Name, ID, publisher or host" autocomplete="off">
+          <select id="catalog-state" data-i18n-aria-label="cat.filterState" aria-label="filterState"><option value="" data-i18n="cat.filterState">State</option></select>
+          <select id="catalog-category" data-i18n-aria-label="cat.filterCategory" aria-label="filterCategory"><option value="" data-i18n="cat.filterCategory">Category</option></select>
+          <select id="catalog-protocol" data-i18n-aria-label="cat.filterProtocol" aria-label="filterProtocol"><option value="" data-i18n="cat.filterProtocol">Protocol</option></select>
+          <select id="catalog-format" data-i18n-aria-label="cat.filterFormat" aria-label="filterFormat"><option value="" data-i18n="cat.filterFormat">Data format</option></select>
+          <select id="catalog-access" data-i18n-aria-label="cat.filterAccess" aria-label="filterAccess"><option value="" data-i18n="cat.filterAccess">Access</option></select>
+          <select id="catalog-set-filter" data-i18n-aria-label="cat.filterSet" aria-label="filterSet"><option value="" data-i18n="cat.filterSet">Set</option></select>
+        </div>
+
+        <div class="catalog-head">
+          <span data-i18n="cat.col.source">Source</span>
+          <span data-i18n="cat.col.format">Format</span>
+          <span data-i18n="cat.col.access">Access</span>
+          <span data-i18n="cat.col.state">State</span>
+          <span data-i18n="cat.col.data">Data</span>
+          <span data-i18n="cat.col.choice">Your choice</span>
+        </div>
+        <div class="catalog-list" id="catalog-list"><p class="hint" data-i18n="cat.loading">Loading the catalog…</p></div>
+        <div class="catalog-foot">
+          <span class="hint" id="catalog-count"></span>
+          <button class="button light" id="catalog-more" data-i18n="cat.showMore">Show more</button>
+        </div>
+
+        <div class="catalog-detail" id="catalog-detail" hidden></div>
+
+        <div class="catalog-add">
+          <button class="button light" id="catalog-add-toggle" data-i18n="cat.addTitle">Add your own list address</button>
+          <div id="catalog-add-form" hidden>
+            <div class="field-grid">
+              <label>
+                <span data-i18n="cat.addUrl">Address of the list</span>
+                <input id="catalog-add-url" type="url" placeholder="https://example.org/list.txt" spellcheck="false">
+              </label>
+              <label>
+                <span data-i18n="cat.addKind">Data format</span>
+                <select id="catalog-add-kind"></select>
+              </label>
+            </div>
+            <label class="check-label">
+              <input type="checkbox" id="catalog-add-private">
+              <span data-i18n="cat.addPrivate">Allow local addresses (only for your own test services)</span>
+            </label>
+            <div class="button-row">
+              <button class="button light" id="catalog-add-preview" data-i18n="cat.addPreview">Preview</button>
+              <button class="button primary" id="catalog-add-submit" data-i18n="cat.addSubmit">Add to my set</button>
+            </div>
+            <p class="hint" data-i18n="cat.previewNote">Availability and format only.</p>
+            <div class="catalog-preview" id="catalog-add-result"></div>
+          </div>
+        </div>
+      </section>
 
       <!-- GeoIP Card -->
       <section class="card geo-card">
@@ -1735,6 +1827,15 @@ with httpx.Client(proxy="socks5://127.0.0.1:8899") as client:
       <span data-i18n="footer.tagline">Full sweep · Repeated measurements · Your services</span>
     </footer>
   </main>
+
+  <!-- Modal Dialog: Source scope exclusions -->
+  <dialog id="scope-dialog">
+    <div class="dialog-heading">
+      <h2 id="scope-title"></h2>
+      <button class="button light" id="close-scope" aria-label="Close" data-i18n-aria-label="common.close">✕</button>
+    </div>
+    <div id="scope-body"></div>
+  </dialog>
 
   <!-- Modal Dialog: Details -->
   <dialog id="details-dialog">

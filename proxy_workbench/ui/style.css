@@ -6092,7 +6092,7 @@ details[open] .target-accordion-chevron {
 /* 2. Workspace & Configuration Flow */
 .workspace-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 380px;
+  grid-template-columns: minmax(0, 1fr) 350px;
   gap: 16px;
   align-items: start;
 }
@@ -6554,18 +6554,16 @@ details[open] .target-accordion-chevron {
 /* Parameters & Filters Grid */
 .clean-field-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 16px;
 }
-@media (max-width: 800px) {
-  .clean-field-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-@media (max-width: 500px) {
+@media (max-width: 650px) {
   .clean-field-grid {
     grid-template-columns: 1fr;
   }
+}
+.clean-field-grid .country-field-wrapper {
+  grid-column: 1 / -1;
 }
 .clean-field-grid label,
 .clean-field-grid .country-field-wrapper {
@@ -6573,6 +6571,7 @@ details[open] .target-accordion-chevron {
   flex-direction: column;
   gap: 5px;
   margin-bottom: 0;
+  min-width: 0;
 }
 .clean-field-grid label > span,
 .clean-field-grid .field-label-with-count span {
@@ -6597,6 +6596,7 @@ details[open] .target-accordion-chevron {
   background: var(--bg-input);
   color: var(--ink);
   box-sizing: border-box;
+  width: 100%;
 }
 .clean-field-grid select {
   padding: 0 28px 0 10px;
@@ -6616,12 +6616,30 @@ details[open] .target-accordion-chevron {
   background: var(--bg-input);
   display: flex;
   align-items: center;
+  width: 100%;
+  box-sizing: border-box;
+}
+.input-unit-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
 }
 .input-unit-wrap input {
+  width: 100% !important;
   padding-right: 58px !important;
+  box-sizing: border-box !important;
 }
 .input-unit-wrap input#workers {
   padding-right: 74px !important;
+}
+.select-unit-wrap {
+  position: relative;
+  width: 100%;
+}
+.select-unit-wrap select {
+  width: 100% !important;
+  box-sizing: border-box !important;
 }
 .unit-badge {
   position: absolute;
@@ -6997,22 +7015,25 @@ details[open] .target-accordion-chevron {
   color: var(--ink);
 }
 #job-detail.hint {
-  font-size: 11.5px;
+  font-size: 11px;
   color: var(--muted);
-  margin: 0 0 10px;
+  margin: 4px 0 10px;
   text-align: center;
   min-height: 16px;
   line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .mission-btn-start {
-  height: 42px;
+  height: 40px !important;
   width: 100%;
-  border-radius: var(--radius-sm);
-  background: linear-gradient(135deg, var(--teal) 0%, #059669 100%);
-  color: #ffffff;
-  font-size: 14px;
-  font-weight: 800;
-  border: none;
+  border-radius: var(--radius-xs) !important;
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%) !important;
+  border: 1px solid rgba(16, 185, 129, 0.4) !important;
+  color: #ffffff !important;
+  font-size: 13.5px !important;
+  font-weight: 750 !important;
   box-shadow: 0 4px 14px var(--teal-glow);
   cursor: pointer;
   display: flex;
@@ -7040,26 +7061,53 @@ details[open] .target-accordion-chevron {
   font-size: 12px;
   font-weight: 650;
   border-radius: var(--radius-xs);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+}
+.secondary-btn-row .button.ghost-btn {
+  background: var(--bg-surface);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  transition: all 0.15s ease;
+}
+.secondary-btn-row .button.ghost-btn:hover {
+  background: var(--bg-surface-elevated);
+  border-color: var(--ink-secondary);
 }
 .mission-btn-stop:disabled {
-  opacity: 0.45;
+  opacity: 0.6;
   cursor: not-allowed;
-  background: rgba(244, 63, 94, 0.1) !important;
-  border-color: rgba(244, 63, 94, 0.2) !important;
+  background: var(--bg-surface) !important;
+  border: 1px solid var(--line) !important;
   color: var(--muted) !important;
+}
+.mission-btn-stop:not(:disabled) {
+  background: rgba(239, 68, 68, 0.15) !important;
+  border: 1px solid rgba(239, 68, 68, 0.4) !important;
+  color: #f87171 !important;
+  cursor: pointer;
+}
+.mission-btn-stop:not(:disabled):hover {
+  background: rgba(239, 68, 68, 0.3) !important;
+  border-color: #ef4444 !important;
+  color: #ffffff !important;
 }
 .recheck-actions-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
   margin-top: 4px;
+  width: 100%;
+  box-sizing: border-box;
 }
 .recheck-btn {
-  height: 30px;
+  height: 32px;
   padding: 0 8px;
   font-size: 11.5px;
   font-weight: 650;
-  color: var(--muted);
+  color: var(--ink-secondary);
   background: var(--bg-surface);
   border: 1px solid var(--line);
   border-radius: var(--radius-xs);
@@ -7069,17 +7117,31 @@ details[open] .target-accordion-chevron {
   gap: 6px;
   cursor: pointer;
   transition: all 0.15s ease;
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  box-sizing: border-box;
 }
 .recheck-btn:hover {
   color: var(--teal);
   border-color: var(--teal-border);
   background: var(--teal-pale);
 }
+.recheck-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+.recheck-btn span[data-i18n] {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
 .recheck-btn-icon {
   font-size: 12px;
+  flex-shrink: 0;
 }
 
 /* Live Ticker & Mac Terminal */
@@ -7133,14 +7195,17 @@ details[open] .target-accordion-chevron {
   font-family: var(--font-mono);
 }
 .ticker-empty {
-  padding: 14px 10px;
+  padding: 12px 10px;
   text-align: center;
   color: var(--muted);
   font-size: 11px;
+  line-height: 1.4;
   font-family: inherit;
   background: var(--bg-surface);
   border-radius: var(--radius-xs);
   border: 1px dashed var(--line);
+  word-break: normal;
+  overflow-wrap: break-word;
 }
 .ticker-item {
   padding: 3px 6px;
@@ -7398,10 +7463,25 @@ details[open] .target-accordion-chevron {
   color: var(--ink);
 }
 .tb-mini-field input[type="number"] {
-  width: 54px !important;
+  width: 44px !important;
   text-align: center;
   font-family: var(--font-mono);
+  font-size: 11px !important;
+  font-weight: 700 !important;
   cursor: text;
+  -moz-appearance: textfield !important;
+  appearance: textfield !important;
+}
+.tb-mini-field input[type="number"]::-webkit-inner-spin-button,
+.tb-mini-field input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none !important;
+  margin: 0 !important;
+}
+.tb-unit {
+  font-size: 10px !important;
+  font-weight: 600 !important;
+  color: var(--muted) !important;
+  font-family: var(--font-mono);
 }
 .tb-copy-btn {
   height: 28px !important;
@@ -7412,6 +7492,15 @@ details[open] .target-accordion-chevron {
   align-items: center !important;
   gap: 6px !important;
   white-space: nowrap !important;
+  border-radius: var(--radius-xs) !important;
+  border: 1px solid var(--line) !important;
+  background: var(--bg-surface) !important;
+  color: var(--ink) !important;
+  transition: all 0.15s ease;
+}
+.tb-copy-btn:hover {
+  background: var(--bg-surface-elevated) !important;
+  border-color: var(--ink-secondary) !important;
 }
 
 /* Thin Country Bar */
@@ -7560,7 +7649,65 @@ details[open] .target-accordion-chevron {
 }
 [data-theme="light"] .results-table tbody tr:hover td.td-check,
 [data-theme="light"] .results-table tbody tr:hover td.td-num {
-  background: #f1f5f9;
+}
+
+/* Precise Column Geometry for Results Table (Zero Blowout / No Abyss) */
+.th-check, .td-check { width: 36px !important; min-width: 36px !important; max-width: 36px !important; }
+.th-num, .td-num { width: 44px !important; min-width: 44px !important; max-width: 44px !important; }
+.th-proxy, .td-proxy { width: 230px !important; min-width: 200px !important; max-width: 270px !important; }
+.th-score, .td-score { width: 75px !important; min-width: 70px !important; }
+.th-latency, .td-latency { width: 85px !important; min-width: 80px !important; }
+.th-jitter, .td-jitter { width: 80px !important; min-width: 75px !important; }
+.th-speed, .td-speed { width: 85px !important; min-width: 80px !important; }
+.th-success, .td-success { width: 90px !important; min-width: 85px !important; }
+.th-uptime, .td-uptime { width: 80px !important; min-width: 75px !important; }
+.th-clean, .td-clean { width: 95px !important; min-width: 90px !important; }
+.th-anon, .td-anon { width: 105px !important; min-width: 95px !important; }
+.th-country, .td-country { width: 110px !important; min-width: 100px !important; }
+.th-provider, .td-provider { min-width: 140px !important; width: auto !important; }
+.th-age, .td-age { width: 75px !important; min-width: 70px !important; }
+.th-actions, .td-actions { width: 70px !important; min-width: 60px !important; text-align: right !important; }
+
+/* Empty Table State */
+td.empty {
+  text-align: center;
+  padding: 48px 24px !important;
+  color: var(--muted);
+  position: static !important;
+  background: transparent !important;
+}
+.empty-table-state {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  max-width: 440px;
+  margin: 0 auto;
+}
+.empty-table-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--bg-surface);
+  border: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+.empty-table-title {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.empty-table-desc {
+  font-size: 11.5px;
+  color: var(--muted);
+  line-height: 1.45;
+  margin: 0;
 }
 
 /* Protocol tags in table */
@@ -8305,3 +8452,3527 @@ details[open] .target-accordion-chevron {
   font-size: 11.5px;
   color: var(--faint);
 }
+
+/* ==========================================================================
+   14. SOURCE CATALOG (Search, filters, sets, evidence, actions)
+   ========================================================================== */
+
+.catalog-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.catalog-head-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.catalog-section {
+  margin-top: 14px;
+}
+
+.catalog-section h3 {
+  font-size: 11.5px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 0 0 6px;
+  font-weight: 650;
+}
+
+.catalog-sets,
+.catalog-groups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.catalog-set {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md, 10px);
+  padding: 10px 14px;
+  background: var(--bg-surface);
+  min-width: 240px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: all 0.15s ease;
+}
+
+.catalog-set:hover {
+  border-color: var(--teal-border);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.catalog-set.applied {
+  border-color: var(--teal);
+  background: var(--teal-pale, rgba(20, 184, 166, 0.08));
+}
+
+.catalog-set-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+
+.catalog-set-main strong {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--teal);
+}
+
+.catalog-set-name {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.catalog-set-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.catalog-group {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-full);
+  background: var(--bg-surface);
+  color: var(--ink-secondary);
+  padding: 6px 14px;
+  font-size: 11.5px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.catalog-group:hover {
+  border-color: var(--teal);
+  color: var(--ink);
+  transform: translateY(-1px);
+}
+
+.catalog-group-count {
+  font-family: var(--font-mono);
+  color: var(--teal);
+  font-weight: 700;
+}
+
+.catalog-group-date {
+  color: var(--muted);
+  font-weight: 400;
+  font-size: 10.5px;
+}
+
+.catalog-filters {
+  display: grid;
+  grid-template-columns: minmax(220px, 2fr) repeat(6, minmax(120px, 1fr));
+  gap: 8px;
+  margin: 12px 0;
+}
+
+.catalog-search {
+  min-width: 0;
+}
+
+.catalog-head,
+.catalog-row {
+  display: grid;
+  grid-template-columns: minmax(200px, 2.2fr) minmax(150px, 1.4fr) minmax(140px, 1.2fr) minmax(150px, 1.2fr) minmax(200px, 2fr) minmax(210px, 1.6fr);
+  gap: 10px;
+}
+
+.catalog-head {
+  font-size: 10.5px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--muted);
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 8px;
+  font-weight: 700;
+}
+
+.catalog-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 720px;
+  overflow-y: auto;
+}
+
+.catalog-row {
+  border-bottom: 1px solid var(--line);
+  padding: 10px 4px;
+  font-size: 12px;
+  align-items: start;
+  transition: background 0.12s ease;
+}
+
+.catalog-row:hover {
+  background: var(--bg-surface);
+}
+
+.catalog-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  color: var(--ink-secondary);
+}
+
+.catalog-link {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--teal);
+  font-size: 12.5px;
+  font-weight: 650;
+  text-align: left;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.catalog-link:hover {
+  color: var(--teal-hover, #2dd4bf);
+}
+
+.catalog-id,
+.catalog-publisher {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--muted);
+  word-break: break-all;
+}
+
+.catalog-sets-inline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.catalog-terms {
+  font-size: 10.5px;
+  color: var(--teal);
+  text-decoration: underline;
+}
+
+.catalog-err {
+  color: var(--rose);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  word-break: break-all;
+}
+
+.catalog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.catalog-actions .button.chip {
+  font-size: 10.5px;
+  padding: 3px 8px;
+  border-radius: var(--radius-xs, 4px);
+}
+
+.catalog-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.catalog-detail {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md, 10px);
+  padding: 16px;
+  margin-top: 14px;
+  background: var(--bg-surface);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.15);
+}
+
+.catalog-detail h3 {
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 14px 0 8px;
+  font-weight: 700;
+}
+
+.catalog-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.catalog-detail table {
+  width: 100%;
+  font-size: 11.5px;
+  border-collapse: collapse;
+}
+
+.catalog-detail td,
+.catalog-detail th {
+  border-bottom: 1px solid var(--line);
+  padding: 5px 8px;
+  text-align: left;
+}
+
+.catalog-add {
+  border-top: 1px solid var(--line);
+  margin-top: 16px;
+  padding-top: 14px;
+}
+
+#catalog-add-form {
+  margin-top: 12px;
+  padding: 14px;
+  background: var(--bg-surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md, 8px);
+}
+
+.catalog-preview {
+  margin-top: 12px;
+}
+
+.catalog-preview-inner {
+  border: 1px dashed var(--teal-border, var(--line));
+  border-radius: var(--radius-md, 10px);
+  padding: 12px 16px;
+  font-size: 12px;
+  background: var(--bg-surface);
+}
+
+.catalog-sample {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  background: var(--bg-card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm, 6px);
+  padding: 10px;
+  max-height: 180px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+@media (max-width: 1080px) {
+  .catalog-filters {
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  }
+
+  .catalog-head {
+    display: none;
+  }
+
+  .catalog-row {
+    grid-template-columns: 1fr;
+    gap: 8px;
+    border-bottom: 1px solid var(--line);
+  }
+}
+
+@media (max-width: 540px) {
+  .catalog-list {
+    max-height: none;
+  }
+
+  .catalog-set {
+    min-width: 0;
+    width: 100%;
+  }
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   DESIGN SYSTEM OVERLAY — 2026-09-26
+   Produced by the Antigravity design agent swarm (tokens, typography,
+   components, light theme, motion). Appended as a coherent top layer:
+   later rules win at equal specificity. Selectors were verified against
+   index.html/app.js. Everything respects prefers-reduced-motion.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ═══════════ 01-tokens.css ═══════════ */
+/*
+ * PROXY WORKBENCH — DESIGN TOKEN FOUNDATION (01-tokens.css)
+ * ═══════════════════════════════════════════════════════════════════════════
+ * SCALE SYSTEM OVERVIEW (10 lines)
+ *
+ * COLOR   — bg scale (--bg-*): 5 dark + 5 light surfaces, depth via opacity.
+ *           accent scale (--accent-*): emerald #34d399 family, 5 stops.
+ *           semantic: success (green), warning (amber), danger (rose).
+ * SPACING — --space-1..10: 4 · 8 · 12 · 16 · 20 · 24 · 32 · 40 · 56 · 72 px.
+ * RADIUS  — --radius-sm(6) · md(8) · lg(12) · xl(16) · full(9999).
+ * SHADOW  — --shadow-1..3: layered soft boxes, dark & light variants.
+ * MOTION  — --dur-fast(120ms) · med(220ms) · slow(400ms).
+ *           --ease-out: decelerate. --ease-spring: overshoot elastic.
+ * Z-INDEX — --z-nav(50) · --z-modal(900) · --z-toast(1000).
+ * SCOPE   — :root / [data-theme] / pseudo-elements / globals ONLY.
+ * ═══════════════════════════════════════════════════════════════════════════
+ */
+
+/* ==========================================================================
+   DARK THEME — DEFAULT (:root)
+   html[data-theme="dark"] set by inline script before first paint
+   ========================================================================== */
+
+:root {
+  /* ── Color scheme hint ─────────────────────────────────────────── */
+  color-scheme: dark;
+
+  /* ── Font antialiasing ─────────────────────────────────────────── */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+
+  /* ── Background scale (5 stops, dark Obsidian) ─────────────────── */
+  --bg-base:             #080c12;   /* deepest page well */
+  --bg-app:              #090d13;   /* app body          */
+  --bg-sidebar:          #0b111a;   /* sidebar           */
+  --bg-card:             #0f1622;   /* card surface      */
+  --bg-card-hover:       #131c2a;   /* card on hover     */
+  --bg-surface:          #121927;   /* input / inset     */
+  --bg-surface-elevated: #151e2e;   /* dropdowns / popovers */
+  --bg-header:           rgba(9, 13, 19, 0.85);
+  --bg-input:            #151e2e;
+  --bg-subtle:           #0c121b;
+
+  /* ── Border / line scale ───────────────────────────────────────── */
+  --line:          rgba(255, 255, 255, 0.07);   /* hairline divider  */
+  --line-subtle:   rgba(255, 255, 255, 0.05);   /* ghost separator   */
+  --line-strong:   rgba(255, 255, 255, 0.14);   /* card border       */
+  --line-focus:    #34d399;                      /* focus ring color  */
+
+  /* ── Text hierarchy ────────────────────────────────────────────── */
+  --ink:           #f1f5f9;   /* primary text    */
+  --ink-secondary: #cbd5e1;   /* secondary label */
+  --muted:         #8b9bb4;   /* placeholder     */
+  --faint:         #4b5a72;   /* ghost text      */
+
+  /* ── Accent scale — Emerald (#34d399 family) ───────────────────── */
+  --accent-100:  #d1fae5;   /* tint       */
+  --accent-200:  #6ee7b7;   /* soft       */
+  --accent-300:  #34d399;   /* brand BASE */
+  --accent-400:  #10b981;   /* default    */
+  --accent-500:  #059669;   /* hover      */
+  --accent-600:  #047857;   /* active/pressed */
+
+  /* Semantic aliases */
+  --accent:        var(--accent-400);
+  --accent-hover:  var(--accent-500);
+  --accent-active: var(--accent-600);
+  --accent-subtle: rgba(52, 211, 153, 0.12);
+  --accent-border: rgba(52, 211, 153, 0.28);
+  --accent-glow:   rgba(52, 211, 153, 0.20);
+  --accent-text:   var(--accent-400);
+
+  /* Legacy teal aliases — keeps existing components unbroken */
+  --teal:        var(--accent-400);
+  --teal-hover:  var(--accent-500);
+  --teal-active: var(--accent-600);
+  --teal-pale:   var(--accent-subtle);
+  --teal-border: var(--accent-border);
+  --teal-glow:   var(--accent-glow);
+
+  /* ── Success ────────────────────────────────────────────────────── */
+  --success:        #22c55e;
+  --success-hover:  #16a34a;
+  --success-pale:   rgba(34, 197, 94, 0.12);
+  --success-border: rgba(34, 197, 94, 0.28);
+
+  /* ── Warning ────────────────────────────────────────────────────── */
+  --warning:        #f59e0b;
+  --warning-hover:  #d97706;
+  --warning-pale:   rgba(245, 158, 11, 0.12);
+  --warning-border: rgba(245, 158, 11, 0.28);
+
+  /* Legacy amber */
+  --amber:        var(--warning);
+  --amber-hover:  var(--warning-hover);
+  --amber-pale:   var(--warning-pale);
+  --amber-border: var(--warning-border);
+
+  /* ── Danger ─────────────────────────────────────────────────────── */
+  --danger:        #f43f5e;
+  --danger-hover:  #e11d48;
+  --danger-pale:   rgba(244, 63, 94, 0.12);
+  --danger-border: rgba(244, 63, 94, 0.28);
+
+  /* Legacy rose */
+  --rose:        var(--danger);
+  --rose-hover:  var(--danger-hover);
+  --rose-pale:   var(--danger-pale);
+  --rose-border: var(--danger-border);
+
+  /* ── Additional semantic palettes ──────────────────────────────── */
+  --cyan:        #06b6d4;
+  --cyan-hover:  #0891b2;
+  --cyan-pale:   rgba(6, 182, 212, 0.12);
+  --cyan-border: rgba(6, 182, 212, 0.28);
+
+  --blue:        #0ea5e9;
+  --blue-hover:  #0284c7;
+  --blue-pale:   rgba(14, 165, 233, 0.12);
+  --blue-border: rgba(14, 165, 233, 0.24);
+
+  --purple:        #8b5cf6;
+  --purple-hover:  #7c3aed;
+  --purple-pale:   rgba(139, 92, 246, 0.12);
+  --purple-border: rgba(139, 92, 246, 0.24);
+
+  /* ── Spacing scale (4px base) ───────────────────────────────────── */
+  --space-1:   4px;
+  --space-2:   8px;
+  --space-3:   12px;
+  --space-4:   16px;
+  --space-5:   20px;
+  --space-6:   24px;
+  --space-7:   32px;
+  --space-8:   40px;
+  --space-9:   56px;
+  --space-10:  72px;
+
+  /* ── Radius scale ───────────────────────────────────────────────── */
+  --radius-xs:   3px;
+  --radius-sm:   6px;
+  --radius-md:   8px;
+  --radius-lg:   12px;
+  --radius-xl:   16px;
+  --radius-full: 9999px;
+
+  /* ── Shadow scale — layered soft dark shadows ───────────────────── */
+  --shadow-1:
+    0 1px 2px  rgba(0, 0, 0, 0.40),
+    0 1px 4px  rgba(0, 0, 0, 0.25);
+
+  --shadow-2:
+    0 2px 6px  rgba(0, 0, 0, 0.40),
+    0 4px 16px rgba(0, 0, 0, 0.35),
+    0 1px 3px  rgba(0, 0, 0, 0.25);
+
+  --shadow-3:
+    0 4px 12px  rgba(0, 0, 0, 0.50),
+    0 12px 36px rgba(0, 0, 0, 0.45),
+    0 2px 6px   rgba(0, 0, 0, 0.35);
+
+  /* Legacy shadow aliases */
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-sm: var(--shadow-1);
+  --shadow-md: var(--shadow-2);
+  --shadow-lg: var(--shadow-3);
+
+  /* ── Motion tokens ──────────────────────────────────────────────── */
+  --dur-fast:   120ms;
+  --dur-med:    220ms;
+  --dur-slow:   400ms;
+
+  --ease-out:    cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-spring: cubic-bezier(0.16, 1, 0.30, 1);
+
+  /* Legacy transition aliases */
+  --transition-fast:   var(--dur-fast)  var(--ease-out);
+  --transition-normal: var(--dur-med)   var(--ease-out);
+
+  /* ── Z-index scale ───────────────────────────────────────────────── */
+  --z-nav:   50;
+  --z-modal: 900;
+  --z-toast: 1000;
+
+  /* ── Typography ──────────────────────────────────────────────────── */
+  --font:      -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  /* ── Accent & surface aliases (used by existing components) ─────── */
+  --accent-subtle-alt:  rgba(52, 211, 153, 0.08);
+  --bg-card-subtle:     var(--bg-surface);
+  --line-subtle-alt:    var(--line-subtle);
+  --surface-hover:      #1a2538;
+}
+
+/* ==========================================================================
+   LIGHT THEME OVERRIDE
+   Selector matches app.js logic: document.documentElement.dataset.theme
+   ========================================================================== */
+
+html[data-theme="light"],
+[data-theme="light"] {
+
+  /* ── Color scheme hint ─────────────────────────────────────────── */
+  color-scheme: light;
+
+  /* ── Background scale (clean whites + subtle grays) ────────────── */
+  --bg-base:             #f0f4f8;
+  --bg-app:              #f8fafc;
+  --bg-sidebar:          #ffffff;
+  --bg-card:             #ffffff;
+  --bg-card-hover:       #f8fafc;
+  --bg-surface:          #f1f5f9;
+  --bg-surface-elevated: #e8eef6;
+  --bg-header:           rgba(248, 250, 252, 0.90);
+  --bg-input:            #ffffff;
+  --bg-subtle:           #f8fafc;
+
+  /* ── Border / line scale (defined, not ghost) ───────────────────── */
+  --line:        #e2e8f0;
+  --line-subtle: #eef1f6;
+  --line-strong: #cbd5e1;
+  --line-focus:  #10b981;
+
+  /* ── Text hierarchy ────────────────────────────────────────────── */
+  --ink:           #0f172a;
+  --ink-secondary: #334155;
+  --muted:         #64748b;
+  --faint:         #94a3b8;
+
+  /* ── Accent scale ───────────────────────────────────────────────── */
+  --accent-100:  #d1fae5;
+  --accent-200:  #a7f3d0;
+  --accent-300:  #34d399;
+  --accent-400:  #059669;   /* darker for legibility on white */
+  --accent-500:  #047857;
+  --accent-600:  #065f46;
+
+  --accent:        var(--accent-400);
+  --accent-hover:  var(--accent-500);
+  --accent-active: var(--accent-600);
+  --accent-subtle: #ecfdf5;
+  --accent-border: #a7f3d0;
+  --accent-glow:   rgba(16, 185, 129, 0.15);
+  --accent-text:   #065f46;
+
+  /* Legacy teal aliases */
+  --teal:        var(--accent-400);
+  --teal-hover:  var(--accent-500);
+  --teal-active: var(--accent-600);
+  --teal-pale:   var(--accent-subtle);
+  --teal-border: var(--accent-border);
+  --teal-glow:   var(--accent-glow);
+
+  /* ── Success ────────────────────────────────────────────────────── */
+  --success:        #16a34a;
+  --success-hover:  #15803d;
+  --success-pale:   #f0fdf4;
+  --success-border: #bbf7d0;
+
+  /* ── Warning ────────────────────────────────────────────────────── */
+  --warning:        #d97706;
+  --warning-hover:  #b45309;
+  --warning-pale:   #fffbeb;
+  --warning-border: #fde68a;
+
+  --amber:        var(--warning);
+  --amber-hover:  var(--warning-hover);
+  --amber-pale:   var(--warning-pale);
+  --amber-border: var(--warning-border);
+
+  /* ── Danger ─────────────────────────────────────────────────────── */
+  --danger:        #e11d48;
+  --danger-hover:  #be123c;
+  --danger-pale:   #fff1f2;
+  --danger-border: #fecdd3;
+
+  --rose:        var(--danger);
+  --rose-hover:  var(--danger-hover);
+  --rose-pale:   var(--danger-pale);
+  --rose-border: var(--danger-border);
+
+  /* ── Additional palettes ────────────────────────────────────────── */
+  --cyan-pale:   #ecfeff;
+  --cyan-border: #a5f3fc;
+
+  --blue-pale:   #f0f9ff;
+  --blue-border: #bae6fd;
+
+  --purple-pale:   #f5f3ff;
+  --purple-border: #ddd6fe;
+
+  /* ── Shadow scale — luminous, layered, no muddy grays ───────────── */
+  --shadow-1:
+    0 1px 2px  rgba(15, 23, 42, 0.05),
+    0 1px 3px  rgba(15, 23, 42, 0.04);
+
+  --shadow-2:
+    0 2px 6px  rgba(15, 23, 42, 0.06),
+    0 4px 14px rgba(15, 23, 42, 0.05),
+    0 1px 3px  rgba(15, 23, 42, 0.04);
+
+  --shadow-3:
+    0 4px 12px  rgba(15, 23, 42, 0.08),
+    0 14px 28px rgba(15, 23, 42, 0.06),
+    0 2px 6px   rgba(15, 23, 42, 0.04);
+
+  --shadow-xs: 0 1px 2px rgba(15, 23, 42, 0.05);
+  --shadow-sm: var(--shadow-1);
+  --shadow-md: var(--shadow-2);
+  --shadow-lg: var(--shadow-3);
+
+  /* ── Aliases ────────────────────────────────────────────────────── */
+  --accent-subtle-alt:  #f0fdf4;
+  --bg-card-subtle:     #f8fafc;
+  --line-subtle-alt:    #e2e8f0;
+  --surface-hover:      #e2e8f0;
+}
+
+/* ==========================================================================
+   GLOBAL ELEMENT POLISH
+   Only :root, [data-theme], pseudo-elements, and universal globals here.
+   Component styles are owned by other agents.
+   ========================================================================== */
+
+/* ── Focus-visible: consistent 2px accent ring, no mouse flash ──────────── */
+:focus-visible {
+  outline: 2px solid var(--line-focus, #34d399);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm, 6px);
+}
+
+/* Suppress default browser focus ring for non-keyboard navigation */
+:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* ── Text selection ──────────────────────────────────────────────────────── */
+::selection {
+  background: var(--accent-subtle, rgba(52, 211, 153, 0.20));
+  color: var(--ink, #f1f5f9);
+}
+
+[data-theme="light"] ::selection {
+  background: var(--accent-subtle, #ecfdf5);
+  color: var(--ink, #0f172a);
+}
+
+/* ── Scrollbars — thin, themed, both axes, both themes ───────────────────── */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong, rgba(255,255,255,0.14)) transparent;
+}
+
+::-webkit-scrollbar {
+  width:  5px;
+  height: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background:    var(--line-strong, rgba(255,255,255,0.14));
+  border-radius: var(--radius-full, 9999px);
+  border:        1px solid transparent;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background:      var(--muted, #8b9bb4);
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Light theme scrollbar override */
+[data-theme="light"] * {
+  scrollbar-color: var(--line-strong, #cbd5e1) transparent;
+}
+
+[data-theme="light"] ::-webkit-scrollbar-thumb {
+  background:      var(--line-strong, #cbd5e1);
+  background-clip: padding-box;
+}
+
+[data-theme="light"] ::-webkit-scrollbar-thumb:hover {
+  background:      var(--muted, #64748b);
+  background-clip: padding-box;
+}
+
+/* ── Font rendering & color-scheme ──────────────────────────────────────── */
+html {
+  -webkit-font-smoothing:  antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering:          optimizeLegibility;
+}
+
+/* ── Smooth scroll — respect reduced motion ──────────────────────────────── */
+@media (prefers-reduced-motion: no-preference) {
+  html {
+    scroll-behavior: smooth;
+  }
+}
+
+/* ── Reduced motion: disable all transitions & animations ───────────────── */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration:   0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration:  0.01ms !important;
+    scroll-behavior:      auto   !important;
+  }
+}
+
+
+/* ═══════════ 05-typography.css ═══════════ */
+/* ==========================================================================
+   PROXY WORKBENCH — 05 TYPOGRAPHY & SPACING RHYTHM
+   Premium type system: scale, headings, mono, labels, muted hierarchy.
+   Verified selectors: all class names checked against index.html & app.js.
+   Vanilla CSS only · var() with fallbacks · prefers-reduced-motion safe.
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   0. FONT STACKS — registered as custom properties with safe fallbacks
+   -------------------------------------------------------------------------- */
+
+:root {
+  /* System UI sans — covers macOS / iOS / Windows / Android without CDN */
+  --pw-font-sans:
+    -apple-system, BlinkMacSystemFont,
+    "Segoe UI", "Inter", "Helvetica Neue",
+    Arial, sans-serif;
+
+  /* Monospace stack: ui-monospace → SF Mono → Cascadia Code → JetBrains →
+     Menlo → Consolas → Liberation Mono → system monospace.
+     Designed to cover macOS, Windows 11, VS Code users, JetBrains users. */
+  --pw-font-mono:
+    ui-monospace,
+    "SF Mono",
+    "Cascadia Code", "Cascadia Mono",
+    "JetBrains Mono",
+    Menlo,
+    "Consolas",
+    "Liberation Mono",
+    monospace;
+
+  /* Type scale — named steps, 12/13/14/16/18/22/28/34 px */
+  --pw-text-2xs:  12px;
+  --pw-text-xs:   13px;
+  --pw-text-sm:   14px;
+  --pw-text-md:   16px;
+  --pw-text-lg:   18px;
+  --pw-text-xl:   22px;
+  --pw-text-2xl:  28px;
+  --pw-text-3xl:  34px;
+
+  /* Companion line-heights — optical, not mechanical */
+  --pw-lh-tight:    1.2;   /* 28–34 px headings */
+  --pw-lh-snug:     1.3;   /* 18–22 px subheadings */
+  --pw-lh-normal:   1.45;  /* 14–16 px body */
+  --pw-lh-relaxed:  1.55;  /* 12–13 px captions, labels */
+
+  /* Heading letter-spacing — tighter on large, neutral on small */
+  --pw-ls-h1:      -0.025em;  /* 28–34 px */
+  --pw-ls-h2:      -0.018em;  /* 22 px */
+  --pw-ls-h3:      -0.010em;  /* 18 px */
+  --pw-ls-h4:       0em;      /* 16 px — no adjustment */
+  --pw-ls-eyebrow:  0.09em;   /* ALL-CAPS small labels */
+  --pw-ls-mono:     0em;      /* mono always 0 for alignment */
+
+  /* Spacing rhythm — multiples of 4 px grid */
+  --pw-gap-heading-after:   0.45em;  /* space below heading before next element */
+  --pw-gap-section-above:   1.5em;   /* section-level vertical gap */
+}
+
+/* --------------------------------------------------------------------------
+   1. BASE BODY NORMALISATION
+   Overrides the existing 13.5 px body to a clean 14 px base.
+   line-height, smoothing and font-variant-numeric kept in sync.
+   -------------------------------------------------------------------------- */
+
+html {
+  font-size: var(--pw-text-sm, 14px);
+}
+
+body {
+  font-family: var(--pw-font-sans, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+  font-size: var(--pw-text-sm, 14px);
+  line-height: var(--pw-lh-normal, 1.45);
+  /* tabular nums on body prevents jitter in counters / stats */
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+/* --------------------------------------------------------------------------
+   2. HEADING SCALE — h1 → h4
+   All headings share: font-weight 650–700, tighter letter-spacing at large
+   sizes, consistent margin-bottom via the --pw-gap-heading-after token.
+   The existing `h1, h2, h3, h4, p { margin: 0 }` reset is preserved;
+   we re-add controlled spacing here where headings need rhythm.
+   -------------------------------------------------------------------------- */
+
+/* h1 — Page-level hero: 34 px, weight 700, very tight tracking */
+h1 {
+  font-size: var(--pw-text-3xl, 34px);
+  font-weight: 700;
+  letter-spacing: var(--pw-ls-h1, -0.025em);
+  line-height: var(--pw-lh-tight, 1.2);
+  color: var(--ink, #f8fafc);
+  margin-bottom: var(--pw-gap-heading-after, 0.45em);
+}
+
+/* h2 — Section heading: 22 px, weight 680, slightly tight */
+h2 {
+  font-size: var(--pw-text-xl, 22px);
+  font-weight: 680;
+  letter-spacing: var(--pw-ls-h2, -0.018em);
+  line-height: var(--pw-lh-snug, 1.3);
+  color: var(--ink, #f8fafc);
+  margin-bottom: var(--pw-gap-heading-after, 0.45em);
+}
+
+/* h3 — Sub-section: 18 px, weight 660 */
+h3 {
+  font-size: var(--pw-text-lg, 18px);
+  font-weight: 660;
+  letter-spacing: var(--pw-ls-h3, -0.010em);
+  line-height: var(--pw-lh-snug, 1.3);
+  color: var(--ink, #f8fafc);
+  margin-bottom: var(--pw-gap-heading-after, 0.45em);
+}
+
+/* h4 — Card / label heading: 16 px, weight 650, neutral tracking */
+h4 {
+  font-size: var(--pw-text-md, 16px);
+  font-weight: 650;
+  letter-spacing: var(--pw-ls-h4, 0em);
+  line-height: var(--pw-lh-normal, 1.45);
+  color: var(--ink, #f8fafc);
+  margin-bottom: var(--pw-gap-heading-after, 0.45em);
+}
+
+/* --------------------------------------------------------------------------
+   3. CONTEXTUAL HEADING OVERRIDES
+   The app uses headings inside constrained cards where the global h1/h2 scale
+   would blow layout. Override them to the sizes already in use, but keep
+   consistent weight/tracking behaviour.
+   Selectors verified in index.html.
+   -------------------------------------------------------------------------- */
+
+/* Page-level h1 inside .page-heading (Scan / Results / Sources pages) */
+.page-heading h1 {
+  font-size: var(--pw-text-2xl, 28px);
+  font-weight: 700;
+  letter-spacing: var(--pw-ls-h1, -0.025em);
+  line-height: var(--pw-lh-tight, 1.2);
+  margin-bottom: 4px;
+}
+
+/* Help hero title — special extra-large treatment */
+h1.help-hero-title {
+  font-size: var(--pw-text-3xl, 34px);
+  font-weight: 700;
+  letter-spacing: var(--pw-ls-h1, -0.025em);
+  line-height: var(--pw-lh-tight, 1.2);
+  margin-bottom: 8px;
+}
+
+/* Results page h1 — slightly smaller for dense layout */
+.results-title-group h1 {
+  font-size: var(--pw-text-2xl, 28px);
+  font-weight: 700;
+  letter-spacing: var(--pw-ls-h1, -0.025em);
+  line-height: var(--pw-lh-tight, 1.2);
+  margin-bottom: 2px;
+}
+
+/* Compact block card h2 (configuration steps 1/2/3) */
+.compact-block-title h2 {
+  font-size: var(--pw-text-sm, 14px);
+  font-weight: 650;
+  letter-spacing: var(--pw-ls-h4, 0em);
+  line-height: var(--pw-lh-normal, 1.45);
+  margin-bottom: 0;
+}
+
+/* Card-title h2 (mobile profiles cards, source catalog, geodata) */
+.card-title h2 {
+  font-size: var(--pw-text-md, 16px);
+  font-weight: 660;
+  letter-spacing: var(--pw-ls-h4, 0em);
+  line-height: var(--pw-lh-normal, 1.45);
+  margin-bottom: 4px;
+}
+
+/* FAQ title — decorative h2 in help page */
+h2.faq-title {
+  font-size: var(--pw-text-xl, 22px);
+  font-weight: 700;
+  letter-spacing: var(--pw-ls-h2, -0.018em);
+  line-height: var(--pw-lh-snug, 1.3);
+  margin-bottom: 16px;
+}
+
+/* h3 — Source catalog sets / conditions headings */
+.card h3 {
+  font-size: var(--pw-text-sm, 14px);
+  font-weight: 650;
+  letter-spacing: var(--pw-ls-h4, 0em);
+  line-height: var(--pw-lh-normal, 1.45);
+  margin-bottom: 4px;
+}
+
+/* --------------------------------------------------------------------------
+   4. BRAND WORDMARK — .brand in sidebar
+   Verified: <a class="brand"> / .brand-icon / .brand b in index.html & CSS.
+   Wordmark receives optical refinements: tighter tracking, weight calibration.
+   -------------------------------------------------------------------------- */
+
+.brand {
+  font-family: var(--pw-font-sans, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  line-height: 1.2;
+  color: var(--ink-secondary, #cbd5e1);
+}
+
+.brand b {
+  display: block;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--teal, #10b981);
+  /* Subtle text-shadow for premium glow effect */
+  text-shadow: 0 0 20px var(--teal-glow, rgba(16, 185, 129, 0.24));
+}
+
+/* --------------------------------------------------------------------------
+   5. EYEBROW / LABEL STYLE — .eyebrow
+   Verified: used in Scan, Monitor, Gateway, Mobile (Client Configs), Sources
+   (TRANSPARENT COLLECTION), Help pages.
+   Small-caps style: all-uppercase, wide tracking, accent colour.
+   -------------------------------------------------------------------------- */
+
+.eyebrow {
+  font-family: var(--pw-font-sans, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+  font-size: var(--pw-text-2xs, 12px);
+  font-weight: 700;
+  letter-spacing: var(--pw-ls-eyebrow, 0.09em);
+  text-transform: uppercase;
+  line-height: var(--pw-lh-relaxed, 1.55);
+  color: var(--teal, #10b981);
+  /* Simulate true small-caps optically */
+  font-variant-caps: all-small-caps;
+  margin-bottom: 4px;
+}
+
+/* --------------------------------------------------------------------------
+   6. NAV SECTION LABEL — .nav-label (sidebar "WORKSPACE" label)
+   Verified: <div class="nav-label"> in index.html.
+   Tertiary hierarchy: faint colour, uppercase, wide tracking.
+   -------------------------------------------------------------------------- */
+
+.nav-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  line-height: var(--pw-lh-relaxed, 1.55);
+  color: var(--faint, #64748b);
+  padding: 12px 10px 6px;
+}
+
+/* --------------------------------------------------------------------------
+   7. MUTED TEXT HIERARCHY — secondary / tertiary / faint
+   Verified class names: .hint, .page-heading p, .results-title-group p,
+   .help-subtext, .scenarios-sub, .connect-step-value, .denylist-hint-text,
+   .api-hint, .scenarios-note, .results-scope-hint, .sidebar-status p
+   -------------------------------------------------------------------------- */
+
+/* Primary body copy — default (already set on body) */
+/* Secondary text — e.g., page subtitle, contextual descriptions */
+.page-heading p,
+.results-title-group p,
+.help-subtext,
+.scenarios-sub,
+.connect-step-value {
+  font-size: var(--pw-text-xs, 13px);
+  line-height: var(--pw-lh-normal, 1.45);
+  color: var(--muted, #8b9bb4);
+}
+
+/* Tertiary text — hints, small annotations, meta info */
+.hint,
+.api-hint,
+.denylist-hint-text,
+.scenarios-note,
+.results-scope-hint {
+  font-size: var(--pw-text-2xs, 12px);
+  line-height: var(--pw-lh-relaxed, 1.55);
+  color: var(--muted, #8b9bb4);
+}
+
+/* Quaternary / faint — sidebar status line, disclaimer */
+.sidebar-status,
+.sidebar-status span {
+  font-size: 11px;
+  line-height: var(--pw-lh-relaxed, 1.55);
+  color: var(--faint, #64748b);
+}
+
+/* --------------------------------------------------------------------------
+   8. BREADCRUMB — .breadcrumb
+   Verified: <div class="breadcrumb"> in header.
+   -------------------------------------------------------------------------- */
+
+.breadcrumb {
+  font-size: var(--pw-text-xs, 13px);
+  font-weight: 400;
+  line-height: var(--pw-lh-normal, 1.45);
+  color: var(--muted, #8b9bb4);
+  /* Optical letter-spacing for path separators */
+  letter-spacing: 0.01em;
+}
+
+.breadcrumb b,
+#page-label {
+  font-weight: 650;
+  color: var(--ink, #f8fafc);
+}
+
+/* --------------------------------------------------------------------------
+   9. LOCAL BADGE — .local-badge in header
+   Verified: <div class="local-badge"> with "LOCAL APP" text.
+   Treated as an eyebrow-style label (uppercase, compact, faint).
+   -------------------------------------------------------------------------- */
+
+.local-badge {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--faint, #64748b);
+  line-height: 1;
+}
+
+/* --------------------------------------------------------------------------
+   10. PHASE LABEL — .phase (mission control state indicator)
+   Verified: <span id="phase" class="phase"> in index.html.
+   Tabular-nums applied so status text doesn't jump.
+   -------------------------------------------------------------------------- */
+
+.phase {
+  font-size: var(--pw-text-xs, 13px);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  line-height: var(--pw-lh-normal, 1.45);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --------------------------------------------------------------------------
+   11. SCENARIOS — .scenarios-title / .scenarios-sub
+   Verified: index.html line 171/172.
+   -------------------------------------------------------------------------- */
+
+.scenarios-title {
+  font-size: var(--pw-text-xs, 13px);
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  color: var(--ink, #f8fafc);
+}
+
+.scenarios-sub {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--muted, #8b9bb4);
+  line-height: var(--pw-lh-relaxed, 1.55);
+}
+
+/* Compact-header overrides — scenarios bar when condensed */
+.scenarios-header.compact-header .scenarios-title {
+  font-size: 12px;
+}
+
+.scenarios-header.compact-header .scenarios-sub {
+  font-size: 11px;
+}
+
+/* --------------------------------------------------------------------------
+   12. MONOSPACE STACK — numbers, code, addresses, IPs, counters
+   Applied to: .gauge-percent, .metric-value, .stat-number, .progress-number,
+   pre#log, textarea.mono-textarea, .ticker-idle-badge text, .connect-step-value
+   (for address spans), IP/port columns in table (JS-generated).
+   tabular-nums ensures digits align vertically in live counters.
+   -------------------------------------------------------------------------- */
+
+/* Gauge center percentage */
+.gauge-percent {
+  font-family: var(--pw-font-mono, ui-monospace, "SF Mono", Menlo, monospace);
+  font-size: var(--pw-text-xl, 22px);
+  font-weight: 700;
+  letter-spacing: var(--pw-ls-mono, 0em);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+/* Gauge sub-label */
+.gauge-caption {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted, #8b9bb4);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Metric values (speed / ETA cards) */
+.metric-value {
+  font-family: var(--pw-font-mono, ui-monospace, "SF Mono", Menlo, monospace);
+  font-size: var(--pw-text-md, 16px);
+  font-weight: 700;
+  letter-spacing: var(--pw-ls-mono, 0em);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+
+/* Gateway stats — big numbers */
+.stat-number {
+  font-family: var(--pw-font-mono, ui-monospace, "SF Mono", Menlo, monospace);
+  font-size: var(--pw-text-2xl, 28px);
+  font-weight: 700;
+  letter-spacing: var(--pw-ls-mono, 0em);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  color: var(--ink, #f8fafc);
+}
+
+/* Gateway stats label */
+.stat-label {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--muted, #8b9bb4);
+  line-height: var(--pw-lh-relaxed, 1.55);
+}
+
+/* Progress number (#checked / #candidates) */
+.progress-number {
+  font-family: var(--pw-font-mono, ui-monospace, "SF Mono", Menlo, monospace);
+  font-size: var(--pw-text-xl, 22px);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: var(--pw-ls-mono, 0em);
+  line-height: 1;
+  color: var(--ink, #f8fafc);
+}
+
+.progress-separator {
+  font-weight: 300;
+  color: var(--muted, #8b9bb4);
+  margin: 0 2px;
+}
+
+/* Execution log terminal pre */
+pre#log {
+  font-family: var(--pw-font-mono, ui-monospace, "SF Mono", Menlo, monospace);
+  font-size: 12px;
+  line-height: 1.6;
+  letter-spacing: var(--pw-ls-mono, 0em);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Monospace textareas (dnsbl-zones, denylist) */
+textarea.mono-textarea {
+  font-family: var(--pw-font-mono, ui-monospace, "SF Mono", Menlo, monospace);
+  font-size: 12px;
+  line-height: 1.6;
+  letter-spacing: var(--pw-ls-mono, 0em);
+}
+
+/* Ticker status badge ("READY" / "LIVE") */
+.ticker-idle-badge {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Live feed source label */
+.live-feed-source {
+  font-family: var(--pw-font-mono, ui-monospace, "SF Mono", Menlo, monospace);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted, #8b9bb4);
+  letter-spacing: var(--pw-ls-mono, 0em);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Nav count badge (#nav-count on Results button) */
+aside nav small#nav-count,
+#nav-count {
+  font-family: var(--pw-font-mono, ui-monospace, "SF Mono", Menlo, monospace);
+  font-size: 10px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0;
+}
+
+/* --------------------------------------------------------------------------
+   13. CHECK HEADLINE — .check-headline
+   Verified: <span class="check-headline"> for toggle switches.
+   Inline label beside toggles — medium weight, normal tracking.
+   -------------------------------------------------------------------------- */
+
+.check-headline {
+  font-size: var(--pw-text-xs, 13px);
+  font-weight: 600;
+  line-height: var(--pw-lh-normal, 1.45);
+  letter-spacing: 0em;
+}
+
+/* --------------------------------------------------------------------------
+   14. LINK STYLES — <a> elements
+   Base link: inherits ink colour, smooth underline on hover.
+   accent-coloured links get the teal treatment.
+   -------------------------------------------------------------------------- */
+
+a {
+  color: inherit;
+  text-decoration: none;
+  text-underline-offset: 2px;
+  transition: color 0.15s ease, text-decoration-color 0.15s ease;
+}
+
+a:hover {
+  color: var(--teal, #10b981);
+  text-decoration: underline;
+  text-decoration-color: var(--teal-border, rgba(16, 185, 129, 0.32));
+}
+
+a:focus-visible {
+  outline: 2px solid var(--teal, #10b981);
+  outline-offset: 2px;
+  border-radius: 2px;
+  text-decoration: none;
+}
+
+/* Accent links (explicit teal colour, e.g. in help page) */
+a.link,
+.hint a,
+.help-subtext a {
+  color: var(--teal, #10b981);
+  text-decoration: underline;
+  text-decoration-color: var(--teal-border, rgba(16, 185, 129, 0.32));
+  font-weight: 500;
+}
+
+a.link:hover,
+.hint a:hover,
+.help-subtext a:hover {
+  color: var(--teal-hover, #059669);
+  text-decoration-color: var(--teal-hover, #059669);
+}
+
+/* --------------------------------------------------------------------------
+   15. TABULAR NUMS FOR COUNTERS & STATS
+   Applied broadly to any element likely to display changing numbers.
+   Prevents layout jitter when digits update.
+   Selectors verified in index.html & app.js.
+   -------------------------------------------------------------------------- */
+
+#checked,
+#candidates,
+#percent,
+#live-passed,
+#source-count,
+#gauge-percent,
+#speed,
+#eta,
+#gw-pool-size,
+#gw-conns-size,
+#dnsbl-lines-count,
+#denylist-lines-count,
+.view-count,
+.country-count-label,
+.line-count-badge {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* --------------------------------------------------------------------------
+   16. UNIT BADGES — .unit-badge  (tries / sec / threads / bytes / ms / min)
+   Verified: many instances in index.html.
+   Monospace for alignment, muted colour, small uppercase.
+   -------------------------------------------------------------------------- */
+
+.unit-badge {
+  font-family: var(--pw-font-mono, ui-monospace, "SF Mono", Menlo, monospace);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--muted, #8b9bb4);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --------------------------------------------------------------------------
+   17. PROGRESS META / HINT BELOW PROGRESS BAR
+   Verified: <div class="progress-meta"> in index.html.
+   -------------------------------------------------------------------------- */
+
+.progress-meta {
+  font-size: 12px;
+  line-height: var(--pw-lh-relaxed, 1.55);
+  color: var(--muted, #8b9bb4);
+  font-variant-numeric: tabular-nums;
+}
+
+.progress-meta b,
+#percent {
+  font-family: var(--pw-font-mono, ui-monospace, "SF Mono", Menlo, monospace);
+  font-weight: 700;
+  color: var(--ink, #f8fafc);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --------------------------------------------------------------------------
+   18. REDUCED MOTION — honour system preference
+   Disable all CSS transitions / animations in typography layer.
+   (Animations in other layers should do the same in their own files.)
+   -------------------------------------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  a,
+  a.link,
+  .hint a,
+  .help-subtext a {
+    transition: none !important;
+  }
+}
+
+
+/* ═══════════ 03-components.css ═══════════ */
+/* ==========================================================================
+   03-COMPONENTS.CSS — Proxy Workbench Component Polish
+   Premium upgrade pass: coherent, calm, confident. Linear/Raycast/Stripe bar.
+   RULES: Vanilla CSS only. All selectors verified against index.html + app.js.
+          Uses var(--x, fallback) pattern. prefers-reduced-motion respected.
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   0. REDUCED MOTION SAFETY NET
+   All transitions & animations in this file use this guard.
+   -------------------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ==========================================================================
+   1. TOPBAR — subtle bottom border + backdrop blur elevation
+   Targets: header (verified line 137 index.html)
+   ========================================================================== */
+
+header {
+  /* Reinforce the existing backdrop-filter with a slightly stronger surface */
+  background: var(--bg-header, rgba(9, 13, 19, 0.88));
+  /* Crisp separator line — slightly stronger than the current rgba(255,255,255,0.08) */
+  border-bottom: 1px solid var(--line-strong, rgba(255, 255, 255, 0.16));
+  /* Extra shadow below header for perceived depth */
+  box-shadow: 0 1px 0 var(--line, rgba(255, 255, 255, 0.08)),
+              0 2px 12px rgba(0, 0, 0, 0.35);
+}
+
+/* LOCAL APP badge — keep it crisp and breathing gently */
+.local-badge {
+  letter-spacing: 0.07em;
+  box-shadow: 0 0 0 1px var(--teal-border, rgba(16, 185, 129, 0.32));
+  transition: box-shadow 0.2s ease;
+}
+
+/* ==========================================================================
+   2. SIDEBAR NAV — active pill: left indicator bar + soft accent fill
+   Targets: aside.sidebar nav button.nav, button.nav.active
+   (verified lines 51–118 index.html, lines 439–474 style.css)
+   ========================================================================== */
+
+aside.sidebar nav button.nav {
+  position: relative;
+  border-radius: 7px;
+  /* Tighten transition for snappier feel */
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+/* Left indicator bar — only paint it on active */
+aside.sidebar nav button.nav::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 3px;
+  border-radius: 0 2px 2px 0;
+  background: var(--teal, #10b981);
+  opacity: 0;
+  transition: opacity 0.15s ease, transform 0.15s var(--ease-spring, cubic-bezier(0.16, 1, 0.3, 1));
+  transform: scaleY(0.6);
+}
+
+aside.sidebar nav button.nav.active::before {
+  opacity: 1;
+  transform: scaleY(1);
+}
+
+aside.sidebar nav button.nav.active {
+  /* Slightly richer gradient fill — more premium than flat teal-pale */
+  background: linear-gradient(
+    100deg,
+    var(--teal-pale, rgba(16, 185, 129, 0.14)) 0%,
+    rgba(16, 185, 129, 0.06) 60%,
+    transparent 100%
+  );
+  border-color: var(--teal-border, rgba(16, 185, 129, 0.32));
+  color: var(--teal, #10b981);
+  font-weight: 650;
+  box-shadow: inset 0 0 0 1px var(--teal-border, rgba(16, 185, 129, 0.18)),
+              0 1px 3px rgba(0, 0, 0, 0.12);
+}
+
+/* Hover: subtle surface lift without colour change */
+aside.sidebar nav button.nav:hover:not(.active) {
+  background: var(--bg-surface-elevated, #151e2e);
+  color: var(--ink, #f8fafc);
+  border-color: var(--line, rgba(255, 255, 255, 0.08));
+}
+
+/* Focus ring — crisp emerald outline */
+aside.sidebar nav button.nav:focus-visible {
+  outline: 2px solid var(--teal, #10b981);
+  outline-offset: 2px;
+}
+
+/* ==========================================================================
+   3. SCENARIO CARDS ROW — equal heights, active ring, hover lift
+   Targets: .scenario-card, .scenario-card.active, .scenario-tag
+   (verified lines 175–214 index.html)
+   ========================================================================== */
+
+/* One-line grid scenario cards: uniform height & vertical rhythm */
+.scenarios-grid.one-line-grid .scenario-card {
+  /* Force equal heights inside the 5-column grid */
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  height: auto; /* the base layer pins 40px; the vertical card needs room */
+  min-height: 84px;
+  padding: 12px 14px;
+  gap: 6px;
+  border-radius: 9px;
+  border: 1px solid var(--line, rgba(255, 255, 255, 0.08));
+  background: var(--bg-card, #0f1622);
+  /* Softer shadow to ground each card */
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25), 0 0 0 0 var(--teal-border, rgba(16, 185, 129, 0.32));
+  transition:
+    border-color 0.18s ease,
+    box-shadow 0.18s ease,
+    transform 0.18s var(--ease-spring, cubic-bezier(0.16, 1, 0.3, 1));
+  cursor: pointer;
+}
+
+.scenarios-grid.one-line-grid .scenario-card:hover {
+  border-color: var(--line-strong, rgba(255, 255, 255, 0.16));
+  transform: translateY(-2px);
+  box-shadow:
+    0 4px 14px rgba(0, 0, 0, 0.35),
+    0 0 0 0 var(--teal-border, rgba(16, 185, 129, 0.32));
+}
+
+/* Active state: dual-ring accent (inner border + outer glow ring) */
+.scenarios-grid.one-line-grid .scenario-card.active {
+  border-color: var(--teal, #10b981);
+  background: var(--teal-pale, rgba(16, 185, 129, 0.14));
+  /* Outer ring like a selection indicator */
+  box-shadow:
+    0 0 0 1px var(--teal-border, rgba(16, 185, 129, 0.32)),
+    0 0 0 3px rgba(16, 185, 129, 0.10),
+    0 4px 14px rgba(0, 0, 0, 0.25);
+  transform: none;
+}
+
+/* Title: allow two lines in the vertical card (base layer pins nowrap+ellipsis) */
+.scenarios-grid.one-line-grid .scenario-card strong {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  line-height: 1.25;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+/* Scenario tag: mono, consistent height, border-only styling */
+.scenarios-grid.one-line-grid .scenario-card .scenario-tag {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 6px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 9px;
+  font-weight: 750;
+  letter-spacing: 0.05em;
+  border-radius: 3px;
+  background: transparent;
+  border: 1px solid var(--line-strong, rgba(255, 255, 255, 0.16));
+  color: var(--muted, #8b9bb4);
+  /* Tighter, more refined look */
+  align-self: flex-start;
+}
+
+.scenarios-grid.one-line-grid .scenario-card.active .scenario-tag {
+  background: var(--teal, #10b981);
+  border-color: var(--teal, #10b981);
+  color: #ffffff;
+}
+
+/* ==========================================================================
+   4. BADGES / CHIPS — consistent 22px height, dot indicators, subtle borders
+   Targets: .badge, .badge.pass, .badge.warn, .badge.fail, .badge.subtle
+            .condition-badge, .block-step-badge, .line-count-badge
+   (verified in style.css lines 1303–1337, 1432, 1555)
+   ========================================================================== */
+
+/* Base badge reset — standardise height and line-height */
+.badge {
+  height: 22px;
+  line-height: 20px;
+  padding: 0 9px;
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  border-radius: var(--radius-full, 9999px);
+  border-width: 1px;
+  border-style: solid;
+  /* Consistent box-sizing */
+  box-sizing: border-box;
+}
+
+/* Dot indicator before semantic badges */
+.badge.pass::before,
+.badge.success::before {
+  content: "";
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--teal, #10b981);
+  margin-right: 5px;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+
+.badge.warn::before {
+  content: "";
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--amber, #f59e0b);
+  margin-right: 5px;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+
+.badge.fail::before {
+  content: "";
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--rose, #f43f5e);
+  margin-right: 5px;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+
+/* Subtle badge — lighter border, no heavy fill */
+.badge.subtle {
+  background: transparent;
+  color: var(--muted, #8b9bb4);
+  border-color: var(--line-strong, rgba(255, 255, 255, 0.16));
+}
+
+/* Condition badge in the target card header */
+.condition-badge {
+  height: 22px;
+  line-height: 20px;
+  padding: 0 10px;
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.03em;
+  border-radius: var(--radius-full, 9999px);
+  background: transparent;
+  color: var(--muted, #8b9bb4);
+  border: 1px solid var(--line-strong, rgba(255, 255, 255, 0.16));
+  box-sizing: border-box;
+  white-space: nowrap;
+}
+
+/* Step number badge: block-step-badge */
+.block-step-badge {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--teal-pale, rgba(16, 185, 129, 0.14));
+  color: var(--teal, #10b981);
+  border: 1px solid var(--teal-border, rgba(16, 185, 129, 0.32));
+  font-size: 10.5px;
+  font-weight: 750;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+/* Line count badge (DNSBL, denylist) */
+.line-count-badge {
+  height: 20px;
+  padding: 0 7px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--muted, #8b9bb4);
+  background: transparent;
+  border: 1px solid var(--line, rgba(255, 255, 255, 0.08));
+  border-radius: var(--radius-xs, 4px);
+  display: inline-flex;
+  align-items: center;
+  box-sizing: border-box;
+}
+
+/* filter-chips — results toolbar (verified .filter-chip in style.css, index.html) */
+.filter-chip {
+  height: 28px;
+  padding: 0 11px;
+  font-size: 11.5px;
+  font-weight: 500;
+  border-radius: var(--radius-full, 9999px);
+  border: 1px solid var(--line, rgba(255, 255, 255, 0.08));
+  background: transparent;
+  color: var(--muted, #8b9bb4);
+  cursor: pointer;
+  transition: background 0.14s ease, border-color 0.14s ease, color 0.14s ease;
+  white-space: nowrap;
+  box-sizing: border-box;
+}
+
+.filter-chip:hover {
+  background: var(--bg-surface-elevated, #151e2e);
+  border-color: var(--line-strong, rgba(255, 255, 255, 0.16));
+  color: var(--ink, #f8fafc);
+}
+
+.filter-chip.active {
+  background: var(--teal-pale, rgba(16, 185, 129, 0.14));
+  border-color: var(--teal-border, rgba(16, 185, 129, 0.32));
+  color: var(--teal, #10b981);
+  font-weight: 650;
+  box-shadow: 0 0 0 1px var(--teal-border, rgba(16, 185, 129, 0.20));
+}
+
+.filter-chip:focus-visible {
+  outline: 2px solid var(--teal, #10b981);
+  outline-offset: 2px;
+}
+
+/* Results-toolbar specific filter chips (override the heavier .results-tb-filter-chips rules) */
+.results-tb-filter-chips .filter-chip {
+  height: 28px;
+  border-radius: var(--radius-full, 9999px);
+}
+
+/* ==========================================================================
+   5. RESULTS TABLE — sticky header with blur, row hover, zebra, cell rhythm
+   Targets: .table-wrap, thead th, tbody td, tbody tr
+   (verified lines 940–971 index.html, lines 3114–3227 style.css)
+   ========================================================================== */
+
+/* Outer container — better rounded corners & gentle shadow */
+.table-wrap {
+  border-radius: var(--radius-md, 8px);
+  border: 1px solid var(--line, rgba(255, 255, 255, 0.08));
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.30),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  overflow: hidden; /* clip to rounded corners */
+}
+
+/* Sticky header — backdrop blur for premium layering feel */
+thead th {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--bg-surface-elevated, #151e2e);
+  /* Backdrop blur so scrolling rows "slide under" the header */
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: var(--muted, #8b9bb4);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  /* Generous vertical rhythm */
+  padding: 11px 13px;
+  white-space: nowrap;
+  /* Separator below header */
+  border-bottom: 1.5px solid var(--line-strong, rgba(255, 255, 255, 0.16));
+  /* Subtle bottom shadow to sell the stickiness */
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+}
+
+/* Row cells — better padding rhythm */
+tbody td {
+  padding: 9px 13px;
+  border-bottom: 1px solid var(--line, rgba(255, 255, 255, 0.08));
+  color: var(--ink-secondary, #cbd5e1);
+  vertical-align: middle;
+  /* Smooth transitions for zebra / hover */
+  transition: background 0.12s ease;
+}
+
+/* Zebra stripes — very subtle, just enough to aid eye tracking */
+tbody tr:nth-child(even) td {
+  background: rgba(255, 255, 255, 0.015);
+}
+
+/* Row hover — clear highlight that doesn't fight zebra */
+tbody tr:hover td {
+  background: var(--surface-hover, #1a2538);
+}
+
+/* Keep sticky cells consistent on hover */
+tbody tr:hover td.td-check,
+tbody tr:hover td.td-num {
+  background: var(--surface-hover, #1a2538);
+}
+
+/* No border on last row */
+tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* Selected row — accent left border */
+tbody tr.selected td {
+  background: var(--teal-pale, rgba(16, 185, 129, 0.10));
+}
+
+tbody tr.selected td:first-child {
+  box-shadow: inset 3px 0 0 var(--teal, #10b981);
+}
+
+/* Light theme table adjustments */
+[data-theme="light"] tbody tr:nth-child(even) td {
+  background: rgba(15, 23, 42, 0.018);
+}
+
+[data-theme="light"] tbody tr:hover td {
+  background: var(--surface-hover, #e2e8f0);
+}
+
+/* ==========================================================================
+   6. EMPTY STATE — centered composition with icon circle
+   Targets: td.empty, .empty-table-state, .empty-table-icon, .empty-table-title
+   (verified lines 963–968 index.html, lines 7671–7711 style.css)
+   ========================================================================== */
+
+td.empty {
+  padding: 64px 24px !important;
+  text-align: center;
+  position: static !important;
+  background: transparent !important;
+}
+
+.empty-table-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  max-width: 320px;
+  margin: 0 auto;
+  text-align: center;
+}
+
+/* Icon circle — larger, more breathing room, gentle ring */
+.empty-table-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: var(--bg-surface, #121927);
+  border: 1.5px solid var(--line-strong, rgba(255, 255, 255, 0.16));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  color: var(--muted, #8b9bb4);
+  margin-bottom: 6px;
+  /* Outer glow ring for depth */
+  box-shadow:
+    0 0 0 5px rgba(255, 255, 255, 0.03),
+    0 4px 12px rgba(0, 0, 0, 0.25);
+}
+
+.empty-table-title {
+  font-size: 14px;
+  font-weight: 650;
+  color: var(--ink, #f8fafc);
+  line-height: 1.35;
+}
+
+.empty-table-desc {
+  font-size: 12px;
+  color: var(--muted, #8b9bb4);
+  line-height: 1.5;
+}
+
+/* Light theme empty state */
+[data-theme="light"] .empty-table-icon {
+  background: var(--bg-surface, #f1f5f9);
+  border-color: var(--line-strong, #cbd5e1);
+  box-shadow:
+    0 0 0 5px rgba(15, 23, 42, 0.03),
+    0 4px 12px rgba(15, 23, 42, 0.06);
+}
+
+/* ==========================================================================
+   7. PAGINATION CONTROLS — refined pill with balanced button height
+   Targets: .pagination.compact-pagination, .pagination-nav, .nav-page-btn, .page-badge
+   (verified lines 975–981 index.html, lines 7772–7799 style.css)
+   ========================================================================== */
+
+.pagination.compact-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 16px;
+  border-top: 1px solid var(--line, rgba(255, 255, 255, 0.08));
+  background: var(--bg-surface, #121927);
+  /* Subtle inner top shadow to separate from table */
+  box-shadow: inset 0 1px 0 var(--line, rgba(255, 255, 255, 0.05));
+}
+
+.result-total-pill {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--muted, #8b9bb4);
+  font-variant-numeric: tabular-nums;
+}
+
+.pagination-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--bg-surface-elevated, #151e2e);
+  border: 1px solid var(--line, rgba(255, 255, 255, 0.08));
+  border-radius: var(--radius-md, 8px);
+  padding: 3px;
+  box-sizing: border-box;
+}
+
+/* Page navigation buttons */
+.nav-page-btn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 6px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--muted, #8b9bb4);
+  cursor: pointer;
+  transition: background 0.14s ease, color 0.14s ease, border-color 0.14s ease;
+}
+
+.nav-page-btn:hover:not(:disabled) {
+  background: var(--surface-hover, #1a2538);
+  color: var(--ink, #f8fafc);
+  border-color: var(--line, rgba(255, 255, 255, 0.08));
+}
+
+.nav-page-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.nav-page-btn:focus-visible {
+  outline: 2px solid var(--teal, #10b981);
+  outline-offset: 2px;
+}
+
+/* Page number display */
+.page-badge {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  font-weight: 650;
+  padding: 2px 10px;
+  color: var(--ink-secondary, #cbd5e1);
+  user-select: none;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ==========================================================================
+   8. LOG / TERMINAL AREA — mono font stack, inner shadow, better line-height
+   Targets: .mac-terminal, .mac-terminal-bar, pre#log, .mac-terminal-card
+   (verified lines 663–682 index.html, lines 2521–2606 style.css)
+   ========================================================================== */
+
+/* Terminal card wrapper */
+.mac-terminal-card {
+  padding: 0;
+  overflow: hidden;
+  /* Slightly richer border */
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius-md, 8px);
+  background: var(--bg-card, #0f1622);
+  box-shadow:
+    0 4px 20px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+/* Summary line (collapsible trigger) */
+.mac-terminal-card > summary {
+  padding: 9px 14px;
+  font-size: 11.5px;
+  font-weight: 650;
+  color: var(--ink-secondary, #cbd5e1);
+  background: var(--bg-surface, #121927);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* The dark terminal body */
+.mac-terminal {
+  background: #05080d;
+  border-top: none;
+  overflow: hidden;
+  border-radius: 0 0 var(--radius-md, 8px) var(--radius-md, 8px);
+}
+
+/* Mac chrome bar */
+.mac-terminal-bar {
+  background: #0b0e15;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 7px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  /* Inner top highlight for depth */
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+/* Mac dots */
+.mac-dot-close   { background: #ef4444; box-shadow: 0 0 6px rgba(239, 68, 68, 0.5); }
+.mac-dot-minimize { background: #f59e0b; box-shadow: 0 0 6px rgba(245, 158, 11, 0.5); }
+.mac-dot-zoom    { background: #10b981; box-shadow: 0 0 6px rgba(16, 185, 129, 0.5); }
+
+/* The pre log area — premium mono font stack, no scanlines */
+pre#log {
+  margin: 0;
+  padding: 14px 18px;
+  /* Expanded mono stack: SF Mono → Consolas → Menlo → monospace */
+  font-family: "SF Mono", "Cascadia Code", ui-monospace, Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 11.5px;
+  /* Generous line-height for readability */
+  line-height: 1.65;
+  color: #b0c4d8;
+  max-height: 240px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  /* Inner top shadow — subtle depth, no scanlines */
+  box-shadow: inset 0 6px 12px rgba(0, 0, 0, 0.35);
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
+  /* Tab stops for aligned log columns */
+  tab-size: 4;
+}
+
+/* Compact / expanded height presets */
+.mac-terminal.compact pre#log  { max-height: 120px; }
+.mac-terminal.expanded pre#log { max-height: 480px; }
+
+/* Light theme terminal — maintain dark-only feel */
+[data-theme="light"] .mac-terminal {
+  background: #1a2030;
+}
+
+[data-theme="light"] .mac-terminal-bar {
+  background: #141a24;
+  border-bottom-color: rgba(255, 255, 255, 0.10);
+}
+
+[data-theme="light"] pre#log {
+  color: #b8cee0;
+}
+
+/* Height toggle buttons (verified .term-height-btn in style.css) */
+.term-height-btn {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #7a8fa6;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.14s ease, color 0.14s ease, border-color 0.14s ease;
+}
+
+.term-height-btn:hover {
+  background: rgba(255, 255, 255, 0.14);
+  color: #e2e8f0;
+  border-color: rgba(255, 255, 255, 0.22);
+}
+
+.term-height-btn.active {
+  background: var(--teal-pale, rgba(16, 185, 129, 0.18));
+  color: var(--teal, #10b981);
+  border-color: var(--teal-border, rgba(16, 185, 129, 0.40));
+  font-weight: 700;
+}
+
+/* ==========================================================================
+   9. TARGET FORM ROWS (.target) — aligned heights, remove-icon affordance
+   Targets: .target, .target-head, .target-remove-btn
+   (verified lines 1730–1843 style.css, generated by app.js line 2759)
+   ========================================================================== */
+
+/* Target card container */
+.target {
+  padding: 13px 16px;
+  background: var(--bg-surface, #121927);
+  border: 1px solid var(--line, rgba(255, 255, 255, 0.08));
+  border-radius: var(--radius-md, 8px);
+  margin-bottom: 10px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.20);
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.target:hover {
+  border-color: var(--line-strong, rgba(255, 255, 255, 0.16));
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28);
+}
+
+/* Target head row — tighter spacing, consistent 32px row height */
+.target-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  padding-bottom: 9px;
+  border-bottom: 1px solid var(--line, rgba(255, 255, 255, 0.08));
+  min-height: 32px;
+}
+
+/* Remove button — better affordance: visible on hover, danger color */
+.target-remove-btn {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-xs, 4px);
+  color: var(--faint, #64748b);
+  cursor: pointer;
+  transition:
+    color 0.14s ease,
+    background 0.14s ease,
+    border-color 0.14s ease;
+}
+
+.target-remove-btn:hover {
+  color: var(--rose, #f43f5e);
+  background: var(--rose-pale, rgba(244, 63, 94, 0.10));
+  border-color: var(--rose-border, rgba(244, 63, 94, 0.28));
+}
+
+.target-remove-btn:focus-visible {
+  outline: 2px solid var(--rose, #f43f5e);
+  outline-offset: 2px;
+}
+
+/* ==========================================================================
+   10. VIEW TABS (Results page) — refined active state
+   Targets: .view-tabs, .view-tab, .view-tab.active, .view-count
+   (verified lines 695–701 index.html, lines 8101–8143 style.css)
+   ========================================================================== */
+
+.view-tabs {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  background: var(--bg-surface, #121927);
+  border: 1px solid var(--line, rgba(255, 255, 255, 0.08));
+  border-radius: var(--radius-sm, 6px);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.20);
+}
+
+.view-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted, #8b9bb4);
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.14s ease, color 0.14s ease, border-color 0.14s ease;
+  white-space: nowrap;
+}
+
+.view-tab:hover:not(.active) {
+  background: var(--bg-card-hover, #151e2e);
+  color: var(--ink-secondary, #cbd5e1);
+}
+
+.view-tab.active {
+  background: var(--bg-card, #0f1622);
+  color: var(--teal, #10b981);
+  border-color: var(--teal-border, rgba(16, 185, 129, 0.32));
+  font-weight: 650;
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.20),
+    inset 0 0 0 1px rgba(16, 185, 129, 0.08);
+}
+
+.view-count {
+  font-size: 9.5px;
+  font-weight: 600;
+  color: var(--faint, #64748b);
+  font-variant-numeric: tabular-nums;
+  min-width: 12px;
+  text-align: center;
+}
+
+.view-tab.active .view-count {
+  color: var(--teal, #10b981);
+}
+
+.view-tab:focus-visible {
+  outline: 2px solid var(--teal, #10b981);
+  outline-offset: 2px;
+}
+
+/* ==========================================================================
+   11. LIGHT THEME OVERRIDES for components above
+   ========================================================================== */
+
+/* Topbar */
+[data-theme="light"] header {
+  background: var(--bg-header, rgba(248, 250, 252, 0.92));
+  border-bottom-color: var(--line-strong, #cbd5e1);
+  box-shadow: 0 1px 0 #e2e8f0, 0 2px 10px rgba(15, 23, 42, 0.06);
+}
+
+/* Sidebar nav */
+[data-theme="light"] aside.sidebar nav button.nav.active {
+  background: linear-gradient(
+    100deg,
+    var(--teal-pale, #ecfdf5) 0%,
+    rgba(16, 185, 129, 0.04) 60%,
+    transparent 100%
+  );
+  box-shadow: inset 0 0 0 1px var(--teal-border, #a7f3d0);
+}
+
+/* Table */
+[data-theme="light"] thead th {
+  background: var(--bg-surface-elevated, #e2e8f0);
+  border-bottom-color: var(--line-strong, #cbd5e1);
+  color: var(--muted, #64748b);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+}
+
+[data-theme="light"] .table-wrap {
+  box-shadow:
+    0 1px 3px rgba(15, 23, 42, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.80);
+}
+
+/* Pagination */
+[data-theme="light"] .pagination.compact-pagination {
+  background: var(--bg-surface, #f1f5f9);
+  border-top-color: var(--line, #e2e8f0);
+}
+
+[data-theme="light"] .pagination-nav {
+  background: var(--bg-surface-elevated, #e2e8f0);
+  border-color: var(--line-strong, #cbd5e1);
+}
+
+[data-theme="light"] .nav-page-btn:hover:not(:disabled) {
+  background: var(--surface-hover, #e2e8f0);
+}
+
+/* Scenario cards */
+[data-theme="light"] .scenarios-grid.one-line-grid .scenario-card {
+  background: var(--bg-card, #ffffff);
+  border-color: var(--line, #e2e8f0);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+}
+
+[data-theme="light"] .scenarios-grid.one-line-grid .scenario-card:hover {
+  border-color: var(--line-strong, #cbd5e1);
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.09);
+}
+
+/* Filter chips */
+[data-theme="light"] .filter-chip {
+  border-color: var(--line, #e2e8f0);
+  color: var(--muted, #64748b);
+}
+
+[data-theme="light"] .filter-chip:hover {
+  background: var(--bg-surface-elevated, #e2e8f0);
+  border-color: var(--line-strong, #cbd5e1);
+  color: var(--ink, #0f172a);
+}
+
+/* View tabs */
+[data-theme="light"] .view-tabs {
+  background: var(--bg-surface, #f1f5f9);
+  border-color: var(--line, #e2e8f0);
+  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+[data-theme="light"] .view-tab.active {
+  background: var(--bg-card, #ffffff);
+  border-color: var(--line-strong, #cbd5e1);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+}
+
+/* ==========================================================================
+   12. CLEAN FIELD GRID — form rows spacing rhythm (Parameters block)
+   Targets: .clean-field-grid, .input-unit-wrap
+   (verified line 267 index.html, lines 1520–1526 style.css)
+   ========================================================================== */
+
+/* Slightly more spacious grid gap for breathing room */
+.clean-field-grid {
+  gap: 12px;
+}
+
+/* Input unit wrap — ensure the unit badge never clips */
+.input-unit-wrap {
+  position: relative;
+}
+
+.input-unit-wrap input {
+  padding-right: 52px;
+}
+
+.unit-badge {
+  right: 10px;
+  font-size: 10.5px;
+  font-weight: 650;
+  color: var(--faint, #64748b);
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+/* ==========================================================================
+   13. SCENARIO CARDS (non-one-line variants) — consistent
+   Targets: .scenario-card (the base non-compact version)
+   ========================================================================== */
+
+.scenario-card {
+  border-radius: var(--radius-md, 8px);
+  border: 1px solid var(--line, rgba(255, 255, 255, 0.08));
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  transition:
+    border-color 0.18s ease,
+    box-shadow 0.18s ease,
+    transform 0.18s var(--ease-spring, cubic-bezier(0.16, 1, 0.3, 1));
+}
+
+.scenario-card.active {
+  border-color: var(--teal, #10b981);
+  background: var(--teal-pale, rgba(16, 185, 129, 0.12));
+  box-shadow:
+    0 0 0 1px var(--teal-border, rgba(16, 185, 129, 0.32)),
+    0 0 0 3px rgba(16, 185, 129, 0.08),
+    0 4px 16px rgba(0, 0, 0, 0.20);
+}
+
+/* ==========================================================================
+   END OF 03-COMPONENTS.CSS
+   ========================================================================== */
+
+
+/* ═══════════ 04-light.css ═══════════ */
+/* ==========================================================================
+   PROXY WORKBENCH — 04-light.css
+   Light Theme Parity + Contrast Correction Layer
+   Scoped to [data-theme="light"] and html[data-theme="light"]
+   ==========================================================================
+
+   AUDIT — HARDCODED DARK COLORS FOUND OUTSIDE :root / [data-theme] BLOCKS
+   (component-rule literals that break light theme)
+
+   Line 2537  .mac-terminal           background: #06090e  → near-black, invisible dark chrome
+   Line 2545  .mac-terminal-bar       background: #0c1118  → near-black bar, invisible in light
+   Line 2573  .mac-terminal-title     color: #64748b       → OK but untokenised (used in dark ctx)
+   Line 2583  .mac-terminal-badge     color: #10b981       → bright green, low contrast on light bar
+   Line 2590  .terminal-live-dot      background: #10b981  → accent OK, minor refinement
+   Line 2600  pre#log                 color: #cbd5e1       → near-white text, ~1.5:1 on white bg ✗
+   Line 7241  .term-height-btn        background: rgba(255,255,255,0.08) → ~0 visibility on light
+   Line 7242  .term-height-btn        border: rgba(255,255,255,0.15)     → invisible on light bg
+   Line 7244  .term-height-btn        color: #94a3b8       → ~2.8:1 on light btn bg ✗
+   Line 7253  .term-height-btn:hover  background: rgba(255,255,255,0.2)  → invisible on light
+   Line 7254  .term-height-btn:hover  color: #f8fafc       → near-white, ~1.1:1 on light ✗
+
+   WCAG CONTRAST CHECK (light theme token values)
+   --ink (#0f172a)        on --bg-app (#f8fafc):   ~18.5:1 ✓ AAA
+   --ink-secondary (#334155) on #f8fafc:           ~ 9.8:1 ✓ AAA
+   --muted (#64748b)      on #f8fafc:              ~ 4.6:1 ✓ AA
+   --faint (#94a3b8)      on #f8fafc:              ~ 2.8:1 ✗ decorative only
+   --accent-text (#065f46) on #ecfdf5:             ~ 8.2:1 ✓ AAA
+   pre#log #cbd5e1        on white bg:             ~ 1.5:1 ✗ FIXED below
+
+   ISSUES FIXED IN THIS FILE
+   1.  .mac-terminal — near-black bg → light surface
+   2.  .mac-terminal-bar — near-black bg → light surface-elevated
+   3.  .mac-terminal-badge — bright green → dark accent-text
+   4.  .terminal-live-dot — accent colour (minor refinement)
+   5.  pre#log — near-white text → dark ink-secondary on light bg
+   6.  .term-height-btn — invisible dark rgba → solid light tokens
+   7.  dialog — box-shadow 0.7 opacity → light-appropriate shadow
+   8.  dialog::backdrop — rgba(0,0,0,0.68) → 0.45 opacity for light
+   9.  #toast — heavy box-shadow → light-appropriate
+   10. .step-badge-ios — #3b82f6 on white ~3.1:1 → #1d4ed8 on #eff6ff ~7.2:1
+   11. .step-badge-android — #10b981 on white ~2.5:1 → #065f46 on #ecfdf5 ~8.2:1
+   12. .mission-btn-stop — dark danger state → visible red-on-light + solid hover
+   13. .mission-btn-start — heavy glow shadow → softened for light
+   14. .results-table sticky column shadow — lightened
+   15. .qr-container.has-qr — border visibility bump
+   16. .code-snippet-box — border bump to line-strong
+   17. Cards / section-cards — border bump
+   18. Header — bottom border + lighter shadow
+   19. Sidebar — right border
+   20. .scenario-card hover + active — light-adapted focus ring
+   ========================================================================== */
+
+/* ── 1. TERMINAL BLOCK ─────────────────────────────────────────────────────
+   .mac-terminal uses hardcoded near-black: #06090e (line 2537)
+   .mac-terminal-bar uses hardcoded near-black: #0c1118 (line 2545)
+   .mac-terminal-title uses hardcoded #64748b (line 2573)
+   .mac-terminal-badge uses hardcoded #10b981 (line 2583) → low contrast on light bar
+   ─────────────────────────────────────────────────────────────────────── */
+
+[data-theme="light"] .mac-terminal {
+  background: var(--bg-surface, #f1f5f9);
+  border: 1px solid var(--line-strong, #cbd5e1);
+  box-shadow: var(--shadow-sm, 0 1px 3px rgba(15, 23, 42, 0.06));
+}
+
+[data-theme="light"] .mac-terminal-bar {
+  background: var(--bg-surface-elevated, #e2e8f0);
+  border-bottom: 1px solid var(--line-strong, #cbd5e1);
+}
+
+[data-theme="light"] .mac-terminal-title {
+  /* #64748b on #e2e8f0 → ~4.6:1 ✓ AA */
+  color: var(--muted, #64748b);
+}
+
+[data-theme="light"] .mac-terminal-badge {
+  /* #065f46 on #e2e8f0 → ~8.5:1 ✓ AAA */
+  color: var(--accent-text, #065f46);
+}
+
+[data-theme="light"] .terminal-live-dot {
+  background: var(--accent, #059669);
+}
+
+/* ── 2. pre#log ────────────────────────────────────────────────────────────
+   Hardcoded color: #cbd5e1 (line 2600) → near-white, ~1.5:1 on white bg ✗
+   ─────────────────────────────────────────────────────────────────────── */
+
+[data-theme="light"] pre#log {
+  /* #334155 on #f1f5f9 → ~8.9:1 ✓ AAA */
+  color: var(--ink-secondary, #334155);
+  background: var(--bg-surface, #f1f5f9);
+}
+
+/* ── 3. TERMINAL HEIGHT BUTTONS ────────────────────────────────────────────
+   .term-height-btn (lines 7241-7255):
+   bg  rgba(255,255,255,0.08) → invisible on light bg
+   bdr rgba(255,255,255,0.15) → invisible on light bg
+   clr #94a3b8 → ~2.8:1 on light btn bg ✗
+   :hover bg  rgba(255,255,255,0.2)  → invisible
+   :hover clr #f8fafc               → ~1.1:1 on light ✗
+   ─────────────────────────────────────────────────────────────────────── */
+
+[data-theme="light"] .term-height-btn {
+  background: var(--bg-card, #ffffff);
+  border: 1px solid var(--line-strong, #cbd5e1);
+  /* #334155 on #fff → ~9.8:1 ✓ AAA */
+  color: var(--ink-secondary, #334155);
+}
+
+[data-theme="light"] .term-height-btn:hover,
+[data-theme="light"] .term-height-btn.active {
+  background: var(--bg-surface, #f1f5f9);
+  border-color: var(--accent, #059669);
+  color: var(--ink, #0f172a);
+}
+
+/* ── 4. DIALOG ─────────────────────────────────────────────────────────────
+   Base: box-shadow 0 24px 64px rgba(0,0,0,0.7) + backdrop rgba(0,0,0,0.68)
+   Both are crushing on a light background.
+   ─────────────────────────────────────────────────────────────────────── */
+
+[data-theme="light"] dialog[open] {
+  background: var(--bg-card, #ffffff);
+  border: 1px solid var(--line-strong, #cbd5e1);
+  box-shadow:
+    0 0 0 1px rgba(15, 23, 42, 0.04),
+    0 20px 56px -8px rgba(15, 23, 42, 0.12),
+    0 8px 20px -4px rgba(15, 23, 42, 0.06);
+}
+
+[data-theme="light"] dialog::backdrop {
+  background: rgba(15, 23, 42, 0.42);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+/* ── 5. TOAST ──────────────────────────────────────────────────────────────
+   Base: box-shadow 0 10px 30px rgba(0,0,0,0.45) is too intense on light.
+   ─────────────────────────────────────────────────────────────────────── */
+
+[data-theme="light"] #toast:not([hidden]):not(:empty) {
+  box-shadow:
+    0 0 0 1px rgba(15, 23, 42, 0.06),
+    0 8px 24px -4px rgba(15, 23, 42, 0.10);
+}
+
+/* ── 6. STEP BADGES — CONTRAST FIX ────────────────────────────────────────
+   .step-badge-ios:     #3b82f6 on rgba(59,130,246,0.12)≈white → ~3.1:1 ✗
+   .step-badge-android: #10b981 on rgba(16,185,129,0.12)≈white → ~2.5:1 ✗
+   ─────────────────────────────────────────────────────────────────────── */
+
+[data-theme="light"] .step-badge-ios {
+  /* #1d4ed8 on #eff6ff → ~7.2:1 ✓ AAA */
+  background: #eff6ff;
+  color: #1d4ed8;
+  border-color: rgba(29, 78, 216, 0.22);
+}
+
+[data-theme="light"] .step-badge-android {
+  /* #065f46 on #ecfdf5 → ~8.2:1 ✓ AAA */
+  background: #ecfdf5;
+  color: #065f46;
+  border-color: rgba(6, 95, 70, 0.20);
+}
+
+/* ── 7. MISSION STOP BUTTON — DANGER CONTRAST ─────────────────────────────
+   :not(:disabled)       color: #f87171 on rgba(239,68,68,0.15)≈white → ~3.2:1 ✗
+   :not(:disabled):hover color: #ffffff on rgba(239,68,68,0.3) → ~2.9:1 ✗
+   ─────────────────────────────────────────────────────────────────────── */
+
+[data-theme="light"] .mission-btn-stop:not(:disabled) {
+  background: rgba(239, 68, 68, 0.08) !important;
+  border: 1px solid rgba(239, 68, 68, 0.30) !important;
+  /* #b91c1c on light → ~7.5:1 ✓ AAA */
+  color: #b91c1c !important;
+}
+
+[data-theme="light"] .mission-btn-stop:not(:disabled):hover {
+  /* #ffffff on #ef4444 → ~4.6:1 ✓ AA */
+  background: #ef4444 !important;
+  border-color: #dc2626 !important;
+  color: #ffffff !important;
+}
+
+/* ── 8. MISSION START BUTTON — GLOW SHADOW ─────────────────────────────────
+   Gradient itself is fine; glow shadow rgba(16,185,129,0.4) looks muddy on white.
+   ─────────────────────────────────────────────────────────────────────── */
+
+[data-theme="light"] .mission-btn-start {
+  box-shadow: 0 2px 10px rgba(5, 150, 105, 0.20) !important;
+}
+
+[data-theme="light"] .mission-btn-start:hover {
+  box-shadow: 0 4px 16px rgba(5, 150, 105, 0.30) !important;
+}
+
+/* ── 9. STICKY COLUMN SHADOW (RESULTS TABLE) ──────────────────────────────
+   box-shadow: 3px 0 6px -2px rgba(0,0,0,0.2) is visible but heavy on white.
+   ─────────────────────────────────────────────────────────────────────── */
+
+[data-theme="light"] .results-table tbody td.td-num,
+[data-theme="light"] .results-table thead th.th-num {
+  box-shadow: 3px 0 8px -4px rgba(15, 23, 42, 0.08);
+}
+
+/* ── 10. QR CONTAINER ──────────────────────────────────────────────────────
+   .qr-container.has-qr already uses #ffffff bg (correct).
+   Ensure border is clearly visible on near-white app bg.
+   ─────────────────────────────────────────────────────────────────────── */
+
+[data-theme="light"] .qr-container:has(svg),
+[data-theme="light"] .qr-container.has-qr {
+  border: 1px solid var(--line-strong, #cbd5e1);
+  box-shadow: var(--shadow-sm, 0 1px 3px rgba(15, 23, 42, 0.06));
+}
+
+/* ── 11. CODE SNIPPET BOX ──────────────────────────────────────────────────
+   --line in light = #e2e8f0 on --bg-surface #f1f5f9 → very low contrast.
+   Bump to line-strong.
+   ─────────────────────────────────────────────────────────────────────── */
+
+[data-theme="light"] .code-snippet-box {
+  border-color: var(--line-strong, #cbd5e1);
+}
+
+/* ── 12. CARDS & SECTION CARDS ─────────────────────────────────────────────
+   Generic .card / .section-card with --line borders may be near-invisible
+   on white surfaces. Bump to line-strong.
+   ─────────────────────────────────────────────────────────────────────── */
+
+[data-theme="light"] .card {
+  border-color: var(--line-strong, #cbd5e1);
+}
+
+[data-theme="light"] .section-card {
+  border-color: var(--line-strong, #cbd5e1);
+}
+
+/* ── 13. APP HEADER ─────────────────────────────────────────────────────────
+   Header bg is rgba(248,250,252,0.90) ≈ app bg — add crisp separator.
+   ─────────────────────────────────────────────────────────────────────── */
+
+[data-theme="light"] header,
+[data-theme="light"] .app-header {
+  border-bottom-color: var(--line-strong, #cbd5e1);
+  box-shadow: 0 1px 0 var(--line-strong, #cbd5e1),
+              var(--shadow-xs, 0 1px 2px rgba(15, 23, 42, 0.03));
+}
+
+/* ── 14. SIDEBAR ────────────────────────────────────────────────────────────
+   Sidebar (#ffffff) vs bg-app (#f8fafc): ~same luminance, needs separator.
+   ─────────────────────────────────────────────────────────────────────── */
+
+[data-theme="light"] aside.sidebar,
+[data-theme="light"] .sidebar {
+  border-right-color: var(--line-strong, #cbd5e1);
+}
+
+/* ── 15. SCENARIO CARD — HOVER & ACTIVE ────────────────────────────────────
+   In dark mode the glow is rendered via box-shadow with rgba opacity.
+   In light mode the card bg is #ffffff — ensure focus ring is visible.
+   ─────────────────────────────────────────────────────────────────────── */
+
+[data-theme="light"] .scenario-card:hover {
+  border-color: var(--line-strong, #cbd5e1);
+  box-shadow: var(--shadow-sm, 0 1px 3px rgba(15, 23, 42, 0.06));
+}
+
+[data-theme="light"] .scenario-card.active {
+  border-color: var(--accent, #059669);
+  box-shadow: 0 0 0 1px var(--accent, #059669),
+              0 2px 8px rgba(5, 150, 105, 0.12);
+}
+
+/* ── 16. FOCUS STATES — UNIVERSAL CRISP RING ──────────────────────────────
+   Dark glow: 0 0 0 2px rgba(16,185,129,0.16) may be too faint on light.
+   ─────────────────────────────────────────────────────────────────────── */
+
+[data-theme="light"] :focus-visible {
+  outline: 2px solid var(--line-focus, #10b981);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.12);
+}
+
+/* ── 17. PREFERS-REDUCED-MOTION GUARD ─────────────────────────────────────
+   All overrides above are colour/border/shadow — no motion changes.
+   Guard animated elements that might be affected.
+   ─────────────────────────────────────────────────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  [data-theme="light"] .terminal-live-dot {
+    animation: none;
+  }
+
+  [data-theme="light"] dialog[open] {
+    animation: none;
+    transform: none;
+  }
+
+  [data-theme="light"] #toast:not([hidden]):not(:empty) {
+    animation: none;
+  }
+}
+
+
+/* ═══════════ 02-motion.css ═══════════ */
+/* ==========================================================================
+   PROXY WORKBENCH — 02-motion.css
+   Micro-animations & Delight Layer
+   Vanilla CSS only · Dark/green accent system · prefers-reduced-motion safe
+   ========================================================================== */
+
+/*
+  CLASSES INTENTIONALLY INTRODUCED FOR app.js TO USE:
+  ─────────────────────────────────────────────────────────────────────────────
+  .panel-enter        — Apply to .page.active panels after tab switch;
+                        triggers fadeUp entrance (remove after animationend).
+  .card-stagger       — Apply to a card container whose direct .card children
+                        should animate in with nth-child stagger on page load.
+  .skeleton           — Shimmer placeholder for async loading states.
+  .btn-loading        — Add to .button while async work is in progress;
+                        shows a shimmer overlay and prevents double-clicks.
+  .toast-progress     — Injected inside #toast by app.js to show a progress bar.
+  ─────────────────────────────────────────────────────────────────────────────
+*/
+
+
+/* ==========================================================================
+   0. MASTER prefers-reduced-motion KILL SWITCH
+   All animation / transition / keyframe declarations inside this file are
+   wrapped or overridden below. One block, complete coverage.
+   ========================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  /* Kill every animation and cut every transition to instant */
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    transition-delay: 0ms !important;
+  }
+}
+
+
+/* ==========================================================================
+   1. KEYFRAME LIBRARY
+   ========================================================================== */
+
+/* --- Entrance utilities --- */
+@keyframes pw-fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pw-fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes pw-scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.97) translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+/* --- Toast slide-down from top --- */
+@keyframes pw-toastSlideIn {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -14px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+}
+
+/* --- Toast shimmer progress bar --- */
+@keyframes pw-shimmer {
+  0%   { background-position: -200% center; }
+  100% { background-position:  200% center; }
+}
+
+/* --- Skeleton shimmer --- */
+@keyframes pw-skeletonShimmer {
+  0%   { background-position: -400px 0; }
+  100% { background-position:  400px 0; }
+}
+
+/* --- Status dot: soft expanding ring pulse --- */
+@keyframes pw-dotRing {
+  0% {
+    box-shadow:
+      0 0 0 0   var(--teal-glow, rgba(16,185,129,0.4)),
+      0 0 6px 0 var(--teal, #10b981);
+  }
+  60% {
+    box-shadow:
+      0 0 0 5px rgba(16, 185, 129, 0),
+      0 0 8px 0 var(--teal, #10b981);
+  }
+  100% {
+    box-shadow:
+      0 0 0 0   rgba(16, 185, 129, 0),
+      0 0 6px 0 var(--teal, #10b981);
+  }
+}
+
+/* --- Radar dot expanding ring (distinct timing) --- */
+@keyframes pw-radarRing {
+  0% {
+    box-shadow:
+      0 0 0 0   var(--teal-glow, rgba(16,185,129,0.35)),
+      0 0 4px 0 var(--teal, #10b981);
+  }
+  65% {
+    box-shadow:
+      0 0 0 7px rgba(16, 185, 129, 0),
+      0 0 10px 0 var(--teal, #10b981);
+  }
+  100% {
+    box-shadow:
+      0 0 0 0   rgba(16, 185, 129, 0),
+      0 0 4px 0 var(--teal, #10b981);
+  }
+}
+
+/* --- Button icon nudge --- */
+@keyframes pw-iconNudge {
+  0%   { transform: translateX(0); }
+  40%  { transform: translateX(3px); }
+  100% { transform: translateX(0); }
+}
+
+/* --- View-tab indicator slide --- */
+@keyframes pw-tabIndicatorIn {
+  from { opacity: 0; transform: scaleX(0.6); }
+  to   { opacity: 1; transform: scaleX(1); }
+}
+
+/* --- Modal backdrop --- */
+@keyframes pw-backdropIn {
+  from { opacity: 0; backdrop-filter: blur(0px); }
+  to   { opacity: 1; backdrop-filter: blur(8px); }
+}
+
+
+/* ==========================================================================
+   2. BUTTONS
+   Verified selectors: .button, .button.primary, aside.sidebar nav button.nav
+   ========================================================================== */
+
+/* --- 2a. Generic button hover lift (150ms, spring ease) --- */
+/* NOTE: style.css already defines translateY(-1px) + shadow on .button:hover.
+   We layer an extra glow transition on top without overriding existing rules.  */
+.button:not(:disabled) {
+  transition:
+    transform     0.15s var(--ease-spring, cubic-bezier(0.16,1,0.3,1)),
+    box-shadow    0.15s var(--ease-spring, cubic-bezier(0.16,1,0.3,1)),
+    border-color  0.15s ease,
+    background    0.15s ease,
+    color         0.15s ease,
+    opacity       0.15s ease;
+}
+
+/* --- 2b. Primary button: subtle emerald glow on hover --- */
+.button.primary:hover:not(:disabled) {
+  box-shadow:
+    0 4px 14px var(--teal-glow, rgba(16,185,129,0.24)),
+    0 0 0 1px  var(--teal-border, rgba(16,185,129,0.32));
+}
+
+/* Intensify on focus-visible for keyboard users */
+.button.primary:focus-visible:not(:disabled) {
+  outline: none;
+  box-shadow:
+    0 0 0 2px var(--bg-app, #090d13),
+    0 0 0 4px var(--teal, #10b981),
+    0 4px 14px var(--teal-glow, rgba(16,185,129,0.24));
+}
+
+/* --- 2c. Active press scale --- */
+.button:active:not(:disabled) {
+  transform: scale(0.98) !important;
+  transition-duration: 0.08s !important;
+}
+
+/* --- 2d. Icon nudge: buttons that contain an SVG or icon span --- */
+/* Matches icon buttons in results toolbar, header actions */
+.button:hover:not(:disabled) svg,
+.button:hover:not(:disabled) .btn-icon {
+  animation: pw-iconNudge 0.35s var(--ease-spring, cubic-bezier(0.16,1,0.3,1)) forwards;
+}
+
+/* --- 2e. Nav sidebar buttons --- */
+aside.sidebar nav button.nav {
+  transition:
+    background    0.15s ease,
+    color         0.15s ease,
+    border-color  0.15s ease,
+    transform     0.15s var(--ease-spring, cubic-bezier(0.16,1,0.3,1));
+}
+
+aside.sidebar nav button.nav:hover:not(.active) {
+  transform: translateX(2px);
+}
+
+aside.sidebar nav button.nav.active {
+  /* Smooth accent border glow for active state */
+  box-shadow:
+    inset 3px 0 0 var(--teal, #10b981),
+    0 1px 4px rgba(0,0,0,0.1);
+  transition:
+    background    0.2s ease,
+    color         0.2s ease,
+    border-color  0.2s ease,
+    box-shadow    0.2s ease;
+}
+
+/* --- 2f. Save-settings button feedback already in style.css; just smooth it --- */
+.save-settings-btn {
+  transition:
+    transform     0.18s var(--ease-spring, cubic-bezier(0.16,1,0.3,1)),
+    box-shadow    0.18s var(--ease-spring, cubic-bezier(0.16,1,0.3,1)),
+    border-color  0.18s ease,
+    background    0.18s ease,
+    color         0.18s ease !important;
+}
+
+
+/* ==========================================================================
+   3. CARDS
+   Verified selectors: .card, .scenario-card, .card-stagger (new)
+   ========================================================================== */
+
+/* --- 3a. Card hover: border accent + lift (interactive cards only) --- */
+/* style.css already transitions transform/shadow; we add border-teal hint */
+.card:hover {
+  border-color: var(--teal-border, rgba(16,185,129,0.28));
+  transform: translateY(-1px);
+}
+
+/* Non-interactive cards (monitor, table wrappers) opt out */
+.card.monitor:hover,
+.results-card.table-focus-card:hover,
+.card.no-lift:hover {
+  transform: none;
+  border-color: var(--line-strong, rgba(255,255,255,0.16));
+}
+
+/* --- 3b. Scenario cards: enhanced interactive lift --- */
+.scenario-card {
+  transition:
+    transform     0.18s var(--ease-spring, cubic-bezier(0.16,1,0.3,1)),
+    border-color  0.18s ease,
+    box-shadow    0.18s var(--ease-spring, cubic-bezier(0.16,1,0.3,1)),
+    background    0.18s ease;
+}
+
+.scenario-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--teal-border, rgba(16,185,129,0.32));
+  box-shadow:
+    var(--shadow-md, 0 4px 16px rgba(0,0,0,0.6)),
+    0 0 0 1px var(--teal-border, rgba(16,185,129,0.2));
+}
+
+.scenario-card:active {
+  transform: scale(0.975) !important;
+  transition-duration: 0.08s !important;
+}
+
+/* --- 3c. Card entrance animation with nth-child stagger (page load only) ---
+   Add class .card-stagger to the container whose .card children should
+   animate in. Works for up to 8 children. Uses animation (not transition)
+   so it fires once on page load only. */
+
+.card-stagger > .card,
+.card-stagger > .scenario-card {
+  opacity: 0;
+  animation: pw-fadeUp 300ms var(--ease-spring, cubic-bezier(0.16,1,0.3,1)) forwards;
+}
+
+.card-stagger > .card:nth-child(1),
+.card-stagger > .scenario-card:nth-child(1) { animation-delay:  40ms; }
+.card-stagger > .card:nth-child(2),
+.card-stagger > .scenario-card:nth-child(2) { animation-delay:  90ms; }
+.card-stagger > .card:nth-child(3),
+.card-stagger > .scenario-card:nth-child(3) { animation-delay: 140ms; }
+.card-stagger > .card:nth-child(4),
+.card-stagger > .scenario-card:nth-child(4) { animation-delay: 190ms; }
+.card-stagger > .card:nth-child(5),
+.card-stagger > .scenario-card:nth-child(5) { animation-delay: 240ms; }
+.card-stagger > .card:nth-child(6),
+.card-stagger > .scenario-card:nth-child(6) { animation-delay: 290ms; }
+.card-stagger > .card:nth-child(7),
+.card-stagger > .scenario-card:nth-child(7) { animation-delay: 340ms; }
+.card-stagger > .card:nth-child(8),
+.card-stagger > .scenario-card:nth-child(8) { animation-delay: 380ms; }
+
+
+/* ==========================================================================
+   4. TAB SWITCHING
+   Verified selectors: .view-tab, .view-tab.active, .page.active
+   ========================================================================== */
+
+/* --- 4a. view-tab pill transition --- */
+.view-tab {
+  position: relative;
+  transition:
+    background    0.15s ease,
+    color         0.15s ease,
+    font-weight   0.1s  ease;
+}
+
+/* Animated underline indicator using ::after pseudo-element */
+.view-tab::after {
+  content: '';
+  position: absolute;
+  bottom: 2px;
+  left: 50%;
+  width: 0%;
+  height: 2px;
+  background: var(--teal, #10b981);
+  border-radius: 2px;
+  transform: translateX(-50%);
+  opacity: 0;
+  transition:
+    width   0.2s var(--ease-spring, cubic-bezier(0.16,1,0.3,1)),
+    opacity 0.2s ease;
+}
+
+.view-tab.active::after {
+  width: 70%;
+  opacity: 1;
+  animation: pw-tabIndicatorIn 0.22s var(--ease-spring, cubic-bezier(0.16,1,0.3,1)) forwards;
+}
+
+/* --- 4b. Panel content entrance (class applied by app.js on tab switch) ---
+   app.js should: add .panel-enter to the newly activated .page.active, then
+   remove it on animationend.  */
+.panel-enter {
+  animation: pw-scaleIn 0.22s var(--ease-spring, cubic-bezier(0.16,1,0.3,1)) both !important;
+}
+
+/* Page active baseline — keep existing pageFadeSlide, just ensure will-change */
+.page.active {
+  will-change: opacity, transform;
+}
+
+
+/* ==========================================================================
+   5. INPUTS & SELECTS
+   Verified selectors: input[type="text|number|search|url"], select, textarea
+   ========================================================================== */
+
+/* --- 5a. Focus ring transition (enhances existing style.css rules) --- */
+input[type="text"],
+input[type="number"],
+input[type="search"],
+input[type="url"],
+input:not([type]),
+textarea,
+select {
+  transition:
+    border-color  0.15s ease,
+    box-shadow    0.15s ease,
+    background    0.15s ease;
+}
+
+/* Crisp, visible focus ring */
+input[type="text"]:focus,
+input[type="number"]:focus,
+input[type="search"]:focus,
+input[type="url"]:focus,
+input:not([type]):focus,
+textarea:focus,
+select:focus {
+  outline: none;
+  border-color: var(--line-focus, #10b981) !important;
+  box-shadow:
+    0 0 0 3px var(--teal-pale, rgba(16,185,129,0.14)),
+    0 0 0 1px var(--teal-border, rgba(16,185,129,0.32));
+  transition:
+    border-color 0.12s ease,
+    box-shadow   0.18s var(--ease-spring, cubic-bezier(0.16,1,0.3,1));
+}
+
+/* --- 5b. Hover border brighten --- */
+input:hover:not(:disabled):not(:focus),
+select:hover:not(:disabled):not(:focus),
+textarea:hover:not(:disabled):not(:focus) {
+  border-color: var(--line-strong, rgba(255,255,255,0.16));
+}
+
+/* --- 5c. Select chevron rotation on open (best-effort: :focus state) --- */
+select:focus {
+  background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%2310b981' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+
+/* ==========================================================================
+   6. TOAST
+   Verified selector: #toast:not([hidden]):not(:empty), #toast.toast-hiding
+   ========================================================================== */
+
+/* Override the base toastIn with the richer slide+scale entrance */
+#toast:not([hidden]):not(:empty) {
+  animation: pw-toastSlideIn 0.24s var(--ease-spring, cubic-bezier(0.16,1,0.3,1)) forwards;
+}
+
+/* Smooth exit (style.css .toast-hiding already sets opacity:0 + transform) */
+#toast.toast-hiding {
+  opacity: 0;
+  transform: translate(-50%, -10px) scale(0.96) !important;
+  transition: opacity 0.2s ease, transform 0.2s ease !important;
+  pointer-events: none !important;
+}
+
+/* --- 6a. Toast progress shimmer bar --- */
+/* app.js injects: <div class="toast-progress"></div> inside #toast */
+.toast-progress {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  width: 100%;
+  border-radius: 0 0 var(--radius-full, 9999px) var(--radius-full, 9999px);
+  overflow: hidden;
+  background: var(--teal-pale, rgba(16,185,129,0.14));
+}
+
+.toast-progress::after {
+  content: '';
+  display: block;
+  height: 100%;
+  width: 200%;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--teal, #10b981) 40%,
+    var(--cyan, #06b6d4) 60%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: pw-shimmer 1.4s linear infinite;
+}
+
+
+/* ==========================================================================
+   7. MODAL / DIALOG
+   Verified selectors: dialog[open], dialog::backdrop
+   ========================================================================== */
+
+/* Spring scale-in (refines existing dialogScaleIn in style.css with spring ease) */
+dialog[open] {
+  animation: pw-scaleIn 0.24s var(--ease-spring, cubic-bezier(0.16,1,0.3,1)) both;
+}
+
+dialog::backdrop {
+  animation: pw-backdropIn 0.22s ease-out forwards;
+  background: rgba(0, 0, 0, 0.72);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+
+/* ==========================================================================
+   8. STATUS DOTS
+   Verified selectors: .dot, .pool-dot, .radar-dot, .ticker-live-dot
+   ========================================================================== */
+
+/* Replace crude opacity blink with soft expanding ring */
+.dot,
+.pool-dot {
+  animation: pw-dotRing 2.4s ease-in-out infinite;
+  /* Preserve size/color from style.css — only override animation */
+}
+
+.radar-dot {
+  animation: pw-radarRing 2.0s ease-in-out infinite;
+}
+
+.ticker-live-dot {
+  animation: pw-dotRing 1.8s ease-in-out infinite;
+}
+
+
+/* ==========================================================================
+   9. SKELETON SHIMMER UTILITY
+   Usage: <div class="skeleton" style="width:200px;height:16px;"></div>
+   ========================================================================== */
+
+.skeleton {
+  display: inline-block;
+  border-radius: var(--radius-sm, 6px);
+  background: linear-gradient(
+    90deg,
+    var(--bg-surface, #121927) 25%,
+    var(--bg-surface-elevated, #151e2e) 50%,
+    var(--bg-surface, #121927) 75%
+  );
+  background-size: 400px 100%;
+  animation: pw-skeletonShimmer 1.6s ease-in-out infinite;
+  color: transparent;
+  user-select: none;
+  pointer-events: none;
+}
+
+/* Text-row skeleton helpers */
+.skeleton-line {
+  height: 12px;
+  border-radius: var(--radius-full, 9999px);
+  margin-bottom: 8px;
+}
+
+.skeleton-line.short  { width: 40%; }
+.skeleton-line.medium { width: 65%; }
+.skeleton-line.full   { width: 100%; }
+
+/* Card skeleton */
+.skeleton-card {
+  height: 80px;
+  border-radius: var(--radius-lg, 12px);
+  border: 1px solid var(--line, rgba(255,255,255,0.08));
+}
+
+/* Light theme skeleton override */
+[data-theme="light"] .skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--bg-surface, #f1f5f9) 25%,
+    var(--bg-surface-elevated, #e2e8f0) 50%,
+    var(--bg-surface, #f1f5f9) 75%
+  );
+  background-size: 400px 100%;
+}
+
+
+/* ==========================================================================
+   10. BTN-LOADING STATE (bonus, referenced in header comment for app.js)
+   app.js: button.classList.add('btn-loading'); on async start,
+           button.classList.remove('btn-loading'); on complete.
+   ========================================================================== */
+
+.btn-loading {
+  pointer-events: none !important;
+  position: relative;
+  overflow: hidden;
+  opacity: 0.75;
+}
+
+.btn-loading::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255,255,255,0.12) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: pw-shimmer 1.2s linear infinite;
+}
+
+
+/* ==========================================================================
+   11. FOCUS STATES — global crisp keyboard navigation ring
+   ========================================================================== */
+
+/* Generic focus-visible for all interactive elements */
+:focus-visible {
+  outline: 2px solid var(--teal, #10b981);
+  outline-offset: 2px;
+  border-radius: var(--radius-xs, 4px);
+  transition: outline-offset 0.1s ease;
+}
+
+/* Buttons: inset ring (no layout shift) */
+.button:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 2px var(--bg-app, #090d13),
+    0 0 0 4px var(--teal, #10b981);
+}
+
+/* Nav buttons */
+aside.sidebar nav button.nav:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 2px var(--bg-sidebar, #0b111a),
+    0 0 0 4px var(--teal, #10b981);
+}
+
+
+/* ==========================================================================
+   12. SUBTLE INTERACTIVE ELEMENTS
+   ========================================================================== */
+
+/* FAQ accordion chevron rotation */
+.faq-item[open] .faq-chevron {
+  transform: rotate(180deg);
+}
+
+.faq-chevron {
+  display: inline-block;
+  transition: transform 0.2s var(--ease-spring, cubic-bezier(0.16,1,0.3,1));
+  transform-origin: center;
+}
+
+/* Advanced accordion arrow */
+.accordion-arrow {
+  transition: transform 0.2s var(--ease-spring, cubic-bezier(0.16,1,0.3,1));
+  transform-origin: center;
+}
+
+.advanced-accordion[open] .accordion-arrow {
+  transform: rotate(180deg);
+}
+
+/* Scenario tag shimmer on active */
+.scenario-card.active .scenario-tag {
+  box-shadow: 0 0 8px var(--teal-glow, rgba(16,185,129,0.24));
+  transition: box-shadow 0.3s ease;
+}
+
+/* Gauge fill smooth transition (already in style.css, reinforce will-change) */
+.gauge-fill {
+  will-change: stroke-dashoffset;
+  transition: stroke-dashoffset 0.45s var(--ease-spring, cubic-bezier(0.16,1,0.3,1));
+}
+
+/* Progress bar breathing glow when scanning */
+#progress-bar {
+  transition: width 0.32s ease;
+  will-change: width;
+}
+
+.card.monitor.is-scanning #progress-bar {
+  animation: pw-shimmer 2s linear infinite;
+  background: linear-gradient(
+    90deg,
+    var(--teal, #10b981) 0%,
+    var(--cyan, #06b6d4) 50%,
+    var(--teal, #10b981) 100%
+  );
+  background-size: 200% 100%;
+}
+
+/* Toggle switch smooth transition */
+.toggle-switch-slider {
+  transition:
+    background    0.2s ease,
+    box-shadow    0.2s ease;
+}
+
+/* Region chips hover */
+.region-chip {
+  transition:
+    background    0.15s ease,
+    border-color  0.15s ease,
+    color         0.15s ease,
+    transform     0.15s var(--ease-spring, cubic-bezier(0.16,1,0.3,1));
+}
+
+.region-chip:hover {
+  transform: translateY(-1px);
+}
+
+.region-chip:active {
+  transform: scale(0.96);
+  transition-duration: 0.08s;
+}
+
+/* Filter chips in results toolbar */
+.results-tb-filter-chips .filter-chip {
+  transition:
+    background    0.15s ease,
+    border-color  0.15s ease,
+    color         0.15s ease,
+    box-shadow    0.15s ease,
+    transform     0.12s var(--ease-spring, cubic-bezier(0.16,1,0.3,1));
+}
+
+.results-tb-filter-chips .filter-chip:hover {
+  transform: translateY(-1px);
+}
+
+.results-tb-filter-chips .filter-chip:active {
+  transform: scale(0.95);
+}
+
+/* Table row hover transition smoother */
+.results-table tbody tr {
+  transition: background 0.12s ease;
+}
+
+/* Help card footer link arrow nudge */
+.help-card-link:hover .link-arrow {
+  animation: pw-iconNudge 0.32s var(--ease-spring, cubic-bezier(0.16,1,0.3,1)) forwards;
+}
+
+/* ── Bulk selection bar: scope controls stay usable with nothing selected ── */
+.floating-selection-bar.no-selection .selection-only { display: none; }
+
+/* ── Language menu (12 languages, lazy-loaded packs) ── */
+.lang-menu {
+  position: fixed;
+  z-index: var(--z-dropdown, 500);
+  min-width: 200px;
+  max-height: min(70vh, 480px);
+  overflow-y: auto;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--bg-card, #131a26);
+  border: 1px solid var(--line-strong, rgba(255, 255, 255, 0.14));
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+  animation: langMenuIn 0.16s var(--ease-out, ease-out);
+}
+.lang-menu.hidden { display: none; }
+.lang-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink, #f8fafc);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+.lang-menu-item:hover, .lang-menu-item:focus-visible {
+  background: var(--teal-pale, rgba(52, 211, 153, 0.12));
+  outline: none;
+}
+.lang-menu-item.active {
+  background: var(--teal-pale, rgba(52, 211, 153, 0.14));
+  color: var(--teal, #34d399);
+  font-weight: 600;
+}
+.lang-menu-item.active::after { content: '✓'; }
+.lang-menu-code {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10px;
+  color: var(--muted, #8b9bb4);
+}
+@keyframes langMenuIn {
+  from { opacity: 0; transform: translateY(-4px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+
+/* ── Micro-interactions round 2 ─────────────────────────────────────────── */
+/* Smooth cross-fade while switching dark/light (class applied for 360 ms) */
+html.theme-anim, html.theme-anim *, html.theme-anim *::before, html.theme-anim *::after {
+  transition: background-color 0.28s ease, color 0.28s ease, border-color 0.28s ease,
+              fill 0.28s ease, stroke 0.28s ease, box-shadow 0.28s ease !important;
+}
+/* Copy buttons bounce when the action succeeds */
+@keyframes copyPop {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.12); }
+  100% { transform: scale(1); }
+}
+.copy-pop { animation: copyPop 0.35s var(--ease-spring, cubic-bezier(0.16, 1, 0.3, 1)); }
+/* Toast lifetime bar: shrinks while the toast is visible */
+#toast { position: fixed; overflow: hidden; }
+@keyframes toastProgress { from { width: 100%; } to { width: 0; } }
+.toast-progress {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  width: 100%;
+  background: var(--teal, #34d399);
+  opacity: 0.55;
+  animation: toastProgress linear forwards;
+  pointer-events: none;
+}
+#toast.error .toast-progress { background: var(--rose, #fb7185); }
+/* Details dialog loading placeholder */
+.details-loading { display: flex; align-items: center; justify-content: center; min-height: 220px; }
+.details-loading .spinner {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 3px solid var(--line, rgba(255, 255, 255, 0.12));
+  border-top-color: var(--teal, #34d399);
+  animation: spin 0.8s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  html.theme-anim, html.theme-anim * { transition: none !important; }
+  .copy-pop { animation: none; }
+  .toast-progress { display: none; }
+  .details-loading .spinner { animation-duration: 1.6s; }
+}
+
+/* ── Markup utility classes (replacing repeated inline styles) ──────────── */
+.vstack-10 { display: flex; flex-direction: column; gap: 10px; }
+.hstack-8 { display: flex; align-items: center; gap: 8px; }
+.inline-label { font-size: 11.5px; font-weight: 600; color: var(--ink, #f8fafc); }
+.button.compact { height: 32px; font-size: 12px; padding: 0 10px; }

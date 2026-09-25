@@ -6,6 +6,7 @@ const PRODUCT_VERSION = '__PRODUCT_VERSION__';
 const LANG_KEY = 'proxy-workbench-lang';
 let settings;
 let state = {};
+let renderLogCache = null;
 let resultTargets = [];
 let resultData = null;
 let detailRow = null;
@@ -82,14 +83,16 @@ const messages = {
     'sidebar.data': 'Data and results are stored<br>in the local data folder.',
     'common.saveSettings': 'Save settings',
     'common.close': 'Close',
+    'common.cancel': 'Cancel',
     'common.delete': 'Delete',
+    'common.busy': 'Working…',
     'scan.eyebrow': 'FIND. CHECK. SAVE.',
     'scan.title': 'Proxies for your tasks',
     'scan.lead': 'One or more services. The result is proxies that work with every one of them.',
     'targets.title': 'Which services to check',
     'targets.badge': 'Condition: all services',
     'targets.hint': 'Add the exact URL of a page or API. Each service must reach the configured success threshold.',
-    'targets.add': '＋ Add service',
+    'targets.add': 'Add service',
     'check.title': 'How to check',
     'check.badge': 'Full sweep',
     'check.attempts': 'Attempts per service',
@@ -144,11 +147,11 @@ const messages = {
     'monitor.passed': 'Matching proxies',
     'monitor.sources': 'Connected sources',
     'monitor.start': 'Find and check',
-    'monitor.resume': 'Continue database',
+    'monitor.resume': 'Continue',
     'monitor.resumeTitle': 'Check the remaining database addresses with the current settings',
     'monitor.stop': 'Stop',
     'monitor.recheck': 'Recheck the whole database',
-    'monitor.callout': 'Progress is saved when you stop. “Continue database” skips checks already completed for the same profile.',
+    'monitor.callout': 'Progress is saved when you stop. “Continue” skips checks already completed for the same profile.',
     'mini.title': 'Results that fit your service',
     'mini.text': 'We check the real HTTP response through the proxy. DNSBL and the local denylist flag potentially dirty addresses but do not determine anonymity.',
     'mini.link': 'Open ranking',
@@ -192,6 +195,10 @@ const messages = {
     'results.eyebrow': 'SELECTION WITH CLEANLINESS CHECK',
     'results.title': 'Proxy ranking',
     'results.empty': 'Matching addresses will appear here after a check.',
+    'results.retry': 'Retry',
+    'results.selectAllMatching': 'Use all matching',
+    'results.exportStale': 'The snapshot is expired; re-check before exporting.',
+    'results.exportRunning': 'Wait for the current job to finish.',
     'results.context': 'Checked for: {targets} · profile: {profile}',
     'results.refresh': 'Refresh table',
     'results.order': 'Order',
@@ -418,6 +425,124 @@ const messages = {
     'dnsbl.clear': 'clear',
     'dnsbl.noAnswer': 'no answer',
     'dnsbl.notChecked': 'not checked',
+    'cat.title': 'Source catalog',
+    'cat.rules': 'Five statuses stay separate: found in documentation, URL answered, format confirmed, data looks refreshable, proxies checked. The last one is never set here — this application does not connect to a source\'s proxies. A source row never means working, dead or quality: it means what the app observed. Nothing is selected automatically.',
+    'cat.update': 'Update catalog',
+    'cat.updating': 'Updating the catalog…',
+    'cat.updateStillRunning': 'The catalog update is still running in the background; the list will pick it up when it finishes.',
+    'cat.updateStage.downloading': 'Downloading the published catalog',
+    'cat.updateStage.validating': 'Checking revision and fields',
+    'cat.updateDone': 'Catalog revision {revision}: {added} new, {changed} changed, {retired} retired. Nothing was selected.',
+    'cat.updateUnselected': 'Not selected: {count}. Enable the ones you need by hand.',
+    'cat.updateNotModified': 'The published catalog did not change.',
+    'cat.updateFailed': 'The catalog was not updated: {reason}. The local copy is kept.',
+    'cat.sets': 'Sets',
+    'cat.setsHint': 'A set is a snapshot of source IDs at the moment you apply it. A later catalog update does not add anything to it. Nothing is ever included without your confirmation.',
+    'cat.applySet': 'Use this set',
+    'cat.setApplied': 'Set {name} applied: {count} sources selected.',
+    'cat.setNew': '{count} new in the set — not added',
+    'cat.setMembers': '{count} in the catalog',
+    'cat.conditions': 'Access conditions',
+    'cat.conditionsHint': 'Groups of providers by their own terms, with the date those terms were checked and a link to the primary source. One free tier found in research is not the only one on the market.',
+    'cat.search': 'Name, ID, publisher or host',
+    'cat.filterState': 'State',
+    'cat.filterCategory': 'Category',
+    'cat.filterProtocol': 'Protocol',
+    'cat.filterFormat': 'Data format',
+    'cat.filterAccess': 'Access',
+    'cat.filterSet': 'Set',
+    'cat.all': 'All',
+    'cat.showMore': 'Show more',
+    'cat.shown': 'Showing {shown} of {total}',
+    'cat.empty': 'Nothing matches these filters.',
+    'cat.loading': 'Loading the catalog…',
+    'cat.col.source': 'Source',
+    'cat.col.format': 'Format',
+    'cat.col.access': 'Access',
+    'cat.col.state': 'State',
+    'cat.col.data': 'Data',
+    'cat.col.choice': 'Your choice',
+    'cat.state.never_checked': 'Not checked yet',
+    'cat.state.has_data': 'Checked, no data kept',
+    'cat.state.last_good': 'Data on disk',
+    'cat.state.stale': 'Showing older data',
+    'cat.state.failed': 'Last attempt failed',
+    'cat.state.quarantined': 'Paused after failures',
+    'cat.state.not_proxy_source': 'Not a list of proxy addresses',
+    'cat.state.needs_access': 'Needs its own account or plan',
+    'cat.state.rights_unresolved': 'Data license not established',
+    'cat.state.custom': 'Your own list',
+    'cat.state.retired': 'No longer in the catalog',
+    'cat.retiredNote': 'The accepted catalog no longer lists this source. It stays in your set until you remove it.',
+    'cat.choice.selected': 'In your set',
+    'cat.choice.unselected': 'Not in the set',
+    'cat.choice.disabled': 'Download paused',
+    'cat.action.details': 'Details',
+    'cat.action.check': 'Check availability and format',
+    'cat.action.pause': 'Pause download',
+    'cat.action.resume': 'Resume download',
+    'cat.action.include': 'Add to the set',
+    'cat.action.remove': 'Remove from the set',
+    'cat.action.exclude': 'Exclude its addresses from the scope',
+    'cat.action.recover': 'Clear the pause',
+    'cat.age': 'Data age',
+    'cat.ageNone': 'no data yet',
+    'cat.error': 'Reason',
+    'cat.retryAfter': 'Retry after',
+    'cat.quarantineUntil': 'Paused until',
+    'cat.recognized': 'recognized',
+    'cat.accepted': 'accepted',
+    'cat.rejected': 'rejected',
+    'cat.newUnique': 'not seen in other sources in this snapshot',
+    'cat.passedProfile': 'passed your profile',
+    'cat.checkedByApp': 'checked by the app',
+    'cat.noLiveness': 'Proxies of this source were not connected to or checked by this application.',
+    'cat.detailTitle': 'Source details',
+    'cat.evidence': 'Research evidence',
+    'cat.rights': 'Terms and data license',
+    'cat.termsLink': 'Primary source of the terms',
+    'cat.checkedOn': 'Terms checked',
+    'cat.history': 'Last observations',
+    'cat.cache': 'Stored data',
+    'cat.cacheAge': 'Last complete data set',
+    'cat.cacheRecords': 'records',
+    'cat.time': 'Time',
+    'cat.pages': 'pages',
+    'cat.noHistory': 'No observations yet.',
+    'cat.reasons': 'Rejected because',
+    'cat.previewTitle': 'Preview: {name}',
+    'cat.previewNote': 'Availability and format only. These addresses were not checked as proxies and are not added to the database.',
+    'cat.previewFailed': 'The check did not finish: {reason}.',
+    'cat.previewTruncated': 'The check stopped at its own bound ({bytes} bytes, {records} records); the rest of the list was not read.',
+    'cat.addTitle': 'Add your own list address',
+    'cat.addUrl': 'Address of the list',
+    'cat.addKind': 'Data format',
+    'cat.addPrivate': 'Allow local addresses (only for your own test services)',
+    'cat.addPreview': 'Preview',
+    'cat.addSubmit': 'Add to my set',
+    'cat.addDone': 'Added {id}. Preview it before the next collection.',
+    'cat.addExists': 'This address with this format is already in your set.',
+    'cat.excludeTitle': 'Exclude addresses already received from {id}?',
+    'cat.excludeBody': 'Only addresses that no other source offers in this snapshot are excluded by default. The addresses stay in the database and the history is kept — this only removes them from the current scope. You can undo it by clearing the scope exclusions.',
+    'cat.excludeShared': 'Also exclude addresses other sources also provide',
+    'cat.excludeDone': '{count} of {total} addresses of this source are excluded from the current scope.',
+    'cat.scopeClear': 'Clear the scope exclusions',
+    'cat.scopeCleared': 'Scope exclusions cleared: {count}.',
+    'cat.group.public_free': 'Public free',
+    'cat.group.permanent_free_quota': 'Permanent free plan',
+    'cat.group.free_with_key': 'Free with an API key',
+    'cat.group.trial': 'Trial',
+    'cat.group.paid': 'Paid',
+    'cat.group.own_infrastructure': 'Your own server',
+    'cat.group.snapshot_unavailable': 'Snapshot unavailable',
+    'cat.group.unknown': 'Conditions not established',
+    'toast.cat.set': 'Set applied: {count} sources.',
+    'toast.cat.paused': 'Download paused for {count} sources. They stay in the set.',
+    'toast.cat.resumed': 'Download resumed for {count} sources.',
+    'toast.cat.removed': 'Removed from the set: {count}. Cached data and history are kept.',
+    'toast.cat.added': 'Your list was added and selected.',
+    'toast.cat.recovered': 'The pause was cleared. Stored data was not touched.',
+    'toast.cat.saved': 'The source selection was saved.',
     'sources.eyebrow': 'TRANSPARENT COLLECTION',
     'sources.title': 'Sources and your own lists',
     'sources.lead': 'Every unique address from the connected lists goes into the database. No first-N-lines limit.',
@@ -490,6 +615,10 @@ const messages = {
     'target.sha256': 'Response body SHA-256 (optional)',
     'target.sha256Placeholder': 'Expected response hash',
     'error.app': 'Application error',
+    'error.langPack': 'Не удалось загрузить этот языковой пакет.',
+    'error.timeout': 'The request took too long; the operation may still finish in the background.',
+    'error.network': 'The server is unreachable. Is the application still running?',
+    'error.langPack': 'This language pack failed to load.',
     'error.maxTargets': 'Maximum 20 services.',
     'error.needTarget': 'At least one service is required.',
     'error.statusFormat': 'Enter HTTP codes, for example 200, 204 or 200-299.',
@@ -535,6 +664,11 @@ const messages = {
     'scenario.scrapeDesc': '256 threads, 2s connect timeout, quick prefiltering for big lists',
     'scenario.custom': 'Custom Pro',
     'scenario.customDesc': 'Manual control over all check, identity and export parameters',
+    'scenario.telegramHint': 'Checks that the public web page of the service answers through the proxy. Calls and the app protocol are not measured.',
+    'scenario.youtubeHint': 'Checks that the page answers and measures a separate download sample in Mbit/s. Video quality is not guaranteed by this number.',
+    'scenario.anonHint': 'Screens the exit address with a judge and DNSBL zones and keeps only the rows you asked for.',
+    'scenario.scrapeHint': '256 workers, 2s connect timeout, prefiltering for big lists. No anonymity judge and no speed test.',
+    'scenario.customHint': 'Manual control over all check, identity and export parameters',
     'scenario.applied': 'Scenario applied. Click Find and check to begin.',
     'scenario.customUnchanged': 'Custom settings unchanged; adjust the fields manually.',
     'monitor.liveStream': 'Live Inspection Stream',
@@ -598,7 +732,9 @@ const messages = {
     'connect.routeText': 'Every new TCP connection rotates to the next working proxy. UDP is not supported.',
     'connect.disconnectText': 'Remove the proxy settings in your app, or stop the rotating proxy here.',
     'connect.stopGateway': 'Stop rotating proxy',
+    'connect.startGateway': 'Start rotating proxy',
     'connect.gatewayStopped': 'Rotating proxy stopped',
+    'connect.gatewayStarted': 'Rotating proxy is running.',
     'connect.lanOptIn': 'LAN mode is off: the rotating proxy listens on this computer only.',
     'connect.probeNote': 'The live feed and the quick test are Workbench probes, not your client traffic.',
     'toast.scopeChanged': 'The scope changed; the action was not applied',
@@ -748,14 +884,16 @@ const messages = {
     'sidebar.data': 'Данные и результаты хранятся<br>в локальной папке data.',
     'common.saveSettings': 'Сохранить настройки',
     'common.close': 'Закрыть',
+    'common.cancel': 'Отмена',
     'common.delete': 'Удалить',
+    'common.busy': 'Работаю…',
     'scan.eyebrow': 'НАЙТИ. ПРОВЕРИТЬ. СОХРАНИТЬ.',
     'scan.title': 'Прокси под ваши задачи',
     'scan.lead': 'Один или несколько сервисов. В результате — прокси, работающие с каждым.',
     'targets.title': 'Какие сервисы проверять',
     'targets.badge': 'Условие: все сервисы',
     'targets.hint': 'Добавьте точный URL страницы или API. Каждый сервис должен пройти заданный порог успешности.',
-    'targets.add': '＋ Добавить сервис',
+    'targets.add': 'Добавить сервис',
     'check.title': 'Как проверять',
     'check.badge': 'Полный обход',
     'check.attempts': 'Попыток на сервис',
@@ -810,11 +948,11 @@ const messages = {
     'monitor.passed': 'Подходящих прокси',
     'monitor.sources': 'Подключено источников',
     'monitor.start': 'Найти и проверить',
-    'monitor.resume': 'Продолжить базу',
+    'monitor.resume': 'Продолжить',
     'monitor.resumeTitle': 'Проверить оставшиеся адреса базы с текущими настройками',
     'monitor.stop': 'Остановить',
     'monitor.recheck': 'Перепроверить всю базу заново',
-    'monitor.callout': 'При остановке прогресс сохраняется. «Продолжить базу» пропускает уже завершённые проверки того же профиля.',
+    'monitor.callout': 'При остановке прогресс сохраняется. «Продолжить» пропускает уже завершённые проверки того же профиля.',
     'mini.title': 'Результат — под ваш сервис',
     'mini.text': 'Проверяем настоящий HTTP-ответ через прокси. DNSBL и локальный denylist отмечают потенциально грязные адреса, но не определяют анонимность.',
     'mini.link': 'Открыть рейтинг',
@@ -858,6 +996,10 @@ const messages = {
     'results.eyebrow': 'ОТБОР С ПРОВЕРКОЙ ЧИСТОТЫ',
     'results.title': 'Рейтинг прокси',
     'results.empty': 'После проверки здесь появятся подходящие адреса.',
+    'results.retry': 'Повторить',
+    'results.selectAllMatching': 'Взять все подходящие',
+    'results.exportStale': 'Снимок устарел; перед экспортом перепроверьте адреса.',
+    'results.exportRunning': 'Дождитесь завершения текущей задачи.',
     'results.context': 'Проверено для: {targets} · профиль: {profile}',
     'results.refresh': 'Обновить таблицу',
     'results.order': 'Порядок',
@@ -1084,6 +1226,124 @@ const messages = {
     'dnsbl.clear': 'чисто',
     'dnsbl.noAnswer': 'нет ответа',
     'dnsbl.notChecked': 'не проверялись',
+    'cat.title': 'Каталог источников',
+    'cat.rules': 'Пять статусов остаются раздельными: найден по документации, URL ответил, формат подтверждён, данные выглядят обновляемыми, прокси проверены. Последний здесь не выставляется — приложение не подключается к прокси источников. Строка каталога не значит ни «рабочий», ни «мёртвый», ни «качественный»: она значит то, что приложение наблюдало. Ничего не включается автоматически.',
+    'cat.update': 'Обновить каталог',
+    'cat.updating': 'Каталог обновляется…',
+    'cat.updateStillRunning': 'Обновление каталога ещё идёт в фоне; список подхватит результат, когда оно завершится.',
+    'cat.updateStage.downloading': 'Скачивание опубликованного каталога',
+    'cat.updateStage.validating': 'Проверка ревизии и полей',
+    'cat.updateDone': 'Ревизия каталога {revision}: новых {added}, изменённых {changed}, ушедших {retired}. Ничего не выбрано.',
+    'cat.updateUnselected': 'Не выбрано: {count}. Включите нужные вручную.',
+    'cat.updateNotModified': 'Опубликованный каталог не изменился.',
+    'cat.updateFailed': 'Каталог не обновлён: {reason}. Локальная копия сохранена.',
+    'cat.sets': 'Наборы',
+    'cat.setsHint': 'Набор — это снимок ID источников на момент применения. Позднейшее обновление каталога ничего в него не добавляет. Ничего не включается без подтверждения.',
+    'cat.applySet': 'Взять этот набор',
+    'cat.setApplied': 'Набор «{name}» применён: выбрано источников — {count}.',
+    'cat.setNew': 'в наборе появилось новых: {count} — не добавлены',
+    'cat.setMembers': 'в каталоге записей: {count}',
+    'cat.conditions': 'Условия доступа',
+    'cat.conditionsHint': 'Провайдеры сгруппированы по их собственным условиям, с датой проверки этих условий и ссылкой на первоисточник. Один найденный free tier не значит, что других нет на рынке.',
+    'cat.search': 'Название, ID, издатель или хост',
+    'cat.filterState': 'Состояние',
+    'cat.filterCategory': 'Категория',
+    'cat.filterProtocol': 'Протокол',
+    'cat.filterFormat': 'Формат данных',
+    'cat.filterAccess': 'Условия доступа',
+    'cat.filterSet': 'Набор',
+    'cat.all': 'Все',
+    'cat.showMore': 'Показать ещё',
+    'cat.shown': 'Показано {shown} из {total}',
+    'cat.empty': 'По этим фильтрам ничего нет.',
+    'cat.loading': 'Каталог загружается…',
+    'cat.col.source': 'Источник',
+    'cat.col.format': 'Формат',
+    'cat.col.access': 'Условия',
+    'cat.col.state': 'Состояние',
+    'cat.col.data': 'Данные',
+    'cat.col.choice': 'Ваш выбор',
+    'cat.state.never_checked': 'Ещё не проверялся',
+    'cat.state.has_data': 'Проверен, данных не сохранено',
+    'cat.state.last_good': 'Данные на диске',
+    'cat.state.stale': 'Показываются более старые данные',
+    'cat.state.failed': 'Последняя попытка не удалась',
+    'cat.state.quarantined': 'Пауза после сбоев',
+    'cat.state.not_proxy_source': 'Не список прокси-адресов',
+    'cat.state.needs_access': 'Нужен свой аккаунт или тариф',
+    'cat.state.rights_unresolved': 'Лицензия данных не установлена',
+    'cat.state.custom': 'Ваш собственный список',
+    'cat.state.retired': 'Больше нет в каталоге',
+    'cat.retiredNote': 'Принятый каталог больше не содержит этот источник. Он остаётся в наборе, пока вы не уберёте его.',
+    'cat.choice.selected': 'Входит в набор',
+    'cat.choice.unselected': 'Не входит в набор',
+    'cat.choice.disabled': 'Загрузка на паузе',
+    'cat.action.details': 'Подробности',
+    'cat.action.check': 'Проверить доступность и формат',
+    'cat.action.pause': 'Поставить загрузку на паузу',
+    'cat.action.resume': 'Возобновить загрузку',
+    'cat.action.include': 'Добавить в набор',
+    'cat.action.remove': 'Убрать из набора',
+    'cat.action.exclude': 'Исключить его адреса из scope',
+    'cat.action.recover': 'Снять паузу',
+    'cat.age': 'Возраст данных',
+    'cat.ageNone': 'данных пока нет',
+    'cat.error': 'Причина',
+    'cat.retryAfter': 'Повтор после',
+    'cat.quarantineUntil': 'Пауза до',
+    'cat.recognized': 'распознано',
+    'cat.accepted': 'принято',
+    'cat.rejected': 'отклонено',
+    'cat.newUnique': 'не встречается у других источников в этом срезе',
+    'cat.passedProfile': 'прошли ваш профиль',
+    'cat.checkedByApp': 'проверено приложением',
+    'cat.noLiveness': 'К прокси этого источника приложение не подключалось и не проверяло их.',
+    'cat.detailTitle': 'Подробности источника',
+    'cat.evidence': 'Доказательства исследования',
+    'cat.rights': 'Условия и лицензия данных',
+    'cat.termsLink': 'Первоисточник условий',
+    'cat.checkedOn': 'Условия проверены',
+    'cat.history': 'Последние наблюдения',
+    'cat.cache': 'Сохранённые данные',
+    'cat.cacheAge': 'Последний полный набор',
+    'cat.cacheRecords': 'записей',
+    'cat.time': 'Время',
+    'cat.pages': 'страниц',
+    'cat.noHistory': 'Наблюдений ещё не было.',
+    'cat.reasons': 'Отклонено потому что',
+    'cat.previewTitle': 'Предпросмотр: {name}',
+    'cat.previewNote': 'Только доступность и формат. Эти адреса не проверялись как прокси и не попадают в базу.',
+    'cat.previewFailed': 'Проверка не завершилась: {reason}.',
+    'cat.previewTruncated': 'Проверка остановилась по собственному лимиту ({bytes} байт, {records} записей); остаток списка не считывался.',
+    'cat.addTitle': 'Добавить свой адрес списка',
+    'cat.addUrl': 'Адрес списка',
+    'cat.addKind': 'Формат данных',
+    'cat.addPrivate': 'Разрешить локальные адреса (только для собственных тестовых служб)',
+    'cat.addPreview': 'Предпросмотр',
+    'cat.addSubmit': 'Добавить в мой набор',
+    'cat.addDone': 'Добавлен {id}. Проверьте его перед следующим сбором.',
+    'cat.addExists': 'Этот адрес с таким форматом уже есть в наборе.',
+    'cat.excludeTitle': 'Исключить уже полученные адреса {id}?',
+    'cat.excludeBody': 'По умолчанию исключаются только адреса, которые в этом срезе не предлагает никакой другой источник. Адреса остаются в базе, история сохраняется — они убираются только из текущей области экспорта. Действие можно отменить очисткой исключений.',
+    'cat.excludeShared': 'Исключать и адреса, которые отдают другие источники тоже',
+    'cat.excludeDone': 'Из текущего scope исключено адресов этого источника: {count} из {total}.',
+    'cat.scopeClear': 'Очистить исключения scope',
+    'cat.scopeCleared': 'Исключения scope очищены: {count}.',
+    'cat.group.public_free': 'Публичные бесплатные',
+    'cat.group.permanent_free_quota': 'Постоянный free-тариф',
+    'cat.group.free_with_key': 'Бесплатные с API-ключом',
+    'cat.group.trial': 'Пробный период (trial), не постоянный тариф',
+    'cat.group.paid': 'Платные',
+    'cat.group.own_infrastructure': 'Собственный сервер',
+    'cat.group.snapshot_unavailable': 'Снимок недоступен',
+    'cat.group.unknown': 'Условия не установлены',
+    'toast.cat.set': 'Набор применён: источников — {count}.',
+    'toast.cat.paused': 'Загрузка на паузе для источников: {count}. Они остаются в наборе.',
+    'toast.cat.resumed': 'Загрузка возобновлена для источников: {count}.',
+    'toast.cat.removed': 'Убрано из набора: {count}. Кэш и история сохранены.',
+    'toast.cat.added': 'Ваш список добавлен и выбран.',
+    'toast.cat.recovered': 'Пауза снята. Сохранённые данные не тронуты.',
+    'toast.cat.saved': 'Выбор источников сохранён.',
     'sources.eyebrow': 'ПРОЗРАЧНЫЙ СБОР',
     'sources.title': 'Источники и свои списки',
     'sources.lead': 'Все уникальные адреса из подключённых списков попадут в базу. Без ограничения первых N строк.',
@@ -1156,6 +1416,8 @@ const messages = {
     'target.sha256': 'SHA-256 тела ответа (необязательно)',
     'target.sha256Placeholder': 'Ожидаемый хеш ответа',
     'error.app': 'Ошибка приложения',
+    'error.timeout': 'Запрос длился слишком долго; операция может ещё завершиться в фоне.',
+    'error.network': 'Сервер недоступен. Приложение ещё запущено?',
     'error.maxTargets': 'Максимум 20 сервисов.',
     'error.needTarget': 'Нужен хотя бы один сервис.',
     'error.statusFormat': 'Укажите HTTP-коды: например 200, 204 или 200-299.',
@@ -1201,6 +1463,11 @@ const messages = {
     'scenario.scrapeDesc': '256 потоков, 2с таймаут, мгновенный отсев для десятков тысяч адресов',
     'scenario.custom': 'Экспертный',
     'scenario.customDesc': 'Полный ручной контроль всех сетевых параметров и фильтров',
+    'scenario.telegramHint': 'Проверяет, отвечает ли публичная веб-страница сервиса через прокси. Звонки и протокол приложения не измеряются.',
+    'scenario.youtubeHint': 'Проверяет, отвечает ли страница, и отдельно замеряет загрузку в Мбит/с. Эта цифра не гарантирует качество видео.',
+    'scenario.anonHint': 'Проверяет выходной адрес через Judge и DNSBL-зоны и оставляет только запрошенные строки.',
+    'scenario.scrapeHint': '256 воркеров, таймаут подключения 2 с, предфильтрация больших списков. Без Judge анонимности и замера скорости.',
+    'scenario.customHint': 'Полный ручной контроль всех параметров проверки, анонимности и экспорта',
     'scenario.applied': 'Сценарий применён. Нажмите «Найти и проверить» для запуска.',
     'scenario.customUnchanged': 'Пользовательские настройки не изменены; измените поля вручную.',
     'monitor.liveStream': 'Живая лента проверок',
@@ -1265,6 +1532,8 @@ const messages = {
     'connect.disconnectText': 'Уберите настройки прокси в приложении или остановите ротирующий прокси здесь.',
     'connect.stopGateway': 'Остановить ротирующий прокси',
     'connect.gatewayStopped': 'Ротирующий прокси остановлен',
+    'connect.gatewayStarted': 'Ротирующий прокси запущен.',
+    'connect.startGateway': 'Запустить ротирующий прокси',
     'connect.lanOptIn': 'Режим LAN выключен: ротирующий прокси слушает только этот компьютер.',
     'connect.probeNote': 'Лента и быстрый тест — это пробы Workbench, а не трафик вашего клиента.',
     'toast.scopeChanged': 'Область изменилась, действие не выполнено',
@@ -1354,21 +1623,144 @@ const messages = {
 };
 
 
+// Built-in languages live in `messages`; the rest are lazy-loaded packs in
+// ui/i18n/<code>.js that register themselves into window.__PW_LANGS.
+const LANGS = [
+  {code: 'en', name: 'English'},
+  {code: 'ru', name: 'Русский'},
+  {code: 'uk', name: 'Українська'},
+  {code: 'de', name: 'Deutsch'},
+  {code: 'es', name: 'Español'},
+  {code: 'fr', name: 'Français'},
+  {code: 'pt', name: 'Português'},
+  {code: 'it', name: 'Italiano'},
+  {code: 'pl', name: 'Polski'},
+  {code: 'tr', name: 'Türkçe'},
+  {code: 'zh', name: '中文'},
+  {code: 'ja', name: '日本語'},
+];
+
+function langDict(code) {
+  return messages[code] || (window.__PW_LANGS && window.__PW_LANGS[code]) || null;
+}
+
 function initialLang() {
   let saved = null;
   try { saved = localStorage.getItem(LANG_KEY); } catch {}
-  if (saved === 'en' || saved === 'ru') return saved;
-  return String(navigator.language || '').toLowerCase().startsWith('ru') ? 'ru' : 'en';
+  if (saved && LANGS.some(l => l.code === saved)) return saved;
+  const prefs = navigator.languages || [navigator.language || 'en'];
+  for (const pref of prefs) {
+    const code = String(pref || '').toLowerCase().split('-')[0];
+    if (LANGS.some(l => l.code === code)) return code;
+  }
+  return 'en';
 }
 
 let lang = initialLang();
+
+function ensureLangPack(code) {
+  return new Promise(resolve => {
+    if (langDict(code)) { resolve(true); return; }
+    let el = document.querySelector('script[data-lang="' + code + '"]');
+    if (!el) {
+      el = document.createElement('script');
+      el.src = '/i18n/' + encodeURIComponent(code) + '.js';
+      el.dataset.lang = code;
+      document.head.appendChild(el);
+    }
+    el.addEventListener('load', () => resolve(Boolean(langDict(code))), {once: true});
+    el.addEventListener('error', () => resolve(false), {once: true});
+  });
+}
+
+async function setLang(code) {
+  if (!LANGS.some(l => l.code === code) || code === lang) { closeLangMenu(); return; }
+  const ok = await ensureLangPack(code);
+  closeLangMenu();
+  if (!ok) { toast(t('error.langPack'), true); return; }
+  lang = code;
+  try { localStorage.setItem(LANG_KEY, lang); } catch {}
+  renderLang();
+  // Re-render the dynamic areas that cache translated strings.
+  try { renderState(state); } catch (e) { console.error(e); }
+  if (resultData) { try { renderResults(resultData); } catch (e) { console.error(e); } }
+  if (detailRow) { try { renderDetails(detailRow); } catch (e) { console.error(e); } }
+}
+
+function buildLangMenu() {
+  const menu = $('lang-menu');
+  if (!menu) return;
+  menu.innerHTML = '';
+  for (const item of LANGS) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'lang-menu-item' + (item.code === lang ? ' active' : '');
+    btn.setAttribute('role', 'menuitemradio');
+    btn.setAttribute('aria-checked', String(item.code === lang));
+    btn.dataset.code = item.code;
+    const name = document.createElement('span');
+    name.className = 'lang-menu-name';
+    name.textContent = item.name;
+    const code = document.createElement('span');
+    code.className = 'lang-menu-code';
+    code.textContent = item.code.toUpperCase();
+    btn.append(name, code);
+    btn.onclick = () => setLang(item.code);
+    menu.appendChild(btn);
+  }
+}
+
+function openLangMenu(anchor) {
+  const menu = $('lang-menu');
+  if (!menu) return;
+  buildLangMenu();
+  menu.classList.remove('hidden');
+  const rect = anchor.getBoundingClientRect();
+  const width = 200;
+  menu.style.left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8)) + 'px';
+  const height = menu.offsetHeight || 380;
+  if (rect.bottom + height + 8 < window.innerHeight) menu.style.top = (rect.bottom + 6) + 'px';
+  else menu.style.top = Math.max(8, rect.top - height - 6) + 'px';
+  const first = menu.querySelector('.lang-menu-item.active') || menu.querySelector('.lang-menu-item');
+  if (first) first.focus();
+}
+
+function closeLangMenu() {
+  const menu = $('lang-menu');
+  if (menu) menu.classList.add('hidden');
+}
+
+function bindLangMenu() {
+  const top = $('lang-toggle');
+  const side = $('sidebar-lang-toggle');
+  for (const btn of [top, side]) {
+    if (!btn) continue;
+    btn.onclick = event => {
+      event.stopPropagation();
+      const menu = $('lang-menu');
+      if (!menu || menu.classList.contains('hidden')) openLangMenu(btn);
+      else closeLangMenu();
+    };
+  }
+  document.addEventListener('click', event => {
+    const menu = $('lang-menu');
+    if (!menu || menu.classList.contains('hidden')) return;
+    if (event.target instanceof Node && (menu.contains(event.target) ||
+        event.target === top || (top && top.contains(event.target)) ||
+        event.target === side || (side && side.contains(event.target)))) return;
+    closeLangMenu();
+  });
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape') closeLangMenu();
+  });
+}
 
 function t(key, values={}) {
   if (!key) return '';
   if ((key === 'unit.ms' || key === 'unit.ms_badge') && (!values || values.value === undefined)) {
     return lang === 'ru' ? 'мс' : 'ms';
   }
-  const dict = messages[lang] || messages.en || {};
+  const dict = messages[lang] || (window.__PW_LANGS && window.__PW_LANGS[lang]) || messages.en || {};
   const fallback = messages.en || {};
   const text = dict[key] ?? fallback[key] ?? String(key);
   if (typeof text !== 'string') return String(text ?? key ?? '');
@@ -1511,6 +1903,26 @@ function applyI18n(root=document) {
 const numeric = ['attempts', 'timeout', 'connect_timeout', 'workers', 'prefilter', 'rate', 'max_bytes', 'source_timeout', 'top', 'min_success', 'max_latency', 'want', 'watch', 'reputation-timeout'];
 const profileLabel = profile => messages.en['profile.' + profile] ? t('profile.' + profile) : profile;
 const fmt = n => Number(n || 0).toLocaleString(lang === 'ru' ? 'ru-RU' : 'en-US');
+
+// Smooth count-up for headline numbers: the gauge and counters feel alive
+// during scans instead of snapping between values.
+function animateNumber(el, target, format) {
+  if (!el) return;
+  const to = Number(target) || 0;
+  const from = Number(el.dataset.numValue);
+  el.dataset.numValue = String(to);
+  const render = v => { el.textContent = format ? format(v) : fmt(v); };
+  if (!isFinite(from) || from === to) { render(to); return; }
+  const start = performance.now();
+  const duration = 480;
+  const easeOut = t => 1 - Math.pow(1 - t, 3);
+  const step = now => {
+    const p = Math.min(1, (now - start) / duration);
+    render(from + (to - from) * easeOut(p));
+    if (p < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
 const ms = value => t('unit.ms', {value});
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'}[c]));
 
@@ -1603,7 +2015,7 @@ function toast(message, error=false) {
   node.classList.remove('toast-hiding');
   node.className = error ? 'error' : '';
   node.style.pointerEvents = 'none'; // Never block clicks
-  node.innerHTML = `<span class="toast-icon">${error ? '✕' : '✓'}</span><span class="toast-msg">${esc(text)}</span>`;
+  node.innerHTML = `<span class="toast-icon">${error ? '✕' : '✓'}</span><span class="toast-msg">${esc(text)}</span><span class="toast-progress" style="animation-duration:${error ? 8000 : 3500}ms"></span>`;
   node.hidden = false;
 
   // Restart CSS animation for smooth slide down + fade
@@ -1611,6 +2023,7 @@ function toast(message, error=false) {
   void node.offsetWidth;
   node.style.animation = '';
 
+  // Errors stay longer: a user who tabbed away must still see what failed.
   toastTimer = setTimeout(() => {
     node.classList.add('toast-hiding');
     toastHideTimer = setTimeout(() => {
@@ -1618,17 +2031,27 @@ function toast(message, error=false) {
       node.classList.remove('toast-hiding');
       node.textContent = '';
     }, 240);
-  }, 3500);
+  }, error ? 8000 : 3500);
 }
 
-async function api(path, body) {
-  const response = await fetch(path, {
-    method: body === undefined ? 'GET' : 'POST',
-    headers: {'X-Workbench-Token': token, 'Content-Type': 'application/json'},
-    body: body === undefined ? undefined : JSON.stringify(body)
-  });
-  const value = await response.json();
-  if (!response.ok) throw new Error(value.error ? serverText(value.error) : t('error.app'));
+async function api(path, body, opts) {
+  const timeoutMs = opts && opts.timeoutMs ? opts.timeoutMs : 30000;
+  let response;
+  try {
+    response = await fetch(path, {
+      method: body === undefined ? 'GET' : 'POST',
+      headers: {'X-Workbench-Token': token, 'Content-Type': 'application/json'},
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: AbortSignal.timeout(timeoutMs)
+    });
+  } catch (error) {
+    if (error && (error.name === 'TimeoutError' || error.name === 'AbortError')) throw new Error(t('error.timeout'));
+    if (error instanceof TypeError) throw new Error(t('error.network'));
+    throw error;
+  }
+  let value = null;
+  try { value = await response.json(); } catch (error) { value = null; }
+  if (!response.ok) throw new Error(value && value.error ? serverText(value.error) : t('error.app'));
   return value;
 }
 
@@ -1640,10 +2063,17 @@ function showTab(name) {
   document.querySelectorAll('.nav').forEach(node => {
     node.classList.toggle('active', node.dataset.tab === name);
   });
+  const activePage = document.getElementById('page-' + name);
+  if (activePage) {
+    activePage.classList.remove('panel-enter');
+    void activePage.offsetWidth;
+    activePage.classList.add('panel-enter');
+  }
   const label = $('page-label');
   if (label) label.textContent = t('nav.' + name) || name;
   window.scrollTo({top: 0, behavior: 'instant'});
   if (name === 'results') loadResults();
+  if (name === 'sources' && typeof reloadCatalog === 'function') reloadCatalog();
 }
 
 
@@ -1926,6 +2356,18 @@ class SmartCountryCombobox {
           if (!e.target.closest('.country-typeahead-input')) {
             this.close();
           }
+        }
+      };
+      this.comboboxBox.onkeydown = (e) => {
+        // Keyboard path: Enter/ArrowDown opens and moves focus into the search field.
+        if ((e.key === 'Enter' || e.key === 'ArrowDown') && document.activeElement === this.comboboxBox) {
+          e.preventDefault();
+          if (!this.isOpen) {
+            this.open();
+            if (this.typeaheadInput) this.typeaheadInput.focus();
+          }
+        } else if (e.key === 'Escape' && this.isOpen) {
+          this.close();
         }
       };
     }
@@ -3169,12 +3611,14 @@ function eventLine(event) {
   return `${proxy}${latency}${reliability}`;
 }
 
+let liveFeedErrors = 0;
 async function pollEvents() {
   if (liveFeed.busy) return;
   liveFeed.busy = true;
   try {
     const query = new URLSearchParams({after: liveFeed.cursor, limit: '80'});
     const data = await api('/api/events?' + query);
+    liveFeedErrors = 0;
     if (!data || !Array.isArray(data.events)) return;
     if (data.cursor) liveFeed.cursor = data.cursor;
     for (const event of data.events) {
@@ -3189,7 +3633,14 @@ async function pollEvents() {
     renderLiveFeedItems();
   } catch {
     // A missing event stream must not break the page; the feed keeps the last
-    // events it already had.
+    // events it already had. A stale cursor (server restart) would fail forever,
+    // so after several consecutive failures resync from the newest events.
+    liveFeedErrors += 1;
+    if (liveFeedErrors >= 5) {
+      liveFeedErrors = 0;
+      liveFeed.cursor = '';
+      liveFeed.lastKey = '';
+    }
   } finally {
     liveFeed.busy = false;
   }
@@ -3216,7 +3667,9 @@ function renderLiveFeed(value) {
   const source = $('live-feed-source');
   if (source) source.textContent = t('monitor.liveStreamSource');
   pollEvents();
-  renderLiveFeedItems();
+  // pollEvents() re-renders the ticker on every successful update; this sync
+  // pass only refreshes the translated idle text, so skip it when items exist.
+  if (!liveFeed.items.length) renderLiveFeedItems();
 }
 
 function snapshotView(report) {
@@ -3316,7 +3769,7 @@ function renderState(value) {
     radialFill.style.strokeDashoffset = `${offsetCirc}`;
   }
   const gaugePercent = $('gauge-percent');
-  if (gaugePercent) gaugePercent.textContent = percent.toFixed(1) + '%';
+  if (gaugePercent) animateNumber(gaugePercent, percent, v => v.toFixed(1) + '%');
   const gaugeCaption = $('gauge-caption');
   if (gaugeCaption) {
     const pText = currentPhase === 'ready' ? t('phase.ready') : (t('phase.' + currentPhase) || currentPhase);
@@ -3338,7 +3791,13 @@ function renderState(value) {
   if (logEl) {
     const wasScrolledToBottom = logEl.scrollHeight - logEl.clientHeight <= logEl.scrollTop + 40;
     const rawLog = value.log ? serverLog(value.log) : t('log.empty');
-    logEl.innerHTML = formatLogTerminal(rawLog);
+    if (rawLog !== renderLogCache) {
+      renderLogCache = rawLog;
+      // Cap the work: a scan log can grow to thousands of lines; render the tail only.
+      const lines = rawLog.split('\n');
+      const visible = lines.length > 600 ? lines.slice(-600).join('\n') : rawLog;
+      logEl.innerHTML = formatLogTerminal(visible);
+    }
     if (value.running && wasScrolledToBottom) {
       logEl.scrollTop = logEl.scrollHeight;
     }
@@ -3481,7 +3940,11 @@ function renderState(value) {
   // A stale/error snapshot cannot be rebuilt into a useful export from the UI;
   // the user must re-check first. A partial snapshot remains explicitly labelled
   // and can still be exported as a partial result.
-  if ($('export')) $('export').disabled = snapshotUnavailable || value.running;
+  if ($('export')) {
+    const exportBtn = $('export');
+    exportBtn.disabled = snapshotUnavailable || value.running;
+    exportBtn.title = snapshotUnavailable ? t('results.exportStale') : (value.running ? t('results.exportRunning') : '');
+  }
   if ($('action-export-selected')) $('action-export-selected').disabled = snapshotUnavailable || value.running;
   const report = progress.sources ? progress : value.sources || {};
   renderSources(report, value.source_urls || [], value.source_keys || [], (value.export || {}).source_quality || {});
@@ -3575,6 +4038,7 @@ function renderSources(report, urls, keys=[], quality={}) {
 
 async function poll() {
   if (polling) return;
+  if (document.hidden) return; // background tab: skip the work, the next tick catches up
   polling = true;
   try {
     const value = await api('/api/state');
@@ -3589,7 +4053,12 @@ async function poll() {
     }
     if (gwPulse) gwPulse.style.display = isOnline ? 'inline-block' : 'none';
 
-    renderState(value);
+    try {
+      renderState(value);
+    } catch (error) {
+      // A broken panel must not be reported as the whole app being offline.
+      console.error(error);
+    }
   }
   catch {
     const gwBadge = document.querySelector('.gateway-status-badge');
@@ -3621,9 +4090,13 @@ function updateSelectionUI() {
   const count = selectedProxies.size;
 
   if (bar) {
-    const isVisible = count > 0;
+    const hasRows = document.querySelectorAll('.proxy-select-box').length > 0;
+    // The bar is also the only home of the bulk-scope selector: keep it visible
+    // on a non-empty table even with nothing ticked, hiding selection-only controls.
+    const isVisible = count > 0 || (currentTab === 'results' && hasRows);
     bar.classList.toggle('hidden', !isVisible);
     bar.classList.toggle('active', isVisible);
+    bar.classList.toggle('no-selection', count === 0);
     bar.setAttribute('aria-hidden', String(!isVisible));
   }
   if (countBadge) countBadge.textContent = t('results.selectedCount', {count: fmt(count)});
@@ -3635,6 +4108,17 @@ function updateSelectionUI() {
     selectAll.checked = allChecked;
     selectAll.indeterminate = someChecked && !allChecked;
   }
+}
+
+function renderResultsError(error) {
+  const rowsContainer = $('result-rows');
+  if (!rowsContainer) return;
+  rowsContainer.innerHTML = `<tr><td colspan="15" class="empty"><div class="empty-table-state">` +
+    `<div class="empty-table-icon">⚠️</div>` +
+    `<div class="empty-table-title">${esc(error && error.message ? error.message : t('error.app'))}</div>` +
+    `<button type="button" class="button light chip" id="results-retry">${esc(t('results.retry'))}</button></div></td></tr>`;
+  const retry = $('results-retry');
+  if (retry) retry.onclick = () => loadResults();
 }
 
 function renderCountryDistribution(rows, breakdown) {
@@ -3686,7 +4170,19 @@ function renderResults(data) {
   const page = data ? data.rows : [];
   const start = data ? data.offset : 0;
   const total = data ? data.total : 0;
-  if ($('result-context')) $('result-context').textContent = data && data.profile ? t('results.context', {targets:data.targets.map(target => target.name ? `${target.name} (${target.url})` : target.url).join(' + '), profile:profileLabel(data.request_profile || 'workbench')}) : t('results.empty');
+  if ($('result-context')) {
+    if (data && data.profile) {
+      const targetsList = (data.targets || []).map(target => target.name ? `${target.name} (${target.url})` : target.url).filter(Boolean).join(' + ');
+      if (targetsList) {
+        $('result-context').textContent = t('results.context', {targets: targetsList, profile: profileLabel(data.request_profile || 'workbench')});
+      } else {
+        const prof = profileLabel(data.request_profile || 'workbench');
+        $('result-context').textContent = lang === 'ru' ? `Профиль: ${prof}` : `Profile: ${prof}`;
+      }
+    } else {
+      $('result-context').textContent = t('results.empty');
+    }
+  }
   if ($('result-total')) $('result-total').textContent = t('results.total', {count:fmt(total)});
   const curPage = Math.floor(start / 50) + 1;
   const totalPages = Math.max(1, Math.ceil(total / 50));
@@ -3753,7 +4249,7 @@ function renderResults(data) {
         </div>
       </td>
     </tr>`;
-  }).join('') : `<tr><td colspan="15" class="empty">${esc(t(data ? 'results.noneMatching' : 'results.noneYet'))}</td></tr>`;
+  }).join('') : `<tr><td colspan="15" class="empty"><div class="empty-table-state"><div class="empty-table-icon">🔍</div><div class="empty-table-title">${esc(t(data ? 'results.noneMatching' : 'results.noneYet'))}</div></div></td></tr>`;
 
   $('result-rows').querySelectorAll('[data-details]').forEach(node => node.onclick = () => details(page[Number(node.dataset.details)]));
 
@@ -3859,7 +4355,13 @@ async function loadResults() {
   try {
     const params = resultQuery();
     params.offset = offset;
-    const data = await api('/api/results?' + new URLSearchParams(params));
+    let data = await api('/api/results?' + new URLSearchParams(params));
+    if (offset > 0 && offset >= (data.total || 0)) {
+      // The table shrank (new export, filters): fall back to the last page instead of an empty view.
+      offset = Math.max(0, Math.floor(Math.max(0, (data.total || 0) - 1) / 50) * 50);
+      params.offset = offset;
+      data = await api('/api/results?' + new URLSearchParams(params));
+    }
     resultTargets = data.targets || [];
     resultData = {...data, offset};
     resultState.digest = data.scope_digest || '';
@@ -3871,6 +4373,7 @@ async function loadResults() {
     if ($('next')) $('next').disabled = offset + 50 >= (data.total || 0);
   } catch (error) {
     toast(error.message, true);
+    renderResultsError(error);
   } finally {
     resultBusy = false;
     if (refreshBtn) refreshBtn.disabled = false;
@@ -3988,20 +4491,26 @@ function renderDetails(row) {
   if (bodyEl) bodyEl.innerHTML = html;
 }
 
+let detailsRequestSeq = 0;
 async function details(summary) {
   if (!summary || !summary.proxy) return;
+  const seq = ++detailsRequestSeq;
+  const dlg = $('details-dialog');
+  if (dlg && typeof dlg.showModal === 'function' && !dlg.open) {
+    // Immediate feedback: open with a spinner while the row is loading.
+    const bodyEl = $('details-body');
+    if (bodyEl) bodyEl.innerHTML = '<div class="details-loading"><span class="spinner" aria-hidden="true"></span></div>';
+    const titleEl = $('details-title');
+    if (titleEl) titleEl.textContent = '…';
+    dlg.showModal();
+  }
   try {
     const row = await api('/api/result-detail?proxy=' + encodeURIComponent(summary.proxy));
+    if (seq !== detailsRequestSeq) return; // a newer click already superseded this response
     detailRow = row;
     renderDetails(row);
-    const dlg = $('details-dialog');
-    if (dlg) {
-      if (dlg.open && typeof dlg.close === 'function') {
-        dlg.close();
-      }
-      if (typeof dlg.showModal === 'function') {
-        dlg.showModal();
-      }
+    if (dlg && typeof dlg.showModal === 'function' && !dlg.open) {
+      dlg.showModal();
     }
   } catch (error) {
     toast(error.message, true);
@@ -4187,6 +4696,9 @@ const presets = {
 function markCopied(button, html) {
   if (!button) return;
   button.classList.add('copied');
+  button.classList.remove('copy-pop');
+  void button.offsetWidth;
+  button.classList.add('copy-pop');
   if (!button.dataset.origHtml) button.dataset.origHtml = button.innerHTML;
 
   const copiedLabel = t('results.copied') || (lang === 'ru' ? 'Скопировано!' : 'Copied!');
@@ -4306,7 +4818,7 @@ if ($('geo-update')) {
     label.textContent = t('geo.downloading');
     toast(t('geo.downloading'));
     try {
-      renderGeo(await api('/api/geoip/update', {}));
+      renderGeo(await api('/api/geoip/update', {}, {timeoutMs: 610000}));
       toast(t('geo.updated'));
       if (currentTab === 'results') loadResults();
     } catch (error) {
@@ -4347,7 +4859,10 @@ async function exportSettingsFile(event) {
   } catch (error) {
     toast(error.message, true);
   } finally {
-    if (button) button.disabled = false;
+    if (button) {
+      if (button.dataset.busyLabel) { button.textContent = button.dataset.busyLabel; delete button.dataset.busyLabel; }
+      button.disabled = false;
+    }
   }
 }
 document.querySelectorAll('[data-action="export-settings"]').forEach(button => { button.onclick = exportSettingsFile; });
@@ -4360,7 +4875,10 @@ async function importSettingsFile(event) {
     let parsed;
     try { parsed = JSON.parse(await file.text()); } catch { throw new Error(t('toast.settingsBad')); }
     if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.targets)) throw new Error(t('toast.settingsBad'));
-    fill(await api('/api/settings', {...settings, ...parsed}));
+    // `settings` can be undefined when the initial load failed; merge onto a
+    // clean object so the POST does not lose untouched defaults.
+    const base = settings && typeof settings === 'object' ? settings : {};
+    fill(await api('/api/settings', {...base, ...parsed}));
     toast(t('toast.settingsImported'));
   } catch (error) {
     toast(error.message, true);
@@ -4404,12 +4922,22 @@ function bindCodeEditor(textareaId, gutterId, counterId) {
   const counter = $(counterId);
   if (!textarea || !gutter) return () => {};
 
+  // Pasting a 20 MB list would rebuild thousands of gutter nodes per keystroke;
+  // debounce the heavy rebuild and update the cheap counter immediately.
+  let gutterTimer = null;
+  let renderedLines = -1;
   function update() {
     const text = textarea.value || '';
     const lines = text.length ? text.split('\n').length : 0;
     if (counter) counter.textContent = `${fmt(lines)} ${t('sources.lines')}`;
-    const count = Math.max(1, lines);
-    gutter.innerHTML = Array.from({length: count}, (_, i) => i + 1).join('<br>');
+    clearTimeout(gutterTimer);
+    gutterTimer = setTimeout(() => {
+      const count = Math.max(1, lines);
+      if (count !== renderedLines) {
+        renderedLines = count;
+        gutter.innerHTML = Array.from({length: count}, (_, i) => i + 1).join('<br>');
+      }
+    }, 120);
   }
 
   textarea.addEventListener('input', update);
@@ -4438,7 +4966,11 @@ if ($('request-profile')) $('request-profile').onchange = updateIdentity;
 if ($('dnsbl-enabled')) $('dnsbl-enabled').onchange = updateIdentity;
 
 async function sourceAction(path, button, message) {
-  if (button) button.disabled = true;
+  if (button) {
+    if (!button.dataset.busyLabel) button.dataset.busyLabel = button.textContent;
+    button.textContent = t('common.busy');
+    button.disabled = true;
+  }
   try {
     const value = await api(path, getSettings());
     settings = value.settings;
@@ -4585,7 +5117,11 @@ async function downloadFile(name, node) {
   }
   try {
     const response = await fetch('/api/download/' + name, {headers:{'X-Workbench-Token':token}});
-    if (!response.ok) throw new Error(t('error.fileNotReady'));
+    if (!response.ok) {
+      let detail = '';
+      try { const err = await response.json(); if (err && err.error) detail = serverText(err.error); } catch {}
+      throw new Error(detail || t('error.fileNotReady'));
+    }
     if (picker) {
       let handle;
       try {
@@ -4732,17 +5268,33 @@ async function bulkAction(op, extra={}) {
   const query = resultQuery();
   const scope = extra.scope || resultState.scope;
   const body = {op, scope, query};
+  // The server's bulk export reads these at the top level (export flags).
+  if (op === 'export' || op === 'recheck') {
+    body.q = query.q || '';
+    body.quick = query.quick || '';
+    body.hosting = query.hosting || '';
+  }
   if (scope === 'selected') body.proxies = Array.from(selectedProxies);
   // The digest makes a stale selection or a changed filter visible instead of
   // silently moving the action to another scope.
   if (resultState.digest) body.scope_digest = resultState.digest;
   if (op === 'tag' || op === 'untag') body.tag = (extra.tag !== undefined ? extra.tag : ($('bulk-tag-input') || {}).value || '').trim();
   if (op === 'note') body.note = (extra.note !== undefined ? extra.note : ($('bulk-note-input') || {}).value || '').trim();
-  if (op === 'export' || op === 'recheck') body.settings = await currentSettingsPayload();
+  if (op === 'export' || op === 'recheck') {
+    body.settings = await currentSettingsPayload();
+    if (!body.settings) {
+      // Sending settings: undefined would only produce a server-side validation
+      // error far from the cause; fail here with a clear message instead.
+      toast(t('error.app'), true);
+      return;
+    }
+  }
   if (!body.proxies && scope === 'selected' && !selectedProxies.size) {
     toast(t('results.scope') + ': ' + t('scope.selected'), true);
     return;
   }
+  const busyBtn = extra.button || null;
+  if (busyBtn) busyBtn.disabled = true;
   try {
     const res = await api('/api/results/bulk', body);
     if (op === 'copy') {
@@ -4759,6 +5311,8 @@ async function bulkAction(op, extra={}) {
     loadResults();
   } catch (error) {
     toast(error.message || t('toast.scopeChanged'), true);
+  } finally {
+    if (busyBtn) busyBtn.disabled = false;
   }
 }
 
@@ -4834,6 +5388,9 @@ function renderMatrix(data) {
 }
 
 function syncSelectionScope(digest) {
+  // An empty digest means the server did not report a scope this round;
+  // treating it as a change would wipe the user's selection on a glitch.
+  if (!digest) return;
   if (!resultState.selectionScope) { resultState.selectionScope = digest; return; }
   if (resultState.selectionScope !== digest && selectedProxies.size) {
     // F19: a selection never silently moves to another scope.
@@ -4902,13 +5459,45 @@ function renderConnectPath(value) {
   const note = $('connect-probe-note');
   if (note) note.textContent = (gateway && gateway.probe_note) || t('connect.probeNote');
   const hint = $('connect-disconnect-hint');
+  const gwButton = $('connect-disconnect');
+  if (gwButton) {
+    const online = Boolean(gateway && gateway.address);
+    gwButton.textContent = online ? t('connect.stopGateway') : t('connect.startGateway');
+    gwButton.classList.toggle('danger', online);
+    gwButton.classList.toggle('primary', !online);
+  }
   if (hint) hint.textContent = (gateway && gateway.disconnect_hint) || t('connect.disconnectText');
+}
+
+async function startGateway() {
+  const button = $('connect-disconnect');
+  if (button) {
+    if (!button.dataset.busyLabel) button.dataset.busyLabel = button.textContent;
+    button.textContent = t('common.busy');
+    button.disabled = true;
+  }
+  try {
+    await api('/api/gateway/start', {});
+    toast(t('connect.gatewayStarted'));
+    poll();
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    if (button) {
+      if (button.dataset.busyLabel) { button.textContent = button.dataset.busyLabel; delete button.dataset.busyLabel; }
+      button.disabled = false;
+    }
+  }
 }
 
 async function stopGateway() {
   const button = $('connect-disconnect');
   if (button) button.disabled = true;
   try {
+    if (!(state && state.gateway && state.gateway.address)) {
+      toast(t('gateway.offline'), true);
+      return;
+    }
     await api('/api/gateway/stop', {});
     toast(t('connect.gatewayStopped'));
     poll();
@@ -4932,13 +5521,26 @@ function setupResultList() {
   if (scope) {
     scope.onchange = () => { resultState.scope = scope.value; };
   }
+  if ($('bulk-tag-input')) $('bulk-tag-input').onkeydown = event => {
+    if (event.key === 'Enter') { event.preventDefault(); bulkAction('tag'); }
+  };
+  if ($('bulk-note-input')) $('bulk-note-input').onkeydown = event => {
+    if (event.key === 'Enter') { event.preventDefault(); bulkAction('note'); }
+  };
   const bulk = {copy: 'bulk-copy', export: 'bulk-export', recheck: 'bulk-recheck', tag: 'bulk-tag', note: 'bulk-note',
     unfavorite: 'bulk-unfavorite', exclude: 'bulk-exclude', include: 'bulk-include'};
   for (const [op, id] of Object.entries(bulk)) {
     const button = $(id);
     if (!button) continue;
-    button.onclick = () => bulkAction(op);
+    button.onclick = () => bulkAction(op, {button});
   }
+  const allMatching = $('select-all-matching');
+  if (allMatching) allMatching.onclick = () => {
+    resultState.scope = 'all_matching';
+    const scopeSelect = $('results-scope-select');
+    if (scopeSelect) scopeSelect.value = 'all_matching';
+    toast(t('results.selectAllMatching') + ': ' + fmt((resultData && resultData.total) || 0));
+  };
   const matrix = $('open-matrix');
   if (matrix) matrix.onclick = loadMatrix;
   const closeMatrix = $('matrix-close');
@@ -4983,7 +5585,12 @@ function setupResultList() {
     columnsToggle.onclick = () => $('columns-menu').classList.toggle('hidden');
   }
   const disconnect = $('connect-disconnect');
-  if (disconnect) disconnect.onclick = stopGateway;
+  if (disconnect) {
+    disconnect.onclick = () => {
+      if (state && state.gateway && state.gateway.address) stopGateway();
+      else startGateway();
+    };
+  }
 }
 
 function renderTheme() {
@@ -4998,6 +5605,10 @@ const themeBtn = $('theme-toggle');
 if (themeBtn) {
   themeBtn.onclick = () => {
     const theme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+    const rootEl = document.documentElement;
+    rootEl.classList.add('theme-anim');
+    clearTimeout(rootEl._themeAnimTimer);
+    rootEl._themeAnimTimer = setTimeout(() => rootEl.classList.remove('theme-anim'), 360);
     document.documentElement.dataset.theme = theme;
     try { localStorage.setItem('proxy-workbench-theme', theme); } catch {}
     renderTheme();
@@ -5009,7 +5620,7 @@ function renderLang() {
   applyI18n();
   const langBtn = $('lang-toggle');
   if (langBtn) {
-    langBtn.textContent = t('lang.button');
+    langBtn.textContent = String(lang).toUpperCase();
     langBtn.setAttribute('aria-label', t('lang.label'));
     langBtn.title = t('lang.label');
   }
@@ -5025,6 +5636,7 @@ function renderLang() {
   updateIdentity();
   updateSourceCount();
   updateCodeEditors();
+  if (catalogData && typeof renderCatalog === 'function') renderCatalog(catalogData);
 }
 // Scenario presets with an explicit, complete field set (defect 24, R17).
 //
@@ -5330,6 +5942,10 @@ function setupEnhancedListeners() {
         toast(t('toast.copied', {count: 1}));
         return;
       }
+      let detail = '';
+      try { const err = await res.json(); if (err && err.error) detail = serverText(err.error); } catch {}
+      toast(detail || t('error.fileNotReady'), true);
+      return;
     } catch {}
     toast(t('error.fileNotReady'), true);
   }
@@ -5349,23 +5965,487 @@ function setupEnhancedListeners() {
   });
 }
 
-const langBtn = $('lang-toggle');
-if (langBtn) {
-  langBtn.onclick = () => {
-    lang = lang === 'ru' ? 'en' : 'ru';
-    try { localStorage.setItem(LANG_KEY, lang); } catch {}
-    renderLang();
-  };
-}
-const sidebarLangBtn = $('sidebar-lang-toggle');
-if (sidebarLangBtn && langBtn) sidebarLangBtn.onclick = langBtn.onclick;
+bindLangMenu();
 
+// --- Source catalog -------------------------------------------------------
+const CATALOG_PAGE = 50;
+const ACCESS_GROUPS = ['public_free', 'permanent_free_quota', 'free_with_key', 'trial', 'paid',
+                       'own_infrastructure', 'snapshot_unavailable', 'unknown'];
+const SOURCE_FORMATS = ['http', 'https', 'socks4', 'socks5', 'socks5h', 'auto', 'text', 'geonode',
+                        'http-fields', 'line', 'json-records', 'fields', 'page-json', 'html-table'];
+let catalogData = null;
+let catalogLimit = CATALOG_PAGE;
+let catalogDetailId = null;
+let catalogTimer = null;
+
+const catalogFilters = () => ({
+  q: $('catalog-q') ? $('catalog-q').value.trim() : '',
+  state: $('catalog-state') ? $('catalog-state').value : '',
+  category: $('catalog-category') ? $('catalog-category').value : '',
+  protocol: $('catalog-protocol') ? $('catalog-protocol').value : '',
+  format: $('catalog-format') ? $('catalog-format').value : '',
+  access: $('catalog-access') ? $('catalog-access').value : '',
+  set: $('catalog-set-filter') ? $('catalog-set-filter').value : ''
+});
+
+function catalogQuery(extra={}) {
+  const params = new URLSearchParams();
+  const filters = {...catalogFilters(), ...extra};
+  for (const [key, value] of Object.entries(filters)) if (value) params.set(key, value);
+  params.set('limit', String(catalogLimit));
+  return params.toString();
+}
+
+function fillCatalogSelect(id, values, labelOf) {
+  const node = $(id);
+  if (!node || node.dataset.filled === String(values.length)) return;
+  const current = node.value;
+  const all = node.querySelector('option[value=""]');
+  node.innerHTML = '';
+  if (all) node.appendChild(all);
+  for (const value of values) {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = labelOf ? labelOf(value) : value;
+    node.appendChild(option);
+  }
+  node.value = values.includes(current) ? current : '';
+  node.dataset.filled = String(values.length);
+}
+
+function renderCatalogFacets(view) {
+  const facet = value => Object.keys(value || {});
+  fillCatalogSelect('catalog-category', facet((view && view.facets && view.facets.categories) || {}).sort());
+  fillCatalogSelect('catalog-protocol', ['http', 'https', 'socks4', 'socks5']);
+  fillCatalogSelect('catalog-format', facet((view && view.facets && view.facets.formats) || {}).sort());
+  fillCatalogSelect('catalog-access', ACCESS_GROUPS.filter(group => (view && view.facets && view.facets.access_groups || {})[group]),
+                    group => t(`cat.group.${group}`));
+  fillCatalogSelect('catalog-set-filter', (view && view.sets || []).map(item => item.id), item => {
+    const set = (view && view.sets || []).find(entry => entry.id === item);
+    return set ? `${set.id} (${set.members})` : item;
+  });
+  const states = (view && view.facets && view.facets.states) || {};
+  const node = $('catalog-state');
+  if (!node) return;
+  const wanted = Object.keys(states).filter(value => states[value]).sort();
+  if (node.dataset.filled !== String(wanted.join(','))) {
+    const current = node.value;
+    const all = node.querySelector('option[value=""]');
+    node.innerHTML = '';
+    if (all) node.appendChild(all);
+    for (const value of wanted) {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = `${t(`cat.state.${value}`)} (${states[value]})`;
+      node.appendChild(option);
+    }
+    node.value = wanted.includes(current) ? current : '';
+    node.dataset.filled = String(wanted.join(','));
+  }
+}
+
+function renderCatalogSets(view) {
+  const container = $('catalog-sets');
+  if (!container) return;
+  container.innerHTML = (view.sets || []).map(item => `
+    <div class="catalog-set${item.applied ? ' applied' : ''}">
+      <div class="catalog-set-main">
+        <strong>${esc(item.id)}</strong>
+        <span class="catalog-set-name">${esc(item.name)}</span>
+        <span class="badge subtle">${esc(t('cat.setMembers', {count: fmt(item.members)}))}</span>
+        ${item.applied ? `<span class="badge success">${esc(t('cat.choice.selected'))}</span>` : ''}
+      </div>
+      <div class="catalog-set-meta">
+        ${item.new_members && item.new_members.length ? `<span class="badge warn">${esc(t('cat.setNew', {count: fmt(item.new_members.length)}))}</span>` : ''}
+        <button class="button light" data-catalog-set="${esc(item.id)}" data-i18n="cat.applySet">${esc(t('cat.applySet'))}</button>
+      </div>
+    </div>`).join('');
+  container.querySelectorAll('[data-catalog-set]').forEach(button => {
+    button.onclick = () => catalogAction('/api/sources/set', {set: button.dataset.catalogSet}, null, 'toast.cat.set');
+  });
+}
+
+function renderCatalogGroups(view) {
+  const container = $('catalog-groups');
+  if (!container) return;
+  container.innerHTML = (view.access_groups || []).map(group => `
+    <button class="catalog-group" data-catalog-access="${esc(group.id)}" title="${esc(group.checked_at || '')}">
+      <span class="catalog-group-name">${esc(t(`cat.group.${group.id}`))}</span>
+      <span class="catalog-group-count">${fmt(group.count)}</span>
+      ${group.checked_at ? `<span class="catalog-group-date">${esc(group.checked_at.slice(0, 10))}</span>` : ''}
+    </button>`).join('');
+  container.querySelectorAll('[data-catalog-access]').forEach(button => {
+    button.onclick = () => {
+      const accessSel = $('catalog-access');
+      if (accessSel) {
+        accessSel.value = accessSel.value === button.dataset.catalogAccess ? '' : button.dataset.catalogAccess;
+        renderLang();
+        reloadCatalog();
+      }
+    };
+  });
+}
+
+function relativeAge(seconds) {
+  if (seconds === null || seconds === undefined) return '';
+  if (seconds < 60) return `${seconds} s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} min`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)} h`;
+  return `${Math.floor(seconds / 86400)} d`;
+}
+
+function runtimeCell(runtime) {
+  if (!runtime || !runtime.observed_at) {
+    return runtime && runtime.error
+      ? `<span class="catalog-err" title="${esc(runtime.error)}">${esc(runtime.error)}</span>`
+      : '<span class="text-muted">—</span>';
+  }
+  const parts = [
+    `<span title="${esc(t('cat.accepted'))}">${esc(t('cat.accepted'))} ${fmt(runtime.accepted)}</span>`,
+    `<span title="${esc(t('cat.rejected'))}">${esc(t('cat.rejected'))} ${fmt(runtime.rejected)}</span>`,
+    `<span title="${esc(t('cat.recognized'))}">${esc(t('cat.recognized'))} ${fmt(runtime.recognized)}</span>`
+  ];
+  const contribution = runtime.contribution;
+  if (contribution && contribution.accepted) {
+    parts.push(`<span class="text-muted" title="${esc(t('cat.newUnique'))}">${esc(t('cat.newUnique'))}: ${fmt(contribution.exclusive)}</span>`);
+  }
+  if (runtime.checked_by_app !== null && runtime.checked_by_app !== undefined) {
+    parts.push(`<span class="text-muted" title="${esc(t('cat.checkedByApp'))}">${esc(t('cat.checkedByApp'))} ${fmt(runtime.checked_by_app)}, ${esc(t('cat.passedProfile'))} ${fmt(runtime.passed_profile)}</span>`);
+  }
+  if (runtime.cache_state && runtime.cache_state !== 'none') parts.push(`<span class="badge subtle">${esc(runtime.cache_state)}</span>`);
+  if (runtime.error) parts.push(`<span class="catalog-err" title="${esc(t('cat.error'))}">${esc(runtime.error)}</span>`);
+  if (runtime.quarantine_until) parts.push(`<span class="badge warn">${esc(t('cat.quarantineUntil'))} ${esc(new Date(runtime.quarantine_until * 1000).toLocaleString())}</span>`);
+  return parts.join(' ');
+}
+
+function catalogRowHtml(row) {
+  const runtime = row.runtime || {};
+  const stateLabel = t(`cat.state.${row.state}`);
+  const stateClass = ['failed', 'quarantined'].includes(row.state) ? 'fail'
+    : ['stale'].includes(row.state) ? 'warn'
+    : ['last_good', 'has_data'].includes(row.state) ? 'pass' : 'subtle';
+  const choiceClass = row.selection_state === 'selected' ? 'pass' : row.selection_state === 'disabled' ? 'warn' : 'subtle';
+  const accessNote = row.access_blocked_reason || row.not_proxy_source_reason || row.access_note;
+  const age = runtime.last_good_age_seconds;
+  return `<div class="catalog-row" data-source-id="${esc(row.id)}">
+    <div class="catalog-cell catalog-cell-source">
+      <button class="catalog-link" data-catalog-details="${esc(row.id)}">${esc(row.name)}</button>
+      <div class="catalog-id">${esc(row.id)}</div>
+      <div class="catalog-publisher">${esc(row.publisher.name || row.publisher.id || '—')} · ${esc(row.category)}</div>
+      ${row.custom ? `<span class="badge subtle">${esc(t('cat.state.custom'))}</span>` : ''}
+      ${row.retired ? `<div class="text-muted-warn">${esc(t('cat.retiredNote'))}</div>` : ''}
+      ${(row.sets || []).length ? `<div class="catalog-sets-inline">${row.sets.map(set => `<span class="badge subtle">${esc(set)}</span>`).join('')}</div>` : ''}
+    </div>
+    <div class="catalog-cell catalog-cell-format">
+      <span class="badge subtle">${esc(row.adapter)}</span>
+      <div>${(row.formats || []).map(value => `<span class="badge subtle">${esc(value)}</span>`).join(' ')}</div>
+      <div class="text-muted">${(row.protocols || []).map(value => `<span class="badge subtle">${esc(value)}</span>`).join(' ')}</div>
+      <div class="text-muted" title="${esc(accessNote || '')}">${esc(accessNote ? accessNote.slice(0, 60) : '')}</div>
+    </div>
+    <div class="catalog-cell catalog-cell-access">
+      <div title="${esc(t('cat.termsLink'))}">${esc(t(`cat.group.${row.access_group}`))}</div>
+      <div class="text-muted">${esc(row.access)}</div>
+      ${row.checked_at ? `<div class="text-muted">${esc(row.checked_at.slice(0, 10))}</div>` : ''}
+      ${row.terms_url ? `<a class="catalog-terms" href="${esc(row.terms_url)}" target="_blank" rel="noopener">${esc(t('cat.termsLink'))}</a>` : ''}
+    </div>
+    <div class="catalog-cell catalog-cell-state">
+      <span class="badge status-badge ${stateClass}" title="${esc(accessNote || '')}">${esc(stateLabel)}</span>
+      <div class="text-muted">${esc(t('cat.age'))}: ${esc(age === null || age === undefined ? t('cat.ageNone') : relativeAge(age))}</div>
+      ${!row.collectable ? `<div class="text-muted-warn">${esc(row.not_proxy_source_reason || row.access_blocked_reason || '')}</div>` : ''}
+    </div>
+    <div class="catalog-cell catalog-cell-data">${runtimeCell(runtime)}</div>
+    <div class="catalog-cell catalog-cell-choice">
+      <span class="badge ${choiceClass}">${esc(t(`cat.choice.${row.selection_state}`))}</span>
+      <div class="catalog-actions">
+        ${row.collectable ? `<button class="button chip" data-catalog-check="${esc(row.id)}" title="${esc(t('cat.action.check'))}">${esc(t('cat.action.check'))}</button>` : ''}
+        ${row.selected ? (row.download_disabled
+          ? `<button class="button chip" data-catalog-resume="${esc(row.id)}" title="${esc(t('cat.action.resume'))}">${esc(t('cat.action.resume'))}</button>`
+          : `<button class="button chip" data-catalog-toggle="${esc(row.id)}" title="${esc(t('cat.action.pause'))}">${esc(t('cat.action.pause'))}</button>`)
+          : `<button class="button chip" data-catalog-select="${esc(row.id)}" title="${esc(t('cat.action.include'))}">${esc(t('cat.action.include'))}</button>`}
+        ${row.selected ? `<button class="button chip" data-catalog-remove="${esc(row.id)}" title="${esc(t('cat.action.remove'))}">${esc(t('cat.action.remove'))}</button>` : ''}
+        ${row.runtime && row.runtime.error ? `<button class="button chip" data-catalog-recover="${esc(row.id)}" title="${esc(t('cat.action.recover'))}">↻</button>` : ''}
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderCatalog(view) {
+  catalogData = view;
+  const rev = $('catalog-revision');
+  if (rev) rev.textContent = `${view.revision} · ${view.published_at ? String(view.published_at).slice(0, 10) : ''}`;
+  renderCatalogFacets(view);
+  renderCatalogSets(view);
+  renderCatalogGroups(view);
+  const rows = view.sources || [];
+  const list = $('catalog-list');
+  if (list) {
+    list.innerHTML = rows.length
+      ? rows.map(catalogRowHtml).join('')
+      : `<p class="hint">${esc(t('cat.empty'))}</p>`;
+  }
+  const count = $('catalog-count');
+  if (count) count.textContent = t('cat.shown', {shown: fmt(rows.length), total: fmt(view.total)});
+  const more = $('catalog-more');
+  if (more) more.classList.toggle('hidden', rows.length >= view.total);
+  bindCatalogRows();
+  if (catalogDetailId) loadCatalogDetail(catalogDetailId);
+}
+
+function bindCatalogRows() {
+  const handlers = {
+    'catalog-details': id => loadCatalogDetail(id),
+    'catalog-check': id => previewSource(id),
+    'catalog-toggle': id => catalogToggle(id, true),
+    'catalog-resume': id => catalogToggle(id, false),
+    'catalog-select': id => catalogSelect(id, true),
+    'catalog-remove': id => catalogSelect(id, false),
+    'catalog-recover': id => catalogAction('/api/sources/toggle', {id, disabled: false}, null, 'toast.cat.recovered'),
+  };
+  const list = $('catalog-list');
+  if (!list) return;
+  for (const [action, run] of Object.entries(handlers)) {
+    list.querySelectorAll(`[data-${action}]`).forEach(button => {
+      button.onclick = () => run(button.dataset[action.replace(/-([a-z])/g, (_, c) => c.toUpperCase())]);
+    });
+  }
+}
+
+async function reloadCatalog() {
+  try {
+    const list = $('catalog-list');
+    if (!list) return;
+    renderCatalog(await api('/api/source-catalog?' + catalogQuery()));
+  } catch (error) {
+    const list = $('catalog-list');
+    if (list) list.innerHTML = `<p class="hint">${esc(error.message)}</p>`;
+  }
+}
+
+function catalogToggle(id, disabled) {
+  return catalogAction('/api/sources/toggle', {id, disabled}, null, disabled ? 'toast.cat.paused' : 'toast.cat.resumed');
+}
+
+function catalogSelect(id, selected) {
+  return catalogAction('/api/sources/select', {id, selected}, null, selected ? 'toast.cat.saved' : 'toast.cat.removed');
+}
+
+async function catalogAction(path, body, message, toastKey) {
+  try {
+    const value = await api(path, body);
+    if (value && value.settings) {
+      settings = value.settings;
+      if ($('sources')) $('sources').value = (settings.sources || []).join('\n');
+      updateSourceCount();
+      updateCodeEditors();
+    }
+    if (toastKey) toast(t(toastKey, {count: fmt((value && (value.members || [1]).length) || 1)}));
+    else if (message) toast(message(value));
+    await reloadCatalog();
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+
+async function loadCatalogDetail(sourceId) {
+  catalogDetailId = sourceId;
+  const node = $('catalog-detail');
+  if (!node) return;
+  node.hidden = false;
+  try {
+    const row = await api('/api/source-catalog/' + encodeURIComponent(sourceId));
+    const runtime = row.runtime || {};
+    const evidence = Object.entries(row.evidence || {}).map(([key, value]) =>
+      `<tr><td>${esc(key)}</td><td>${esc(value.state || '—')}</td><td>${esc(value.checked_at || '—')}</td></tr>`).join('');
+    const history = (row.history || []).map(item => `<tr>
+        <td>${esc(new Date((item.ended_at || item.started_at || 0) * 1000).toLocaleString())}</td>
+        <td>${esc(item.http_state)}</td><td>${esc(item.parse_state)}</td><td>${esc(item.cache_state)}</td>
+        <td>${fmt(item.accepted)} / ${fmt(item.rejected)}</td><td>${esc(item.error || '—')}</td></tr>`).join('');
+    node.innerHTML = `
+      <div class="dialog-heading">
+        <h2>${esc(t('cat.detailTitle'))}: ${esc(row.name)}</h2>
+        <button class="button light" data-catalog-close>✕</button>
+      </div>
+      <p class="hint">${esc(t('cat.noLiveness'))}</p>
+      <div class="catalog-detail-grid">
+        <div>
+          <h3 data-i18n="cat.evidence">Research evidence</h3>
+          <table><tbody>${evidence}</tbody></table>
+          <h3 data-i18n="cat.rights">Terms and data license</h3>
+          <p class="hint">${esc(t('cat.checkedOn'))}: ${esc((row.rights || {}).checked_at || row.checked_at || '—')}</p>
+          <p class="hint">data_license: ${esc((row.rights || {}).data_license || 'unknown')} · code_license: ${esc((row.rights || {}).code_license || 'unknown')}</p>
+          ${row.terms_url ? `<a class="catalog-terms" href="${esc(row.terms_url)}" target="_blank" rel="noopener">${esc(t('cat.termsLink'))}</a>` : ''}
+        </div>
+        <div>
+          <h3 data-i18n="cat.cache">Stored data</h3>
+          <p class="hint">${esc(t('cat.cacheAge'))}: ${esc(runtime.last_good_age_seconds === null || runtime.last_good_age_seconds === undefined ? t('cat.ageNone') : relativeAge(runtime.last_good_age_seconds))}
+             · ${esc(t('cat.cacheRecords'))}: ${fmt((row.cache || {}).last_good ? (row.cache.last_good.record_count || 0) : 0)}</p>
+          <p class="hint">HTTP ${esc(runtime.http_state || '—')} · ${esc(runtime.parse_state || '—')} · ${esc(runtime.cache_state || '—')}</p>
+          ${runtime.error ? `<p class="catalog-err">${esc(t('cat.error'))}: ${esc(runtime.error)}</p>` : ''}
+          ${runtime.etag || runtime.last_modified ? `<p class="hint">ETag: ${esc(runtime.state_etag || '—')} · Last-Modified: ${esc(runtime.state_last_modified || '—')}</p>` : ''}
+        </div>
+      </div>
+      <h3 data-i18n="cat.history">Last observations</h3>
+      ${history ? `<table><thead><tr><th>${esc(t('cat.time'))}</th><th>HTTP</th><th>${esc(t('cat.col.format'))}</th><th>${esc(t('cat.cache'))}</th><th>${esc(t('cat.accepted'))} / ${esc(t('cat.rejected'))}</th><th>${esc(t('cat.error'))}</th></tr></thead><tbody>${history}</tbody></table>`
+        : `<p class="hint">${esc(t('cat.noHistory'))}</p>`}`;
+    const closeBtn = node.querySelector('[data-catalog-close]');
+    if (closeBtn) closeBtn.onclick = () => { node.hidden = true; catalogDetailId = null; };
+    applyI18n(node);
+  } catch (error) {
+    node.innerHTML = `<p class="catalog-err">${esc(error.message)}</p>`;
+  }
+}
+
+function previewHtml(row) {
+  const reasons = Object.entries(row.reject_reasons || {}).map(([reason, count]) => `<span class="badge subtle">${esc(reason)}: ${fmt(count)}</span>`).join(' ');
+  return `<div class="catalog-preview-inner">
+    <strong>${esc(t('cat.previewTitle', {name: row.name || row.source_id}))}</strong>
+    <p class="hint">${esc(t('cat.previewNote'))}</p>
+    <p>${esc(t('cat.recognized'))}: <b>${fmt(row.recognized)}</b> · ${esc(t('cat.accepted'))}: <b>${fmt(row.accepted)}</b> · ${esc(t('cat.rejected'))}: <b>${fmt(row.rejected)}</b></p>
+    ${reasons ? `<p>${esc(t('cat.reasons'))}: ${reasons}</p>` : ''}
+    ${row.truncated ? `<p class="text-muted-warn">${esc(t('cat.previewTruncated', {bytes: fmt((row.limits || {}).max_bytes), records: fmt((row.limits || {}).max_candidates)}))}</p>` : ''}
+    <p class="hint">HTTP ${esc(row.http_state)} · ${esc(row.parse_state)} · ${esc(row.cache_state)} · ${esc(row.format || '—')} · ${esc(t('cat.pages'))} ${fmt(row.pages)}${row.error ? ` · <span class="catalog-err">${esc(row.error)}</span>` : ''}</p>
+    ${(row.sample || []).length ? `<pre class="catalog-sample">${esc(row.sample.join('\n'))}</pre>` : ''}
+  </div>`;
+}
+
+async function previewSource(sourceId) {
+  try {
+    const row = await api('/api/sources/check', {id: sourceId});
+    toast(t('cat.accepted') + ': ' + fmt(row.accepted));
+    await loadCatalogDetail(sourceId);
+    const detail = $('catalog-detail');
+    if (detail) {
+      const extra = document.createElement('div');
+      extra.innerHTML = previewHtml(row);
+      detail.prepend(extra);
+      applyI18n(extra);
+    }
+  } catch (error) {
+    toast(t('cat.previewFailed', {reason: error.message}), true);
+  }
+}
+
+function setupCatalogListeners() {
+  const closeScope = $('close-scope');
+  if (closeScope) closeScope.onclick = () => { const d = $('scope-dialog'); if (d) d.close(); };
+
+  const refreshBtn = $('catalog-refresh');
+  if (refreshBtn) {
+    refreshBtn.onclick = async () => {
+      const spinner = refreshBtn.querySelector('.btn-spinner');
+      const label = refreshBtn.querySelector('.btn-label');
+      const note = $('catalog-update-note');
+      refreshBtn.disabled = true;
+      if (spinner) spinner.classList.remove('hidden');
+      if (note) { note.hidden = false; note.textContent = t('cat.updating'); }
+      try {
+        await api('/api/sources/refresh', {});
+        for (let attempt = 0; attempt < 60; attempt += 1) {
+          const job = await api('/api/sources/update-status');
+          if (note) {
+            if (job.stage === 'downloading') note.textContent = t('cat.updateStage.downloading');
+            if (job.stage === 'validating') note.textContent = t('cat.updateStage.validating');
+          }
+          if (!job.running) {
+            if (job.error) {
+              if (note) note.textContent = t('cat.updateFailed', {reason: serverText(job.error)});
+              toast(note ? note.textContent : '', true);
+            } else if (job.not_modified) {
+              if (note) note.textContent = t('cat.updateNotModified');
+              toast(note ? note.textContent : '');
+            } else {
+              if (note) note.textContent = t('cat.updateDone', {revision: job.revision, added: fmt(job.added), changed: fmt(job.changed), retired: fmt(job.retired)});
+              toast(note ? note.textContent : '');
+            }
+            break;
+          }
+          await new Promise(resolve => setTimeout(resolve, 400));
+        }
+        // The fast loop ended while the job still runs: say so instead of
+        // silently re-enabling the button mid-update.
+        if (note && !note.dataset.done) {
+          note.textContent = t('cat.updateStillRunning');
+          toast(note.textContent, true);
+        }
+        await reloadCatalog();
+      } catch (error) {
+        if (note) note.textContent = t('cat.updateFailed', {reason: error.message});
+        toast(error.message, true);
+      } finally {
+        refreshBtn.disabled = false;
+        if (spinner) spinner.classList.add('hidden');
+        if (label) label.textContent = t('cat.update');
+      }
+    };
+  }
+
+  for (const id of ['catalog-q', 'catalog-state', 'catalog-category', 'catalog-protocol', 'catalog-format', 'catalog-access', 'catalog-set-filter']) {
+    const node = $(id);
+    if (!node) continue;
+    node.oninput = () => { catalogLimit = CATALOG_PAGE; clearTimeout(catalogTimer); catalogTimer = setTimeout(reloadCatalog, 250); };
+    node.onchange = () => { catalogLimit = CATALOG_PAGE; reloadCatalog(); };
+  }
+
+  const moreBtn = $('catalog-more');
+  if (moreBtn) moreBtn.onclick = () => { catalogLimit += CATALOG_PAGE; reloadCatalog(); };
+
+  const addToggle = $('catalog-add-toggle');
+  if (addToggle) addToggle.onclick = () => { const f = $('catalog-add-form'); if (f) f.hidden = !f.hidden; };
+
+  const addKind = $('catalog-add-kind');
+  if (addKind) addKind.innerHTML = SOURCE_FORMATS.map(value => `<option value="${esc(value)}">${esc(value)}</option>`).join('');
+
+  const addPreview = $('catalog-add-preview');
+  if (addPreview) {
+    addPreview.onclick = async () => {
+      addPreview.disabled = true;
+      try {
+        const payload = {
+          url: $('catalog-add-url').value.trim(),
+          kind: $('catalog-add-kind').value,
+          allow_private: $('catalog-add-private').checked
+        };
+        const row = await api('/api/sources/preview', payload, {timeoutMs: 90000});
+        const res = $('catalog-add-result');
+        if (res) res.innerHTML = previewHtml(row);
+      } catch (error) {
+        const res = $('catalog-add-result');
+        if (res) res.innerHTML = `<p class="catalog-err">${esc(t('cat.previewFailed', {reason: error.message}))}</p>`;
+      } finally {
+        addPreview.disabled = false;
+      }
+    };
+  }
+
+  const addSubmit = $('catalog-add-submit');
+  if (addSubmit) {
+    addSubmit.onclick = async () => {
+      try {
+        const payload = {
+          url: $('catalog-add-url').value.trim(),
+          kind: $('catalog-add-kind').value
+        };
+        const value = await api('/api/sources/add', payload);
+        toast(t('cat.addDone', {id: value.id}));
+        $('catalog-add-url').value = '';
+        const res = $('catalog-add-result');
+        if (res) res.innerHTML = '';
+        await reloadCatalog();
+      } catch (error) {
+        toast(error.message, true);
+      }
+    };
+  }
+}
+
+try { setupCatalogListeners(); } catch (e) { console.error(e); }
 try { setupCountryComboboxes(); } catch (e) { console.error(e); }
 try { setupFieldPresetChips(); } catch (e) { console.error(e); }
 try { setupEnhancedListeners(); } catch (e) { console.error(e); }
 try { setupResultList(); } catch (e) { console.error(e); }
 
 try { renderLang(); } catch (e) { console.error(e); }
+try { renderSavedViews(resultState.views); } catch (e) { console.error(e); }
 requestAnimationFrame(updateSegmentedGlider);
 setTimeout(updateSegmentedGlider, 100);
 
@@ -5379,9 +6459,9 @@ if (initToast) {
   try {
     const initialSettings = await api('/api/settings');
     fill(initialSettings);
-    await poll();
-    setInterval(poll, 2000);
   } catch (error) {
     toast(error.message, true);
   }
+  await poll();
+  setInterval(poll, 2000);
 })();
