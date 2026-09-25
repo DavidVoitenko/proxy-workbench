@@ -96,6 +96,73 @@ class Upstream:
         return f'<{self.scheme} {self.host}:{self.port} conns={self.connections}>'
 
 
+class ScriptedClient:
+    """A client side whose bytes and writes the test controls exactly.
+
+    A real client can only be *raced*: the gateway decides for itself when to
+    read and when to write, so a test that wants to cancel or expire it inside
+    one particular ``await`` - the one where the tunnel grant is flushed -
+    would have to guess.  Here ``drain`` can be held open from the moment a
+    chosen marker is written, which pins the gateway at that await until the
+    test cancels it.  That window is exactly the one a sequential
+    pick/acquire test cannot produce, and exactly the one where a reserved
+    slot used to be lost.
+    """
+
+    def __init__(self, script=b'', block_on=b''):
+        self.script = bytearray(script)
+        self.buf = b''
+        self.block_on = block_on
+        self.held = asyncio.Event()
+        self.closed = False
+
+    async def _await_more(self):
+        """Block forever, the way a client that stops talking does."""
+        await asyncio.Future()
+
+    async def readexactly(self, size):
+        while len(self.script) < size:
+            await self._await_more()
+        out = bytes(self.script[:size])
+        del self.script[:size]
+        return out
+
+    async def readuntil(self, separator):
+        while separator not in self.script:
+            await self._await_more()
+        end = self.script.index(separator) + len(separator)
+        out = bytes(self.script[:end])
+        del self.script[:end]
+        return out
+
+    async def read(self, size):
+        return b''
+
+    def write(self, data):
+        self.buf += data
+        if self.block_on and self.block_on in self.buf:
+            self.held.set()
+
+    async def drain(self):
+        if self.held.is_set():
+            await self._await_more()
+
+    def close(self):
+        self.closed = True
+
+    async def wait_closed(self):
+        pass
+
+    def can_write_eof(self):
+        return False
+
+    def write_eof(self):
+        pass
+
+    def get_extra_info(self, name, default=None):
+        return default
+
+
 class GatewayCase(unittest.IsolatedAsyncioTestCase):
     """A loopback export, local upstreams and a gateway, all in one temporary home."""
 

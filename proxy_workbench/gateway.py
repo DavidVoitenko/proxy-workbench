@@ -60,10 +60,6 @@ STRATEGIES = ('round-robin', 'random', 'health-aware')
 STICKY_MODES = ('failover', 'strict')
 #: What happens to streams that are already open when a proxy is denied.
 REVOKE_POLICIES = ('keep', 'close')
-#: Methods that may be sent again if the very first tunnel attempt failed before
-#: anything was written.  A request is never replayed once bytes reached an
-#: upstream, whatever the method is.
-IDEMPOTENT = frozenset({b'GET', b'HEAD', b'OPTIONS', b'TRACE', b'PUT', b'DELETE'})
 MAX_HEAD = 64 * 1024
 SESSION = re.compile(r'[A-Za-z0-9_]{1,64}')
 HOP_HEADERS = {b'proxy-authorization', b'proxy-connection', b'connection', b'keep-alive'}
@@ -350,12 +346,17 @@ class Pool:
         self.revision = None
         self.generation = None
         self.status = {}
+        #: What the export yielded after transport and filter selection.
+        self.source_rows = []
+        #: ``source_rows`` minus the denylist: what a client may be offered.
         self.rows = []
+        #: (export key, export revision, denylist digest) the rows were built from.
+        self.rows_stamp = None
         self.cache = OrderedDict()
         self.denied = set()
         self.revoked = 0
         self.stats = dict(connections=0, failed=0, retries=0, rejected=0, upstream_5xx=0,
-                          closed_idle=0, closed_deadline=0, denied=0, replay_refused=0)
+                          closed_idle=0, closed_deadline=0, capped=0, denied=0, replay_refused=0)
 
     # --- export and denylist -------------------------------------------------
 
@@ -380,29 +381,48 @@ class Pool:
         """Install a denylist and revoke admissions for everything it now names.
 
         Revoking an admission is immediate and complete: the proxy leaves the
-        row list, the filter cache and every session binding, so no later
-        request can pick it.  Streams that are already open are a separate
-        decision - see ``on_deny`` and :meth:`revoke_streams`.
+        servable row list and the filter cache, so no later request can pick it,
+        and it is never dialled.  Removing a rule puts the proxy back, because
+        the servable list is always *derived* from the export instead of being
+        edited in place - a one-way ratchet that only a new publication could
+        undo would silently shrink the pool for good (defect 19).
+        Streams that are already open are a separate decision - see
+        ``on_deny`` and :meth:`revoke_streams`.
         """
         denylist = denylist if denylist is not None else reputation.Denylist.empty()
         with self.lock:
-            previous = self.denylist.digest
             self.denylist = denylist
-            fresh = {row['proxy'] for row in self.rows if denylist.match(row['proxy'])}
-            if previous != denylist.digest or fresh:
-                self.denied = fresh
-                if self.denied:
-                    self.revoked += len(self.denied)
-                    self.stats['denied'] += len(self.denied)
-                    self.rows = [row for row in self.rows if row['proxy'] not in self.denied]
-                    self.cache.clear()
-                    # Session bindings are left in place on purpose.  A denied
-                    # address is no longer available, so a failover session
-                    # re-binds to a working one and a strict session is refused -
-                    # both of which the sticky mode decides, not the denylist.
-            else:
-                self.denied = fresh
+            self._apply_denylist()
         return self.denylist
+
+    def _apply_denylist(self):
+        """Recompute the servable rows from the export and the current denylist.
+
+        Caller holds the lock.  The deny decision is taken from the denylist
+        alone, so the same call both revokes a new rule and restores a removed
+        one, and the ``denied`` set always means "named right now" rather than
+        "named at some point".  The stamp makes the common case - a refresh
+        tick where neither the export nor the rules moved - a single comparison
+        instead of a rebuild.
+        """
+        stamp = (self.exports.key, self.exports.revision, self.denylist.digest)
+        if stamp == self.rows_stamp:
+            return self.denied
+        denied = {row['proxy'] for row in self.source_rows
+                  if self.denylist.match(row['proxy']) is not None}
+        added = denied - self.denied
+        if added:
+            self.revoked += len(added)
+            self.stats['denied'] += len(added)
+        self.rows_stamp = stamp
+        self.denied = denied
+        self.rows = [row for row in self.source_rows if row['proxy'] not in denied]
+        self.cache.clear()
+        # Session bindings are left in place on purpose.  A denied address is
+        # no longer available, so a failover session re-binds to a working one
+        # and a strict session is refused - both of which the sticky mode
+        # decides, not the denylist.
+        return denied
 
     def denied_proxies(self):
         with self.lock:
@@ -412,12 +432,18 @@ class Pool:
         """False when the local denylist names this proxy, before any network call."""
         return self.denylist.match(proxy) is None and proxy not in self.denied
 
-    def revoke_streams(self, close):
-        """Return the proxies whose open streams the caller must close, honouring policy."""
-        if self.on_deny != 'close' and not close:
-            return []
+    def revoke_streams(self, force=None):
+        """The proxies whose open streams the caller should close, or an empty list.
+
+        ``keep`` is the default and it is a real decision, not an omission: an
+        open stream already has bytes on the wire and cutting it is the user's
+        call, not a side effect of adding a rule.  ``close`` is the explicit
+        request to drop them.  ``force`` overrides the configured policy for a
+        single call, which is what :meth:`Gateway.set_denylist` needs.
+        """
+        policy = self.on_deny if force is None else ('close' if force else 'keep')
         with self.lock:
-            return sorted(self.denied)
+            return sorted(self.denied) if policy == 'close' else []
 
     def refresh(self):
         """Re-read the export and the denylist.  Performs file I/O: not for the event loop."""
@@ -431,17 +457,10 @@ class Pool:
                 self.generation = (status or {}).get('generation')
                 # The URL scheme is the transport, so https://, socks4a and
                 # socks5h are first-class rows now, not filtered away.
-                self.rows = [row for row in select(rows, self.filters)
-                             if str(row['proxy']).partition('://')[0] in SUPPORTED]
-                self.cache.clear()
-            denied = {row['proxy'] for row in self.rows if not self.allowed(row['proxy'])}
-            if denied != self.denied:
-                if denied:
-                    self.revoked += len(denied - self.denied)
-                    self.stats['denied'] += len(denied - self.denied)
-                self.denied = denied
-                self.rows = [row for row in self.rows if row['proxy'] not in denied]
-                self.cache.clear()
+                self.source_rows = [row for row in select(rows, self.filters)
+                                    if str(row['proxy']).partition('://')[0] in SUPPORTED]
+            # Always re-derived, so a rule that was removed lets its proxy back.
+            self._apply_denylist()
             # What this listener would serve right now: the denylist and the
             # binding of the default pool.  A named binding narrows from here.
             return self.matching(binding=self.default_binding)
@@ -957,9 +976,11 @@ class Gateway:
         self.handshake_timeout = handshake_timeout
         self.response_timeout = response_timeout
         self.max_clients = max(1, int(max_clients))
-        #: 0 means "as long as the client is idle-free"; a positive value caps
-        #: the life of one relayed connection and is visible in the snapshot.
-        self.max_session = max(0, int(max_session))
+        #: Seconds, as a float: 0 means "as long as the client is idle-free", a
+        #: positive value caps the life of one relayed connection and is visible
+        #: in the snapshot.  Rounded to a whole number it would silently turn
+        #: every sub-second cap into "no cap at all", so the fraction is kept.
+        self.max_session = max(0.0, float(max_session))
         self.bind = bind or Bind()
         self.drain_timeout = drain_timeout
         self.ssl_context = ssl_context
@@ -1046,6 +1067,18 @@ class Gateway:
         return user, password
 
     # --- relaying ------------------------------------------------------------
+
+    @staticmethod
+    def _discard(lease, upstream):
+        """Give back a slot and close a tunnel that nobody will ever relay.
+
+        Used on the path between a successful :meth:`connect` and the relay
+        taking the lease.  Every exit from that window must end here, because
+        the slot was already reserved and nobody else will release it.
+        """
+        with contextlib.suppress(OSError, RuntimeError):
+            upstream[1].close()
+        lease.release()
 
     async def relay(self, client_reader, client_writer, lease, upstream, first=b'', kind='tunnel'):
         """Carry one client exchange over one upstream, and report what it proved.
@@ -1140,7 +1173,13 @@ class Gateway:
                 # sent something and got silence counts as a fault.
                 if state.get('sent'):
                     score('closed_empty')
-        except (OSError, asyncio.TimeoutError):
+        except asyncio.TimeoutError:
+            # Only the session cap can raise it here: pipe() swallows its own
+            # idle timeouts, and response_head() classifies its own.  A capped
+            # long connection is a policy decision, not a sign of idleness, so
+            # the two are counted apart and visible in the snapshot.
+            self.pool.stats['capped'] += 1
+        except OSError:
             self.pool.stats['closed_idle'] += 1
         finally:
             if task is not None:
@@ -1248,17 +1287,25 @@ class Gateway:
                 if str(exc) == 'NO_PROXIES' else tr('Все выбранные прокси не ответили.',
                                                     'None of the tried proxies answered.')
             return await self._refuse(writer, b'HTTP/1.1 502 Bad Gateway\r\n', body.encode())
-        if path is None:
-            writer.write(b'HTTP/1.1 200 Connection established\r\n\r\n')
-            await writer.drain()
-            return lease, upstream, b'', 'tunnel'
-        # Plain HTTP: one request per connection keeps rotation simple and
-        # predictable.  The request is written exactly once, after the tunnel is
-        # up, and only to the upstream that owns this lease.
-        target = absolute if lease.proxy.startswith(('http://', 'https://')) else path
-        payload = b'\r\n'.join([b' '.join([method, target.encode('ascii'), version or b'HTTP/1.1']), *kept,
-                                b'Connection: close']) + b'\r\n\r\n'
-        return lease, upstream, payload, 'forward'
+        # The slot is ours from here until the relay takes it.  Telling the
+        # client "connection established" is still an await, and a shutdown, a
+        # handshake deadline or a client that hangs up in exactly that window
+        # must not leave the slot taken (defect 16).
+        try:
+            if path is None:
+                writer.write(b'HTTP/1.1 200 Connection established\r\n\r\n')
+                await writer.drain()
+                return lease, upstream, b'', 'tunnel'
+            # Plain HTTP: one request per connection keeps rotation simple and
+            # predictable.  The request is written exactly once, after the tunnel
+            # is up, and only to the upstream that owns this lease.
+            target = absolute if lease.proxy.startswith(('http://', 'https://')) else path
+            payload = b'\r\n'.join([b' '.join([method, target.encode('ascii'), version or b'HTTP/1.1']), *kept,
+                                    b'Connection: close']) + b'\r\n\r\n'
+            return lease, upstream, payload, 'forward'
+        except BaseException:
+            self._discard(lease, upstream)
+            raise
 
     async def handle_socks5(self, reader, writer):
         methods = await reader.readexactly((await reader.readexactly(1))[0])
@@ -1303,8 +1350,15 @@ class Gateway:
         except (UpstreamError, ValueError, KeyError):
             writer.write(b'\x05\x01\x00\x01' + bytes(6))
             return await writer.drain()
-        writer.write(b'\x05\x00\x00\x01' + bytes(6))
-        await writer.drain()
+        # Same rule as the HTTP path: the grant is an await, so a cancellation
+        # or a client that hangs up while it is written must give the slot back
+        # rather than leak it (defect 16).
+        try:
+            writer.write(b'\x05\x00\x00\x01' + bytes(6))
+            await writer.drain()
+        except BaseException:
+            self._discard(lease, upstream)
+            raise
         return lease, upstream, b'', 'tunnel'
 
     # --- lifecycle -----------------------------------------------------------
@@ -1312,14 +1366,16 @@ class Gateway:
     def set_denylist(self, denylist):
         """Install a denylist and, under ``on_deny='close'``, drop denied streams.
 
+        The policy lives in one place, :meth:`Pool.revoke_streams`, so what is
+        revoked from the pool and what is cut on the wire can never disagree.
         ``keep`` is the default and it is a real decision, not an omission: an
         open stream belongs to a client that already has bytes on the wire, and
         cutting it is the user's call, not a side effect of adding a rule.
         """
         self.pool.set_denylist(denylist)
-        if self.pool.on_deny != 'close':
+        denied = set(self.pool.revoke_streams())
+        if not denied:
             return []
-        denied = set(self.pool.denied)
         closed = []
         for task, lease in list(self.streams.items()):
             if lease.proxy in denied and not task.done():
