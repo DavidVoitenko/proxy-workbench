@@ -259,6 +259,12 @@ class Category:
     description_ru: str
     description_en: str
 
+    def to_dict(self) -> dict:
+        # ``Catalog.summary()`` is the description the GUI, the CLI and the API
+        # read, so a category has to be as serialisable as every other record.
+        return {'id': self.category_id, 'title_ru': self.title_ru, 'title_en': self.title_en,
+                'description_ru': self.description_ru, 'description_en': self.description_en}
+
 
 @dataclass(frozen=True)
 class Preset:
@@ -1094,6 +1100,9 @@ class PresetChange:
         return {'preset_id': self.preset_id, 'state': self.state,
                 'from_version': self.from_version, 'to_version': self.to_version,
                 'from_digest': self.from_digest, 'to_digest': self.to_digest,
+                # A consumer has to know whether a change can move a verdict, so
+                # the flag travels with the diff instead of staying a property.
+                'breaking': self.breaking,
                 'changed_fields': [list(item) for item in self.changed_fields],
                 'deprecated_reason_ru': self.deprecated_reason_ru}
 

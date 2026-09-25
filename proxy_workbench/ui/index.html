@@ -247,6 +247,75 @@
             <div class="quick-services-chips" id="quick-services-chips"></div>
           </section>
 
+          <!-- Service catalog: versioned service definitions and ready sets (F06) -->
+          <section class="card catalog-card service-catalog-card" id="service-catalog">
+            <div class="card-title">
+              <div class="geo-title-wrap">
+                <span class="code-editor-badge">SERVICES</span>
+                <h2 data-i18n="svc.title">Service catalog</h2>
+              </div>
+              <div class="catalog-head-meta">
+                <span id="svc-revision" class="badge subtle">—</span>
+                <button type="button" class="button light chip" id="svc-toggle" aria-expanded="false" aria-controls="svc-body" data-i18n="svc.open">Open catalog</button>
+              </div>
+            </div>
+            <p class="hint" data-i18n="svc.lead">Every service names its id, version, maintainer, real probe and pass condition. A set is a rule over services: all, any, at least K, or only the required ones.</p>
+
+            <div id="svc-body" hidden>
+              <div class="catalog-section">
+                <h3 data-i18n="svc.sets">Sets</h3>
+                <p class="hint" data-i18n="svc.setsHint">Applying a set writes all of its fields, so nothing from the previous set stays behind.</p>
+                <div class="catalog-sets" id="svc-sets"></div>
+              </div>
+
+              <div class="catalog-filters">
+                <input id="svc-q" type="search" class="catalog-search" data-i18n-placeholder="svc.search" data-i18n-aria-label="svc.search" aria-label="Search" placeholder="Name, id or host" autocomplete="off">
+                <select id="svc-category" data-i18n-aria-label="svc.filterCategory" aria-label="filterCategory"><option value="" data-i18n="svc.filterCategory">Category</option></select>
+                <select id="svc-capability" data-i18n-aria-label="svc.filterCapability" aria-label="filterCapability"><option value="" data-i18n="svc.filterCapability">What it proves</option></select>
+              </div>
+
+              <div class="svc-selection" id="svc-selection">
+                <span class="svc-selected-count" id="svc-selected-count">0</span>
+                <span class="text-muted" id="svc-selected-cost"></span>
+                <button type="button" class="button primary chip" id="svc-apply" disabled data-i18n="svc.applySelection">Check the selection</button>
+                <button type="button" class="button light chip" id="svc-save-toggle" data-i18n="svc.saveOwn">Save my set</button>
+                <button type="button" class="button text chip" id="svc-clear" data-i18n="svc.clear">Clear</button>
+              </div>
+
+              <div class="svc-save hidden" id="svc-save-form">
+                <div class="field-grid">
+                  <label>
+                    <span data-i18n="svc.setId">Set id</span>
+                    <input id="svc-set-id" spellcheck="false" placeholder="my-set">
+                  </label>
+                  <label>
+                    <span data-i18n="svc.setTitle">Name</span>
+                    <input id="svc-set-title" maxlength="120" placeholder="My services">
+                  </label>
+                  <label>
+                    <span data-i18n="svc.rule">Rule</span>
+                    <select id="svc-rule"></select>
+                  </label>
+                  <label>
+                    <span data-i18n="svc.minPasses">At least K of the optional</span>
+                    <input id="svc-min-passes" type="number" min="0" max="20" value="1">
+                  </label>
+                </div>
+                <p class="hint" data-i18n="svc.saveHint">Your set keeps its own copy of every definition, so a catalog update cannot change it behind your back.</p>
+                <div class="button-row">
+                  <button type="button" class="button primary" id="svc-save-submit" data-i18n="svc.saveSubmit">Save the set</button>
+                </div>
+                <div class="catalog-preview" id="svc-save-result"></div>
+              </div>
+
+              <div class="svc-list" id="svc-list"><p class="hint" data-i18n="svc.loading">Loading the catalog…</p></div>
+              <div class="catalog-foot">
+                <span class="hint" id="svc-count"></span>
+              </div>
+              <div class="catalog-detail" id="svc-detail" hidden></div>
+            </div>
+          </section>
+
           <!-- Block 2: Parameters and Filters -->
           <section class="card compact-block" id="step-params-card">
             <div class="compact-block-title">
@@ -865,6 +934,13 @@
             </select>
           </label>
 
+          <label class="tb-mini-field">
+            <span data-i18n="tb.collection">Collection:</span>
+            <select id="result-collection" data-i18n-aria-label="col.scope" aria-label="Collection scope">
+              <option value="" data-i18n="col.allCollections">All collections</option>
+            </select>
+          </label>
+
           <div style="margin-left: auto; display: flex; align-items: center; gap: 8px;">
             <button class="button light chip tb-copy-btn" id="copy-page">
               <span class="btn-icon">📋</span>
@@ -1387,6 +1463,49 @@ with httpx.Client(proxy="socks5://127.0.0.1:8899") as client:
           <button class="button primary" id="collect" data-i18n="own.collect">Collect addresses only</button>
         </section>
       </div>
+
+      <!-- Collections: the scope of a check and of the results view (F02) -->
+      <section class="card catalog-card" id="collections">
+        <div class="card-title">
+          <div class="geo-title-wrap">
+            <span class="code-editor-badge">LISTS</span>
+            <h2 data-i18n="col.title">Collections and the scope of the check</h2>
+          </div>
+          <div class="catalog-head-meta">
+            <span id="col-count" class="badge subtle">0</span>
+            <button class="button light" id="col-refresh" data-i18n="common.refresh">Refresh</button>
+          </div>
+        </div>
+        <p class="hint" data-i18n="col.lead">The public base, the migrated list and your own lists are separate lists. The scope decides which of them a check measures and which rows the results table shows; nothing is ever copied from one list into another.</p>
+
+        <div class="field-grid">
+          <label>
+            <span data-i18n="col.scope">Scope of the check</span>
+            <select id="collection-scope" data-i18n-aria-label="col.scope" aria-label="Collection scope"></select>
+          </label>
+          <label>
+            <span data-i18n="col.newName">Name of a new collection</span>
+            <input id="collection-name" maxlength="160" spellcheck="false" placeholder="My lists">
+          </label>
+          <div class="align-end">
+            <button class="button light" id="collection-create" data-i18n="col.create">Create</button>
+          </div>
+        </div>
+        <p class="hint" id="collection-note"></p>
+
+        <div class="catalog-list" id="collection-list"></div>
+
+        <details class="advanced-accordion" id="collection-members-box">
+          <summary data-i18n="col.membersTitle">Addresses of the selected collection</summary>
+          <p class="hint" data-i18n="col.membersHint">One address per line: host:port or protocol://host:port. Addresses are added to this collection only; removing one keeps it in every other list it belongs to.</p>
+          <textarea id="collection-input" rows="4" spellcheck="false" placeholder="198.51.100.7:8080&#10;socks5://198.51.100.8:1080" class="mono-textarea"></textarea>
+          <div class="button-row">
+            <button type="button" class="button light" id="collection-add" data-i18n="col.add">Add addresses</button>
+          </div>
+          <div class="catalog-preview" id="collection-add-result"></div>
+          <div class="collection-members" id="collection-members"></div>
+        </details>
+      </section>
 
       <!-- Source catalog -->
       <section class="card catalog-card" id="catalog">

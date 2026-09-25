@@ -86,6 +86,7 @@ const messages = {
     'common.cancel': 'Cancel',
     'common.delete': 'Delete',
     'common.busy': 'Working…',
+    'common.refresh': 'Refresh',
     'scan.eyebrow': 'FIND. CHECK. SAVE.',
     'scan.title': 'Proxies for your tasks',
     'scan.lead': 'One or more services. The result is proxies that work with every one of them.',
@@ -456,6 +457,101 @@ const messages = {
     'cat.shown': 'Showing {shown} of {total}',
     'cat.empty': 'Nothing matches these filters.',
     'cat.loading': 'Loading the catalog…',
+    // Service catalog and sets (F06)
+    'svc.title': 'Service catalog',
+    'svc.lead': 'Every service names its id, version, maintainer, real probe and pass condition. A set is a rule over services: all, any, at least K, or only the required ones.',
+    'svc.open': 'Open catalog',
+    'svc.sets': 'Sets',
+    'svc.setsHint': 'Applying a set writes all of its fields, so nothing from the previous set stays behind.',
+    'svc.search': 'Name, id or host',
+    'svc.filterCategory': 'Category',
+    'svc.filterCapability': 'What it proves',
+    'svc.loading': 'Loading the catalog…',
+    'svc.empty': 'No service matches these filters.',
+    'svc.selected': 'Selected services: {count}',
+    'svc.cost': 'per pass: {requests} requests, {bytes} per service, weight {weight}',
+    'svc.applySelection': 'Check the selection',
+    'svc.applied': 'Set {id} applied: {targets} checks, {fields} fields set. Save the settings or start a check.',
+    'svc.applyFailed': 'The set was not applied',
+    'svc.saveOwn': 'Save my set',
+    'svc.clear': 'Clear',
+    'svc.setId': 'Set id',
+    'svc.setTitle': 'Name',
+    'svc.rule': 'Rule',
+    'svc.minPasses': 'At least K of the optional',
+    'svc.saveHint': 'Your set keeps its own copy of every definition, so a catalog update cannot change it behind your back.',
+    'svc.saveSubmit': 'Save the set',
+    'svc.saved': 'Set {id} saved. It keeps its own copy of {presets} definitions.',
+    'svc.saveFailed': 'The set was not saved',
+    'svc.detailTitle': 'Service',
+    'svc.probes': 'Probes',
+    'svc.passCondition': 'Pass condition',
+    'svc.notProved': 'Does not prove',
+    'svc.limitations': 'Limitations',
+    'svc.cost': 'Cost',
+    'svc.definitionChecked': 'Definition checked on',
+    'svc.liveChecked': 'Live response checked on',
+    'svc.verified': 'Verification',
+    'svc.verified.documented': 'From the documented contract',
+    'svc.verified.legacy_definition': 'Definition carried over from the previous version',
+    'svc.verified.unverified_live': 'No live response checked yet',
+    'svc.maintainer': 'Maintainer',
+    'svc.setOf': 'Sets that include it',
+    'svc.update': 'Update definitions',
+    'svc.updatePreview': 'Nothing changed: these definitions are current.',
+    'svc.updateChanges': 'Definitions changed since this set was saved: {count}.',
+    'svc.updateApply': 'Apply the update',
+    'svc.updateDone': 'The set is updated; {count} definitions changed.',
+    'svc.updateFailed': 'The definitions were not updated',
+    'svc.state.updated': 'changed',
+    'svc.state.added': 'added',
+    'svc.state.removed': 'removed',
+    'svc.state.deprecated': 'deprecated',
+    'svc.state.undeprecated': 'no longer deprecated',
+    'svc.state.unchanged': 'unchanged',
+    'svc.breaking': 'can change the verdict',
+    'svc.appliedBadge': 'Applied now',
+    'svc.version': 'Version',
+    'svc.digest': 'Definition',
+    'svc.required': 'Required',
+    'svc.optional': 'Optional',
+    'svc.rule.all': 'all services',
+    'svc.rule.any': 'any optional service',
+    'svc.rule.at_least': 'at least K optional',
+    'svc.rule.none': 'only the required ones',
+    'svc.capability': 'Proves',
+    'svc.ruleLabel': 'Rule: {rule}, minimum {min}',
+    'svc.loadFailed': 'The service catalog could not be read',
+    // Collections: the scope of a check and of the results view (F02)
+    'col.title': 'Collections and the scope of the check',
+    'col.lead': 'The public base, the migrated list and your own lists are separate lists. The scope decides which of them a check measures and which rows the results table shows; nothing is ever copied from one list into another.',
+    'col.scope': 'Scope of the check',
+    'col.allCollections': 'All collections',
+    'col.newName': 'Name of a new collection',
+    'col.create': 'Create',
+    'col.created': 'Collection {name} created. It starts empty and stays separate.',
+    'col.createFailed': 'The collection was not created',
+    'col.public': 'public',
+    'col.private': 'your own',
+    'col.archived': 'archived',
+    'col.members': 'addresses',
+    'col.use': 'Use as scope',
+    'col.scopeSet': 'The scope of the check is now {name}.',
+    'col.scopeUnknown': 'This collection is not in the local database: the check would be refused.',
+    'col.membersTitle': 'Addresses of the selected collection',
+    'col.membersHint': 'One address per line: host:port or protocol://host:port. Addresses are added to this collection only; removing one keeps it in every other list it belongs to.',
+    'col.add': 'Add addresses',
+    'col.added': 'Added {added}, already there {known}, rejected {rejected}.',
+    'col.dropped': '{count} addresses past the limit were not added.',
+    'col.addFailed': 'The addresses were not added',
+    'col.remove': 'Remove from this collection',
+    'col.removed': 'Removed from {name}. It stays in every other list it belongs to.',
+    'col.removeFailed': 'The address was not removed',
+    'col.membersEmpty': 'This collection has no addresses yet.',
+    'col.membersShown': 'Showing {shown} of {total} addresses.',
+    'col.loadFailed': 'The collections could not be read',
+    'col.noDatabase': 'The local database does not exist yet: run a collection first.',
+    'tb.collection': 'Collection:',
     'cat.col.source': 'Source',
     'cat.col.format': 'Format',
     'cat.col.access': 'Access',
@@ -897,6 +993,7 @@ const messages = {
     'common.cancel': 'Отмена',
     'common.delete': 'Удалить',
     'common.busy': 'Работаю…',
+    'common.refresh': 'Обновить',
     'scan.eyebrow': 'НАЙТИ. ПРОВЕРИТЬ. СОХРАНИТЬ.',
     'scan.title': 'Прокси под ваши задачи',
     'scan.lead': 'Один или несколько сервисов. В результате — прокси, работающие с каждым.',
@@ -1267,6 +1364,101 @@ const messages = {
     'cat.shown': 'Показано {shown} из {total}',
     'cat.empty': 'По этим фильтрам ничего нет.',
     'cat.loading': 'Каталог загружается…',
+    // Каталог сервисов и наборы (F06)
+    'svc.title': 'Каталог сервисов',
+    'svc.lead': 'У каждого сервиса указаны идентификатор, версия, кто ведёт определение, реальная проба и условие прохождения. Набор — это правило над сервисами: все, любой, не менее K или только обязательные.',
+    'svc.open': 'Открыть каталог',
+    'svc.sets': 'Наборы',
+    'svc.setsHint': 'Набор задаёт все свои поля, поэтому от предыдущего набора ничего не остаётся.',
+    'svc.search': 'Название, id или хост',
+    'svc.filterCategory': 'Категория',
+    'svc.filterCapability': 'Что доказывает',
+    'svc.loading': 'Каталог загружается…',
+    'svc.empty': 'По этим фильтрам сервисов нет.',
+    'svc.selected': 'Выбрано сервисов: {count}',
+    'svc.cost': 'за проход: {requests} запросов, {bytes} на сервис, вес {weight}',
+    'svc.applySelection': 'Проверять выбранное',
+    'svc.applied': 'Набор {id} применён: проб {targets}, полей задано {fields}. Сохраните настройки или запустите проверку.',
+    'svc.applyFailed': 'Набор не применён',
+    'svc.saveOwn': 'Сохранить свой набор',
+    'svc.clear': 'Очистить',
+    'svc.setId': 'Идентификатор набора',
+    'svc.setTitle': 'Название',
+    'svc.rule': 'Правило',
+    'svc.minPasses': 'Не менее K из дополнительных',
+    'svc.saveHint': 'Свой набор хранит собственные копии определений, поэтому обновление каталога не изменит его за спиной.',
+    'svc.saveSubmit': 'Сохранить набор',
+    'svc.saved': 'Набор {id} сохранён. В нём собственные копии определений: {presets}.',
+    'svc.saveFailed': 'Набор не сохранён',
+    'svc.detailTitle': 'Сервис',
+    'svc.probes': 'Пробы',
+    'svc.passCondition': 'Условие прохождения',
+    'svc.notProved': 'Не доказывает',
+    'svc.limitations': 'Ограничения',
+    'svc.cost': 'Стоимость',
+    'svc.definitionChecked': 'Определение проверено',
+    'svc.liveChecked': 'Живой ответ проверен',
+    'svc.verified': 'Проверка',
+    'svc.verified.documented': 'По документированному контракту',
+    'svc.verified.legacy_definition': 'Определение перенесено из прошлой версии',
+    'svc.verified.unverified_live': 'Живой ответ ещё не проверялся',
+    'svc.maintainer': 'Кто ведёт',
+    'svc.setOf': 'Наборы, где он есть',
+    'svc.update': 'Обновить определения',
+    'svc.updatePreview': 'Изменений нет: эти определения актуальны.',
+    'svc.updateChanges': 'Определения изменились с момента сохранения набора: {count}.',
+    'svc.updateApply': 'Применить обновление',
+    'svc.updateDone': 'Набор обновлён, изменено определений: {count}.',
+    'svc.updateFailed': 'Определения не обновлены',
+    'svc.state.updated': 'изменено',
+    'svc.state.added': 'добавлено',
+    'svc.state.removed': 'удалено',
+    'svc.state.deprecated': 'объявлен устаревшим',
+    'svc.state.undeprecated': 'больше не устаревший',
+    'svc.state.unchanged': 'без изменений',
+    'svc.breaking': 'может изменить вердикт',
+    'svc.appliedBadge': 'Применён сейчас',
+    'svc.version': 'Версия',
+    'svc.digest': 'Определение',
+    'svc.required': 'Обязательные',
+    'svc.optional': 'Дополнительные',
+    'svc.rule.all': 'все сервисы',
+    'svc.rule.any': 'любой дополнительный',
+    'svc.rule.at_least': 'не менее K дополнительных',
+    'svc.rule.none': 'только обязательные',
+    'svc.capability': 'Доказывает',
+    'svc.ruleLabel': 'Правило: {rule}, минимум {min}',
+    'svc.loadFailed': 'Каталог сервисов не прочитан',
+    // Коллекции: область проверки и таблицы результатов (F02)
+    'col.title': 'Коллекции и область проверки',
+    'col.lead': 'Публичная база, перенесённый список и ваши собственные списки — это разные списки. Область решает, какой из них измеряет проверка и какие строки показывает таблица результатов; ничего не копируется из одного списка в другой.',
+    'col.scope': 'Область проверки',
+    'col.allCollections': 'Все коллекции',
+    'col.newName': 'Название новой коллекции',
+    'col.create': 'Создать',
+    'col.created': 'Коллекция {name} создана. Она пуста и ни с чем не смешана.',
+    'col.createFailed': 'Коллекция не создана',
+    'col.public': 'публичная',
+    'col.private': 'своя',
+    'col.archived': 'в архиве',
+    'col.members': 'адресов',
+    'col.use': 'Выбрать как область',
+    'col.scopeSet': 'Область проверки: {name}.',
+    'col.scopeUnknown': 'Такой коллекции нет в локальной базе: проверка будет отклонена.',
+    'col.membersTitle': 'Адреса выбранной коллекции',
+    'col.membersHint': 'По одному адресу в строке: host:port или protocol://host:port. Адреса добавляются только в эту коллекцию; удаление одного не убирает его из других списков.',
+    'col.add': 'Добавить адреса',
+    'col.added': 'Добавлено {added}, уже было {known}, отклонено {rejected}.',
+    'col.dropped': 'Адресов сверх предела не добавлено: {count}.',
+    'col.addFailed': 'Адреса не добавлены',
+    'col.remove': 'Убрать из этой коллекции',
+    'col.removed': 'Убрано из «{name}». В других списках адрес остался.',
+    'col.removeFailed': 'Адрес не убран',
+    'col.membersEmpty': 'В этой коллекции пока нет адресов.',
+    'col.membersShown': 'Показано {shown} из {total} адресов.',
+    'col.loadFailed': 'Коллекции не прочитаны',
+    'col.noDatabase': 'Локальной базы ещё нет: сначала выполните сбор адресов.',
+    'tb.collection': 'Коллекция:',
     'cat.col.source': 'Источник',
     'cat.col.format': 'Формат',
     'cat.col.access': 'Условия',
@@ -3120,6 +3312,8 @@ function getSettings() {
   copy.protocol = val('protocol', 'all');
   copy.countries = val('countries');
   copy.fail_fast = checked('fail_fast');
+  // F02: the scope of a check is one collection id, empty for the public base.
+  copy.collection = val('collection-scope', copy.collection || '');
   const zoneValues = zones();
   copy.reputation = {
     local_enabled: checked('local-denylist-enabled'),
@@ -3197,6 +3391,9 @@ function fill(value) {
   if ($('protocol')) $('protocol').value = value.protocol || 'all';
   if ($('countries')) $('countries').value = value.countries || '';
   if ($('fail_fast')) $('fail_fast').checked = value.fail_fast !== false;
+  if ($('collection-scope') && (value.collection || '') !== $('collection-scope').value) {
+    $('collection-scope').value = value.collection || '';
+  }
   if ($('targets')) {
     $('targets').replaceChildren();
     if (Array.isArray(value.targets)) value.targets.forEach(addTarget);
@@ -5242,6 +5439,9 @@ function resultQuery() {
     max_latency: Number($('result-max-latency') ? $('result-max-latency').value : 0) || 0,
     country: $('result-country') ? $('result-country').value.trim() : '',
     hosting: resultHostingFilter(),
+    // F02: the table can be about one collection; an empty value is every
+    // collection the active profile measured.
+    collection: $('result-collection') ? $('result-collection').value : '',
     q: $('result-search') ? $('result-search').value.trim() : '',
     view: resultState.view,
     offset
@@ -5793,6 +5993,12 @@ function renderLang() {
   // language switch has to repaint them after applyI18n() restored the keys.
   if (typeof renderConnectPath === 'function') renderConnectPath(state);
   if (catalogData && typeof renderCatalog === 'function') renderCatalog(catalogData);
+  if (serviceCatalogState.view && typeof renderServiceCatalog === 'function') {
+    renderServiceCatalog(serviceCatalogState.view);
+  }
+  if (collectionsState.items.length && typeof renderCollections === 'function') {
+    renderCollections({collections: collectionsState.items, selected: collectionsState.selected});
+  }
 }
 // Scenario presets with an explicit, complete field set (defect 24, R17).
 //
@@ -6603,7 +6809,611 @@ function setupCatalogListeners() {
   }
 }
 
+// Collections (F02): the scope of a check and of the results view.
+//
+// A collection is a named list of addresses in the local database.  The public
+// base, the migrated list and a personal list are different rows, so choosing
+// one never shows another and nothing is copied between them.  The scope of the
+// check is a saved setting; the results view filter is a view control, like the
+// other filters of the table.
+const collectionsState = {items: [], selected: '', detailId: null, memberLimit: 50};
+
+function collectionLabel(item) {
+  const kind = item.kind === 'public' ? t('col.public') : t('col.private');
+  return `${item.name} · ${kind} · ${fmt(item.members || 0)} ${t('col.members')}`;
+}
+
+function fillCollectionSelect(selectId, items, fallback) {
+  const node = $(selectId);
+  if (!node) return;
+  const all = node.querySelector('option[value=""]');
+  // Before the first fill the control has no options yet, so the value the
+  // server sent is the only source; after that the control itself is.
+  const current = node.dataset.filled === '1' ? node.value : (fallback || '');
+  node.innerHTML = '';
+  if (all) node.appendChild(all);
+  else {
+    const option = document.createElement('option');
+    option.value = '';
+    option.textContent = t('col.allCollections');
+    node.appendChild(option);
+  }
+  for (const item of items) {
+    const option = document.createElement('option');
+    option.value = item.id;
+    option.textContent = collectionLabel(item);
+    node.appendChild(option);
+  }
+  // An id the database does not know is kept visible instead of dropped: the
+  // server refuses a check against it, and a silent reset would hide that.
+  if (current && !items.some(item => item.id === current)) {
+    const option = document.createElement('option');
+    option.value = current;
+    option.textContent = `${current} · ${t('col.scopeUnknown')}`;
+    node.appendChild(option);
+  }
+  node.dataset.filled = '1';
+  node.value = current;
+}
+
+function renderCollections(view) {
+  collectionsState.items = view.collections || [];
+  collectionsState.selected = view.selected || '';
+  fillCollectionSelect('collection-scope', collectionsState.items, (settings && settings.collection) || '');
+  fillCollectionSelect('result-collection', collectionsState.items);
+  const count = $('col-count');
+  if (count) count.textContent = fmt(collectionsState.items.length);
+  const list = $('collection-list');
+  if (list) {
+    list.innerHTML = collectionsState.items.length
+      ? collectionsState.items.map(item => `
+        <div class="catalog-row collection-row" data-collection-id="${esc(item.id)}">
+          <div class="catalog-cell catalog-cell-source">
+            <strong>${esc(item.name)}</strong>
+            <div class="catalog-id">${esc(item.id)}</div>
+          </div>
+          <div class="catalog-cell catalog-cell-state">
+            <span class="badge subtle">${esc(item.kind === 'public' ? t('col.public') : t('col.private'))}</span>
+            ${item.archived ? `<span class="badge warn">${esc(t('col.archived'))}</span>` : ''}
+          </div>
+          <div class="catalog-cell catalog-cell-data">
+            <span class="badge ${item.members ? 'pass' : 'subtle'}">${fmt(item.members || 0)} ${esc(t('col.members'))}</span>
+          </div>
+          <div class="catalog-cell catalog-cell-choice">
+            <div class="catalog-actions">
+              <button class="button chip" data-collection-members="${esc(item.id)}">${esc(t('col.membersTitle'))}</button>
+              <button class="button chip" data-collection-use="${esc(item.id)}" ${item.archived ? 'disabled' : ''}>${esc(t('col.use'))}</button>
+            </div>
+          </div>
+        </div>`).join('')
+      : `<p class="hint">${esc(t('col.noDatabase'))}</p>`;
+    list.querySelectorAll('[data-collection-use]').forEach(button => {
+      button.onclick = () => useCollection(button.dataset.collectionUse);
+    });
+    list.querySelectorAll('[data-collection-members]').forEach(button => {
+      button.onclick = () => {
+        const box = $('collection-members-box');
+        if (box) box.open = true;
+        loadCollectionMembers(button.dataset.collectionMembers);
+      };
+    });
+  }
+  const note = $('collection-note');
+  if (note) {
+    const active = collectionsState.items.find(item => item.id === ($('collection-scope') || {}).value);
+    note.textContent = active ? t('col.scopeSet', {name: active.name})
+      : (($('collection-scope') || {}).value ? t('col.scopeUnknown') : '');
+  }
+  if (collectionsState.detailId) loadCollectionMembers(collectionsState.detailId);
+}
+
+async function loadCollections() {
+  try {
+    renderCollections(await api('/api/collections'));
+  } catch (error) {
+    const list = $('collection-list');
+    if (list) list.innerHTML = `<p class="hint">${esc(error.message)}</p>`;
+  }
+}
+
+function useCollection(id) {
+  const select = $('collection-scope');
+  if (!select) return;
+  select.value = id;
+  renderCollections({collections: collectionsState.items, selected: id});
+  loadCollectionMembers(id);
+  const item = collectionsState.items.find(entry => entry.id === id);
+  toast(t('col.scopeSet', {name: item ? item.name : id}));
+}
+
+async function loadCollectionMembers(collectionId) {
+  const box = $('collection-members');
+  if (!box) return;
+  collectionsState.detailId = collectionId;
+  try {
+    const view = await api('/api/collections/members?collection=' + encodeURIComponent(collectionId));
+    const shown = (view.members || []).slice(0, collectionsState.memberLimit);
+    box.innerHTML = shown.length ? `
+      <div class="collection-members-head">
+        <span class="hint">${esc(t('col.membersShown', {shown: fmt(shown.length), total: fmt(view.total || 0)}))}</span>
+      </div>
+      ${shown.map(item => `<div class="collection-member">
+        <code>${esc(item.proxy)}</code>
+        <span class="badge subtle">${esc(item.origin)}</span>
+        <span class="text-muted">${esc((item.collections || []).join(', '))}</span>
+        <button class="button text chip" data-collection-remove="${esc(collectionId)}|${esc(item.proxy)}">${esc(t('col.remove'))}</button>
+      </div>`).join('')}` : `<p class="hint">${esc(t('col.membersEmpty'))}</p>`;
+    box.querySelectorAll('[data-collection-remove]').forEach(button => {
+      button.onclick = () => {
+        const [id, proxy] = button.dataset.collectionRemove.split('|');
+        removeCollectionMember(id, proxy);
+      };
+    });
+  } catch (error) {
+    box.innerHTML = `<p class="catalog-err">${esc(error.message)}</p>`;
+  }
+}
+
+async function removeCollectionMember(collectionId, proxy) {
+  try {
+    const view = await api('/api/collections/member-remove', {collection: collectionId, proxy});
+    const item = collectionsState.items.find(entry => entry.id === collectionId);
+    toast(t('col.removed', {name: item ? item.name : collectionId}));
+    await loadCollections();
+    await loadCollectionMembers(collectionId);
+  } catch (error) {
+    toast(t('col.removeFailed') + ': ' + error.message, true);
+  }
+}
+
+function setupCollectionListeners() {
+  const refresh = $('col-refresh');
+  if (refresh) refresh.onclick = () => loadCollections();
+
+  const scope = $('collection-scope');
+  if (scope) {
+    scope.onchange = () => {
+      const item = collectionsState.items.find(entry => entry.id === scope.value);
+      const note = $('collection-note');
+      if (note) note.textContent = item ? t('col.scopeSet', {name: item.name}) : t('col.scopeUnknown');
+      loadCollectionMembers(scope.value);
+    };
+  }
+
+  const create = $('collection-create');
+  if (create) {
+    create.onclick = async () => {
+      const input = $('collection-name');
+      const name = input ? input.value.trim() : '';
+      if (!name) { toast(t('col.createFailed') + ': ' + t('col.newName'), true); return; }
+      try {
+        const view = await api('/api/collections', {name});
+        if (input) input.value = '';
+        toast(t('col.created', {name: view.name || name}));
+        await loadCollections();
+        useCollection(view.collection);
+      } catch (error) {
+        toast(t('col.createFailed') + ': ' + error.message, true);
+      }
+    };
+  }
+
+  const add = $('collection-add');
+  if (add) {
+    add.onclick = async () => {
+      const scopeNode = $('collection-scope');
+      const input = $('collection-input');
+      const result = $('collection-add-result');
+      if (!scopeNode || !scopeNode.value) { toast(t('col.scopeUnknown'), true); return; }
+      add.disabled = true;
+      try {
+        const view = await api('/api/collections/members',
+          {collection: scopeNode.value, proxies: input ? input.value : ''});
+        if (input) input.value = '';
+        if (result) result.innerHTML = `<p class="hint">${esc(t('col.added', {
+          added: fmt(view.added || 0), known: fmt(view.already || 0), rejected: fmt(view.rejected_total || 0)}))}${
+          view.dropped ? ` ${esc(t('col.dropped', {count: fmt(view.dropped)}))}` : ''}</p>`;
+        await loadCollections();
+        await loadCollectionMembers(scopeNode.value);
+      } catch (error) {
+        if (result) result.innerHTML = `<p class="catalog-err">${esc(error.message)}</p>`;
+        toast(t('col.addFailed') + ': ' + error.message, true);
+      } finally {
+        add.disabled = false;
+      }
+    };
+  }
+
+  const resultFilter = $('result-collection');
+  if (resultFilter) {
+    resultFilter.onchange = () => {
+      offset = 0;
+      loadResults();
+    };
+  }
+}
+
+// Service catalog (F06): versioned definitions, sets, and the user's own set.
+//
+// A preset carries its probes and its pass condition, so the page never claims
+// a service works because a request merely answered.  A set is a rule over
+// presets; applying one writes the complete field inventory, which is why no
+// judge or threshold of the previous set survives.
+const serviceCatalogState = {view: null, selected: [], detailId: null, timer: null};
+const SERVICE_RULES = ['all', 'any', 'at_least', 'none'];
+// The states of a manifest are machine values; each one has a text next to it,
+// and an unknown value falls back to "unchanged" instead of showing a raw key.
+const SERVICE_RULE_KEYS = {all: 'svc.rule.all', any: 'svc.rule.any', at_least: 'svc.rule.at_least',
+                           none: 'svc.rule.none'};
+const SERVICE_VERIFICATION_KEYS = {documented: 'svc.verified.documented',
+                                   legacy_definition: 'svc.verified.legacy_definition',
+                                   unverified_live: 'svc.verified.unverified_live'};
+const SERVICE_CHANGE_KEYS = {updated: 'svc.state.updated', added: 'svc.state.added',
+                             removed: 'svc.state.removed', deprecated: 'svc.state.deprecated',
+                             undeprecated: 'svc.state.undeprecated', unchanged: 'svc.state.unchanged'};
+const serviceRuleKey = combination => SERVICE_RULE_KEYS[combination] || SERVICE_RULE_KEYS.any;
+const serviceVerificationKey = state => SERVICE_VERIFICATION_KEYS[state] || SERVICE_VERIFICATION_KEYS.unverified_live;
+const serviceChangeKey = state => SERVICE_CHANGE_KEYS[state] || SERVICE_CHANGE_KEYS.unchanged;
+
+function serviceCatalogQuery() {
+  const params = new URLSearchParams();
+  const value = id => {
+    const node = $(id);
+    return node ? node.value.trim() : '';
+  };
+  for (const [key, node] of [['q', 'svc-q'], ['category', 'svc-category'], ['capability', 'svc-capability']]) {
+    const found = value(node);
+    if (found) params.set(key, found);
+  }
+  if (serviceCatalogState.selected.length) params.set('selected', serviceCatalogState.selected.join(','));
+  return params.toString();
+}
+
+function serviceVerificationBadge(preset) {
+  const state = preset.verification || 'unverified_live';
+  const cls = state === 'documented' ? 'pass' : state === 'legacy_definition' ? 'warn' : 'subtle';
+  return `<span class="badge ${cls}">${esc(t(serviceVerificationKey(state)))}</span>`;
+}
+
+function serviceRowHtml(preset) {
+  const on = serviceCatalogState.selected.includes(preset.id);
+  const probes = (preset.probes || []).length;
+  return `<label class="svc-row${on ? ' selected' : ''}">
+    <input type="checkbox" class="svc-check" data-svc-check="${esc(preset.id)}" ${on ? 'checked' : ''}>
+    <span class="svc-row-main">
+      <strong>${esc(preset.title_ru)}</strong>
+      <span class="catalog-id">${esc(preset.id)} v${fmt(preset.version)}</span>
+      <span class="text-muted">${esc(preset.capability_title || preset.capability)} · ${fmt(probes)} ${esc(t('svc.probes'))}</span>
+      ${serviceVerificationBadge(preset)}
+      <span class="text-muted">${esc(t('svc.cost') + ': ' + fmt(preset.cost.requests_per_pass) + ' / ' + fmt(preset.cost.max_bytes) + ' B')}</span>
+    </span>
+    <button type="button" class="button text chip" data-svc-details="${esc(preset.id)}">${esc(t('svc.detailTitle'))}</button>
+  </label>`;
+}
+
+function serviceSetHtml(item) {
+  const rule = t(serviceRuleKey(item.combination));
+  return `<div class="catalog-set${item.applied ? ' applied' : ''}">
+    <div class="catalog-set-main">
+      <strong>${esc(item.id)}</strong>
+      <span class="catalog-set-name">${esc(item.title)}</span>
+      <span class="badge subtle">${esc(t('svc.ruleLabel', {rule, min: fmt(item.min_passes || 0)}))}</span>
+      <span class="badge subtle">${fmt(item.probes || 0)} ${esc(t('svc.probes'))}</span>
+      ${item.origin === 'user' ? `<span class="badge subtle">${esc(t('svc.saveOwn'))}</span>` : ''}
+      ${item.applied ? `<span class="badge success">${esc(t('svc.appliedBadge'))}</span>` : ''}
+    </div>
+    <div class="catalog-set-meta">
+      <button class="button light" data-svc-set="${esc(item.id)}">${esc(t('cat.applySet'))}</button>
+      <button class="button light" data-svc-set-details="${esc(item.id)}">${esc(t('svc.detailTitle'))}</button>
+      <button class="button light" data-svc-set-update="${esc(item.id)}">${esc(t('svc.update'))}</button>
+      ${item.origin === 'user' ? `<button class="button text" data-svc-set-delete="${esc(item.id)}">${esc(t('common.delete'))}</button>` : ''}
+    </div>
+  </div>`;
+}
+
+function renderServiceCatalog(view) {
+  serviceCatalogState.view = view;
+  const summary = view.catalog || {};
+  const revision = $('svc-revision');
+  if (revision) {
+    revision.textContent = `v${fmt(summary.manifest_version || 0)} · ${(summary.generated_at || '').slice(0, 10)}`;
+  }
+  fillCatalogSelect('svc-category', (summary.categories || []).map(item => item.id),
+                    id => (summary.categories || []).find(item => item.id === id)?.title_ru || id);
+  fillCatalogSelect('svc-capability', (summary.capabilities || []).map(item => item.id),
+                    id => (summary.capabilities || []).find(item => item.id === id)?.title_ru || id);
+  const rules = $('svc-rule');
+  if (rules && !rules.options.length) {
+    for (const rule of SERVICE_RULES) {
+      const option = document.createElement('option');
+      option.value = rule;
+      option.textContent = t(serviceRuleKey(rule));
+      rules.appendChild(option);
+    }
+    rules.value = 'any';
+  }
+  const sets = $('svc-sets');
+  if (sets) sets.innerHTML = (view.sets || []).map(serviceSetHtml).join('');
+  const list = $('svc-list');
+  if (list) {
+    list.innerHTML = (view.presets || []).length
+      ? view.presets.map(serviceRowHtml).join('')
+      : `<p class="hint">${esc(t('svc.empty'))}</p>`;
+  }
+  const count = $('svc-count');
+  if (count) count.textContent = t('cat.shown', {shown: fmt((view.presets || []).length), total: fmt(view.total || 0)});
+  renderServiceSelection(view);
+  bindServiceCatalogRows();
+  if (serviceCatalogState.detailId) loadServiceDetail(serviceCatalogState.detailId);
+}
+
+function renderServiceSelection(view) {
+  const selected = serviceCatalogState.selected;
+  const count = $('svc-selected-count');
+  if (count) count.textContent = t('svc.selected', {count: fmt(selected.length)});
+  const cost = $('svc-selected-cost');
+  if (cost) {
+    const value = (view && view.cost) || null;
+    cost.textContent = value ? t('svc.cost', {requests: fmt(value.requests_per_pass || 0),
+      bytes: fmt(value.max_bytes || 0), weight: value.budget_weight}) : '';
+  }
+  const apply = $('svc-apply');
+  if (apply) apply.disabled = selected.length === 0;
+}
+
+function bindServiceCatalogRows() {
+  const list = $('svc-list');
+  if (list) {
+    list.querySelectorAll('[data-svc-check]').forEach(box => {
+      box.onchange = () => {
+        const id = box.dataset.svcCheck;
+        const at = serviceCatalogState.selected.indexOf(id);
+        if (box.checked && at < 0) serviceCatalogState.selected.push(id);
+        if (!box.checked && at >= 0) serviceCatalogState.selected.splice(at, 1);
+        box.closest('.svc-row')?.classList.toggle('selected', box.checked);
+        renderServiceSelection(serviceCatalogState.view);
+      };
+    });
+    list.querySelectorAll('[data-svc-details]').forEach(button => {
+      button.onclick = event => { event.preventDefault(); loadServiceDetail(button.dataset.svcDetails); };
+    });
+  }
+  const sets = $('svc-sets');
+  if (!sets) return;
+  sets.querySelectorAll('[data-svc-set]').forEach(button => {
+    button.onclick = () => applyServiceSet(button.dataset.svcSet);
+  });
+  sets.querySelectorAll('[data-svc-set-details]').forEach(button => {
+    button.onclick = () => loadServiceDetail(button.dataset.svcSetDetails);
+  });
+  sets.querySelectorAll('[data-svc-set-update]').forEach(button => {
+    button.onclick = () => updateServiceSet(button.dataset.svcSetUpdate);
+  });
+  sets.querySelectorAll('[data-svc-set-delete]').forEach(button => {
+    button.onclick = () => deleteServiceSet(button.dataset.svcSetDelete);
+  });
+}
+
+async function reloadServiceCatalog() {
+  const list = $('svc-list');
+  if (!list) return;
+  try {
+    renderServiceCatalog(await api('/api/service-catalog?' + serviceCatalogQuery()));
+  } catch (error) {
+    list.innerHTML = `<p class="catalog-err">${esc(error.message)}</p>`;
+  }
+}
+
+async function applyServiceSet(setId) {
+  const view = serviceCatalogState.view;
+  const item = ((view && view.sets) || []).find(entry => entry.id === setId);
+  // A named set is applied as it is; a set the user is building right now is
+  // sent as a selection, so the same button works before it has a name.
+  const body = item ? {set: setId} : {
+    set: 'selection', title: t('svc.selected', {count: fmt(serviceCatalogState.selected.length)}),
+    preset_ids: serviceCatalogState.selected.slice(),
+    combination: ($('svc-rule') || {}).value || 'any',
+    min_passes: Number(($('svc-min-passes') || {}).value || 1)
+  };
+  try {
+    const value = await api('/api/service-catalog/apply', body);
+    if (value.settings) fill(value.settings);
+    syncQuickServiceChips();
+    const report = value.report || {};
+    toast(t('svc.applied', {
+      id: (value.set || {}).id || setId,
+      targets: fmt((value.settings && value.settings.targets || []).length),
+      fields: fmt((report.set || []).length + (report.cleared || []).length)
+    }));
+    await reloadServiceCatalog();
+  } catch (error) {
+    toast(t('svc.applyFailed') + ': ' + error.message, true);
+  }
+}
+
+async function updateServiceSet(setId) {
+  const detail = $('svc-detail');
+  try {
+    const value = await api('/api/service-catalog/update', {set: setId});
+    renderServiceSetUpdate(detail, value, setId);
+  } catch (error) {
+    toast(t('svc.updateFailed') + ': ' + error.message, true);
+  }
+}
+
+function renderServiceSetUpdate(node, value, setId) {
+  if (!node) return;
+  const changes = value.changes || [];
+  const changed = changes.filter(change => change.state !== 'unchanged');
+  node.hidden = false;
+  serviceCatalogState.detailId = setId;
+  node.innerHTML = `
+    <div class="dialog-heading">
+      <h2>${esc(t('svc.update'))}: ${esc(setId)}</h2>
+      <button class="button light" data-svc-close>✕</button>
+    </div>
+    <p class="hint">${esc(changed.length ? t('svc.updateChanges', {count: fmt(changed.length)})
+                                    : t('svc.updatePreview'))}</p>
+    ${changes.length ? `<table class="svc-diff"><thead><tr>
+        <th>${esc(t('svc.detailTitle'))}</th><th>${esc(t('svc.update'))}</th>
+        <th>${esc(t('svc.version'))}</th><th>${esc(t('svc.digest'))}</th></tr></thead>
+      <tbody>${changes.map(change => `<tr>
+        <td><code>${esc(change.preset_id)}</code></td>
+        <td><span class="badge ${change.breaking ? 'fail' : 'subtle'}">${esc(t(serviceChangeKey(change.state)))}</span></td>
+        <td>${esc(change.from_version)} → ${esc(change.to_version)}${change.breaking ? ` · <span class="badge fail">${esc(t('svc.breaking'))}</span>` : ''}</td>
+        <td class="text-muted">${esc(String(change.from_digest || '').slice(0, 10))} → ${esc(String(change.to_digest || '').slice(0, 10))}</td>
+      </tr>`).join('')}</tbody></table>` : ''}
+    ${changed.length ? `<div class="button-row">
+      <button class="button primary" data-svc-update-apply="${esc(setId)}">${esc(t('svc.updateApply'))}</button>
+    </div>` : ''}`;
+  const close = node.querySelector('[data-svc-close]');
+  if (close) close.onclick = () => { node.hidden = true; serviceCatalogState.detailId = null; };
+  const applyBtn = node.querySelector('[data-svc-update-apply]');
+  if (applyBtn) {
+    applyBtn.onclick = async () => {
+      applyBtn.disabled = true;
+      try {
+        const done = await api('/api/service-catalog/update', {set: setId, apply: true});
+        toast(t('svc.updateDone', {count: fmt(done.applied || 0)}));
+        await reloadServiceCatalog();
+      } catch (error) {
+        toast(t('svc.updateFailed') + ': ' + error.message, true);
+      } finally {
+        applyBtn.disabled = false;
+      }
+    };
+  }
+}
+
+async function loadServiceDetail(id) {
+  const node = $('svc-detail');
+  if (!node) return;
+  serviceCatalogState.detailId = id;
+  node.hidden = false;
+  try {
+    const view = await api('/api/service-catalog/set?set=' + encodeURIComponent(id));
+    const item = view.set || {};
+    const probes = (view.presets || []).map(preset => `
+      <div class="svc-detail-preset">
+        <strong>${esc(preset.title_ru)}</strong>
+        <span class="catalog-id">${esc(preset.id)} v${fmt(preset.version)}</span>
+        ${serviceVerificationBadge(preset)}
+        <div class="hint">${esc(t('svc.maintainer'))}: ${esc(preset.maintainer)}</div>
+        <div class="hint">${esc(t('svc.definitionChecked'))}: ${esc(preset.definition_checked_on || '—')}
+          · ${esc(t('svc.liveChecked'))}: ${esc(preset.live_checked_on || '—')}</div>
+        <h4>${esc(t('svc.probes'))}</h4>
+        ${(preset.probes || []).map(probe => `<div class="svc-probe">
+          <code>${esc(probe.method)} ${esc(probe.url)}</code>
+          <div class="hint">${esc(t('svc.passCondition'))}: ${esc(probe.pass_condition || '')}</div>
+        </div>`).join('')}
+        ${(preset.not_proved_ru || []).length ? `<div class="hint"><b>${esc(t('svc.notProved'))}:</b> ${esc(preset.not_proved_ru.join('; '))}</div>` : ''}
+        ${(preset.limitations_ru || []).length ? `<div class="hint"><b>${esc(t('svc.limitations'))}:</b> ${esc(preset.limitations_ru.join('; '))}</div>` : ''}
+        <div class="hint">${esc(t('svc.cost'))}: ${fmt(preset.cost.requests_per_pass)} ${esc(t('svc.probes'))},
+          ${fmt(preset.cost.max_bytes)} B · ${esc(preset.cost.rate_limit_ru || '')}</div>
+      </div>`).join('');
+    node.innerHTML = `
+      <div class="dialog-heading">
+        <h2>${esc(t('svc.detailTitle'))}: ${esc(item.title || id)}</h2>
+        <button class="button light" data-svc-close>✕</button>
+      </div>
+      <p class="hint">${esc(item.description || '')}</p>
+      <p class="hint">${esc(t('svc.ruleLabel', {rule: t(serviceRuleKey(item.combination)), min: fmt(item.min_passes || 0)}))}</p>
+      <div class="catalog-detail-grid">
+        <div><b>${esc(t('svc.required'))}</b><div>${esc((item.required || []).join(', ') || '—')}</div></div>
+        <div><b>${esc(t('svc.optional'))}</b><div>${esc((item.optional || []).join(', ') || '—')}</div></div>
+      </div>
+      ${probes}`;
+    const close = node.querySelector('[data-svc-close]');
+    if (close) close.onclick = () => { node.hidden = true; serviceCatalogState.detailId = null; };
+    applyI18n(node);
+  } catch (error) {
+    node.innerHTML = `<p class="catalog-err">${esc(error.message)}</p>`;
+  }
+}
+
+async function deleteServiceSet(setId) {
+  try {
+    await api('/api/service-catalog/delete', {set: setId});
+    toast(t('common.delete') + ': ' + setId);
+    await reloadServiceCatalog();
+  } catch (error) {
+    toast(t('svc.saveFailed') + ': ' + error.message, true);
+  }
+}
+
+function setupServiceCatalogListeners() {
+  const toggle = $('svc-toggle');
+  const body = $('svc-body');
+  if (toggle && body) {
+    toggle.onclick = () => {
+      body.hidden = !body.hidden;
+      toggle.setAttribute('aria-expanded', body.hidden ? 'false' : 'true');
+      toggle.textContent = body.hidden ? t('svc.open') : t('common.close');
+      if (!body.hidden && !serviceCatalogState.view) reloadServiceCatalog();
+    };
+  }
+  const search = $('svc-q');
+  if (search) {
+    search.oninput = () => {
+      clearTimeout(serviceCatalogState.timer);
+      serviceCatalogState.timer = setTimeout(reloadServiceCatalog, 250);
+    };
+  }
+  for (const id of ['svc-category', 'svc-capability']) {
+    const node = $(id);
+    if (node) node.onchange = () => reloadServiceCatalog();
+  }
+  const apply = $('svc-apply');
+  if (apply) apply.onclick = () => applyServiceSet('selection');
+  const clear = $('svc-clear');
+  if (clear) {
+    clear.onclick = () => {
+      serviceCatalogState.selected = [];
+      renderServiceSelection(serviceCatalogState.view);
+      reloadServiceCatalog();
+    };
+  }
+  const saveToggle = $('svc-save-toggle');
+  const saveForm = $('svc-save-form');
+  if (saveToggle && saveForm) {
+    saveToggle.onclick = () => {
+      saveForm.classList.toggle('hidden');
+      if (!saveForm.classList.contains('hidden')) {
+        const title = $('svc-set-title');
+        if (title && !title.value) title.value = t('svc.setTitle');
+      }
+    };
+  }
+  const saveSubmit = $('svc-save-submit');
+  if (saveSubmit) {
+    saveSubmit.onclick = async () => {
+      const body = {
+        id: (($('svc-set-id') || {}).value || '').trim(),
+        title: (($('svc-set-title') || {}).value || '').trim(),
+        preset_ids: serviceCatalogState.selected.slice(),
+        combination: ($('svc-rule') || {}).value || 'any',
+        min_passes: Number(($('svc-min-passes') || {}).value || 1)
+      };
+      saveSubmit.disabled = true;
+      try {
+        const value = await api('/api/service-catalog/save', body);
+        toast(t('svc.saved', {id: value.set.id, presets: fmt((value.set.required || []).length + (value.set.optional || []).length)}));
+        const result = $('svc-save-result');
+        if (result) result.innerHTML = `<p class="hint">${esc(t('svc.saved', {
+          id: value.set.id, presets: fmt((value.set.required || []).length + (value.set.optional || []).length)}))}</p>`;
+        await reloadServiceCatalog();
+      } catch (error) {
+        toast(t('svc.saveFailed') + ': ' + error.message, true);
+      } finally {
+        saveSubmit.disabled = false;
+      }
+    };
+  }
+}
+
 try { setupCatalogListeners(); } catch (e) { console.error(e); }
+try { setupCollectionListeners(); } catch (e) { console.error(e); }
+try { setupServiceCatalogListeners(); } catch (e) { console.error(e); }
 try { setupCountryComboboxes(); } catch (e) { console.error(e); }
 try { setupFieldPresetChips(); } catch (e) { console.error(e); }
 try { setupEnhancedListeners(); } catch (e) { console.error(e); }
@@ -6626,6 +7436,11 @@ if (initToast) {
     fill(initialSettings);
   } catch (error) {
     toast(error.message, true);
+  }
+  try {
+    await loadCollections();
+  } catch (error) {
+    console.error(error);
   }
   await poll();
   setInterval(poll, 2000);
