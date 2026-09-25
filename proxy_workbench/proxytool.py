@@ -765,9 +765,11 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                   max_source_line_bytes=DEFAULT_SOURCE_MAX_LINE_BYTES,
                   max_source_candidates=DEFAULT_SOURCE_MAX_CANDIDATES,
                   max_source_redirects=DEFAULT_SOURCE_MAX_REDIRECTS,
-                  collection_id=None, origin='public'):
+                  collection_id=None, origin='public', allow_private_endpoints=False):
     if not isinstance(allow_private_sources, bool):
         raise ValueError('allow_private_sources: ожидается bool')
+    if not isinstance(allow_private_endpoints, bool):
+        raise ValueError('allow_private_endpoints: ожидается bool')
     max_source_bytes = _source_limit(max_source_bytes, 'max_source_bytes', maximum=MAX_SOURCE_BYTES)
     max_source_line_bytes = _source_limit(max_source_line_bytes, 'max_source_line_bytes', maximum=MAX_SOURCE_LINE_BYTES)
     max_source_candidates = _source_limit(max_source_candidates, 'max_source_candidates', maximum=MAX_SOURCE_CANDIDATES)
@@ -792,9 +794,12 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                              blocked=sum(r.get('blocked', 0) for r in reports),
                              candidates=db.execute("SELECT count(*) FROM candidates").fetchone()[0]))
 
-    def add(value, protocol='http', country=None, source=None):
+    def add(value, protocol='http', country=None, source=None, public_only=True):
         value = value.strip()
-        proxy = normalize(value if '://' in value else protocol+'://'+value)
+        raw = value if '://' in value else protocol+'://'+value
+        # A remote source never gets to name a hostname or a private address,
+        # whatever the flag says: only a list the user handed over locally does.
+        proxy = normalize(raw) if public_only else normalize_custom(raw)
         if not proxy:
             return 'invalid'
         if denylist.match(proxy):
@@ -818,12 +823,13 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
         return 'accepted'
 
 
-    def add_detected(value, source=None):
+    def add_detected(value, source=None, public_only=True):
         """Unlabeled addresses are tried as every protocol; the checks show which one works."""
         value = value.strip()
         if '://' in value:
-            return add(value, source=source)
-        outcomes = [add(value, protocol, source=source) for protocol in DETECT_PROTOCOLS]
+            return add(value, source=source, public_only=public_only)
+        outcomes = [add(value, protocol, source=source, public_only=public_only)
+                    for protocol in DETECT_PROTOCOLS]
         return next((o for o in ('accepted', 'blocked') if o in outcomes), 'invalid')
 
     publish()
@@ -838,7 +844,9 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                 if count >= max_source_candidates:
                     raise SourceFetchError('SOURCE_CANDIDATE_LIMIT')
                 count += 1
-                outcome = add_detected(line, source='local') if detect_protocols else add(line, source='local')
+                outcome = (add_detected(line, source='local', public_only=not allow_private_endpoints)
+                           if detect_protocols else add(line, source='local',
+                                                        public_only=not allow_private_endpoints))
                 invalid += outcome == 'invalid'
                 blocked += outcome == 'blocked'
         reports.append(dict(input=f'local-input-{input_index}', rows=count, invalid=invalid,
@@ -2999,6 +3007,11 @@ def parser():
                    help=tr('import: как применить список к выбранной коллекции', 'import: how to apply the list to the chosen collection'))
     p.add_argument('--allow-partial', action='store_true',
                    help=tr('import: принять список, часть строк которого отклонена', 'import: accept a list where some rows were rejected'))
+    p.add_argument('--allow-private-endpoints', action='store_true',
+                   help=tr('collect/import: ваш локальный список может называть имя хоста или непубличный адрес; '
+                        'удалённые источники остаются строго публичными, а логин и пароль в URL не принимаются никогда',
+                        'collect/import: your local list may name a hostname or a non-public address; remote '
+                        'sources stay public-only, and credentials in a URL are never accepted'))
     p.add_argument('--commit', action='store_true', help=tr('import: применить предпросмотр', 'import: commit the preview'))
     p.add_argument('--count-what', choices=['endpoint', 'ip', 'exit'], default='endpoint',
                    help=tr('что считает --want: адреса, IP или подтверждённые выходные IP',
@@ -3200,22 +3213,42 @@ def management_command(args):
             return handler(workbench, args, action)
     except WorkbenchError as exc:
         print(tr(f'Ошибка: {exc}', f'Error: {exc}'), file=sys.stderr)
+        _print_code(exc.code)
         return 2
     except apikeys.ApiKeyError as exc:
         print(tr(f'Ошибка ключа: {exc}', f'Key error: {exc}'), file=sys.stderr)
+        _print_code(getattr(exc, 'code', None))
         return 2
     except (schema.DbError, scheduler_error(), secrets_error()) as exc:
         print(tr(f'Ошибка базы данных: {exc}', f'Database error: {exc}'), file=sys.stderr)
+        _print_code(getattr(exc, 'code', None))
         return 2
     except importer_error() as exc:
+        # Every refusal of the importer is a subclass of ``ImportProblem``, and
+        # each one names its own ``E_*`` code (CONTRACTS §5.4).  Enumerating a
+        # few of them here is how a ``ImportPartialBlocked`` or a
+        # ``ImportBusy`` escaped as a traceback instead of a message.
         print(tr(f'Ошибка импорта: {exc}', f'Import error: {exc}'), file=sys.stderr)
+        _print_code(getattr(exc, 'code', None))
         return 2
     except profiles_error() as exc:
         print(tr(f'Ошибка профиля: {exc}', f'Profile error: {exc}'), file=sys.stderr)
+        _print_code(getattr(exc, 'code', None))
         return 2
     except pools_error() as exc:
         print(tr(f'Ошибка пула: {exc}', f'Pool error: {exc}'), file=sys.stderr)
+        _print_code(getattr(exc, 'code', None))
         return 2
+
+
+def _print_code(code):
+    """Print the stable ``E_*`` code of a refusal under its message.
+
+    The code is machine-readable and the sentence is localizable, so a script
+    can branch on the first line and a person reads the second.
+    """
+    if isinstance(code, str) and code:
+        print(code, file=sys.stderr)
 
 
 def scheduler_error():
@@ -3230,7 +3263,7 @@ def secrets_error():
 
 def importer_error():
     from . import importer
-    return importer.ImportFormatError
+    return importer.ImportProblem
 
 
 def profiles_error():
@@ -3252,8 +3285,14 @@ def emit(args, value, text=None):
     return 0
 
 
-def _resolve_collection(workbench, name):
-    """A collection by id or by name; the public base when nothing was asked."""
+def _resolve_collection(workbench, name, create=False):
+    """A collection by id or by name; the public base when nothing was asked.
+
+    With ``create`` a name that does not exist yet becomes a *private*
+    collection, created empty.  It stays empty on purpose: the public base is
+    not copied into it, because a personal list that silently starts as the
+    public list is defect 11.
+    """
     if not name:
         return ensure_public_collection(workbench.conn)
     row = workbench.conn.execute(
@@ -3263,8 +3302,27 @@ def _resolve_collection(workbench, name):
         row = workbench.conn.execute(
             'SELECT id FROM collections WHERE name=? AND archived_at IS NULL', (name,)).fetchone()
     if row is None:
-        raise WorkbenchError(tr(f'Коллекция не найдена: {name}', f'collection not found: {name}'))
+        if not create:
+            raise WorkbenchError(tr(f'Коллекция не найдена: {name}', f'collection not found: {name}'))
+        from . import importer
+        return importer.create_collection(workbench.conn, name, kind='private')
     return row['id'] if isinstance(row, sqlite3.Row) else row[0]
+
+
+def _import_policy(args):
+    """The endpoint policy of an import, from the command line.
+
+    The public base takes globally routable addresses only.  A private
+    collection may name a hostname or a private address, but only because the
+    user said so with ``--allow-private-endpoints`` -- an explicit, recorded
+    choice rather than a form that accepts what the collector later drops
+    (F04, defect 10).  Credentials are refused either way: the importer refuses
+    them structurally, and no flag turns that off.
+    """
+    from . import importer
+    if not getattr(args, 'allow_private_endpoints', False):
+        return importer.DEFAULT_POLICY
+    return importer.EndpointPolicy(public_only=False)
 
 
 def _cmd_import(workbench, args, action):
@@ -3281,7 +3339,12 @@ def _cmd_import(workbench, args, action):
     path = Path(args.input[0])
     if not path.is_file():
         raise WorkbenchError(tr(f'Файл не найден: {path}', f'file not found: {path}'))
-    collection_id = _resolve_collection(workbench, args.collection)
+    # ``--collection NAME`` is how a user names their own list, so a name that
+    # does not exist yet becomes an empty private collection instead of a
+    # refusal that leaves them with no CLI way to start one.
+    policy = _import_policy(args)
+    collection_id = _resolve_collection(workbench, args.collection,
+                                        create=bool(args.collection) and not policy.public_only)
     fmt = args.import_format or None
     if fmt in ('clash', 'singbox'):
         # A proxy-client document is parsed by the subscription adapter, and
@@ -3295,7 +3358,7 @@ def _cmd_import(workbench, args, action):
                     tr(f'Формат {fmt}: принято {added}, отклонено {len(result.rejected)}; коллекция {collection_id}',
                        f'format {fmt}: {added} accepted, {len(result.rejected)} rejected; collection {collection_id}'))
     source = workbench.import_source(path)
-    plan = workbench.import_preview(source, collection_id, mode=args.merge, fmt=fmt)
+    plan = workbench.import_preview(source, collection_id, mode=args.merge, fmt=fmt, policy=policy)
     if action == 'preview':
         return emit(args, plan.to_dict(),
                     tr(f'Предпросмотр: принято {len(plan.valid)}, дубликатов {len(plan.duplicates)}, '
@@ -3916,7 +3979,8 @@ def main(argv=None):
                 max_source_bytes=args.source_max_bytes,
                 max_source_line_bytes=args.source_max_line_bytes,
                 max_source_candidates=args.source_max_candidates,
-                max_source_redirects=args.source_max_redirects), args.stop_file))
+                max_source_redirects=args.source_max_redirects,
+                allow_private_endpoints=args.allow_private_endpoints), args.stop_file))
             atomic(args.data / 'sources-report.json', json.dumps(report, indent=2) + '\n')
             print(tr(f'Уникальных кандидатов в базе: {report["unique"]}', f'Unique candidates in the database: {report["unique"]}'), flush=True)
         if args.command in ('scan', 'run'):
