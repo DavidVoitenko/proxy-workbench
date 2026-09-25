@@ -44,9 +44,9 @@ SAFE_TARGET_HEADERS = {'accept', 'accept-encoding', 'accept-language', 'cache-co
 
 # Source fetching is deliberately bounded before a response is handed to a parser.
 # These defaults are finite so a public list cannot consume unbounded memory or CPU.
-DEFAULT_SOURCE_MAX_BYTES = 8 * 1024 * 1024
+DEFAULT_SOURCE_MAX_BYTES = 32 * 1024 * 1024
 DEFAULT_SOURCE_MAX_LINE_BYTES = 64 * 1024
-DEFAULT_SOURCE_MAX_CANDIDATES = 100_000
+DEFAULT_SOURCE_MAX_CANDIDATES = 500_000
 DEFAULT_SOURCE_MAX_REDIRECTS = 5
 MAX_SOURCE_BYTES = 512 * 1024 * 1024
 MAX_SOURCE_LINE_BYTES = 16 * 1024 * 1024
@@ -82,7 +82,8 @@ class PinnedSourceTransport(httpx.AsyncBaseTransport):
         self.transport = httpx.AsyncHTTPTransport(verify=TLS)
 
     async def handle_async_request(self, request):
-        headers = dict(request.headers)
+        # httpx keys headers in lower case; dropping every Host variant avoids sending two.
+        headers = {key: value for key, value in request.headers.items() if key.lower() != 'host'}
         host_header = f'[{self.hostname}]' if ':' in self.hostname else self.hostname
         port = request.url.port
         if port and port not in (80, 443):
@@ -901,7 +902,8 @@ async def request_once(proxy, target, config, rate):
                         result['error'] = 'HASH_MISMATCH'
                     else:
                         result['ok'] = True
-    except (httpx.HTTPError, TimeoutError, OSError) as exc:
+    except Exception as exc:
+        # Broken proxies raise more than httpx errors (socksio parses raw replies).
         result['error'] = type(exc).__name__
     finally:
         result['ms'] = round((time.monotonic() - start) * 1000, 2)
@@ -998,7 +1000,7 @@ async def measure_speed(proxy, config, rate):
                     elapsed = max(time.perf_counter() - (first or started), 1e-6)
                     if result['bytes']:
                         result['mbps'] = round(result['bytes'] * 8 / elapsed / 1e6, 2)
-    except (httpx.HTTPError, TimeoutError, OSError) as exc:
+    except Exception as exc:
         result['error'] = type(exc).__name__
         # A partial download still says something about the speed.
     finally:
@@ -1035,7 +1037,7 @@ async def judge_proxy(proxy, config, rate, own_ips):
                 body = await anonymity.fetch_judge(client, config['anonymity']['judge_url'], headers)
     except ValueError as exc:
         return anonymity.result('unknown', error=str(exc), started=started)
-    except (httpx.HTTPError, TimeoutError, OSError) as exc:
+    except Exception as exc:
         return anonymity.result('unknown', error=type(exc).__name__, started=started)
     verdict = anonymity.classify(body, own_ips)
     return anonymity.result(verdict['level'], verdict['signals'], started=started, exit_address=anonymity.exit_ip(body))
@@ -1245,7 +1247,12 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
                 if verdict is not None and verdict_blocks(verdict, strict):
                     row = blocked_result(proxy, verdict)
                 else:
-                    row = await probe(proxy, config, limiter)
+                    try:
+                        row = await probe(proxy, config, limiter)
+                    except Exception as exc:
+                        # One malformed proxy must never stop the whole scan.
+                        row = unreachable_result(proxy)
+                        row['error'] = type(exc).__name__
                     if verdict is not None:
                         row['reputation'] = verdict
                 store(proxy, row)
