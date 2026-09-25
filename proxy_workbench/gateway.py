@@ -55,14 +55,16 @@ class Pool:
         self.sessions = {}
         self.position = 0
         self.key = None
+        self.revision = None
         self.rows = []
         self.cache = {}
         self.stats = dict(connections=0, failed=0, retries=0)
 
     def refresh(self):
         rows, _ = self.exports.load()
-        if self.exports.key != self.key:
+        if self.exports.key != self.key or self.exports.revision != self.revision:
             self.key = self.exports.key
+            self.revision = self.exports.revision
             self.rows = [row for row in select(rows, self.filters)
                          if row['protocol'] in SUPPORTED and not row['proxy'].startswith('https://')]
             self.cache.clear()
@@ -462,6 +464,15 @@ class Background:
             self.server.close()
             with contextlib.suppress(Exception):
                 await asyncio.wait_for(self.server.wait_closed(), 2)
-        asyncio.run_coroutine_threadsafe(stop(), self.loop).result(5)
-        self.loop.call_soon_threadsafe(self.loop.stop)
+
+        try:
+            asyncio.run_coroutine_threadsafe(stop(), self.loop).result(5)
+        except (TimeoutError, RuntimeError):
+            # The socket is already closed above; do not leave the helper thread
+            # alive if a client kept a handler blocked during shutdown.
+            pass
+        if not self.loop.is_closed():
+            self.loop.call_soon_threadsafe(self.loop.stop)
         self.thread.join(5)
+        if not self.thread.is_alive() and not self.loop.is_closed():
+            self.loop.close()

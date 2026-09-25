@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from types import SimpleNamespace
 
@@ -172,6 +173,31 @@ class SelectionTests(unittest.TestCase):
         _, stable = self.exported(sort='stability')
         self.assertEqual(stable[0], 'http://11.0.0.1:80')
 
+    def test_server_side_selection_reports_missing_and_keeps_all_formats(self):
+        chosen = ['http://11.0.0.1:80', '11.0.0.250:80']
+        report, proxies = self.exported(allowed_proxies=chosen)
+        self.assertEqual(proxies, ['http://11.0.0.1:80'])
+        self.assertEqual((report['selection_requested'], report['selection_exported']), (2, 1))
+        self.assertEqual(report['selection_missing'], ['http://11.0.0.250:80'])
+        out = self.home / 'out'
+        self.assertIn('http://11.0.0.1:80', (out / 'ranked.csv').read_text(encoding='utf-8'))
+        self.assertIn('PROXY 11.0.0.1:80', (out / 'proxy.pac').read_text(encoding='utf-8'))
+        self.assertIn('11.0.0.1:80', (out / 'clash.yaml').read_text(encoding='utf-8'))
+        self.assertIn('11.0.0.1:80', (out / 'singbox.json').read_text(encoding='utf-8'))
+
+    def test_stale_selection_is_missing_instead_of_falling_back_to_full_export(self):
+        self.db.execute("UPDATE results SET payload=json_set(payload, '$.checked_at', 1) WHERE proxy='http://11.0.0.1:80'")
+        self.db.commit()
+        report, proxies = self.exported(allowed_proxies=['http://11.0.0.1:80'])
+        self.assertEqual(proxies, [])
+        self.assertEqual(report['selection_missing'], ['http://11.0.0.1:80'])
+        self.assertEqual(report['selection_exported'], 0)
+
+    def test_export_query_matches_visible_proxy_filter(self):
+        report, proxies = self.exported(query='socks5')
+        self.assertEqual(report['query'], 'socks5')
+        self.assertEqual(proxies, ['socks5h://11.0.0.3:1080', 'socks5://11.0.0.2:1080'])
+
 
 class GuiSelectionTests(unittest.TestCase):
     def setUp(self):
@@ -204,6 +230,15 @@ class GuiSelectionTests(unittest.TestCase):
         response.raise_for_status()
         return [row['proxy'] for row in response.json()['rows']]
 
+    def await_job(self):
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            state = self.client.get('/api/state').json()
+            if not state['running'] and 'exit_code' in state['job']:
+                return state
+            time.sleep(.03)
+        self.fail('export job did not finish')
+
     def test_results_filters_search_and_sort(self):
         self.assertEqual(self.proxies('sort=quality'), ['socks5://11.0.0.2:1080', 'http://11.0.0.1:8080'])
         self.assertEqual(self.proxies('sort=stability'), ['http://11.0.0.1:8080', 'socks5://11.0.0.2:1080'])
@@ -212,6 +247,24 @@ class GuiSelectionTests(unittest.TestCase):
         self.assertEqual(self.proxies('q=8080'), ['http://11.0.0.1:8080'])
         for bad in ('sort=random', 'protocol=ftp', 'max_latency=-5'):
             self.assertEqual(self.client.get('/api/results?' + bad).status_code, 400)
+
+    def test_selected_export_is_server_side_and_invalid_payloads_are_400(self):
+        for selection in ([], ['http://user:password@11.0.0.1:80'], ['proxy.example:80'], ['11.0.0.1:80'] * 1001):
+            response = self.client.post('/api/start', json={'action': 'export', 'selection': selection})
+            self.assertEqual(response.status_code, 400, selection)
+        self.assertFalse((self.home / 'gui-settings.json').exists())
+        self.assertFalse((self.home / 'gui-selection.json').exists())
+
+        response = self.client.post('/api/start', json={
+            'action': 'export', 'selection': ['11.0.0.1:8080', '11.0.0.250:8080'],
+            'settings': gui.defaults()})
+        self.assertEqual(response.status_code, 200, response.text)
+        state = self.await_job()
+        self.assertEqual(state['job']['exit_code'], 0, state['log'])
+        self.assertEqual(self.client.get('/api/download/proxies.txt').text.splitlines(), ['http://11.0.0.1:8080'])
+        self.assertEqual(state['export']['selection_missing'], ['http://11.0.0.250:8080'])
+        self.assertEqual(state['export']['selection_exported'], 1)
+        self.assertFalse((self.home / 'gui-selection.json').exists())
 
 
 if __name__ == '__main__':

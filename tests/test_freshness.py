@@ -4,6 +4,7 @@ from pathlib import Path
 import sqlite3
 import sys
 import tempfile
+import time
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -64,6 +65,59 @@ class FreshnessTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sorted(seen), sorted(self.proxies[:2]))
         self.assertEqual(self.histories(profile)[self.proxies[0]]['checks'], 3)
 
+    async def test_scan_snapshot_states_and_scope_counts(self):
+        wanted = {}
+        await self.scan(want=1, run_state=wanted)
+        self.assertEqual((wanted['state'], wanted['stop_reason']), ('partial', 'want_reached'))
+        self.assertLess(wanted['checked'], wanted['scope_candidates'])
+        self.assertGreaterEqual(wanted['pending'], 1)
+
+        complete = {}
+        await self.scan(run_state=complete)
+        self.assertEqual((complete['state'], complete['stop_reason']), ('complete', 'complete'))
+        self.assertEqual((complete['checked'], complete['pending']), (6, 0))
+
+        self.alive = set(self.proxies[:2])
+        refresh = {}
+        await self.scan(recheck_passing=True, run_state=refresh)
+        self.assertEqual((refresh['state'], refresh['stop_reason']), ('partial', 'recheck_passing'))
+        self.assertEqual((refresh['scope_candidates'], refresh['checked'], refresh['pending']), (3, 3, 0))
+
+    async def test_cancelled_recheck_keeps_current_and_old_rows(self):
+        profile, _ = await self.scan()
+        out = self.home / 'exports'
+        current = p.export(self.db, profile, out, min_success=1)
+        before = dict(self.db.execute('SELECT proxy, payload FROM results WHERE profile=?', (profile,)))
+        self.assertTrue(current['complete'])
+        pointer = json.loads((out / 'current.json').read_text(encoding='utf-8'))['generation']
+        stop = self.home / 'stop-recheck'
+        state = {}
+        seen = 0
+
+        async def probe(proxy, cfg, rate):
+            nonlocal seen
+            seen += 1
+            if seen == 2:
+                stop.write_text('stop', encoding='utf-8')
+                await asyncio.sleep(60)
+            return measured(proxy, cfg, ok=proxy in self.alive)
+
+        with self.assertRaises(asyncio.CancelledError):
+            await p.stoppable(p.scan(self.db, config(), workers=1, rate=0, probe=probe, progress=False,
+                                     min_success=1, recheck=True, run_state=state), stop)
+        after = dict(self.db.execute('SELECT proxy, payload FROM results WHERE profile=?', (profile,)))
+        self.assertEqual(set(before), set(after))
+        self.assertEqual(after[self.proxies[2]], before[self.proxies[2]])
+        self.assertEqual(state['checked'], 1)
+        self.assertEqual((state['state'], state['stop_reason']), ('partial', 'stopped'))
+
+        diagnostic = p.export(self.db, profile, out, min_success=1, run_state=state, diagnostic=True)
+        self.assertEqual(json.loads((out / 'current.json').read_text(encoding='utf-8'))['generation'], pointer)
+        self.assertEqual((diagnostic['state'], diagnostic['stop_reason'], diagnostic['complete']),
+                         ('partial', 'stopped', False))
+        self.assertEqual(p.current_generation_name(out), pointer)
+        self.assertNotEqual(p.current_generation_name(out, 'diagnostic.json'), pointer)
+
     async def test_full_recheck_keeps_history_and_uptime_sort(self):
         profile, _ = await self.scan()
         self.alive = {self.proxies[1]}
@@ -114,6 +168,27 @@ class ExportFormatTests(unittest.TestCase):
         self.assertEqual(sorted(chains[1:]), ['http 11.0.0.1 8080', 'socks5 11.0.0.4 1080'])
         self.assertEqual(report['source_quality'], {'aaa': {'checked': 2, 'passed': 1}, 'bbb': {'checked': 1, 'passed': 1},
                                                     'unknown': {'checked': 1, 'passed': 1}})
+    def test_snapshot_schema_and_watch_freshness(self):
+        cfg = config()
+        self.db.execute('INSERT INTO profiles VALUES (?,?)', ('fresh', json.dumps(cfg)))
+        now = time.time()
+        for index, checked_at in enumerate((now - 500, now - 100), 1):
+            proxy = f'http://11.0.0.{index}:80'
+            row = measured(proxy, cfg)
+            row['checked_at'] = checked_at
+            self.db.execute('INSERT INTO candidates VALUES (?)', (proxy,))
+            self.db.execute('INSERT INTO results VALUES (?,?,?)', ('fresh', proxy, json.dumps(row)))
+        self.db.commit()
+        out = self.home / 'fresh-out'
+        report = p.export(self.db, 'fresh', out, min_success=1, watch_minutes=120)
+        self.assertEqual(report['schema_version'], 1)
+        self.assertEqual((report['state'], report['stop_reason'], report['complete']), ('complete', 'complete', True))
+        self.assertEqual(report['scope_candidates'], report['checked'])
+        rows = json.loads(p.export_file(out, 'ranked.json').read_text(encoding='utf-8'))
+        self.assertTrue(all(row['valid_until'] > row['checked_at'] for row in rows))
+        self.assertAlmostEqual(min(row['valid_until'] for row in rows),
+                               min(row['checked_at'] for row in rows) + 14400, places=3)
+        self.assertEqual(report['valid_until'], min(row['valid_until'] for row in rows))
 
 
 class SourceTrackingTests(unittest.IsolatedAsyncioTestCase):

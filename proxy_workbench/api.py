@@ -11,6 +11,7 @@ import ipaddress
 import json
 import random
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
@@ -20,7 +21,8 @@ from . import formats
 from . import geoip
 from .branding import PRODUCT_NAME, PRODUCT_VERSION
 from .i18n import tr
-from .proxytool import PROTOCOLS, proxy_protocol, row_history
+from .proxytool import (PROTOCOLS, export_file as proxytool_export_file,
+                        export_manifest as proxytool_export_manifest, proxy_protocol, row_fresh, row_history)
 
 DEFAULT_PORT = 8765
 TOKEN_ENV = 'PROXY_WORKBENCH_API_TOKEN'
@@ -71,38 +73,85 @@ def public_row(row):
         'checks': history['checks'],
         'score': row.get('score'),
         'checked_at': row.get('checked_at'),
+        'valid_until': row.get('valid_until'),
+        'stale': not row_fresh(row),
     }
 
 
 class Exports:
-    """Latest export, reloaded when the file changes."""
+    """One coherent current generation, reloaded when its pointer or files change."""
 
     def __init__(self, directory):
         self.directory = Path(directory)
         self.lock = threading.Lock()
         self.key = None
+        self.revision = 0
+        self.visible = None
+        self.rows = []
+        self.status = {}
+
+    def _clear(self, key=None):
+        self.key = key
+        self.revision += 1
+        self.visible = None
         self.rows = []
         self.status = {}
 
     def load(self):
-        path = self.directory / 'ranked.json'
+        """Return only fresh rows; an expired row disappears without restarting API/gateway."""
+        manifest = proxytool_export_manifest(self.directory)
+        generation = manifest.get('generation') if manifest else None
+        ranked_path = proxytool_export_file(self.directory, 'ranked.json', generation=generation)
+        status_path = proxytool_export_file(self.directory, 'status.json', generation=generation)
         try:
-            stat = path.stat()
+            if generation and not status_path.is_file():
+                raise OSError('snapshot status missing')
+            ranked_stat = ranked_path.stat()
+            status_stat = status_path.stat() if status_path.is_file() else None
         except OSError:
-            return [], {}
-        key = (stat.st_mtime_ns, stat.st_size)
+            with self.lock:
+                self._clear((generation, 'missing'))
+                return [], {}
+        key = (generation or 'legacy', ranked_stat.st_mtime_ns, ranked_stat.st_size,
+               (status_stat.st_mtime_ns, status_stat.st_size) if status_stat else None)
+        now = time.time()
         with self.lock:
             if key != self.key:
                 try:
-                    rows = json.loads(path.read_text(encoding='utf-8'))
-                    status_path = self.directory / 'status.json'
-                    status = json.loads(status_path.read_text(encoding='utf-8')) if status_path.is_file() else {}
+                    rows = json.loads(ranked_path.read_text(encoding='utf-8'))
+                    status = json.loads(status_path.read_text(encoding='utf-8')) if status_stat else {}
+                    if not isinstance(rows, list) or not isinstance(status, dict):
+                        raise ValueError('invalid export')
+                    if generation and status.get('generation') != generation:
+                        raise ValueError('mixed export generations')
                     self.rows = [public_row(row) for row in rows]
+                    self.status = status
+                    self.key = key
                 except (OSError, ValueError, KeyError, TypeError):
-                    # A new export is being written; keep serving the previous one.
-                    return self.rows, self.status
-                self.status, self.key = status, key
-            return self.rows, self.status
+                    # Legacy root files can be observed mid-write. A generation is
+                    # immutable, so a broken current snapshot is safer to clear.
+                    if generation or self.key is None:
+                        self._clear(key)
+                    return [], self.status
+            rows = [dict(row, stale=not row_fresh(row, now)) for row in self.rows if row_fresh(row, now)]
+            visible = (key, tuple(row['proxy'] for row in rows), tuple(row.get('valid_until') for row in rows))
+            if visible != self.visible:
+                self.visible = visible
+                self.revision += 1
+            status = dict(self.status)
+            if status:
+                valid_until = status.get('valid_until')
+                try:
+                    status['stale'] = valid_until is not None and float(valid_until) <= now
+                except (TypeError, ValueError, OverflowError):
+                    status['stale'] = True
+                status.setdefault('state', 'complete' if status.get('complete') else 'partial')
+                status.setdefault('stop_reason', 'complete' if status.get('state') == 'complete' else 'stopped')
+                status.setdefault('generation', generation)
+                if status.get('state') != 'complete' or status.get('checked') != status.get('scope_candidates'):
+                    status['complete'] = False
+            return rows, status
+
 
 
 def parse_query(query):
@@ -209,10 +258,15 @@ def make_api_server(data, host='127.0.0.1', port=DEFAULT_PORT, token=None):
             if url.path in ('/', '/status'):
                 return self.send_json(200, {
                     'service': PRODUCT_NAME, 'version': PRODUCT_VERSION, 'available': len(rows),
-                    'generated_at': status.get('generated_at'), 'complete': status.get('complete'),
-                    'checked': status.get('checked'), 'candidates': status.get('candidates'),
-                    'sort': status.get('sort'), 'targets': status.get('targets', []),
-                    'endpoints': ENDPOINTS})
+                    'schema_version': status.get('schema_version'), 'generation': status.get('generation'),
+                    'profile': status.get('profile'), 'state': status.get('state'),
+                    'stop_reason': status.get('stop_reason'), 'scope': status.get('scope'),
+                    'scope_candidates': status.get('scope_candidates'), 'checked': status.get('checked'),
+                    'pending': status.get('pending'), 'passed': status.get('passed'),
+                    'candidates': status.get('candidates'), 'generated_at': status.get('generated_at'),
+                    'valid_until': status.get('valid_until'), 'stale': status.get('stale', False),
+                    'complete': status.get('complete'), 'sort': status.get('sort'),
+                    'targets': status.get('targets', []), 'endpoints': ENDPOINTS})
             if url.path not in ('/proxies', '/random', '/pac', '/clash', '/singbox'):
                 return self.send_json(404, {'error': 'not found', 'endpoints': ENDPOINTS})
             try:
@@ -238,8 +292,11 @@ def make_api_server(data, host='127.0.0.1', port=DEFAULT_PORT, token=None):
             if query['format'] == 'hostport':
                 return self.send(200, ''.join(f"{row['proxy'].partition('://')[2]}\n" for row in selected),
                                  'text/plain; charset=utf-8')
-            return self.send_json(200, {'count': len(selected), 'generated_at': status.get('generated_at'),
-                                        'proxies': selected})
+            body = {'count': len(selected), 'generated_at': status.get('generated_at'), 'proxies': selected}
+            if status:
+                body.update(valid_until=status.get('valid_until'), stale=status.get('stale', False),
+                            generation=status.get('generation'), state=status.get('state'))
+            return self.send_json(200, body)
 
     server = ThreadingHTTPServer((host, port), Handler)
     server.daemon_threads = True

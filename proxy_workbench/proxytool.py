@@ -362,19 +362,28 @@ def atomic(path, content):
 
 
 EXPORT_GENERATION_RETENTION = 3
+SNAPSHOT_SCHEMA_VERSION = 1
+MIN_FRESHNESS_SECONDS = 2 * 60 * 60
 PROTOCOL_EXPORTS = {'http': 'http.txt', 'https': 'https.txt', 'socks4': 'socks4.txt', 'socks5': 'socks5.txt'}
 PROTOCOL_ALIASES = {'socks5h': 'socks5'}
 
 
-def current_generation_name(directory):
+def export_manifest(directory, pointer='current.json'):
+    """Read one export pointer without ever accepting a path outside ``generations``."""
     try:
-        manifest = json.loads((Path(directory)/'current.json').read_text(encoding='utf-8'))
+        manifest = json.loads((Path(directory)/pointer).read_text(encoding='utf-8'))
         generation = manifest.get('generation') if isinstance(manifest, dict) else None
-        if isinstance(generation, str) and generation not in ('', '.', '..') and '/' not in generation and '\\' not in generation:
-            return generation
+        if (isinstance(generation, str) and generation not in ('', '.', '..')
+                and '/' not in generation and '\\' not in generation):
+            return manifest
     except (OSError, UnicodeError, json.JSONDecodeError):
         pass
     return None
+
+
+def current_generation_name(directory, pointer='current.json'):
+    manifest = export_manifest(directory, pointer)
+    return manifest.get('generation') if manifest else None
 
 
 def prune_export_generations(directory, keep=EXPORT_GENERATION_RETENTION, current=None):
@@ -398,18 +407,27 @@ def prune_export_generations(directory, keep=EXPORT_GENERATION_RETENTION, curren
     return removed, failed, remaining
 
 
-def export_file(directory, name):
+def export_file(directory, name, generation=None, pointer='current.json'):
+    """Resolve a file from one export generation, with a legacy-root fallback.
+
+    Once ``generations/`` exists, falling back to mutable root files after a
+    broken/deleted pointer could mix two snapshots.  Legacy installations with
+    no generation directory continue to work unchanged.
+    """
     directory = Path(directory)
-    pointer = directory/'current.json'
     try:
-        manifest = json.loads(pointer.read_text(encoding='utf-8'))
-        generation = current_generation_name(directory)
-        if generation:
-            candidate = directory/'generations'/generation/name
-            if candidate.is_file():
-                return candidate
-    except (OSError, UnicodeError, json.JSONDecodeError):
-        pass
+        name = os.fspath(name)
+    except TypeError:
+        return directory/'generations'/'.missing'/'invalid-export-name'
+    if (not isinstance(name, str) or not name or name in ('.', '..')
+            or '/' in name or '\\' in name or Path(name).name != name):
+        return directory/'generations'/'.missing'/'invalid-export-name'
+    if generation is None:
+        generation = current_generation_name(directory, pointer)
+    if generation:
+        return directory/'generations'/generation/name
+    if (directory/pointer).exists() or (directory/'generations').is_dir():
+        return directory/'generations'/'.missing'/name
     return directory/name
 
 
@@ -941,6 +959,36 @@ def row_history(row, min_success=2/3):
     return row.get('history') or next_history(None, result_allowed(row, min_success), row.get('checked_at'))
 
 
+def freshness_seconds(watch_minutes=0):
+    """A result is fresh for two watch intervals, but never less than two hours."""
+    try:
+        watch = max(0.0, float(watch_minutes))
+    except (TypeError, ValueError):
+        watch = 0.0
+    return max(MIN_FRESHNESS_SECONDS, 2 * watch * 60)
+
+
+def stamp_freshness(row, watch_minutes=0, fallback_checked_at=None):
+    """Add the freshness contract to a row without invalidating pre-1.7 data."""
+    checked_at = row.get('checked_at')
+    if not isinstance(checked_at, (int, float)) or isinstance(checked_at, bool) or not math.isfinite(checked_at) or checked_at <= 0:
+        checked_at = fallback_checked_at or time.time()
+        row['checked_at'] = checked_at
+    row['valid_until'] = checked_at + freshness_seconds(watch_minutes)
+    return row
+
+
+def row_fresh(row, now=None):
+    """Whether a ranked row is currently usable; legacy rows without TTL stay compatible."""
+    valid_until = row.get('valid_until')
+    if valid_until is None:
+        return True
+    try:
+        return float(valid_until) > (time.time() if now is None else now)
+    except (TypeError, ValueError, OverflowError):
+        return False
+
+
 def allowed_failures(config):
     """Failures per target a proxy may have and still pass, or None without fail-fast."""
     fail_fast = config.get('fail_fast')
@@ -1097,7 +1145,7 @@ def blocked_result(proxy, verdict):
 
 async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_proxy, progress=True, on_progress=None, min_success=2/3, screen=None, denylist=None, min_anonymity='any', protocol='all', max_latency=None,
                countries=(), country_of=None, want=0, recheck_passing=False, prefilter=0, prefilter_timeout=3,
-               exclude_hosting=False, provider_of=None):
+               exclude_hosting=False, provider_of=None, run_state=None):
     """Check every pending candidate of the profile.
 
     With ``prefilter`` connections a cheap TCP connect runs first: most public
@@ -1129,7 +1177,8 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
         return (result_allowed(row, min_success, denylist=active_denylist, strict=strict, min_anonymity=min_anonymity)
                 and matches_selection(row, protocol, max_latency))
 
-    # A re-check keeps each proxy's history so uptime survives new measurements.
+    # A re-check keeps each proxy's history and its last usable payload until a
+    # replacement is actually written.  A cancellation must never erase data.
     previous = {}
     only = None
     if recheck or recheck_passing:
@@ -1138,12 +1187,13 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
             if recheck_passing and not (selected(proxy) and counts_as_passed(row)):
                 continue
             previous[proxy] = row_history(row, min_success)
-        db.executemany('DELETE FROM results WHERE profile=? AND proxy=?', ((profile, proxy) for proxy in previous))
         if recheck_passing:
             only = set(previous)
     db.commit()
 
-    done = {proxy for (proxy,) in db.execute('SELECT proxy FROM results WHERE profile=?', (profile,))}
+    done = set() if (recheck or recheck_passing) else {
+        proxy for (proxy,) in db.execute('SELECT proxy FROM results WHERE profile=?', (profile,))
+    }
     pending, total, completed = [], 0, 0
     for (proxy,) in db.execute('SELECT proxy FROM candidates ORDER BY proxy'):
         if (only is None or proxy in only) and selected(proxy):
@@ -1164,13 +1214,14 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
     pending.sort(key=lambda proxy: proxy not in proven)
     passed = 0
     status_counts = {'clean': 0, 'listed': 0, 'unknown': 0, 'local_denied': 0}
-    for (payload,) in db.execute('SELECT payload FROM results WHERE profile=?', (profile,)):
-        row = json.loads(payload)
-        if not selected(row['proxy']) or (only is not None and row['proxy'] not in only):
-            continue
-        status = (row.get('reputation') or {}).get('status', 'clean')
-        status_counts[status] = status_counts.get(status, 0) + 1
-        passed += int(counts_as_passed(row))
+    if not (recheck or recheck_passing):
+        for (payload,) in db.execute('SELECT payload FROM results WHERE profile=?', (profile,)):
+            row = json.loads(payload)
+            if not selected(row['proxy']) or (only is not None and row['proxy'] not in only):
+                continue
+            status = (row.get('reputation') or {}).get('status', 'clean')
+            status_counts[status] = status_counts.get(status, 0) + 1
+            passed += int(counts_as_passed(row))
     initial = completed
     limiter = Rate(rate)
     queue = asyncio.Queue(maxsize=workers * 2)
@@ -1263,9 +1314,28 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
         elapsed = max(0.001, time.monotonic() - started)
         speed = (completed - initial) / elapsed
         eta = (total - completed) / speed if speed else 0
+        incomplete = completed < total
+        if recheck_passing:
+            snapshot_state = 'partial'
+            stop_reason = 'recheck_passing'
+        elif incomplete and enough.is_set():
+            snapshot_state = 'partial'
+            stop_reason = 'want_reached'
+        elif incomplete:
+            snapshot_state = 'partial'
+            stop_reason = 'stopped'
+        else:
+            snapshot_state = 'complete'
+            stop_reason = 'complete'
+        if run_state is not None:
+            run_state.update(profile=profile, state=snapshot_state, stop_reason=stop_reason,
+                             scope_candidates=total, checked=completed, pending=max(0, total - completed),
+                             passed=passed)
         if on_progress:
             on_progress(dict(phase='scanning', profile=profile, checked=completed, candidates=total, passed=passed,
-                             speed=round(speed, 2), eta_seconds=round(eta) if speed else None, workers=workers,
+                             pending=max(0, total - completed), state=snapshot_state, stop_reason=stop_reason,
+                             scope_candidates=total, speed=round(speed, 2),
+                             eta_seconds=round(eta) if speed else None, workers=workers,
                              reputation=status_counts, unreachable=unreachable))
         if progress:
             print(tr(f'Проверено {completed}/{total}; {speed:.1f} прокси/с; осталось ~{eta / 60:.1f} мин', f'Checked {completed}/{total}; {speed:.1f} proxies/s; ~{eta / 60:.1f} min left'), flush=True)
@@ -1396,10 +1466,26 @@ def matches_selection(row, protocol='all', max_latency=None, countries=(), count
 
 
 def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, denylist=None, local_override=None, min_anonymity='any',
-           protocol='all', max_latency=None, countries=(), country_of=None, exclude_hosting=False, provider_of=None):
+           protocol='all', max_latency=None, countries=(), country_of=None, exclude_hosting=False, provider_of=None,
+           watch_minutes=0, allowed_proxies=None, run_state=None, diagnostic=False, query=''):
     if not db.execute('SELECT 1 FROM profiles WHERE id=?', (profile,)).fetchone():
         raise ValueError('Профиль проверки не найден')
     denylist = denylist or Denylist.empty()
+    selection_requested = None
+    if allowed_proxies is not None:
+        try:
+            requested = list(allowed_proxies)
+        except TypeError:
+            raise ValueError('Некорректный список выбранных прокси.') from None
+        if not 1 <= len(requested) <= 1000:
+            raise ValueError('Выберите от 1 до 1000 прокси.')
+        normalized = [normalize(value) for value in requested]
+        if any(value is None for value in normalized):
+            raise ValueError('Выбранный список содержит неподдерживаемый адрес или credentials.')
+        selection_requested = set(normalized)
+    if not isinstance(query, str) or len(query) > 100:
+        raise ValueError('Некорректный поиск экспорта.')
+    query = query.strip().lower()
     cfg = json.loads(db.execute('SELECT config FROM profiles WHERE id=?', (profile,)).fetchone()[0])
     policy = cfg.get('reputation', {})
     strict = bool(policy.get('strict', False))
@@ -1416,6 +1502,7 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
         raise ValueError('Не удалось прочитать локальный denylist; экспорт остановлен.')
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
+    published_at = time.time()
     generations = directory/'generations'
     generations.mkdir(exist_ok=True)
     _, failed, remaining = prune_export_generations(directory)
@@ -1427,35 +1514,54 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
     db.execute('DROP TABLE IF EXISTS temp.export_rank')
     db.execute('CREATE TEMP TABLE export_rank(proxy TEXT PRIMARY KEY, score REAL, latency REAL, reliability REAL, '
                'jitter REAL, uptime REAL, checks INTEGER, bandwidth REAL, recommended REAL)')
-    checked = passed = local_filtered = 0
+    stored_checked = passed = local_filtered = 0
     sources = dict(db.execute('SELECT proxy, source FROM candidate_meta WHERE source IS NOT NULL'))
     source_quality = {}
     status_counts = {'clean': 0, 'listed': 0, 'unknown': 0, 'local_denied': 0}
     anonymity_counts = {}
     breakdown = {'protocols': {}, 'countries': {}}
     recommend_later = []
+    selection_eligible = set()
+
+    def in_scope(proxy):
+        if protocol not in (None, 'all') and proxy_protocol(proxy) != protocol:
+            return False
+        if countries and (country_of(proxy) if country_of else None) not in countries:
+            return False
+        return not (exclude_hosting and is_hosting(proxy, provider_of))
+
+    scope_candidates = sum(1 for (proxy,) in db.execute('SELECT proxy FROM candidates') if in_scope(proxy))
     for (payload,) in db.execute('SELECT payload FROM results WHERE profile=?', (profile,)):
         row = json.loads(payload)
-        checked += 1
+        if not in_scope(row.get('proxy', '')):
+            continue
+        stored_checked += 1
         status = (row.get('reputation') or {}).get('status', 'clean')
         status_counts[status] = status_counts.get(status, 0) + 1
         level = (row.get('anonymity') or {}).get('level')
         if level:
             anonymity_counts[level] = anonymity_counts.get(level, 0) + 1
-        eligible = (result_allowed(row, min_success, denylist=None, strict=strict, min_anonymity=min_anonymity)
-                    and matches_selection(row, protocol, max_latency, countries, country_of, exclude_hosting, provider_of))
+        stamp_freshness(row, watch_minutes, published_at)
+        eligible = (row_fresh(row, published_at)
+                    and result_allowed(row, min_success, denylist=None, strict=strict, min_anonymity=min_anonymity)
+                    and matches_selection(row, protocol, max_latency, countries, country_of, exclude_hosting, provider_of)
+                    and (not query or query in row.get('proxy', '').lower()))
         if eligible and active_denylist is not None and active_denylist.match(row.get('proxy', '')):
             local_filtered += 1
             eligible = False
-        elif eligible:
-            history = row_history(row, min_success)
-            for group, value in (('protocols', proxy_protocol(row['proxy'])), ('countries', row_country(row, country_of) or '??')):
-                breakdown[group][value] = breakdown[group].get(value, 0) + 1
-            db.execute('INSERT INTO export_rank VALUES (?,?,?,?,?,?,?,?,NULL)',
-                       (row['proxy'], row['score'], row['latency_ms'], row['reliability'], row.get('jitter_ms'),
-                        history['passes'] / history['checks'], history['checks'], (row.get('speed') or {}).get('mbps')))
-            recommend_later.append(row)
+        if eligible:
             passed += 1
+            selection_eligible.add(row['proxy'])
+            if selection_requested is None or row['proxy'] in selection_requested:
+                history = row_history(row, min_success)
+                for group, value in (('protocols', proxy_protocol(row['proxy'])),
+                                     ('countries', row_country(row, country_of) or '??')):
+                    breakdown[group][value] = breakdown[group].get(value, 0) + 1
+                db.execute('INSERT INTO export_rank VALUES (?,?,?,?,?,?,?,?,NULL)',
+                           (row['proxy'], row['score'], row['latency_ms'], row['reliability'], row.get('jitter_ms'),
+                            history['passes'] / history['checks'], history['checks'],
+                            (row.get('speed') or {}).get('mbps')))
+                recommend_later.append(row)
         quality = source_quality.setdefault(sources.get(row.get('proxy'), 'unknown'), {'checked': 0, 'passed': 0})
         quality['checked'] += 1
         quality['passed'] += int(eligible)
@@ -1469,12 +1575,13 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
     selected = db.execute(f"""SELECT r.payload FROM export_rank e JOIN results r
         ON r.proxy=e.proxy AND r.profile=? ORDER BY {order} LIMIT ?""", (profile, top or -1))
     fields = ['proxy', 'score', 'latency_ms', 'jitter_ms', 'reliability', 'min_target_reliability',
-              'successes', 'requests', 'checked_at', 'reputation_status', 'reputation_sources',
+              'successes', 'requests', 'checked_at', 'valid_until', 'reputation_status', 'reputation_sources',
               'anonymity', 'anonymity_signals', 'country', 'exit_ip', 'exit_country', 'asn', 'provider', 'hosting', 'mbps', 'listed_in', 'recommended', 'checks', 'passes']
     names = ['proxies.txt', 'ranked.json', 'ranked.csv', *PROTOCOL_EXPORTS.values(), 'hostport.txt', 'proxychains.txt',
              'proxy.pac', 'clash.yaml', 'singbox.json']
     best = []
     exported = 0
+    exported_valid_until = []
     try:
         with (generation/'proxies.txt').open('w', encoding='utf-8') as txt, \
              (generation/'ranked.json').open('w', encoding='utf-8') as js, \
@@ -1490,7 +1597,7 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
             writer.writeheader()
             js.write('[')
             for (payload,) in selected:
-                row = json.loads(payload)
+                row = stamp_freshness(json.loads(payload), watch_minutes, published_at)
                 verdict = row.get('reputation') or {}
                 row['reputation_status'] = verdict.get('status', 'clean')
                 row['reputation_sources'] = ','.join(item.get('zone', '') for item in verdict.get('dnsbl', [])
@@ -1518,6 +1625,7 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
                 js.write((',' if exported else '') + '\n' + json.dumps(row, ensure_ascii=False))
                 writer.writerow(csv_row)
                 exported += 1
+                exported_valid_until.append(row['valid_until'])
                 if len(best) < formats.CLASH_LIMIT:
                     best.append(row)
             js.write('\n]\n')
@@ -1525,28 +1633,60 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
         (generation/'clash.yaml').write_text(formats.clash(best), encoding='utf-8')
         (generation/'singbox.json').write_text(formats.singbox(best), encoding='utf-8')
         total = db.execute('SELECT count(*) FROM candidates').fetchone()[0]
-        report = dict(profile=profile, candidates=total, checked=checked, pending=total-checked,
-                      passed=passed, local_filtered=local_filtered, exported=exported, complete=checked == total,
-                      generated_at=time.time(), sort=sort, min_success=min_success,
-                      protocol=protocol, max_latency=max_latency, countries=list(countries or ()),
-                      exclude_hosting=bool(exclude_hosting and provider_of),
-                      targets=[dict(name=t.get('name', ''), url=public_url(t['url'])) for t in cfg.get('targets', [])],
-                      request_profile=cfg.get('request_profile', 'workbench'),
-                      request_profile_digest=cfg.get('request_profile_digest', ''),
-                      reputation=dict(policy, counts=status_counts), generation=generation.name,
-                      anonymity=dict(enabled=bool(cfg.get('anonymity')), min_level=min_anonymity,
-                                     counts=anonymity_counts),
-                      source_quality=source_quality, breakdown=breakdown)
+        if run_state:
+            checked = max(0, int(run_state.get('checked', stored_checked)))
+            scope_candidates = max(0, int(run_state.get('scope_candidates', scope_candidates)))
+            snapshot_state = run_state.get('state', 'partial')
+            stop_reason = run_state.get('stop_reason', 'stopped')
+            reported_passed = max(0, int(run_state.get('passed', passed)))
+        else:
+            checked = stored_checked
+            snapshot_state = 'complete' if checked == scope_candidates else 'partial'
+            stop_reason = 'complete' if snapshot_state == 'complete' else 'stopped'
+            reported_passed = passed
+        if snapshot_state not in ('complete', 'partial', 'error'):
+            snapshot_state = 'error' if stop_reason == 'error' else 'partial'
+        if stop_reason not in ('complete', 'want_reached', 'recheck_passing', 'stopped', 'error'):
+            stop_reason = 'stopped' if snapshot_state != 'complete' else 'complete'
+        freshness = freshness_seconds(watch_minutes)
+        valid_until = min(exported_valid_until, default=published_at + freshness)
+        missing = sorted(selection_requested - selection_eligible) if selection_requested is not None else []
+        report = dict(
+            schema_version=SNAPSHOT_SCHEMA_VERSION, profile=profile, generation=generation.name,
+            state=snapshot_state, stop_reason=stop_reason,
+            scope=dict(protocol=protocol, countries=list(countries or ()), exclude_hosting=bool(exclude_hosting)),
+            scope_candidates=scope_candidates, checked=checked,
+            pending=max(0, scope_candidates - checked), passed=reported_passed,
+            candidates=total, local_filtered=local_filtered, exported=exported,
+            complete=snapshot_state == 'complete' and checked == scope_candidates,
+            generated_at=published_at, valid_until=valid_until, stale=False,
+            sort=sort, min_success=min_success, protocol=protocol, max_latency=max_latency,
+            countries=list(countries or ()), exclude_hosting=bool(exclude_hosting and provider_of), query=query,
+            watch_minutes=float(watch_minutes),
+            selection_requested=len(selection_requested) if selection_requested is not None else 0,
+            selection_exported=exported if selection_requested is not None else 0,
+            selection_missing=missing,
+            selection_truncated=max(0, len(selection_eligible) - exported) if selection_requested is not None else 0,
+            targets=[dict(name=t.get('name', ''), url=public_url(t['url'])) for t in cfg.get('targets', [])],
+            request_profile=cfg.get('request_profile', 'workbench'),
+            request_profile_digest=cfg.get('request_profile_digest', ''),
+            reputation=dict(policy, counts=status_counts),
+            anonymity=dict(enabled=bool(cfg.get('anonymity')), min_level=min_anonymity,
+                           counts=anonymity_counts),
+            source_quality=source_quality, breakdown=breakdown)
         atomic(generation/'status.json', json.dumps(report, indent=2) + '\n')
-        atomic(directory/'current.json', json.dumps({'generation':generation.name, 'files':names}, ensure_ascii=False) + '\n')
+        pointer_name = 'diagnostic.json' if diagnostic else 'current.json'
+        atomic(directory/pointer_name, json.dumps({'generation':generation.name, 'files':names,
+                                                   'state':snapshot_state}, ensure_ascii=False) + '\n')
         published = True
-        # Keep legacy root filenames for scripts that already consume them.
-        for name in names:
-            temporary = directory/(name+'.tmp')
-            shutil.copyfile(generation/name, temporary)
-            temporary.replace(directory/name)
-        atomic(directory / 'status.json', json.dumps(report, indent=2) + '\n')
-        prune_export_generations(directory, current=generation.name)
+        if not diagnostic:
+            # Keep legacy root filenames for scripts that already consume them.
+            for name in names:
+                temporary = directory/(name+'.tmp')
+                shutil.copyfile(generation/name, temporary)
+                temporary.replace(directory/name)
+            atomic(directory/'status.json', json.dumps(report, indent=2) + '\n')
+        prune_export_generations(directory, current=current_generation_name(directory))
     finally:
         selected.close()
         if not published:
@@ -1603,6 +1743,9 @@ def parser():
     p.add_argument('--yes', action='store_true', help=tr('подтвердить удаление локальных результатов', 'confirm deleting local results'))
     p.add_argument('--progress-file', type=Path, help=argparse.SUPPRESS)
     p.add_argument('--stop-file', type=Path, help=argparse.SUPPRESS)
+    p.add_argument('--selection-file', type=Path, help=argparse.SUPPRESS)
+    p.add_argument('--export-query', default='', help=argparse.SUPPRESS)
+    p.add_argument('--export-hosting', choices=('', 'hide'), default='', help=argparse.SUPPRESS)
     p.add_argument('--data', type=Path, default=paths.default_data(),
                    help=tr('папка для базы, настроек и экспорта', 'folder for the database, settings and exports'))
     p.add_argument('--input', action='append', default=[], help=tr('локальный список прокси; можно повторять', 'local proxy list file; can be repeated'))
@@ -1866,6 +2009,30 @@ def test_proxies(args):
     return 0 if passed == len(proxies) else 1
 
 
+def read_selection_file(path):
+    """Read and remove the short-lived GUI allowlist passed to an export worker."""
+    path = Path(path)
+    try:
+        if path.stat().st_size > 1_000_000:
+            raise ValueError('Слишком большой список выбранных прокси.')
+        values = json.loads(path.read_text(encoding='utf-8'))
+    except FileNotFoundError:
+        raise ValueError('Файл выбранных прокси не найден.') from None
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        raise ValueError('Не удалось прочитать список выбранных прокси.') from None
+    finally:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
+    if not isinstance(values, list) or not 1 <= len(values) <= 1000:
+        raise ValueError('Выберите от 1 до 1000 прокси.')
+    normalized = [normalize(value) for value in values]
+    if any(value is None for value in normalized):
+        raise ValueError('Выбранный список содержит неподдерживаемый адрес или credentials.')
+    return list(dict.fromkeys(normalized))
+
+
 def main(argv=None):
     utf8_output()
     p = parser()
@@ -1888,6 +2055,19 @@ def main(argv=None):
         countries = geoip.parse_countries(args.country)
     except ValueError as exc:
         p.error(tr(str(exc), 'Countries: use two-letter ISO codes, for example DE,NL.'))
+    if args.command != 'export' and (args.selection_file is not None or args.export_query or args.export_hosting):
+        p.error('--selection-file/--export-query/--export-hosting доступны только для export')
+    if len(args.export_query) > 100:
+        p.error('Поиск экспорта слишком длинный: максимум 100 символов.')
+    export_query = args.export_query.strip().lower()
+    allowed_proxies = None
+    if args.selection_file is not None:
+        if args.command != 'export':
+            p.error('--selection-file доступен только для export')
+        try:
+            allowed_proxies = read_selection_file(args.selection_file)
+        except ValueError as exc:
+            p.error(str(exc))
     os.umask(0o077)
     args.data.mkdir(parents=True, exist_ok=True)
     if args.command == 'serve':
@@ -1973,6 +2153,11 @@ def main(argv=None):
     profile = None
     code = 0
     latest = {}
+    last_report = None
+    last_scan_state = None
+    scan_in_progress = False
+    current_published = False
+    scan_interrupted = False
 
     def update_progress(values):
         latest.update(values, updated_at=time.time())
@@ -1981,13 +2166,15 @@ def main(argv=None):
 
     update_progress(dict(phase='starting', checked=0, candidates=0))
 
-    def export_now():
+    def export_now(*, run_state=None, diagnostic=False, selected=None):
         return export(db, profile, args.data / 'exports', top=args.top,
                       sort=args.sort, min_success=args.min_success, denylist=denylist,
                       local_override=args.local_denylist, min_anonymity=args.min_anonymity,
                       protocol=args.protocol, max_latency=args.max_latency or None,
-                      countries=countries, country_of=country_of, exclude_hosting=args.no_hosting,
-                      provider_of=provider_of)
+                      countries=countries, country_of=country_of,
+                      exclude_hosting=args.no_hosting or args.export_hosting == 'hide',
+                      provider_of=provider_of, watch_minutes=args.watch, query=export_query,
+                      allowed_proxies=selected, run_state=run_state, diagnostic=diagnostic)
 
     try:
         if args.command in ('scan', 'run'):
@@ -2011,7 +2198,6 @@ def main(argv=None):
         if args.command in ('scan', 'run'):
             workers = fit_workers(args.workers)
             print(tr(f'Воркеров: {workers}; полный обход; профиль {profile}', f'Workers: {workers}; full pass; profile {profile}'), flush=True)
-            atomic(args.data / 'last-profile.txt', profile)
 
             dnsbl_gate = asyncio.Semaphore(8)
             async def reputation_check(proxy, scan_config):
@@ -2037,27 +2223,54 @@ def main(argv=None):
             prefilter = fit_prefilter(workers, args.prefilter)
 
             def run_scan(**options):
-                asyncio.run(stoppable(scan(db, config, workers=workers, rate=args.rate,
-                                           probe=probe, on_progress=update_progress, min_success=args.min_success,
-                                           screen=reputation_check, denylist=denylist,
-                                           min_anonymity=args.min_anonymity, protocol=args.protocol,
-                                           max_latency=args.max_latency or None, countries=countries,
-                                           country_of=country_of, prefilter=prefilter,
-                                           exclude_hosting=args.no_hosting, provider_of=provider_of,
-                                           prefilter_timeout=min(args.prefilter_timeout, args.connect_timeout),
-                                           **options), args.stop_file))
+                nonlocal last_scan_state, scan_in_progress, scan_interrupted
+                state = {}
+                scan_interrupted = False
+                scan_in_progress = True
+                try:
+                    asyncio.run(stoppable(scan(db, config, workers=workers, rate=args.rate,
+                                               probe=probe, on_progress=update_progress, min_success=args.min_success,
+                                               screen=reputation_check, denylist=denylist,
+                                               min_anonymity=args.min_anonymity, protocol=args.protocol,
+                                               max_latency=args.max_latency or None, countries=countries,
+                                               country_of=country_of, prefilter=prefilter,
+                                               exclude_hosting=args.no_hosting, provider_of=provider_of,
+                                               prefilter_timeout=min(args.prefilter_timeout, args.connect_timeout),
+                                               run_state=state, **options), args.stop_file))
+                except (KeyboardInterrupt, asyncio.CancelledError):
+                    scan_interrupted = True
+                    state.update(state='partial', stop_reason='stopped')
+                    last_scan_state = state
+                    raise
+                except Exception:
+                    scan_interrupted = True
+                    state.update(state='error', stop_reason='error')
+                    last_scan_state = state
+                    raise
+                finally:
+                    scan_in_progress = False
+                last_scan_state = state
+                return state
 
-            run_scan(recheck=args.recheck, recheck_passing=args.recheck_passing, want=args.want)
+            last_scan_state = run_scan(recheck=args.recheck, recheck_passing=args.recheck_passing, want=args.want)
+            last_report = export_now(run_state=last_scan_state)
+            current_published = True
+            # Publish the active profile only after its generation is complete;
+            # a cancelled scan leaves the previous results/current export visible.
+            atomic(args.data / 'last-profile.txt', profile)
             while args.watch:
                 # Keep the list fresh: publish, wait, then re-check only the proxies that pass.
-                report = export_now()
-                update_progress(dict(report, phase='waiting', next_check_at=time.time() + args.watch * 60))
-                print(tr(f'Сохранено {report["exported"]}. Следующая перепроверка рабочих прокси через {args.watch:g} мин.', f'Saved {report["exported"]}. Next re-check of working proxies in {args.watch:g} min.'),
+                update_progress(dict(last_report, phase='waiting', next_check_at=time.time() + args.watch * 60))
+                print(tr(f'Сохранено {last_report["exported"]}. Следующая перепроверка рабочих прокси через {args.watch:g} мин.', f'Saved {last_report["exported"]}. Next re-check of working proxies in {args.watch:g} min.'),
                       flush=True)
                 asyncio.run(stoppable(asyncio.sleep(args.watch * 60), args.stop_file))
-                run_scan(recheck_passing=True)
+                last_scan_state = run_scan(recheck_passing=True)
+                last_report = export_now(run_state=last_scan_state)
+                current_published = True
         elif args.command == 'export':
             profile = (args.data / 'last-profile.txt').read_text(encoding='utf-8').strip()
+            last_report = export_now(selected=allowed_proxies)
+            current_published = True
     except (KeyboardInterrupt, asyncio.CancelledError):
         print(tr('Остановлено. Завершённые проверки сохранены; scan продолжит проход.', 'Stopped. Finished checks are saved; the next scan continues where this one stopped.'), flush=True)
         code = 130
@@ -2067,18 +2280,19 @@ def main(argv=None):
     finally:
         try:
             db.commit()
-            if profile and db.execute('SELECT 1 FROM profiles WHERE id=?', (profile,)).fetchone():
-                update_progress(dict(phase='exporting'))
+            if code and scan_interrupted and last_scan_state and profile \
+                    and db.execute('SELECT 1 FROM profiles WHERE id=?', (profile,)).fetchone():
+                update_progress(dict(phase='exporting_diagnostic'))
                 try:
-                    report = export_now()
+                    last_report = export_now(run_state=last_scan_state, diagnostic=True)
                 except Exception as exc:
-                    if not code:
-                        print(tr(f'Ошибка экспорта: {type(exc).__name__}: проверьте data/ и denylist.', f'Export error: {type(exc).__name__}: check data/ and the denylist.'), file=sys.stderr)
-                        code = 2
-                    update_progress(dict(phase='error', error=type(exc).__name__))
+                    print(tr(f'Не удалось сохранить диагностический snapshot: {type(exc).__name__}.',
+                             f'Could not save the diagnostic snapshot: {type(exc).__name__}.'), file=sys.stderr)
                 else:
-                    update_progress(report)
-                    print(tr(f'Проверено {report["checked"]}/{report["candidates"]}; подходят {report["passed"]}; сохранено {report["exported"]}', f'Checked {report["checked"]}/{report["candidates"]}; matching {report["passed"]}; saved {report["exported"]}'), flush=True)
+                    update_progress(last_report)
+            if current_published and last_report:
+                print(tr(f'Проверено {last_report["checked"]}/{last_report["scope_candidates"]}; подходят {last_report["passed"]}; сохранено {last_report["exported"]}',
+                         f'Checked {last_report["checked"]}/{last_report["scope_candidates"]}; matching {last_report["passed"]}; saved {last_report["exported"]}'), flush=True)
         finally:
             update_progress(dict(phase='stopped' if code == 130 else 'error' if code else 'complete', exit_code=code))
             db.close()

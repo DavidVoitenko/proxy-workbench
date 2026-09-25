@@ -7,6 +7,7 @@ from pathlib import Path
 import struct
 import sys
 import tempfile
+import time
 import unittest
 
 import httpx
@@ -214,6 +215,28 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((status['proxies'], status['sessions']), (2, 1))
         self.assertGreaterEqual(sum(item['ok'] for item in status['top']), 10)
         self.assertEqual(status['active'], 0)
+
+    def test_pool_drops_expired_generation_rows_and_missing_file(self):
+        exports = self.home / 'exports'
+        generation = exports / 'generations' / '.generation-test'
+        generation.mkdir(parents=True)
+        proxy = 'http://11.0.0.1:80'
+        current = dict(proxy=proxy, reliability=1, min_target_reliability=1, latency_ms=100,
+                       jitter_ms=1, score=90, successes=3, requests=3, checked_at=time.time(),
+                       valid_until=time.time() + 60, samples=[])
+        (generation / 'ranked.json').write_text(json.dumps([current]), encoding='utf-8')
+        (generation / 'status.json').write_text(json.dumps({'schema_version': 1, 'generation': generation.name,
+                                                             'state': 'complete', 'stop_reason': 'complete',
+                                                             'complete': True, 'valid_until': current['valid_until']}),
+                                                 encoding='utf-8')
+        (exports / 'current.json').write_text(json.dumps({'generation': generation.name}), encoding='utf-8')
+        pool = gateway.Pool(self.home)
+        self.assertEqual(pool.refresh(), [proxy])
+        current['valid_until'] = time.time() - 1
+        (generation / 'ranked.json').write_text(json.dumps([current]), encoding='utf-8')
+        self.assertEqual(pool.refresh(), [])
+        (generation / 'ranked.json').unlink()
+        self.assertEqual(pool.refresh(), [])
 
     def test_client_options_parsing(self):
         self.assertEqual(gateway.client_options('user'), ({}, None))
