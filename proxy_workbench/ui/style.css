@@ -3325,6 +3325,17 @@ tbody tr:hover td.td-num {
   justify-content: center;
 }
 
+/* The full re-check is offered next to the quick test, not inside it: the
+   quick test is diagnostic and never refreshes the stored row (defect 23). */
+.recheck-btn {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .row-tg-btn {
   height: 26px;
   padding: 0 8px;

@@ -57,14 +57,49 @@ class CodeTranslationTests(unittest.TestCase):
         self.assertEqual(gui.CHILD_ENV['PROXY_WORKBENCH_LANG'], 'ru')
 
 
+class StateDetailTranslationTests(unittest.TestCase):
+    """CONTRACTS §5.4: ``state_detail`` is a machine value with a text next to it."""
+
+    def test_every_reason_the_engine_can_report_has_text(self):
+        from proxy_workbench import core
+        for detail in sorted(core.STATE_DETAILS):
+            self.assertIn(detail, i18n.STATE_DETAILS, f'{detail} has no translation')
+            ru = i18n.state_detail_text(detail, 'ru')
+            en = i18n.state_detail_text(detail, 'en')
+            self.assertNotEqual(ru, detail, f'{detail} has no Russian text')
+            self.assertNotEqual(en, detail, f'{detail} has no English text')
+            self.assertNotEqual(ru, en, f'{detail} reads the same in both languages')
+
+    def test_expired_and_empty_do_not_share_a_text(self):
+        self.assertNotEqual(i18n.state_detail_text('all_expired', 'ru'),
+                            i18n.state_detail_text('empty_no_match', 'ru'))
+        self.assertNotEqual(i18n.state_detail_text('all_expired', 'en'),
+                            i18n.state_detail_text('empty_no_match', 'en'))
+
+    def test_an_unknown_reason_stays_visible_and_nothing_becomes_empty_text(self):
+        self.assertEqual(i18n.state_detail_text('a_new_reason', 'ru'), 'a_new_reason')
+        self.assertEqual(i18n.state_detail_text('', 'en'), '')
+        self.assertEqual(i18n.state_detail_text(None, 'ru'), '')
+
+    def test_the_reader_states_the_interface_adds_are_translated_too(self):
+        # gui.py reports these two when the publication pointer cannot be read
+        for detail in ('no_snapshot', 'pointer_unreadable'):
+            self.assertIn(detail, i18n.STATE_DETAILS)
+            self.assertNotEqual(i18n.state_detail_text(detail, 'en'), detail)
+
+
 class MessageCatalogTests(unittest.TestCase):
     NEW_KEYS = ('view.fresh', 'view.stale', 'view.failed', 'view.unknown', 'view.all',
                 'scope.page', 'scope.selected', 'scope.allMatching',
                 'results.matrix', 'results.undo', 'results.tag', 'results.note',
                 'results.bulkRecheck', 'results.views', 'results.columns',
-                'quick.volume', 'quick.skipped', 'quick.recheckFull',
+                'quick.volume', 'quick.skipped', 'quick.recheckFull', 'quick.recheckNote',
+                'results.snapshotReason',
                 'connect.pool', 'connect.client', 'connect.fields', 'connect.route',
                 'connect.disconnect', 'connect.stopGateway', 'connect.probeNote',
+                'connect.clientLine', 'connect.gatewayOff', 'connect.fieldHost',
+                'connect.fieldPort', 'connect.fieldProtocol', 'connect.protocols',
+                'scenario.version',
                 'monitor.liveStreamSource', 'results.snapshotBroken')
 
     def test_every_new_key_exists_in_both_languages(self):

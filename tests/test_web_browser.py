@@ -134,6 +134,35 @@ process.stdout.write(JSON.stringify({toasts: globalThis.__toasts, disabled: node
         self.assertEqual(len(answer['toasts']), 1)
         self.assertFalse(answer['disabled'])
 
+    def test_a_failed_transfer_aborts_instead_of_closing_and_leaving_a_half_file(self):
+        prelude = self.harness(picker="() => { globalThis.__pickerCalls += 1; return Promise.resolve({createWritable: () => globalThis.__writable}); }")
+        # the page only streams into a real WritableStream; node has none
+        prelude = prelude.replace('window = {};', 'window = {};\nglobalThis.WritableStream = function WritableStream() {};')
+        prelude = prelude.replace("""      pipeTo: async (writable, options) => {
+        globalThis.__pipeOptions.push(options || null);
+        globalThis.__writable = writable;
+      }""", """      pipeTo: async (writable, options) => {
+        globalThis.__pipeOptions.push(options || null);
+        throw new Error('connection lost mid-file');
+      }""")
+        out = run(self.source(), """
+const node = {disabled: false, dataset: {}, textContent: 'Download'};
+globalThis.__aborts = 0;
+globalThis.__writable = {close: async () => { globalThis.__closes += 1; },
+                        abort: async (reason) => { globalThis.__aborts += 1; globalThis.__abortReason = String(reason); }};
+await downloadFile('proxies.txt', node);
+process.stdout.write(JSON.stringify({closes: globalThis.__closes, aborts: globalThis.__aborts,
+  abortReason: globalThis.__abortReason, options: globalThis.__pipeOptions,
+  toasts: globalThis.__toasts, disabled: node.disabled}));
+""", prelude)
+        answer = json.loads(out)
+        self.assertEqual(answer['closes'], 0, 'a failed transfer must not close the destination')
+        self.assertEqual(answer['aborts'], 1, 'the half-written file must be aborted, not closed')
+        self.assertIn('connection lost', answer['abortReason'])
+        self.assertEqual(answer['options'], [{'preventClose': True}])
+        self.assertEqual(len(answer['toasts']), 1, 'the user is told the download failed')
+        self.assertFalse(answer['disabled'], 'the button must stay usable after a failure')
+
 
 class ScenarioPresetTests(unittest.TestCase):
     """Defect 24: a scenario owns every field it changes and claims nothing extra."""
@@ -180,6 +209,19 @@ process.stdout.write(JSON.stringify({
             for field in item['fields']:
                 self.assertIn(field, payload['managed'],
                               f'{item["id"]} changes a field no reset knows about')
+
+    def test_every_preset_is_versioned(self):
+        """R17: a preset states which version of its definition is in effect."""
+        out = run(self.source(), """
+process.stdout.write(JSON.stringify(SCENARIOS.map(s => ({id: s.id, version: s.version,
+  name: s.name.en, note: s.note.en}))));
+""", self.harness())
+        for item in json.loads(out):
+            self.assertIsInstance(item['version'], int, f"{item['id']} has no preset version")
+            self.assertGreaterEqual(item['version'], 1)
+        source = ws.APP_JS.read_text(encoding='utf-8')
+        self.assertIn("t('scenario.version', {number: scenario.version || 1})", source,
+                      'the applied preset does not show its version')
 
     def test_switching_scenarios_leaves_no_parameter_of_the_previous_one(self):
         out = run(self.source(), """
@@ -247,6 +289,109 @@ process.stdout.write(JSON.stringify(SCENARIOS.map(s => ({id: s.id, name: s.name,
                 self.assertIn(target['name'].lower(), ('telegram web', 'youtube web', 'anonymity check', 'website response'))
             # Each scenario states in words what it does not measure.
             self.assertTrue(item['note']['en'] and item['note']['ru'])
+
+
+class QuickTestRecheckTests(unittest.TestCase):
+    """Defect 23: the quick test stores nothing, so the refresh is a separate act.
+
+    The server answers with ``scope.recheck_action`` and its own wording; the
+    page turns that into a chip next to the answer, and never invents the
+    offer when the server did not make it.
+    """
+
+    def source(self):
+        return ws.js_slice('function offerFullRecheck(', 'function renderResults(')
+
+    def harness(self):
+        return PRELUDE + """
+function makeElement() {
+  return {dataset: {}, attributes: {}, type: '', className: '', title: '', textContent: '',
+    setAttribute(name, value) { this.attributes[name] = value; },
+    getAttribute(name) { return this.attributes[name]; }};
+}
+document.createElement = makeElement;
+function makeGroup() {
+  const group = {children: []};
+  group.appendChild = node => { group.children.push(node); node.parentElement = group; };
+  group.querySelector = selector => group.children.find(node =>
+    selector === '[data-recheck-proxy]' && node.dataset.recheckProxy) || null;
+  const quick = {dataset: {testProxy: 'http://11.0.0.1:8080'}};
+  quick.closest = () => ({querySelector: selector => selector === '.row-actions-group' ? group : null});
+  return {group, quick};
+}
+"""
+
+    def test_the_answer_offers_a_separate_full_recheck(self):
+        out = run(self.source(), """
+const {group, quick} = makeGroup();
+const button = offerFullRecheck(quick, 'http://11.0.0.1:8080', {scope: {
+  kind: 'quick_diagnostic', stored: false, recheck_action: 'recheck',
+  recheck_note: 'A full re-check updates the stored row and its freshness.'}});
+process.stdout.write(JSON.stringify({added: group.children.length, dataset: button.dataset,
+  title: button.title, label: button.getAttribute('aria-label'), text: button.textContent}));
+""", self.harness())
+        answer = json.loads(out)
+        self.assertEqual(answer['added'], 1)
+        self.assertEqual(answer['dataset']['recheckProxy'], 'http://11.0.0.1:8080')
+        self.assertIn('recheck', answer['title'])
+        self.assertIn('updates the stored row', answer['title'],
+                      'the page must use the wording the server sent')
+        self.assertIn('http://11.0.0.1:8080', answer['label'])
+
+    def test_no_offer_without_a_recheck_action_from_the_server(self):
+        out = run(self.source(), """
+const first = makeGroup();
+const refused = offerFullRecheck(first.quick, 'http://11.0.0.1:8080', {scope: {stored: false}});
+const denied = makeGroup();
+const noScope = offerFullRecheck(denied.quick, 'http://11.0.0.1:8080', {error: 'E_SCOPE_DENYLIST'});
+process.stdout.write(JSON.stringify({refused, noScope,
+  first: first.group.children.length, denied: denied.group.children.length}));
+""", self.harness())
+        answer = json.loads(out)
+        self.assertIsNone(answer['refused'])
+        self.assertIsNone(answer['noScope'])
+        self.assertEqual(answer['first'], 0)
+        self.assertEqual(answer['denied'], 0)
+
+    def test_the_offer_is_never_made_twice_on_one_row(self):
+        out = run(self.source(), """
+const {group, quick} = makeGroup();
+const scope = {recheck_action: 'recheck', recheck_note: 'again'};
+offerFullRecheck(quick, 'http://11.0.0.1:8080', {scope});
+offerFullRecheck(quick, 'http://11.0.0.1:8080', {scope});
+process.stdout.write(JSON.stringify({added: group.children.length}));
+""", self.harness())
+        self.assertEqual(json.loads(out)['added'], 1)
+
+    def test_the_recheck_action_carries_exactly_the_clicked_row(self):
+        # the click handler is a thin delegation; the payload it builds is what
+        # the server must receive, so it is checked here
+        source = ws.js_slice('const COLUMN_LABELS = {', 'function setupResultList()')
+        out = run(source, """
+globalThis.__lookup = id => ({'result-sort': {value: 'recommended'}, 'result-min': {value: '0.5'},
+  'result-anon': {value: 'any'}, 'result-protocol': {value: 'all'}, 'result-max-latency': {value: 0},
+  'result-country': {value: ''}, 'result-hosting': {value: ''}, 'result-search': {value: ''}}[id] || null);
+globalThis.__api = async (path, body) => {
+  if (path === '/api/results/bulk') { globalThis.__body = body; return {count: body.proxies.length}; }
+  return {min_success: 0.5};
+};
+globalThis.navigator = {clipboard: {writeText: async () => {}}};
+async function currentSettingsPayload() { return {min_success: 0.5}; }
+function loadResults() {}
+function updateSelectionUI() {}
+selectedProxies.add('http://11.0.0.2:8080');
+resultState.digest = 'digest-1';
+await bulkAction('recheck', {scope: 'selected', proxies: ['http://11.0.0.1:8080']});
+process.stdout.write(JSON.stringify({op: globalThis.__body.op, scope: globalThis.__body.scope,
+  proxies: globalThis.__body.proxies, digest: globalThis.__body.scope_digest,
+  hasSettings: Boolean(globalThis.__body.settings)}));
+""", PRELUDE)
+        body = json.loads(out)
+        self.assertEqual(body['op'], 'recheck')
+        self.assertEqual(body['proxies'], ['http://11.0.0.1:8080'],
+                         'the re-check must not drag the whole checkbox selection along')
+        self.assertEqual(body['digest'], 'digest-1')
+        self.assertTrue(body['hasSettings'], 'a re-check needs the saved settings')
 
 
 class LiveFeedClientTests(unittest.TestCase):
@@ -385,6 +530,35 @@ process.stdout.write(JSON.stringify(globalThis.__body));
         self.assertEqual(body['tag'], 'fast')
         self.assertIn('query', body)
         self.assertNotIn('proxies', body, 'an all-matching action must not ship the rows')
+
+    def test_the_page_says_why_the_list_is_what_it_is(self):
+        """Defect 3: an expired set and an empty one must not read alike."""
+        # the real message catalogue, so the assertion is on the text a user reads
+        prelude = re.sub(r'^const t = .*\n', '', PRELUDE, flags=re.M)
+        source = (ws.js_slice('const messages = {', 'const LANGS = [')
+                  + '\n' + ws.js_slice('function t(key, values={})', '// Server validation messages')
+                  + '\n' + self.source())
+        out = run(source, """
+const read = payload => {
+  globalThis.__lookup = id => (id === 'results-view-hint' ? globalThis.__hint : null);
+  renderViewTabs(payload);
+  return {text: globalThis.__hint.textContent, warn: globalThis.__hint.classList.warn};
+};
+globalThis.__hint = {textContent: '', classList: {warn: false, toggle(name, force) { if (name === 'warn') this.warn = Boolean(force); }}};
+const ok = read({counts: {}, state_detail: 'ok', state_detail_label: 'the set was built and accepted'});
+const expired = read({counts: {}, state_detail: 'all_expired', state_detail_label: 'every row expired; a new check is needed'});
+const empty = read({counts: {}, state_detail: 'empty_no_match', state_detail_label: 'nothing matched the filters'});
+const broken = read({counts: {}, snapshot_state: 'broken'});
+process.stdout.write(JSON.stringify({ok, expired, empty, broken}));
+""", prelude)
+        answer = json.loads(out)
+        self.assertNotIn('expired', answer['ok']['text'])
+        self.assertIn('every row expired', answer['expired']['text'])
+        self.assertTrue(answer['expired']['warn'])
+        self.assertIn('nothing matched the filters', answer['empty']['text'])
+        self.assertNotEqual(answer['expired']['text'], answer['empty']['text'])
+        self.assertIn('cannot be read', answer['broken']['text'])
+        self.assertTrue(answer['broken']['warn'])
 
 
 if __name__ == '__main__':

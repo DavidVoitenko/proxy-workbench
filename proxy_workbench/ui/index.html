@@ -1050,15 +1050,15 @@
           </li>
           <li class="connect-step">
             <span class="connect-step-title" data-i18n="connect.client">2. App or browser</span>
-            <span class="connect-step-value" data-i18n="gateway.hint">Set 127.0.0.1:8899 as an HTTP or SOCKS5 proxy anywhere.</span>
+            <span class="connect-step-value" id="connect-client-hint" data-i18n="gateway.hint">Set the address from step 1 as an HTTP or SOCKS5 proxy.</span>
             <span class="connect-step-note" id="connect-probe-note"></span>
           </li>
           <li class="connect-step">
             <span class="connect-step-title" data-i18n="connect.fields">3. Fields</span>
             <div class="endpoint-specs">
-              <div><strong>Host:</strong> <code>127.0.0.1</code></div>
-              <div><strong>Port:</strong> <code>8899</code></div>
-              <div><strong>Protocol:</strong> <code>SOCKS5 / HTTP</code></div>
+              <div><strong data-i18n="connect.fieldHost">Host:</strong> <code id="connect-host">—</code></div>
+              <div><strong data-i18n="connect.fieldPort">Port:</strong> <code id="connect-port">—</code></div>
+              <div><strong data-i18n="connect.fieldProtocol">Protocol:</strong> <code id="connect-protocol">—</code></div>
             </div>
           </li>
           <li class="connect-step" id="connect-route">
@@ -1126,24 +1126,24 @@
             <!-- Tab: cURL -->
             <div class="gw-tab-content" id="gw-tab-curl">
               <div class="code-snippet-box">
-                <pre><code># SOCKS5 rotation
+                <pre><code id="gw-curl-code"># SOCKS5 rotation
 curl -x socks5h://127.0.0.1:8899 https://api.ipify.org
 
 # HTTP rotation
 curl -x http://127.0.0.1:8899 https://api.ipify.org</code></pre>
-                <button class="button light chip copy-code-btn" data-copy-text="curl -x socks5h://127.0.0.1:8899 https://api.ipify.org" data-i18n="gateway.copyCode">Copy Code</button>
+                <button class="button light chip copy-code-btn" id="gw-copy-curl" data-copy-text="curl -x socks5h://127.0.0.1:8899 https://api.ipify.org" data-i18n="gateway.copyCode">Copy Code</button>
               </div>
             </div>
 
             <!-- Tab: Python -->
             <div class="gw-tab-content" id="gw-tab-python">
               <div class="code-snippet-box">
-                <pre><code>import httpx
+                <pre><code id="gw-python-code">import httpx
 
 with httpx.Client(proxy="socks5://127.0.0.1:8899") as client:
     response = client.get("https://api.ipify.org")
     print("Rotated IP:", response.text)</code></pre>
-                <button class="button light chip copy-code-btn" data-copy-text='import httpx&#10;with httpx.Client(proxy="socks5://127.0.0.1:8899") as client:&#10;    print(client.get("https://api.ipify.org").text)' data-i18n="gateway.copyCode">Copy Code</button>
+                <button class="button light chip copy-code-btn" id="gw-copy-python" data-copy-text='import httpx&#10;with httpx.Client(proxy="socks5://127.0.0.1:8899") as client:&#10;    print(client.get("https://api.ipify.org").text)' data-i18n="gateway.copyCode">Copy Code</button>
               </div>
             </div>
 
@@ -1152,9 +1152,9 @@ with httpx.Client(proxy="socks5://127.0.0.1:8899") as client:
               <div class="browser-guide-card">
                 <p data-i18n="gateway.hint">Set it as an HTTP or SOCKS5 proxy anywhere. Every TCP connection goes through the next working proxy; UDP is not supported.</p>
                 <div class="endpoint-specs">
-                  <div><strong>Host:</strong> <code>127.0.0.1</code></div>
-                  <div><strong>Port:</strong> <code>8899</code></div>
-                  <div><strong>Protocol:</strong> <code>SOCKS5 / HTTP</code></div>
+                  <div><strong data-i18n="connect.fieldHost">Host:</strong> <code id="gw-browser-host">—</code></div>
+                  <div><strong data-i18n="connect.fieldPort">Port:</strong> <code id="gw-browser-port">—</code></div>
+                  <div><strong data-i18n="connect.fieldProtocol">Protocol:</strong> <code id="gw-browser-protocol">—</code></div>
                 </div>
               </div>
             </div>

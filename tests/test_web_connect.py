@@ -180,6 +180,131 @@ process.stdout.write(url);
                 self.assertNotIn('qr', line.lower(), 'the QR builder must not read a request token')
 
 
+class ConnectionPathRenderTests(unittest.TestCase):
+    """F17 step 2-3: the fields are the ones the listener really has.
+
+    A hard-coded ``127.0.0.1:8899`` in the page is a promise the run may not
+    keep: ``--gateway-port`` may pick another port, and ``--no-gateway`` means
+    there is no address at all.  These tests drive the page's own renderer with
+    the page's own message catalogue, so they check the text a user reads.
+    """
+
+    PRELUDE = """
+const lang = 'en';
+const fmt = value => String(value);
+const nodes = {};
+['connect-pool', 'connect-client-hint', 'connect-host', 'connect-port', 'connect-protocol',
+ 'connect-generation', 'connect-lan', 'connect-probe-note', 'connect-disconnect-hint',
+ 'connect-disconnect', 'gw-browser-host', 'gw-browser-port', 'gw-browser-protocol',
+ 'gw-curl-code', 'gw-python-code', 'gw-copy-curl', 'gw-copy-python'].forEach(id => {
+  nodes[id] = {textContent: '', dataset: {}, classList: {toggled: [], toggle(name) { this.toggled.push(name); }}};
+});
+const $ = id => nodes[id] || null;
+"""
+
+    def render(self, value):
+        source = (ws.js_slice('const messages = {', 'const LANGS = [')
+                  + '\n' + ws.js_slice('function t(key, values={})', '// Server validation messages')
+                  + '\n' + ws.js_slice('function splitGatewayAddress(', 'async function startGateway()'))
+        script = self.PRELUDE + '\n' + source + """
+const value = %s;
+renderConnectPath(value);
+process.stdout.write(JSON.stringify({
+  host: $('connect-host').textContent, port: $('connect-port').textContent,
+  protocol: $('connect-protocol').textContent, hint: $('connect-client-hint').textContent,
+  generation: $('connect-generation').textContent, pool: $('connect-pool').textContent,
+  browserHost: $('gw-browser-host').textContent, browserPort: $('gw-browser-port').textContent,
+  curl: $('gw-curl-code').textContent, python: $('gw-python-code').textContent,
+  curlCopy: $('gw-copy-curl').dataset.copyText, button: $('connect-disconnect').textContent}));
+""" % json.dumps(value)
+        return json.loads(ws.node_ok(script))
+
+    def test_the_fields_are_the_real_listener_address(self):
+        shown = self.render({'gateway': {'address': '192.168.0.41:45123', 'proxies': 3, 'bind_host': '0.0.0.0',
+                                         'mobile_ready': True, 'binding': {'generation': '.generation-abcdef1234567890',
+                                                                             'state': 'complete', 'available': 3}}})
+        self.assertEqual(shown['host'], '192.168.0.41')
+        self.assertEqual(shown['port'], '45123')
+        self.assertNotEqual(shown['port'], '8899')
+        self.assertIn('192.168.0.41:45123', shown['hint'])
+        self.assertNotEqual(shown['protocol'], '—')
+
+    def test_an_ipv6_listener_is_split_into_host_and_port(self):
+        shown = self.render({'gateway': {'address': '[fe80::1]:8899', 'proxies': 1, 'bind_host': '::',
+                                         'mobile_ready': True, 'binding': {}}})
+        self.assertEqual(shown['host'], 'fe80::1')
+        self.assertEqual(shown['port'], '8899')
+        self.assertIn('[fe80::1]:8899', shown['curl'], 'an IPv6 literal needs brackets in a recipe')
+
+    def test_a_stopped_gateway_shows_no_address_instead_of_the_old_one(self):
+        shown = self.render({'gateway': None})
+        self.assertEqual(shown['host'], '—')
+        self.assertEqual(shown['port'], '—')
+        self.assertEqual(shown['protocol'], '—')
+        self.assertNotIn('8899', shown['hint'])
+        self.assertIn('8899', shown['curl'], 'with no listener the recipe keeps the example address')
+
+    def test_the_script_recipes_carry_the_live_address(self):
+        shown = self.render({'gateway': {'address': '127.0.0.1:45123', 'proxies': 1, 'bind_host': '127.0.0.1',
+                                         'mobile_ready': False, 'binding': {}}})
+        self.assertIn('curl -x socks5h://127.0.0.1:45123', shown['curl'])
+        self.assertIn('curl -x http://127.0.0.1:45123', shown['curl'])
+        self.assertIn('socks5://127.0.0.1:45123', shown['python'])
+        self.assertIn('127.0.0.1:45123', shown['curlCopy'])
+        self.assertNotIn('8899', shown['curlCopy'])
+        self.assertEqual(shown['browserHost'], '127.0.0.1')
+        self.assertEqual(shown['browserPort'], '45123')
+
+    def test_the_page_keeps_no_hard_coded_port_in_the_recipes(self):
+        html = ws.INDEX_HTML.read_text(encoding='utf-8')
+        for anchor in ('connect-host', 'connect-port', 'connect-protocol', 'connect-client-hint',
+                       'gw-browser-host', 'gw-browser-port', 'gw-curl-code', 'gw-python-code'):
+            self.assertIn(f'id="{anchor}"', html, f'{anchor} is not a field the page fills')
+        # The step list and the browser tab state the live address, so no port
+        # literal may survive there.
+        connect_card = html[html.index('id="connect-card"'):html.index('id="gw-tab-tg"')]
+        browser_tab = html[html.index('id="gw-tab-browser"'):html.index('id="page-mobile"')]
+        for block in (connect_card, browser_tab):
+            self.assertNotIn('8899', block, 'the connection path states a port the run may not use')
+        # The two script recipes carry a static example until the first poll
+        # rewrites them; that example must be the real default, not a guess.
+        self.assertIn(f'127.0.0.1:{gateway.DEFAULT_PORT}', html[html.index('id="gw-tab-curl"'):])
+        self.assertIn(f'127.0.0.1:{gateway.DEFAULT_PORT}', html[html.index('id="gw-tab-python"'):])
+
+    def test_the_snapshot_reason_is_shown_in_words_and_keeps_the_code(self):
+        shown = self.render({'gateway': {'address': '127.0.0.1:8899', 'proxies': 0, 'bind_host': '127.0.0.1',
+                                         'mobile_ready': False,
+                                         'binding': {'state': 'stale', 'state_detail': 'all_expired',
+                                                     'state_detail_label': 'every row expired; a new check is needed',
+                                                     'available': 0}}})
+        self.assertIn('every row expired', shown['generation'])
+        self.assertIn('all_expired', shown['generation'])
+
+    def test_the_server_translates_every_reason_the_engine_can_report(self):
+        from proxy_workbench import core, i18n
+        for detail in sorted(core.STATE_DETAILS):
+            self.assertIn(detail, i18n.STATE_DETAILS, f'{detail} has no text in either language')
+            for lang in ('ru', 'en'):
+                self.assertNotEqual(i18n.state_detail_text(detail, lang), detail)
+        # An unknown reason stays visible as a reason instead of disappearing.
+        self.assertEqual(i18n.state_detail_text('a_reason_from_the_future', 'en'),
+                         'a_reason_from_the_future')
+        self.assertEqual(i18n.state_detail_text(None, 'en'), '')
+
+    def test_expired_and_empty_read_differently_on_the_connect_path(self):
+        expired = self.render({'gateway': {'address': '127.0.0.1:8899', 'proxies': 0, 'bind_host': '127.0.0.1',
+                                           'mobile_ready': False,
+                                           'binding': {'state': 'stale', 'state_detail': 'all_expired',
+                                                       'state_detail_label': 'every row expired; a new check is needed',
+                                                       'available': 0}}})
+        empty = self.render({'gateway': {'address': '127.0.0.1:8899', 'proxies': 0, 'bind_host': '127.0.0.1',
+                                         'mobile_ready': False,
+                                         'binding': {'state': 'empty', 'state_detail': 'empty_no_match',
+                                                     'state_detail_label': 'nothing matched the filters',
+                                                     'available': 0}}})
+        self.assertNotEqual(expired['generation'], empty['generation'])
+
+
 class RecipeTests(unittest.TestCase):
     def test_the_connection_path_is_present_in_the_page(self):
         html = ws.INDEX_HTML.read_text(encoding='utf-8')

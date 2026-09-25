@@ -671,6 +671,7 @@ const messages = {
     'scenario.customHint': 'Manual control over all check, identity and export parameters',
     'scenario.applied': 'Scenario applied. Click Find and check to begin.',
     'scenario.customUnchanged': 'Custom settings unchanged; adjust the fields manually.',
+    'scenario.version': 'Preset v{number}',
     'monitor.liveStream': 'Live Inspection Stream',
     'monitor.liveStreamIdle': 'Checked proxies appear here in real time with ping and status.',
     'monitor.liveStreamSource': 'Real measurement events, one per finished check',
@@ -717,10 +718,12 @@ const messages = {
     'results.selectionScopeHint': 'A selection belongs to the current scope. Changing filters or the generation clears it.',
     'results.selectionCleared': 'Selection cleared: the scope changed',
     'results.snapshotBroken': 'The published snapshot cannot be read; the table stays empty instead of showing unrelated rows.',
+    'results.snapshotReason': 'Why the list is what it is: {reason}.',
     'quick.title': 'Quick test',
     'quick.volume': 'Volume: {targets} services x {attempts} attempts, at most {requests} requests, {seconds}s total',
     'quick.skipped': 'Not measured: reputation, anonymity, speed',
     'quick.recheckFull': 'Full re-check',
+    'quick.recheckNote': 'A full re-check updates the stored row and its freshness.',
     'quick.storedNo': 'The stored row is not changed by this test',
     'connect.title': 'Connection path',
     'connect.pool': '1. Pool',
@@ -737,6 +740,13 @@ const messages = {
     'connect.gatewayStarted': 'Rotating proxy is running.',
     'connect.lanOptIn': 'LAN mode is off: the rotating proxy listens on this computer only.',
     'connect.probeNote': 'The live feed and the quick test are Workbench probes, not your client traffic.',
+    'connect.clientLine': 'Set {address} as the HTTP or SOCKS5 proxy of your app, browser or script.',
+    'connect.gatewayOff': 'The rotating proxy is off, so there is no address to set yet.',
+    'connect.fieldHost': 'Host:',
+    'connect.fieldPort': 'Port:',
+    'connect.fieldProtocol': 'Protocol:',
+    'connect.protocols': 'HTTP and SOCKS5, TCP only',
+    'connect.udpNo': 'UDP is not supported',
     'toast.scopeChanged': 'The scope changed; the action was not applied',
     'monitor.gaugeTitle': 'OVERALL PROGRESS',
     'monitor.proxiesFound': 'Matching proxies',
@@ -1471,6 +1481,7 @@ const messages = {
     'scenario.customHint': 'Полный ручной контроль всех параметров проверки, анонимности и экспорта',
     'scenario.applied': 'Сценарий применён. Нажмите «Найти и проверить» для запуска.',
     'scenario.customUnchanged': 'Пользовательские настройки не изменены; измените поля вручную.',
+    'scenario.version': 'Пресет v{number}',
     'monitor.liveStream': 'Живая лента проверок',
     'monitor.liveStreamIdle': 'Проверяемые адреса отображаются здесь с пингом и статусом.',
     'monitor.liveStreamSource': 'Реальные события измерений: одно на завершённую проверку',
@@ -1517,10 +1528,12 @@ const messages = {
     'results.selectionScopeHint': 'Выделение относится к текущей области. Смена фильтров или поколения очищает его.',
     'results.selectionCleared': 'Выделение очищено: область изменилась',
     'results.snapshotBroken': 'Опубликованный снимок не читается; таблица остаётся пустой, а не показывает посторонние строки.',
+    'results.snapshotReason': 'Почему список такой: {reason}.',
     'quick.title': 'Быстрый тест',
     'quick.volume': 'Объём: {targets} сервисов x {attempts} попыток, не более {requests} запросов, {seconds} с суммарно',
     'quick.skipped': 'Не измеряется: репутация, анонимность, скорость',
     'quick.recheckFull': 'Полная перепроверка',
+    'quick.recheckNote': 'Полная перепроверка обновит строку результата и её свежесть.',
     'quick.storedNo': 'Сохранённая строка этим тестом не меняется',
     'connect.title': 'Путь подключения',
     'connect.pool': '1. Пул',
@@ -1537,6 +1550,13 @@ const messages = {
     'connect.startGateway': 'Запустить ротирующий прокси',
     'connect.lanOptIn': 'Режим LAN выключен: ротирующий прокси слушает только этот компьютер.',
     'connect.probeNote': 'Лента и быстрый тест — это пробы Workbench, а не трафик вашего клиента.',
+    'connect.clientLine': 'Укажите {address} как HTTP или SOCKS5 прокси в приложении, браузере или скрипте.',
+    'connect.gatewayOff': 'Ротирующий прокси выключен, адреса для подключения пока нет.',
+    'connect.fieldHost': 'Адрес:',
+    'connect.fieldPort': 'Порт:',
+    'connect.fieldProtocol': 'Протокол:',
+    'connect.protocols': 'HTTP и SOCKS5, только TCP',
+    'connect.udpNo': 'UDP не поддерживается',
     'toast.scopeChanged': 'Область изменилась, действие не выполнено',
     'monitor.gaugeTitle': 'ОБЩИЙ ПРОГРЕСС',
     'monitor.proxiesFound': 'Подходящих прокси',
@@ -4167,6 +4187,28 @@ function renderCountryDistribution(rows, breakdown) {
   }).join(' ');
 }
 
+// Defect 23 / R18.  The quick test is a diagnostic probe: it states its volume
+// and stores nothing, so the answer must not read as if the row were refreshed.
+// The refresh is offered as its own action, with the server's own wording.
+function offerFullRecheck(quickButton, proxy, result) {
+  const scope = result && result.scope;
+  if (!quickButton || !scope || scope.recheck_action !== 'recheck') return null;
+  const row = quickButton.closest ? quickButton.closest('tr') : null;
+  const group = (row && row.querySelector('.row-actions-group')) || quickButton.parentElement;
+  if (!group) return null;
+  if (group.querySelector('[data-recheck-proxy]')) return group.querySelector('[data-recheck-proxy]');
+  const note = scope.recheck_note || t('quick.recheckNote');
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'button chip recheck-btn';
+  button.dataset.recheckProxy = proxy;
+  button.textContent = '⟳';
+  button.title = `${t('quick.recheckFull')} — ${note}`;
+  button.setAttribute('aria-label', `${t('quick.recheckFull')}: ${proxy}`);
+  group.appendChild(button);
+  return button;
+}
+
 function renderResults(data) {
   const page = data ? data.rows : [];
   const start = data ? data.offset : 0;
@@ -4304,6 +4346,9 @@ function renderResults(data) {
           btn.className = 'button chip fail test-badge';
           toast(`${proxy} · ${res.error || 'Failed'} · ${detail}`, true);
         }
+        // Defect 23: the quick test changed nothing that is stored, so the way
+        // to refresh the row is offered as its own action, next to the answer.
+        offerFullRecheck(btn, proxy, res);
       } catch (err) {
         btn.innerHTML = '✕';
         toast(err.message, true);
@@ -4338,6 +4383,18 @@ function renderResults(data) {
       } catch {
         toast(t('toast.copyFailed'), true);
       }
+    });
+  }
+
+  // One delegated handler for the re-check chips, because the chips are created
+  // after the row is rendered and a re-render replaces the rows.
+  if (!$('result-rows')._recheckDelegated) {
+    $('result-rows')._recheckDelegated = true;
+    $('result-rows').addEventListener('click', async event => {
+      const btn = event.target.closest('[data-recheck-proxy]');
+      if (!btn) return;
+      event.stopPropagation();
+      await bulkAction('recheck', {scope: 'selected', proxies: [btn.dataset.recheckProxy], button: btn});
     });
   }
 }
@@ -5134,7 +5191,16 @@ async function downloadFile(name, node) {
       if (handle) {
         const writable = await writableOf(handle);
         if (writable) {
-          await response.body.pipeTo(writable, {preventClose: true});
+          try {
+            await response.body.pipeTo(writable, {preventClose: true});
+          } catch (error) {
+            // A failed transfer must not leave a half-written file behind, and
+            // abort() is the only close here: the stream still has exactly one.
+            if (typeof writable.abort === 'function') {
+              try { await writable.abort(error); } catch { /* already gone */ }
+            }
+            throw error;
+          }
           await writable.close();             // exactly one close, ours
           return;
         }
@@ -5245,8 +5311,15 @@ function renderViewTabs(data) {
   });
   const hint = $('results-view-hint');
   if (hint) {
-    hint.textContent = (data && data.snapshot_state === 'broken') ? t('results.snapshotBroken') : t('results.selectionScopeHint');
-    hint.classList.toggle('warn', Boolean(data && data.snapshot_state === 'broken'));
+    // Defect 3: an expired member and a set that simply matched nothing are
+    // different reasons, and the page says which one it is instead of showing
+    // an empty table with no explanation.
+    const broken = Boolean(data && data.snapshot_state === 'broken');
+    const reason = data ? (data.state_detail_label || '') : '';
+    const explained = !broken && reason && String(data.state_detail) !== 'ok';
+    hint.textContent = broken ? t('results.snapshotBroken')
+      : (explained ? t('results.snapshotReason', {reason}) : t('results.selectionScopeHint'));
+    hint.classList.toggle('warn', broken || explained);
   }
 }
 
@@ -5275,7 +5348,8 @@ async function bulkAction(op, extra={}) {
     body.quick = query.quick || '';
     body.hosting = query.hosting || '';
   }
-  if (scope === 'selected') body.proxies = Array.from(selectedProxies);
+  if (Array.isArray(extra.proxies) && extra.proxies.length) body.proxies = extra.proxies;
+  else if (scope === 'selected') body.proxies = Array.from(selectedProxies);
   // The digest makes a stale selection or a changed filter visible instead of
   // silently moving the action to another scope.
   if (resultState.digest) body.scope_digest = resultState.digest;
@@ -5433,22 +5507,101 @@ function renderSavedViews(views) {
 // ---------------------------------------------------------------------------
 // Connection path (F17)
 // ---------------------------------------------------------------------------
+function splitGatewayAddress(address) {
+  // The listener may sit on an IPv6 literal, so the host is the part before the
+  // last colon with the brackets removed, exactly like the Telegram link does.
+  const raw = String(address || '');
+  const separator = raw.lastIndexOf(':');
+  if (separator <= 0) return {host: raw, port: ''};
+  let host = raw.slice(0, separator);
+  const port = raw.slice(separator + 1);
+  if (host.startsWith('[') && host.endsWith(']')) host = host.slice(1, -1);
+  return {host, port};
+}
+
+// A recipe that names 127.0.0.1:8899 is wrong the moment --gateway-port picks
+// another port, and it is copied verbatim into a terminal.  Both recipes and
+// their copy buttons are built from the live listener instead.
+function renderGatewayRecipes(parts) {
+  const placeholder = '127.0.0.1:8899';
+  const host = parts ? (parts.host.includes(':') ? `[${parts.host}]` : parts.host) : placeholder;
+  const port = parts ? parts.port : '8899';
+  const endpoint = `${host}:${port}`;
+  const curl = `# SOCKS5 rotation\ncurl -x socks5h://${endpoint} https://api.ipify.org\n\n`
+    + `# HTTP rotation\ncurl -x http://${endpoint} https://api.ipify.org`;
+  const python = 'import httpx\n\n'
+    + `with httpx.Client(proxy="socks5://${endpoint}") as client:\n`
+    + '    response = client.get("https://api.ipify.org")\n'
+    + '    print("Rotated IP:", response.text)';
+  const curlCode = $('gw-curl-code');
+  setTextOnce(curlCode, curl);
+  const pythonCode = $('gw-python-code');
+  setTextOnce(pythonCode, python);
+  const curlCopy = $('gw-copy-curl');
+  if (curlCopy) curlCopy.dataset.copyText = `curl -x socks5h://${endpoint} https://api.ipify.org`;
+  const pythonCopy = $('gw-copy-python');
+  if (pythonCopy) {
+    pythonCopy.dataset.copyText = `import httpx\nwith httpx.Client(proxy="socks5://${endpoint}") as client:\n`
+      + '    print(client.get("https://api.ipify.org").text)';
+  }
+}
+
+// The status poll runs every second, so the recipe is only written when the
+// address actually changed; otherwise a text selection in the snippet would be
+// wiped out under the user's cursor.
+function setTextOnce(node, value) {
+  if (node && node.textContent !== value) node.textContent = value;
+}
+
 function renderConnectPath(value) {
   const gateway = value && value.gateway;
   const binding = (gateway && gateway.binding) || {};
+  const online = Boolean(gateway && gateway.address);
   const poolBox = $('connect-pool');
   if (poolBox) {
-    poolBox.textContent = gateway && gateway.address
+    poolBox.textContent = online
       ? `${gateway.address} · ${fmt(gateway.proxies || 0)}`
       : (lang === 'ru' ? 'ротирующий прокси выключен' : 'rotating proxy is off');
   }
+  // Step 3 states the fields this listener really has.  A hard-coded port is a
+  // promise the run may not keep (--gateway-port can pick another one), and
+  // F17 asks for exact fields, not a plausible example.
+  const parts = online ? splitGatewayAddress(gateway.address) : {host: '', port: ''};
+  const clientHint = $('connect-client-hint');
+  if (clientHint) {
+    clientHint.textContent = online
+      ? t('connect.clientLine', {address: gateway.address})
+      : t('connect.gatewayOff');
+  }
+  const hostBox = $('connect-host');
+  if (hostBox) hostBox.textContent = parts.host || '—';
+  const portBox = $('connect-port');
+  if (portBox) portBox.textContent = parts.port || '—';
+  const protocolBox = $('connect-protocol');
+  if (protocolBox) protocolBox.textContent = online ? t('connect.protocols') : '—';
+  // The browser tab repeats the same three fields, and the two script recipes
+  // are only useful if they carry the address the listener really uses.
+  const browserHost = $('gw-browser-host');
+  if (browserHost) browserHost.textContent = parts.host || '—';
+  const browserPort = $('gw-browser-port');
+  if (browserPort) browserPort.textContent = parts.port || '—';
+  const browserProtocol = $('gw-browser-protocol');
+  if (browserProtocol) browserProtocol.textContent = online ? t('connect.protocols') : '—';
+  renderGatewayRecipes(online ? parts : null);
   const generation = $('connect-generation');
   if (generation) {
-    const parts = [];
-    if (binding.generation) parts.push(String(binding.generation).replace(/^\.generation-/, '').slice(0, 12));
-    if (binding.state) parts.push(binding.state + (binding.state_detail ? ` / ${binding.state_detail}` : ''));
-    if (binding.available !== undefined) parts.push(lang === 'ru' ? `доступно ${binding.available}` : `${binding.available} available`);
-    generation.textContent = parts.length ? parts.join(' · ') : '—';
+    const shown = [];
+    if (binding.generation) shown.push(String(binding.generation).replace(/^\.generation-/, '').slice(0, 12));
+    if (binding.state) shown.push(binding.state);
+    // ``state_detail`` is a machine value; the page says the reason in words
+    // and keeps the code beside it (CONTRACTS §5.4).  Defect 3: "nothing
+    // matched" and "everything expired" must not read the same.
+    if (binding.state_detail) {
+      const label = binding.state_detail_label;
+      shown.push(label ? `${label} (${binding.state_detail})` : binding.state_detail);
+    }
+    if (binding.available !== undefined) shown.push(lang === 'ru' ? `доступно ${binding.available}` : `${binding.available} available`);
+    generation.textContent = shown.length ? shown.join(' · ') : '—';
   }
   const lan = $('connect-lan');
   if (lan && gateway) {
@@ -5462,7 +5615,6 @@ function renderConnectPath(value) {
   const hint = $('connect-disconnect-hint');
   const gwButton = $('connect-disconnect');
   if (gwButton) {
-    const online = Boolean(gateway && gateway.address);
     gwButton.textContent = online ? t('connect.stopGateway') : t('connect.startGateway');
     gwButton.classList.toggle('danger', online);
     gwButton.classList.toggle('primary', !online);
@@ -5637,6 +5789,9 @@ function renderLang() {
   updateIdentity();
   updateSourceCount();
   updateCodeEditors();
+  // The connection path fills its own fields from the live listener, so a
+  // language switch has to repaint them after applyI18n() restored the keys.
+  if (typeof renderConnectPath === 'function') renderConnectPath(state);
   if (catalogData && typeof renderCatalog === 'function') renderCatalog(catalogData);
 }
 // Scenario presets with an explicit, complete field set (defect 24, R17).
@@ -5657,6 +5812,7 @@ const SCENARIO_FIELDS = [
 const SCENARIOS = [
   {
     id: 'telegram',
+    version: 1,
     name: {en: 'Telegram web reachability', ru: 'Telegram: доступность веб-страницы'},
     note: {en: 'Checks the public web page, not calls or the app protocol.',
            ru: 'Проверяет публичную веб-страницу, а не звонки и не протокол приложения.'},
@@ -5665,6 +5821,7 @@ const SCENARIOS = [
   },
   {
     id: 'youtube',
+    version: 1,
     name: {en: 'YouTube page load', ru: 'YouTube: загрузка страницы'},
     note: {en: 'Checks that the page answers, plus a separate download-size sample.',
            ru: 'Проверяет ответ страницы и отдельный замер скорости скачивания.'},
@@ -5673,6 +5830,7 @@ const SCENARIOS = [
   },
   {
     id: 'anon',
+    version: 1,
     name: {en: 'Anonymity screening', ru: 'Анонимность: отбор'},
     note: {en: 'Screens the exit address for a judge verdict and DNSBL listings.',
            ru: 'Проверяет внешний адрес на judge и списки DNSBL.'},
@@ -5683,6 +5841,7 @@ const SCENARIOS = [
   },
   {
     id: 'scrape',
+    version: 1,
     name: {en: 'High-throughput sweep', ru: 'Массовый обход'},
     note: {en: 'Many workers and a short timeout for big lists; no anonymity or speed test.',
            ru: 'Много потоков и короткий таймаут для больших списков; без анонимности и скорости.'},
@@ -5692,6 +5851,7 @@ const SCENARIOS = [
   },
   {
     id: 'custom',
+    version: 1,
     name: {en: 'Custom', ru: 'Свой сценарий'},
     note: {en: 'Keeps everything as it is.', ru: 'Оставляет всё как есть.'},
     targets: null,
@@ -5890,7 +6050,11 @@ function setupEnhancedListeners() {
       syncAllPresetChips();
       updateIdentity();
       const note = $('scenario-note');
-      if (note) note.textContent = lang === 'ru' ? scenario.note.ru : scenario.note.en;
+      if (note) {
+        const text = lang === 'ru' ? scenario.note.ru : scenario.note.en;
+        // R17: a preset states which version of its definition is in effect.
+        note.textContent = `${text} · ${t('scenario.version', {number: scenario.version || 1})}`;
+      }
       const toastMsg = scenario.id === 'custom'
         ? t('scenario.customUnchanged')
         : t('scenario.applied');
