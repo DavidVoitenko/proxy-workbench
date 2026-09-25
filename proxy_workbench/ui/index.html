@@ -1416,6 +1416,89 @@ with httpx.Client(proxy="socks5://127.0.0.1:8899") as client:
         </section>
       </div>
 
+      <!-- Source catalog -->
+      <section class="card catalog-card" id="catalog">
+        <div class="card-title">
+          <div class="geo-title-wrap">
+            <span class="code-editor-badge">CATALOG</span>
+            <h2 data-i18n="cat.title">Source catalog</h2>
+          </div>
+          <div class="catalog-head-meta">
+            <span id="catalog-revision" class="badge subtle">—</span>
+            <button class="button light" id="catalog-refresh">
+              <span class="btn-spinner hidden" aria-hidden="true"></span>
+              <span class="btn-label" data-i18n="cat.update">Update catalog</span>
+            </button>
+          </div>
+        </div>
+        <p class="hint" data-i18n="cat.rules">Five statuses stay separate.</p>
+        <p class="hint" id="catalog-update-note" hidden></p>
+
+        <div class="catalog-section">
+          <h3 data-i18n="cat.sets">Sets</h3>
+          <p class="hint" data-i18n="cat.setsHint">A set is a snapshot.</p>
+          <div class="catalog-sets" id="catalog-sets"></div>
+        </div>
+
+        <div class="catalog-section">
+          <h3 data-i18n="cat.conditions">Access conditions</h3>
+          <p class="hint" data-i18n="cat.conditionsHint">Providers by their own terms.</p>
+          <div class="catalog-groups" id="catalog-groups"></div>
+        </div>
+
+        <div class="catalog-filters">
+          <input id="catalog-q" type="search" class="catalog-search" data-i18n-placeholder="cat.search" placeholder="Name, ID, publisher or host" autocomplete="off">
+          <select id="catalog-state"><option value="" data-i18n="cat.filterState">State</option></select>
+          <select id="catalog-category"><option value="" data-i18n="cat.filterCategory">Category</option></select>
+          <select id="catalog-protocol"><option value="" data-i18n="cat.filterProtocol">Protocol</option></select>
+          <select id="catalog-format"><option value="" data-i18n="cat.filterFormat">Data format</option></select>
+          <select id="catalog-access"><option value="" data-i18n="cat.filterAccess">Access</option></select>
+          <select id="catalog-set-filter"><option value="" data-i18n="cat.filterSet">Set</option></select>
+        </div>
+
+        <div class="catalog-head">
+          <span data-i18n="cat.col.source">Source</span>
+          <span data-i18n="cat.col.format">Format</span>
+          <span data-i18n="cat.col.access">Access</span>
+          <span data-i18n="cat.col.state">State</span>
+          <span data-i18n="cat.col.data">Data</span>
+          <span data-i18n="cat.col.choice">Your choice</span>
+        </div>
+        <div class="catalog-list" id="catalog-list"><p class="hint" data-i18n="cat.loading">Loading the catalog…</p></div>
+        <div class="catalog-foot">
+          <span class="hint" id="catalog-count"></span>
+          <button class="button light" id="catalog-more" data-i18n="cat.showMore">Show more</button>
+        </div>
+
+        <div class="catalog-detail" id="catalog-detail" hidden></div>
+
+        <div class="catalog-add">
+          <button class="button light" id="catalog-add-toggle" data-i18n="cat.addTitle">Add your own list address</button>
+          <div id="catalog-add-form" hidden>
+            <div class="field-grid">
+              <label>
+                <span data-i18n="cat.addUrl">Address of the list</span>
+                <input id="catalog-add-url" type="url" placeholder="https://example.org/list.txt" spellcheck="false">
+              </label>
+              <label>
+                <span data-i18n="cat.addKind">Data format</span>
+                <select id="catalog-add-kind"></select>
+              </label>
+            </div>
+            <label class="check-label">
+              <input type="checkbox" id="catalog-add-private">
+              <span data-i18n="cat.addPrivate">Allow local addresses (only for your own test services)</span>
+            </label>
+            <div class="button-row">
+              <button class="button light" id="catalog-add-preview" data-i18n="cat.addPreview">Preview</button>
+              <button class="button primary" id="catalog-add-submit" data-i18n="cat.addSubmit">Add to my set</button>
+            </div>
+            <p class="hint" data-i18n="cat.previewNote">Availability and format only.</p>
+            <div class="catalog-preview" id="catalog-add-result"></div>
+          </div>
+        </div>
+      </section>
+
       <!-- GeoIP Card -->
       <section class="card geo-card">
         <div class="card-title">
@@ -1771,6 +1854,15 @@ with httpx.Client(proxy="socks5://127.0.0.1:8899") as client:
       <span data-i18n="footer.tagline">Full sweep · Repeated measurements · Your services</span>
     </footer>
   </main>
+
+  <!-- Modal Dialog: Source scope exclusions -->
+  <dialog id="scope-dialog">
+    <div class="dialog-heading">
+      <h2 id="scope-title"></h2>
+      <button class="button light" id="close-scope" aria-label="Close" data-i18n-aria-label="common.close">✕</button>
+    </div>
+    <div id="scope-body"></div>
+  </dialog>
 
   <!-- Modal Dialog: Details -->
   <dialog id="details-dialog">

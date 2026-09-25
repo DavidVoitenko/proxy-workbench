@@ -14,8 +14,10 @@ PRODUCT_ID = "ProxyWorkbench"
 PRODUCT_VERSION = "2.2.1"
 DEFAULT_REQUEST_PROFILE = "workbench"
 PROJECT_URL = "https://github.com/DavidVoitenko/proxy-workbench"
-# Newest built-in source list, fetched only when the user asks for it.
-SOURCES_URL = "https://raw.githubusercontent.com/DavidVoitenko/proxy-workbench/main/sources.json"
+# Versioned public source catalog, fetched only when the user asks for it.
+SOURCE_CATALOG_URL = "https://raw.githubusercontent.com/DavidVoitenko/proxy-workbench/main/proxy_workbench/sources.json"
+# Compatibility alias for scripts written against the pre-catalog flat list.
+SOURCES_URL = SOURCE_CATALOG_URL
 
 REQUEST_PROFILES = {
     "workbench": {

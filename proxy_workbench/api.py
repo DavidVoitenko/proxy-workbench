@@ -10,6 +10,7 @@ import hmac
 import ipaddress
 import json
 import random
+import sqlite3
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -19,6 +20,8 @@ from urllib.parse import parse_qs, urlsplit
 from . import anonymity
 from . import formats
 from . import geoip
+from . import source_catalog
+from . import source_management
 from .branding import PRODUCT_NAME, PRODUCT_VERSION
 from .i18n import tr
 from .proxytool import (PROTOCOLS, export_file as proxytool_export_file,
@@ -35,7 +38,75 @@ ENDPOINTS = {
     '/clash': 'Clash / Mihomo config with the best matching proxies; same filters',
     '/singbox': 'sing-box config with the best matching proxies; same filters',
     '/status': 'summary of the latest export',
+    '/sources': 'source catalog; filters: q, set, category, protocol, format, access, state, limit, offset',
+    '/sources/{id}': 'one catalog source: evidence, rights, history and cache age',
+    '/source-sets': 'source sets and how many of their members are selected',
 }
+
+
+def read_selection(data):
+    """The user's stored selection, read only.  Never migrated or rewritten here."""
+    try:
+        value = json.loads((Path(data) / 'gui-settings.json').read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(value, dict):
+        return {}
+    if isinstance(value.get('source_selection'), dict):
+        return value['source_selection']
+    try:
+        return source_catalog.migrate_settings(value)['source_selection']
+    except (ValueError, source_catalog.CatalogError, OSError):
+        return {}
+
+
+def read_catalog(data):
+    """Last accepted catalog when the GUI stored one, otherwise the bundled file."""
+    stored = Path(data) / 'source-catalog.json'
+    if stored.is_file():
+        try:
+            return source_catalog.load_catalog(stored, allow_research=False, allow_unsafe=True)
+        except (OSError, ValueError, source_catalog.CatalogError):
+            pass
+    return source_catalog.load_bundled()
+
+
+class SourceReader:
+    """Read-only catalog reader: a short WAL snapshot, no workbench lock, no writes."""
+
+    def __init__(self, data):
+        self.data = Path(data)
+        self.path = self.data / 'proxies.sqlite3'
+
+    def _connect(self):
+        if not self.path.is_file():
+            return None
+        try:
+            return sqlite3.connect(self.path.as_uri() + '?mode=ro', uri=True, timeout=2)
+        except Exception:
+            return None
+
+    def view(self, query):
+        catalog = read_catalog(self.data)
+        selection = read_selection(self.data)
+        db = self._connect()
+        try:
+            runtime = source_management.runtime_snapshot(db)
+            return source_management.build_view(catalog, selection, runtime, query, redact=True, db=db)
+        finally:
+            if db is not None:
+                db.close()
+
+    def detail(self, source_id):
+        catalog = read_catalog(self.data)
+        selection = read_selection(self.data)
+        db = self._connect()
+        try:
+            runtime = source_management.runtime_snapshot(db)
+            return source_management.detail_view(catalog, selection, source_id, runtime, db, redact=True)
+        finally:
+            if db is not None:
+                db.close()
 
 
 def is_loopback(host):
@@ -209,6 +280,7 @@ def make_api_server(data, host='127.0.0.1', port=DEFAULT_PORT, token=None):
         raise ValueError(tr(f'API на {host} доступно из сети: задайте токен через --api-token или {TOKEN_ENV}.',
                             f'the API on {host} is reachable from the network: set a token with --api-token or {TOKEN_ENV}'))
     exports = Exports(Path(data) / 'exports')
+    sources = SourceReader(data)
 
     class Handler(BaseHTTPRequestHandler):
         server_version = f'{PRODUCT_NAME}/{PRODUCT_VERSION}'
@@ -254,6 +326,25 @@ def make_api_server(data, host='127.0.0.1', port=DEFAULT_PORT, token=None):
                 return self.send_json(403, {'error': 'host not allowed'})
             if not self.authorized(url.query):
                 return self.send_json(401, {'error': 'missing or wrong token'})
+            if url.path == '/source-sets':
+                view = sources.view({'limit': 1})
+                return self.send_json(200, {'schema_version': view['schema_version'],
+                                            'revision': view['revision'],
+                                            'sets': view['sets']})
+            if url.path == '/sources' or url.path.startswith('/sources/'):
+                # Read-only by construction: no enable, no preview, no update.
+                if url.path == '/sources':
+                    try:
+                        return self.send_json(200, sources.view(url.query))
+                    except ValueError as exc:
+                        return self.send_json(400, {'error': str(exc)})
+                source_id = url.path[len('/sources/'):]
+                if not source_id or '/' in source_id:
+                    return self.send_json(404, {'error': 'not found', 'endpoints': ENDPOINTS})
+                detail = sources.detail(source_id)
+                if detail is None:
+                    return self.send_json(404, {'error': 'no such source', 'endpoints': ENDPOINTS})
+                return self.send_json(200, detail)
             rows, status = exports.load()
             if url.path in ('/', '/status'):
                 return self.send_json(200, {

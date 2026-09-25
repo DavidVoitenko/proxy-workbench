@@ -4,6 +4,35 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Source catalog on the Sources screen.** Search and filters (set, category, protocol, data format, access conditions, observed state), access-condition groups with the date their terms were checked and a link to the primary source, and one row per source showing what the application actually observed: HTTP state, format state, cache/last-good age, recognized/accepted/rejected counters, exclusive contribution in this snapshot and the last reason.
+- **Sets, applied explicitly.** `quick`, `extended`, per-protocol bundles, `experimental` and `custom`. A set is a snapshot of source IDs: a later catalog update never adds anything to it, and nothing is selected without confirmation.
+- **Three separate actions, so they cannot be confused:** pause one source's download (it stays in the set), remove a source from the set (cache and history are kept), and exclude addresses already received from the current scope (data is kept, the action can be undone).
+- **Own list URL with an explicit format choice,** plus a preview that reports how many records were recognized, how many were rejected and why — without adding a single candidate to the database.
+- **Per-source check and recovery buttons,** and a catalog update with visible progress that reports added/changed/retired entries and selects nothing.
+- **`proxy-workbench sources`** with `list`, `show`, `sets`, `set`, `enable`, `disable`, `add`, `remove`, `check`, `update`, `recover`, `status` and `exclude-scope`.
+- **Read-only `GET /sources`, `/sources/{id}` and `/source-sets`** in the local API, with the same IDs, filters and state labels as the GUI and the CLI.
+
+### Fixed
+
+- **A source only the accepted catalog lists was selected but never downloaded.** Every selection change re-read the selection against the packaged catalog, so an entry that exists only in an accepted update lost its download spec — and `sources` is the one list the collector reads. The catalog the change was validated against is now the one used to re-read it, from the GUI and from the CLI; pruning sees those sources as well, so the drift cannot stay unnoticed.
+- **"Pause download" accepted a source that does not exist.** It wrote the ID into the settings and reported success; nothing could show it, undo it or explain it, and the settings had to be edited by hand. Like every other selection action, it now refuses an unknown ID.
+- **A preview could not answer for a list the collector reads.** The check's byte budget was smaller than the collector's, and a body past it was rejected whole, so sources of 4–32 MiB returned one answer — "too large", zero bytes, zero records — under a "availability and format only" label. The budget is now the collector's own, a body past even that is read as a prefix and reported as a prefix (with the records the prefix contains), and the collector itself still refuses a body past its limit.
+- **The "Пользовательские" / custom set was empty by construction,** so the set filter, the set card and the "custom" state answered three different questions about the same rows. Its members are the user's own lists.
+- **"Add to the set" did nothing for a catalog source.** The membership test compared the ID against the keys of the source record, so the loop body never ran and the GUI reported a successful save. An ID that is already in the set is no longer taken out of it by the same action.
+- **A transport failure could be reported as a broken adapter.** The retry loop reused the exception name the handler above it deletes, so a connection the origin dropped mid-body raised `UnboundLocalError` and the source was reported as `SOURCE_ADAPTER_ERROR` instead of the transport error it was. A byte or record limit keeps its own outcome.
+- **Migration re-typed the sources the user had chosen.** A bare URL in the old text area meant an HTTP list, and the catalog's own declaration about that URL overwrote it. The format the person typed is kept and the collector reads the source that way; removing a source drops the recorded format with it.
+- **A source the collector cannot read is no longer offered as an ordinary list.** Fourteen catalog records were marked collectable while their adapter returned nothing: the table sources declare their own columns and table, the JSON sources declare their own field names, and the ones whose addresses are written by `document.write()` or rendered client-side are marked as a format the application cannot read, with a reason.
+- The nesting limit of the HTML table reader is applied to the table it reads instead of the whole document, so a deeply nested page layout in front of the table no longer hides a readable table. The node limit still covers the document.
+- A source the accepted catalog retired stays a row: it was selected, still counted as selected, and could not be seen or taken back out of the set.
+- An unexpected adapter error on a source with nothing cached is no longer reported as "showing older data".
+- The CLI and the GUI compute the same scope digest for the same country filter, so an exclusion made by `sources exclude-scope` is visible to the scan and can be undone.
+- The preview reads a bounded prefix of the body and reports the bound it stopped at, instead of downloading and parsing a whole list.
+- A source paused in the catalog offers "Resume download"; it only offered "Pause download", which could not be undone from that screen.
+- A source whose payload is not a list of proxy addresses (Tor exit exports, MTProto, client configs, provider dashboards, self-hosted recipes) can no longer be materialized into a download spec; it stays visible in the catalog with an honest reason.
+- The catalog fetch used an undefined redirect constant, so an update could never complete.
+
 ## [2.2.1] — 2026-09-25
 
 ### Fixed

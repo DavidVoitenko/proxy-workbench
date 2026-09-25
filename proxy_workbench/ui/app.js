@@ -82,6 +82,7 @@ const messages = {
     'sidebar.data': 'Data and results are stored<br>in the local data folder.',
     'common.saveSettings': 'Save settings',
     'common.close': 'Close',
+    'common.cancel': 'Cancel',
     'scan.eyebrow': 'FIND. CHECK. SAVE.',
     'scan.title': 'Proxies for your tasks',
     'scan.lead': 'One or more services. The result is proxies that work with every one of them.',
@@ -394,6 +395,123 @@ const messages = {
     'dnsbl.clear': 'clear',
     'dnsbl.noAnswer': 'no answer',
     'dnsbl.notChecked': 'not checked',
+    'cat.title': 'Source catalog',
+    'cat.rules': 'Five statuses stay separate: found in documentation, URL answered, format confirmed, data looks refreshable, proxies checked. The last one is never set here — this application does not connect to a source\'s proxies. A source row never means working, dead or quality: it means what the app observed. Nothing is selected automatically.',
+    'cat.update': 'Update catalog',
+    'cat.updating': 'Updating the catalog…',
+    'cat.updateStage.downloading': 'Downloading the published catalog',
+    'cat.updateStage.validating': 'Checking revision and fields',
+    'cat.updateDone': 'Catalog revision {revision}: {added} new, {changed} changed, {retired} retired. Nothing was selected.',
+    'cat.updateUnselected': 'Not selected: {count}. Enable the ones you need by hand.',
+    'cat.updateNotModified': 'The published catalog did not change.',
+    'cat.updateFailed': 'The catalog was not updated: {reason}. The local copy is kept.',
+    'cat.sets': 'Sets',
+    'cat.setsHint': 'A set is a snapshot of source IDs at the moment you apply it. A later catalog update does not add anything to it. Nothing is ever included without your confirmation.',
+    'cat.applySet': 'Use this set',
+    'cat.setApplied': 'Set {name} applied: {count} sources selected.',
+    'cat.setNew': '{count} new in the set — not added',
+    'cat.setMembers': '{count} in the catalog',
+    'cat.conditions': 'Access conditions',
+    'cat.conditionsHint': 'Groups of providers by their own terms, with the date those terms were checked and a link to the primary source. One free tier found in research is not the only one on the market.',
+    'cat.search': 'Name, ID, publisher or host',
+    'cat.filterState': 'State',
+    'cat.filterCategory': 'Category',
+    'cat.filterProtocol': 'Protocol',
+    'cat.filterFormat': 'Data format',
+    'cat.filterAccess': 'Access',
+    'cat.filterSet': 'Set',
+    'cat.all': 'All',
+    'cat.showMore': 'Show more',
+    'cat.shown': 'Showing {shown} of {total}',
+    'cat.empty': 'Nothing matches these filters.',
+    'cat.loading': 'Loading the catalog…',
+    'cat.col.source': 'Source',
+    'cat.col.format': 'Format',
+    'cat.col.access': 'Access',
+    'cat.col.state': 'State',
+    'cat.col.data': 'Data',
+    'cat.col.choice': 'Your choice',
+    'cat.state.never_checked': 'Not checked yet',
+    'cat.state.has_data': 'Checked, no data kept',
+    'cat.state.last_good': 'Data on disk',
+    'cat.state.stale': 'Showing older data',
+    'cat.state.failed': 'Last attempt failed',
+    'cat.state.quarantined': 'Paused after failures',
+    'cat.state.not_proxy_source': 'Not a list of proxy addresses',
+    'cat.state.needs_access': 'Needs its own account or plan',
+    'cat.state.rights_unresolved': 'Data license not established',
+    'cat.state.custom': 'Your own list',
+    'cat.state.retired': 'No longer in the catalog',
+    'cat.retiredNote': 'The accepted catalog no longer lists this source. It stays in your set until you remove it.',
+    'cat.choice.selected': 'In your set',
+    'cat.choice.unselected': 'Not in the set',
+    'cat.choice.disabled': 'Download paused',
+    'cat.action.details': 'Details',
+    'cat.action.check': 'Check availability and format',
+    'cat.action.pause': 'Pause download',
+    'cat.action.resume': 'Resume download',
+    'cat.action.include': 'Add to the set',
+    'cat.action.remove': 'Remove from the set',
+    'cat.action.exclude': 'Exclude its addresses from the scope',
+    'cat.action.recover': 'Clear the pause',
+    'cat.age': 'Data age',
+    'cat.ageNone': 'no data yet',
+    'cat.error': 'Reason',
+    'cat.retryAfter': 'Retry after',
+    'cat.quarantineUntil': 'Paused until',
+    'cat.recognized': 'recognized',
+    'cat.accepted': 'accepted',
+    'cat.rejected': 'rejected',
+    'cat.newUnique': 'not seen in other sources in this snapshot',
+    'cat.passedProfile': 'passed your profile',
+    'cat.checkedByApp': 'checked by the app',
+    'cat.noLiveness': 'Proxies of this source were not connected to or checked by this application.',
+    'cat.detailTitle': 'Source details',
+    'cat.evidence': 'Research evidence',
+    'cat.rights': 'Terms and data license',
+    'cat.termsLink': 'Primary source of the terms',
+    'cat.checkedOn': 'Terms checked',
+    'cat.history': 'Last observations',
+    'cat.cache': 'Stored data',
+    'cat.cacheAge': 'Last complete data set',
+    'cat.cacheRecords': 'records',
+    'cat.time': 'Time',
+    'cat.pages': 'pages',
+    'cat.noHistory': 'No observations yet.',
+    'cat.reasons': 'Rejected because',
+    'cat.previewTitle': 'Preview: {name}',
+    'cat.previewNote': 'Availability and format only. These addresses were not checked as proxies and are not added to the database.',
+    'cat.previewFailed': 'The check did not finish: {reason}.',
+    'cat.previewTruncated': 'The check stopped at its own bound ({bytes} bytes, {records} records); the rest of the list was not read.',
+    'cat.addTitle': 'Add your own list address',
+    'cat.addUrl': 'Address of the list',
+    'cat.addKind': 'Data format',
+    'cat.addPrivate': 'Allow local addresses (only for your own test services)',
+    'cat.addPreview': 'Preview',
+    'cat.addSubmit': 'Add to my set',
+    'cat.addDone': 'Added {id}. Preview it before the next collection.',
+    'cat.addExists': 'This address with this format is already in your set.',
+    'cat.excludeTitle': 'Exclude addresses already received from {id}?',
+    'cat.excludeBody': 'Only addresses that no other source offers in this snapshot are excluded by default. The addresses stay in the database and the history is kept — this only removes them from the current scope. You can undo it by clearing the scope exclusions.',
+    'cat.excludeShared': 'Also exclude addresses other sources also provide',
+    'cat.excludeDone': '{count} of {total} addresses of this source are excluded from the current scope.',
+    'cat.scopeClear': 'Clear the scope exclusions',
+    'cat.scopeCleared': 'Scope exclusions cleared: {count}.',
+    'cat.group.public_free': 'Public free',
+    'cat.group.permanent_free_quota': 'Permanent free plan',
+    'cat.group.free_with_key': 'Free with an API key',
+    'cat.group.trial': 'Trial',
+    'cat.group.paid': 'Paid',
+    'cat.group.own_infrastructure': 'Your own server',
+    'cat.group.snapshot_unavailable': 'Snapshot unavailable',
+    'cat.group.unknown': 'Conditions not established',
+    'toast.cat.set': 'Set applied: {count} sources.',
+    'toast.cat.paused': 'Download paused for {count} sources. They stay in the set.',
+    'toast.cat.resumed': 'Download resumed for {count} sources.',
+    'toast.cat.removed': 'Removed from the set: {count}. Cached data and history are kept.',
+    'toast.cat.added': 'Your list was added and selected.',
+    'toast.cat.recovered': 'The pause was cleared. Stored data was not touched.',
+    'toast.cat.saved': 'The source selection was saved.',
     'sources.eyebrow': 'TRANSPARENT COLLECTION',
     'sources.title': 'Sources and your own lists',
     'sources.lead': 'Every unique address from the connected lists goes into the database. No first-N-lines limit.',
@@ -641,6 +759,7 @@ const messages = {
     'sidebar.data': 'Данные и результаты хранятся<br>в локальной папке data.',
     'common.saveSettings': 'Сохранить настройки',
     'common.close': 'Закрыть',
+    'common.cancel': 'Отмена',
     'scan.eyebrow': 'НАЙТИ. ПРОВЕРИТЬ. СОХРАНИТЬ.',
     'scan.title': 'Прокси под ваши задачи',
     'scan.lead': 'Один или несколько сервисов. В результате — прокси, работающие с каждым.',
@@ -953,6 +1072,123 @@ const messages = {
     'dnsbl.clear': 'чисто',
     'dnsbl.noAnswer': 'нет ответа',
     'dnsbl.notChecked': 'не проверялись',
+    'cat.title': 'Каталог источников',
+    'cat.rules': 'Пять статусов остаются раздельными: найден по документации, URL ответил, формат подтверждён, данные выглядят обновляемыми, прокси проверены. Последний здесь не выставляется — приложение не подключается к прокси источников. Строка каталога не значит ни «рабочий», ни «мёртвый», ни «качественный»: она значит то, что приложение наблюдало. Ничего не включается автоматически.',
+    'cat.update': 'Обновить каталог',
+    'cat.updating': 'Каталог обновляется…',
+    'cat.updateStage.downloading': 'Скачивание опубликованного каталога',
+    'cat.updateStage.validating': 'Проверка ревизии и полей',
+    'cat.updateDone': 'Ревизия каталога {revision}: новых {added}, изменённых {changed}, ушедших {retired}. Ничего не выбрано.',
+    'cat.updateUnselected': 'Не выбрано: {count}. Включите нужные вручную.',
+    'cat.updateNotModified': 'Опубликованный каталог не изменился.',
+    'cat.updateFailed': 'Каталог не обновлён: {reason}. Локальная копия сохранена.',
+    'cat.sets': 'Наборы',
+    'cat.setsHint': 'Набор — это снимок ID источников на момент применения. Позднейшее обновление каталога ничего в него не добавляет. Ничего не включается без подтверждения.',
+    'cat.applySet': 'Взять этот набор',
+    'cat.setApplied': 'Набор «{name}» применён: выбрано источников — {count}.',
+    'cat.setNew': 'в наборе появилось новых: {count} — не добавлены',
+    'cat.setMembers': 'в каталоге записей: {count}',
+    'cat.conditions': 'Условия доступа',
+    'cat.conditionsHint': 'Провайдеры сгруппированы по их собственным условиям, с датой проверки этих условий и ссылкой на первоисточник. Один найденный free tier не значит, что других нет на рынке.',
+    'cat.search': 'Название, ID, издатель или хост',
+    'cat.filterState': 'Состояние',
+    'cat.filterCategory': 'Категория',
+    'cat.filterProtocol': 'Протокол',
+    'cat.filterFormat': 'Формат данных',
+    'cat.filterAccess': 'Условия доступа',
+    'cat.filterSet': 'Набор',
+    'cat.all': 'Все',
+    'cat.showMore': 'Показать ещё',
+    'cat.shown': 'Показано {shown} из {total}',
+    'cat.empty': 'По этим фильтрам ничего нет.',
+    'cat.loading': 'Каталог загружается…',
+    'cat.col.source': 'Источник',
+    'cat.col.format': 'Формат',
+    'cat.col.access': 'Условия',
+    'cat.col.state': 'Состояние',
+    'cat.col.data': 'Данные',
+    'cat.col.choice': 'Ваш выбор',
+    'cat.state.never_checked': 'Ещё не проверялся',
+    'cat.state.has_data': 'Проверен, данных не сохранено',
+    'cat.state.last_good': 'Данные на диске',
+    'cat.state.stale': 'Показываются более старые данные',
+    'cat.state.failed': 'Последняя попытка не удалась',
+    'cat.state.quarantined': 'Пауза после сбоев',
+    'cat.state.not_proxy_source': 'Не список прокси-адресов',
+    'cat.state.needs_access': 'Нужен свой аккаунт или тариф',
+    'cat.state.rights_unresolved': 'Лицензия данных не установлена',
+    'cat.state.custom': 'Ваш собственный список',
+    'cat.state.retired': 'Больше нет в каталоге',
+    'cat.retiredNote': 'Принятый каталог больше не содержит этот источник. Он остаётся в наборе, пока вы не уберёте его.',
+    'cat.choice.selected': 'Входит в набор',
+    'cat.choice.unselected': 'Не входит в набор',
+    'cat.choice.disabled': 'Загрузка на паузе',
+    'cat.action.details': 'Подробности',
+    'cat.action.check': 'Проверить доступность и формат',
+    'cat.action.pause': 'Поставить загрузку на паузу',
+    'cat.action.resume': 'Возобновить загрузку',
+    'cat.action.include': 'Добавить в набор',
+    'cat.action.remove': 'Убрать из набора',
+    'cat.action.exclude': 'Исключить его адреса из scope',
+    'cat.action.recover': 'Снять паузу',
+    'cat.age': 'Возраст данных',
+    'cat.ageNone': 'данных пока нет',
+    'cat.error': 'Причина',
+    'cat.retryAfter': 'Повтор после',
+    'cat.quarantineUntil': 'Пауза до',
+    'cat.recognized': 'распознано',
+    'cat.accepted': 'принято',
+    'cat.rejected': 'отклонено',
+    'cat.newUnique': 'не встречается у других источников в этом срезе',
+    'cat.passedProfile': 'прошли ваш профиль',
+    'cat.checkedByApp': 'проверено приложением',
+    'cat.noLiveness': 'К прокси этого источника приложение не подключалось и не проверяло их.',
+    'cat.detailTitle': 'Подробности источника',
+    'cat.evidence': 'Доказательства исследования',
+    'cat.rights': 'Условия и лицензия данных',
+    'cat.termsLink': 'Первоисточник условий',
+    'cat.checkedOn': 'Условия проверены',
+    'cat.history': 'Последние наблюдения',
+    'cat.cache': 'Сохранённые данные',
+    'cat.cacheAge': 'Последний полный набор',
+    'cat.cacheRecords': 'записей',
+    'cat.time': 'Время',
+    'cat.pages': 'страниц',
+    'cat.noHistory': 'Наблюдений ещё не было.',
+    'cat.reasons': 'Отклонено потому что',
+    'cat.previewTitle': 'Предпросмотр: {name}',
+    'cat.previewNote': 'Только доступность и формат. Эти адреса не проверялись как прокси и не попадают в базу.',
+    'cat.previewFailed': 'Проверка не завершилась: {reason}.',
+    'cat.previewTruncated': 'Проверка остановилась на своём пределе ({bytes} байт, {records} записей); остальной список не прочитан.',
+    'cat.addTitle': 'Добавить адрес своего списка',
+    'cat.addUrl': 'Адрес списка',
+    'cat.addKind': 'Формат данных',
+    'cat.addPrivate': 'Разрешить локальные адреса (только для своих тестовых сервисов)',
+    'cat.addPreview': 'Предпросмотр',
+    'cat.addSubmit': 'Добавить в мой набор',
+    'cat.addDone': 'Добавлен {id}. Посмотрите предпросмотр перед следующим сбором.',
+    'cat.addExists': 'Такой адрес с таким форматом уже есть в вашем наборе.',
+    'cat.excludeTitle': 'Исключить уже полученные адреса источника {id}?',
+    'cat.excludeBody': 'По умолчанию исключаются только адреса, которых нет у других источников в этом срезе. Адреса остаются в базе, история сохраняется — они только исключаются из текущего scope. Отменить можно, очистив исключения scope.',
+    'cat.excludeShared': 'Исключить также адреса, которые дают и другие источники',
+    'cat.excludeDone': 'Из текущего scope исключено {count} из {total} адресов этого источника.',
+    'cat.scopeClear': 'Очистить исключения scope',
+    'cat.scopeCleared': 'Исключения scope очищены: {count}.',
+    'cat.group.public_free': 'Публичные бесплатные',
+    'cat.group.permanent_free_quota': 'Постоянные бесплатные тарифы',
+    'cat.group.free_with_key': 'Бесплатные с ключом',
+    'cat.group.trial': 'Пробный период (trial), не постоянный тариф',
+    'cat.group.paid': 'Платные',
+    'cat.group.own_infrastructure': 'Собственный сервер',
+    'cat.group.snapshot_unavailable': 'Снимок недоступен',
+    'cat.group.unknown': 'Условия не установлены',
+    'toast.cat.set': 'Набор применён: источников — {count}.',
+    'toast.cat.paused': 'Загрузка на паузе для источников: {count}. Они остаются в наборе.',
+    'toast.cat.resumed': 'Загрузка возобновлена для источников: {count}.',
+    'toast.cat.removed': 'Убрано из набора: {count}. Кэш и история сохранены.',
+    'toast.cat.added': 'Ваш список добавлен и выбран.',
+    'toast.cat.recovered': 'Пауза снята. Сохранённые данные не тронуты.',
+    'toast.cat.saved': 'Выбор источников сохранён.',
     'sources.eyebrow': 'ПРОЗРАЧНЫЙ СБОР',
     'sources.title': 'Источники и свои списки',
     'sources.lead': 'Все уникальные адреса из подключённых списков попадут в базу. Без ограничения первых N строк.',
@@ -1420,6 +1656,7 @@ function showTab(name) {
   if (label) label.textContent = t('nav.' + name) || name;
   window.scrollTo({top: 0, behavior: 'smooth'});
   if (name === 'results') loadResults();
+  if (name === 'sources' && typeof reloadCatalog === 'function') reloadCatalog();
 }
 
 
@@ -3743,6 +3980,7 @@ function renderLang() {
     sidebarLabel.textContent = t('lang.currentName');
   }
   $('page-label').textContent = t('nav.' + currentTab);
+  if (catalogData) renderCatalog(catalogData);
   renderTheme();
   updateIdentity();
   updateSourceCount();
@@ -3938,6 +4176,450 @@ function setupEnhancedListeners() {
   if ($('btn-copy-singbox')) $('btn-copy-singbox').onclick = () => copyConfigDownload('singbox.json');
   if ($('btn-copy-clash')) $('btn-copy-clash').onclick = () => copyConfigDownload('clash.yaml');
 }
+
+// --- Source catalog -------------------------------------------------------
+// One view over the same catalog the CLI and the read-only API read.  A row
+// shows what the app observed, never "working"/"dead"/"quality": those words
+// have no evidence behind them in this project.
+const CATALOG_PAGE = 50;
+const ACCESS_GROUPS = ['public_free', 'permanent_free_quota', 'free_with_key', 'trial', 'paid',
+                       'own_infrastructure', 'snapshot_unavailable', 'unknown'];
+const SOURCE_FORMATS = ['http', 'https', 'socks4', 'socks5', 'socks5h', 'auto', 'text', 'geonode',
+                        'http-fields', 'line', 'json-records', 'fields', 'page-json', 'html-table'];
+let catalogData = null;
+let catalogLimit = CATALOG_PAGE;
+let catalogDetailId = null;
+let catalogTimer = null;
+
+const catalogFilters = () => ({
+  q: $('catalog-q').value.trim(),
+  state: $('catalog-state').value,
+  category: $('catalog-category').value,
+  protocol: $('catalog-protocol').value,
+  format: $('catalog-format').value,
+  access: $('catalog-access').value,
+  set: $('catalog-set-filter').value
+});
+
+function catalogQuery(extra={}) {
+  const params = new URLSearchParams();
+  const filters = {...catalogFilters(), ...extra};
+  for (const [key, value] of Object.entries(filters)) if (value) params.set(key, value);
+  params.set('limit', String(catalogLimit));
+  return params.toString();
+}
+
+function fillCatalogSelect(id, values, labelOf) {
+  const node = $(id);
+  if (!node || node.dataset.filled === String(values.length)) return;
+  const current = node.value;
+  const all = node.querySelector('option[value=""]');
+  node.innerHTML = '';
+  node.appendChild(all);
+  for (const value of values) {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = labelOf ? labelOf(value) : value;
+    node.appendChild(option);
+  }
+  node.value = values.includes(current) ? current : '';
+  node.dataset.filled = String(values.length);
+}
+
+function renderCatalogFacets(view) {
+  const facet = value => Object.keys(value || {});
+  fillCatalogSelect('catalog-category', facet(view.facets.categories).sort());
+  fillCatalogSelect('catalog-protocol', ['http', 'https', 'socks4', 'socks5']);
+  fillCatalogSelect('catalog-format', facet(view.facets.formats).sort());
+  fillCatalogSelect('catalog-access', ACCESS_GROUPS.filter(group => (view.facets.access_groups || {})[group]),
+                    group => t(`cat.group.${group}`));
+  fillCatalogSelect('catalog-set-filter', (view.sets || []).map(item => item.id), item => {
+    const set = (view.sets || []).find(entry => entry.id === item);
+    return set ? `${set.id} (${set.members})` : item;
+  });
+  const states = view.facets.states || {};
+  const node = $('catalog-state');
+  const wanted = Object.keys(states).filter(value => states[value]).sort();
+  if (node.dataset.filled !== String(wanted.join(','))) {
+    const current = node.value;
+    const all = node.querySelector('option[value=""]');
+    node.innerHTML = '';
+    node.appendChild(all);
+    for (const value of wanted) {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = `${t(`cat.state.${value}`)} (${states[value]})`;
+      node.appendChild(option);
+    }
+    node.value = wanted.includes(current) ? current : '';
+    node.dataset.filled = String(wanted.join(','));
+  }
+}
+
+function renderCatalogSets(view) {
+  $('catalog-sets').innerHTML = (view.sets || []).map(item => `
+    <div class="catalog-set${item.applied ? ' applied' : ''}">
+      <div class="catalog-set-main">
+        <strong>${esc(item.id)}</strong>
+        <span class="catalog-set-name">${esc(item.name)}</span>
+        <span class="badge subtle">${esc(t('cat.setMembers', {count: fmt(item.members)}))}</span>
+        ${item.applied ? `<span class="badge success">${esc(t('cat.choice.selected'))}</span>` : ''}
+      </div>
+      <div class="catalog-set-meta">
+        ${item.new_members.length ? `<span class="badge warn">${esc(t('cat.setNew', {count: fmt(item.new_members.length)}))}</span>` : ''}
+        <button class="button light" data-catalog-set="${esc(item.id)}" data-i18n="cat.applySet">${esc(t('cat.applySet'))}</button>
+      </div>
+    </div>`).join('');
+  $('catalog-sets').querySelectorAll('[data-catalog-set]').forEach(button => {
+    button.onclick = () => catalogAction('/api/sources/set', {set: button.dataset.catalogSet}, 'toast.cat.set');
+  });
+}
+
+function renderCatalogGroups(view) {
+  $('catalog-groups').innerHTML = (view.access_groups || []).map(group => `
+    <button class="catalog-group" data-catalog-access="${esc(group.id)}" title="${esc(group.checked_at || '')}">
+      <span class="catalog-group-name">${esc(t(`cat.group.${group.id}`))}</span>
+      <span class="catalog-group-count">${fmt(group.count)}</span>
+      ${group.checked_at ? `<span class="catalog-group-date">${esc(group.checked_at.slice(0, 10))}</span>` : ''}
+    </button>`).join('');
+  $('catalog-groups').querySelectorAll('[data-catalog-access]').forEach(button => {
+    button.onclick = () => {
+      $('catalog-access').value = $('catalog-access').value === button.dataset.catalogAccess ? '' : button.dataset.catalogAccess;
+      renderLang();
+      reloadCatalog();
+    };
+  });
+}
+
+function relativeAge(seconds) {
+  if (seconds < 60) return `${seconds} s`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} min`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)} h`;
+  return `${Math.floor(seconds / 86400)} d`;
+}
+
+function runtimeCell(runtime) {
+  if (!runtime || !runtime.observed_at) {
+    return runtime && runtime.error
+      ? `<span class="catalog-err" title="${esc(runtime.error)}">${esc(runtime.error)}</span>`
+      : '<span class="text-muted">—</span>';
+  }
+  const parts = [
+    `<span title="${esc(t('cat.accepted'))}">${esc(t('cat.accepted'))} ${fmt(runtime.accepted)}</span>`,
+    `<span title="${esc(t('cat.rejected'))}">${esc(t('cat.rejected'))} ${fmt(runtime.rejected)}</span>`,
+    `<span title="${esc(t('cat.recognized'))}">${esc(t('cat.recognized'))} ${fmt(runtime.recognized)}</span>`
+  ];
+  const contribution = runtime.contribution;
+  if (contribution && contribution.accepted) {
+    parts.push(`<span class="text-muted" title="${esc(t('cat.newUnique'))}">${esc(t('cat.newUnique'))}: ${fmt(contribution.exclusive)}</span>`);
+  }
+  if (runtime.checked_by_app !== null && runtime.checked_by_app !== undefined) {
+    parts.push(`<span class="text-muted" title="${esc(t('cat.checkedByApp'))}">${esc(t('cat.checkedByApp'))} ${fmt(runtime.checked_by_app)}, ${esc(t('cat.passedProfile'))} ${fmt(runtime.passed_profile)}</span>`);
+  }
+  if (runtime.cache_state && runtime.cache_state !== 'none') parts.push(`<span class="badge subtle">${esc(runtime.cache_state)}</span>`);
+  if (runtime.error) parts.push(`<span class="catalog-err" title="${esc(t('cat.error'))}">${esc(runtime.error)}</span>`);
+  if (runtime.quarantine_until) parts.push(`<span class="badge warn">${esc(t('cat.quarantineUntil'))} ${esc(new Date(runtime.quarantine_until * 1000).toLocaleString())}</span>`);
+  return parts.join(' ');
+}
+
+function catalogRowHtml(row) {
+  const runtime = row.runtime || {};
+  const stateLabel = t(`cat.state.${row.state}`);
+  const stateClass = ['failed', 'quarantined'].includes(row.state) ? 'fail'
+    : ['stale'].includes(row.state) ? 'warn'
+    : ['last_good', 'has_data'].includes(row.state) ? 'pass' : 'subtle';
+  const choiceClass = row.selection_state === 'selected' ? 'pass' : row.selection_state === 'disabled' ? 'warn' : 'subtle';
+  const accessNote = row.access_blocked_reason || row.not_proxy_source_reason || row.access_note;
+  const age = runtime.last_good_age_seconds;
+  return `<div class="catalog-row" data-source-id="${esc(row.id)}">
+    <div class="catalog-cell catalog-cell-source">
+      <button class="catalog-link" data-catalog-details="${esc(row.id)}">${esc(row.name)}</button>
+      <div class="catalog-id">${esc(row.id)}</div>
+      <div class="catalog-publisher">${esc(row.publisher.name || row.publisher.id || '—')} · ${esc(row.category)}</div>
+      ${row.custom ? `<span class="badge subtle">${esc(t('cat.state.custom'))}</span>` : ''}
+      ${row.retired ? `<div class="text-muted-warn">${esc(t('cat.retiredNote'))}</div>` : ''}
+      ${(row.sets || []).length ? `<div class="catalog-sets-inline">${row.sets.map(set => `<span class="badge subtle">${esc(set)}</span>`).join('')}</div>` : ''}
+    </div>
+    <div class="catalog-cell catalog-cell-format">
+      <span class="badge subtle">${esc(row.adapter)}</span>
+      <div>${(row.formats || []).map(value => `<span class="badge subtle">${esc(value)}</span>`).join(' ')}</div>
+      <div class="text-muted">${(row.protocols || []).map(value => `<span class="badge subtle">${esc(value)}</span>`).join(' ')}</div>
+      <div class="text-muted" title="${esc(accessNote || '')}">${esc(accessNote ? accessNote.slice(0, 60) : '')}</div>
+    </div>
+    <div class="catalog-cell catalog-cell-access">
+      <div title="${esc(t('cat.termsLink'))}">${esc(t(`cat.group.${row.access_group}`))}</div>
+      <div class="text-muted">${esc(row.access)}</div>
+      ${row.checked_at ? `<div class="text-muted">${esc(row.checked_at.slice(0, 10))}</div>` : ''}
+      ${row.terms_url ? `<a class="catalog-terms" href="${esc(row.terms_url)}" target="_blank" rel="noopener">${esc(t('cat.termsLink'))}</a>` : ''}
+    </div>
+    <div class="catalog-cell catalog-cell-state">
+      <span class="badge status-badge ${stateClass}" title="${esc(accessNote || '')}">${esc(stateLabel)}</span>
+      <div class="text-muted">${esc(t('cat.age'))}: ${esc(age === null || age === undefined ? t('cat.ageNone') : relativeAge(age))}</div>
+      ${!row.collectable ? `<div class="text-muted-warn">${esc(row.not_proxy_source_reason || row.access_blocked_reason || '')}</div>` : ''}
+    </div>
+    <div class="catalog-cell catalog-cell-data">${runtimeCell(runtime)}</div>
+    <div class="catalog-cell catalog-cell-choice">
+      <span class="badge ${choiceClass}">${esc(t(`cat.choice.${row.selection_state}`))}</span>
+      <div class="catalog-actions">
+        ${row.collectable ? `<button class="button chip" data-catalog-check="${esc(row.id)}" title="${esc(t('cat.action.check'))}">${esc(t('cat.action.check'))}</button>` : ''}
+        ${row.selected ? (row.download_disabled
+          ? `<button class="button chip" data-catalog-resume="${esc(row.id)}" title="${esc(t('cat.action.resume'))}">${esc(t('cat.action.resume'))}</button>`
+          : `<button class="button chip" data-catalog-toggle="${esc(row.id)}" title="${esc(t('cat.action.pause'))}">${esc(t('cat.action.pause'))}</button>`)
+          : `<button class="button chip" data-catalog-select="${esc(row.id)}" title="${esc(t('cat.action.include'))}">${esc(t('cat.action.include'))}</button>`}
+        ${row.selected ? `<button class="button chip" data-catalog-remove="${esc(row.id)}" title="${esc(t('cat.action.remove'))}">${esc(t('cat.action.remove'))}</button>` : ''}
+        ${row.selected ? `<button class="button chip" data-catalog-exclude="${esc(row.id)}" title="${esc(t('cat.action.exclude'))}">⊘</button>` : ''}
+        ${row.runtime && row.runtime.error ? `<button class="button chip" data-catalog-recover="${esc(row.id)}" title="${esc(t('cat.action.recover'))}">↻</button>` : ''}
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderCatalog(view) {
+  catalogData = view;
+  $('catalog-revision').textContent = `${view.revision} · ${view.published_at ? String(view.published_at).slice(0, 10) : ''}`;
+  renderCatalogFacets(view);
+  renderCatalogSets(view);
+  renderCatalogGroups(view);
+  const rows = view.sources || [];
+  $('catalog-list').innerHTML = rows.length
+    ? rows.map(catalogRowHtml).join('')
+    : `<p class="hint">${esc(t('cat.empty'))}</p>`;
+  $('catalog-count').textContent = t('cat.shown', {shown: fmt(rows.length), total: fmt(view.total)});
+  $('catalog-more').classList.toggle('hidden', rows.length >= view.total);
+  bindCatalogRows();
+  if (catalogDetailId) loadCatalogDetail(catalogDetailId);
+}
+
+function bindCatalogRows() {
+  const handlers = {
+    'catalog-details': id => loadCatalogDetail(id),
+    'catalog-check': id => previewSource(id),
+    'catalog-toggle': id => catalogToggle(id, true),
+    'catalog-resume': id => catalogToggle(id, false),
+    'catalog-select': id => catalogSelect(id, true),
+    'catalog-remove': id => catalogSelect(id, false),
+    'catalog-recover': id => catalogAction('/api/sources/recover', {id}, null, 'toast.cat.recovered'),
+    'catalog-exclude': id => openScopeDialog(id)
+  };
+  for (const [action, run] of Object.entries(handlers)) {
+    $('catalog-list').querySelectorAll(`[data-${action}]`).forEach(button => {
+      button.onclick = () => run(button.dataset[action.replace(/-([a-z])/g, (_, c) => c.toUpperCase())]);
+    });
+  }
+}
+
+async function reloadCatalog() {
+  try {
+    renderCatalog(await api('/api/source-catalog?' + catalogQuery()));
+  } catch (error) {
+    $('catalog-list').innerHTML = `<p class="hint">${esc(error.message)}</p>`;
+  }
+}
+
+function catalogToggle(id, disabled) {
+  return catalogAction('/api/sources/toggle', {id, disabled}, null, disabled ? 'toast.cat.paused' : 'toast.cat.resumed');
+}
+
+function catalogSelect(id, selected) {
+  return catalogAction('/api/sources/select', {id, selected}, null, selected ? 'toast.cat.saved' : 'toast.cat.removed');
+}
+
+async function catalogAction(path, body, message, toastKey) {
+  try {
+    const value = await api(path, body);
+    if (value && value.settings) {
+      settings = value.settings;
+      $('sources').value = settings.sources.join('\n');
+      updateSourceCount();
+      updateCodeEditors();
+    }
+    if (toastKey) toast(t(toastKey, {count: fmt((value && (value.members || [1]).length) || 1)}));
+    else if (message) toast(message(value));
+    await reloadCatalog();
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+
+async function loadCatalogDetail(sourceId) {
+  catalogDetailId = sourceId;
+  const node = $('catalog-detail');
+  node.hidden = false;
+  try {
+    const row = await api('/api/source-catalog/' + encodeURIComponent(sourceId));
+    const runtime = row.runtime || {};
+    const evidence = Object.entries(row.evidence || {}).map(([key, value]) =>
+      `<tr><td>${esc(key)}</td><td>${esc(value.state || '—')}</td><td>${esc(value.checked_at || '—')}</td></tr>`).join('');
+    const history = (row.history || []).map(item => `<tr>
+        <td>${esc(new Date((item.ended_at || item.started_at || 0) * 1000).toLocaleString())}</td>
+        <td>${esc(item.http_state)}</td><td>${esc(item.parse_state)}</td><td>${esc(item.cache_state)}</td>
+        <td>${fmt(item.accepted)} / ${fmt(item.rejected)}</td><td>${esc(item.error || '—')}</td></tr>`).join('');
+    node.innerHTML = `
+      <div class="dialog-heading">
+        <h2>${esc(t('cat.detailTitle'))}: ${esc(row.name)}</h2>
+        <button class="button light" data-catalog-close>✕</button>
+      </div>
+      <p class="hint">${esc(t('cat.noLiveness'))}</p>
+      <div class="catalog-detail-grid">
+        <div>
+          <h3 data-i18n="cat.evidence">Research evidence</h3>
+          <table><tbody>${evidence}</tbody></table>
+          <h3 data-i18n="cat.rights">Terms and data license</h3>
+          <p class="hint">${esc(t('cat.checkedOn'))}: ${esc((row.rights || {}).checked_at || row.checked_at || '—')}</p>
+          <p class="hint">data_license: ${esc((row.rights || {}).data_license || 'unknown')} · code_license: ${esc((row.rights || {}).code_license || 'unknown')}</p>
+          ${row.terms_url ? `<a class="catalog-terms" href="${esc(row.terms_url)}" target="_blank" rel="noopener">${esc(t('cat.termsLink'))}</a>` : ''}
+        </div>
+        <div>
+          <h3 data-i18n="cat.cache">Stored data</h3>
+          <p class="hint">${esc(t('cat.cacheAge'))}: ${esc(runtime.last_good_age_seconds === null || runtime.last_good_age_seconds === undefined ? t('cat.ageNone') : relativeAge(runtime.last_good_age_seconds))}
+             · ${esc(t('cat.cacheRecords'))}: ${fmt((row.cache || {}).last_good ? (row.cache.last_good.record_count || 0) : 0)}</p>
+          <p class="hint">HTTP ${esc(runtime.http_state || '—')} · ${esc(runtime.parse_state || '—')} · ${esc(runtime.cache_state || '—')}</p>
+          ${runtime.error ? `<p class="catalog-err">${esc(t('cat.error'))}: ${esc(runtime.error)}</p>` : ''}
+          ${runtime.etag || runtime.last_modified ? `<p class="hint">ETag: ${esc(runtime.state_etag || '—')} · Last-Modified: ${esc(runtime.state_last_modified || '—')}</p>` : ''}
+        </div>
+      </div>
+      <h3 data-i18n="cat.history">Last observations</h3>
+      ${history ? `<table><thead><tr><th>${esc(t('cat.time'))}</th><th>HTTP</th><th>${esc(t('cat.col.format'))}</th><th>${esc(t('cat.cache'))}</th><th>${esc(t('cat.accepted'))} / ${esc(t('cat.rejected'))}</th><th>${esc(t('cat.error'))}</th></tr></thead><tbody>${history}</tbody></table>`
+        : `<p class="hint">${esc(t('cat.noHistory'))}</p>`}`;
+    node.querySelector('[data-catalog-close]').onclick = () => { node.hidden = true; catalogDetailId = null; };
+    applyI18n(node);
+  } catch (error) {
+    node.innerHTML = `<p class="catalog-err">${esc(error.message)}</p>`;
+  }
+}
+
+function previewHtml(row) {
+  const reasons = Object.entries(row.reject_reasons || {}).map(([reason, count]) => `<span class="badge subtle">${esc(reason)}: ${fmt(count)}</span>`).join(' ');
+  return `<div class="catalog-preview-inner">
+    <strong>${esc(t('cat.previewTitle', {name: row.name || row.source_id}))}</strong>
+    <p class="hint">${esc(t('cat.previewNote'))}</p>
+    <p>${esc(t('cat.recognized'))}: <b>${fmt(row.recognized)}</b> · ${esc(t('cat.accepted'))}: <b>${fmt(row.accepted)}</b> · ${esc(t('cat.rejected'))}: <b>${fmt(row.rejected)}</b></p>
+    ${reasons ? `<p>${esc(t('cat.reasons'))}: ${reasons}</p>` : ''}
+    ${row.truncated ? `<p class="text-muted-warn">${esc(t('cat.previewTruncated', {bytes: fmt((row.limits || {}).max_bytes), records: fmt((row.limits || {}).max_candidates)}))}</p>` : ''}
+    <p class="hint">HTTP ${esc(row.http_state)} · ${esc(row.parse_state)} · ${esc(row.cache_state)} · ${esc(row.format || '—')} · ${esc(t('cat.pages'))} ${fmt(row.pages)}${row.error ? ` · <span class="catalog-err">${esc(row.error)}</span>` : ''}</p>
+    ${(row.sample || []).length ? `<pre class="catalog-sample">${esc(row.sample.join('\n'))}</pre>` : ''}
+  </div>`;
+}
+
+async function previewSource(sourceId) {
+  const node = $('catalog-list');
+  try {
+    const row = await api('/api/sources/check', {id: sourceId});
+    toast(t('cat.accepted') + ': ' + fmt(row.accepted));
+    await loadCatalogDetail(sourceId);
+    const detail = $('catalog-detail');
+    const extra = document.createElement('div');
+    extra.innerHTML = previewHtml(row);
+    detail.prepend(extra);
+    applyI18n(extra);
+  } catch (error) {
+    toast(t('cat.previewFailed', {reason: error.message}), true);
+  }
+}
+
+function openScopeDialog(sourceId) {
+  const dialog = $('scope-dialog');
+  $('scope-title').textContent = t('cat.excludeTitle', {id: sourceId});
+  $('scope-body').innerHTML = `<p class="hint">${esc(t('cat.excludeBody'))}</p>
+    <label class="check-label"><input type="checkbox" id="scope-shared"><span>${esc(t('cat.excludeShared'))}</span></label>
+    <div class="button-row">
+      <button class="button primary" id="scope-confirm">${esc(t('cat.action.exclude'))}</button>
+      <button class="button light" id="scope-cancel">${esc(t('common.cancel'))}</button>
+    </div>`;
+  $('scope-cancel').onclick = () => dialog.close();
+  $('scope-confirm').onclick = async () => {
+    try {
+      const value = await api('/api/sources/exclude-scope', {id: sourceId, confirm: true, include_shared: $('scope-shared').checked});
+      dialog.close();
+      toast(t('cat.excludeDone', {count: fmt(value.excluded), total: fmt(value.delivered)}));
+    } catch (error) {
+      toast(error.message, true);
+    }
+  };
+  dialog.showModal();
+}
+$('close-scope').onclick = () => $('scope-dialog').close();
+
+$('catalog-refresh').onclick = async () => {
+  const button = $('catalog-refresh');
+  const spinner = button.querySelector('.btn-spinner');
+  const label = button.querySelector('.btn-label');
+  const note = $('catalog-update-note');
+  button.disabled = true;
+  if (spinner) spinner.classList.remove('hidden');
+  note.hidden = false;
+  note.textContent = t('cat.updating');
+  try {
+    await api('/api/sources/refresh', {});
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      const job = await api('/api/sources/update-status');
+      if (job.stage === 'downloading') note.textContent = t('cat.updateStage.downloading');
+      if (job.stage === 'validating') note.textContent = t('cat.updateStage.validating');
+      if (!job.running) {
+        if (job.error) {
+          note.textContent = t('cat.updateFailed', {reason: serverText(job.error)});
+          toast(note.textContent, true);
+        } else if (job.not_modified) {
+          note.textContent = t('cat.updateNotModified');
+          toast(note.textContent);
+        } else {
+          note.textContent = t('cat.updateDone', {revision: job.revision, added: fmt(job.added), changed: fmt(job.changed), retired: fmt(job.retired)});
+          toast(note.textContent);
+        }
+        break;
+      }
+      await new Promise(resolve => setTimeout(resolve, 400));
+    }
+    await reloadCatalog();
+  } catch (error) {
+    note.textContent = t('cat.updateFailed', {reason: error.message});
+    toast(note.textContent, true);
+  } finally {
+    button.disabled = false;
+    if (spinner) spinner.classList.add('hidden');
+    if (label) label.textContent = t('cat.update');
+  }
+};
+
+for (const id of ['catalog-q', 'catalog-state', 'catalog-category', 'catalog-protocol', 'catalog-format', 'catalog-access', 'catalog-set-filter']) {
+  const node = $(id);
+  if (!node) continue;
+  node.oninput = () => { catalogLimit = CATALOG_PAGE; clearTimeout(catalogTimer); catalogTimer = setTimeout(reloadCatalog, 250); };
+  node.onchange = () => { catalogLimit = CATALOG_PAGE; reloadCatalog(); };
+}
+$('catalog-more').onclick = () => { catalogLimit += CATALOG_PAGE; reloadCatalog(); };
+
+$('catalog-add-toggle').onclick = () => { $('catalog-add-form').hidden = !$('catalog-add-form').hidden; };
+$('catalog-add-kind').innerHTML = SOURCE_FORMATS.map(value => `<option value="${esc(value)}">${esc(value)}</option>`).join('');
+
+function addPayload() {
+  return {url: $('catalog-add-url').value.trim(), kind: $('catalog-add-kind').value,
+          allow_private: $('catalog-add-private').checked};
+}
+
+$('catalog-add-preview').onclick = async () => {
+  const button = $('catalog-add-preview');
+  button.disabled = true;
+  try {
+    const row = await api('/api/sources/preview', addPayload());
+    $('catalog-add-result').innerHTML = previewHtml(row);
+  } catch (error) {
+    $('catalog-add-result').innerHTML = `<p class="catalog-err">${esc(t('cat.previewFailed', {reason: error.message}))}</p>`;
+  } finally {
+    button.disabled = false;
+  }
+};
+$('catalog-add-submit').onclick = async () => {
+  try {
+    const value = await api('/api/sources/add', {url: $('catalog-add-url').value.trim(), kind: $('catalog-add-kind').value});
+    toast(t('cat.addDone', {id: value.id}));
+    $('catalog-add-url').value = '';
+    $('catalog-add-result').innerHTML = '';
+    await reloadCatalog();
+  } catch (error) {
+    toast(error.message, true);
+  }
+};
 
 $('lang-toggle').onclick = () => { lang = lang === 'ru' ? 'en' : 'ru'; try { localStorage.setItem(LANG_KEY, lang); } catch {} renderLang(); };
 const sidebarLangBtn = $('sidebar-lang-toggle');
