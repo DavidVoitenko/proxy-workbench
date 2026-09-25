@@ -3,6 +3,7 @@ from pathlib import Path
 import sys
 import tempfile
 import threading
+import time
 import unittest
 
 import httpx
@@ -101,6 +102,31 @@ class ApiTests(unittest.TestCase):
             self.db.commit()
             self.export()
             self.assertEqual(client.get('/status').json()['available'], 2)
+
+    def test_snapshot_contract_ttl_and_deleted_current_file(self):
+        with self.start() as client:
+            status = client.get('/status').json()
+            self.assertEqual(status['schema_version'], 1)
+            self.assertEqual(status['state'], 'complete')
+            self.assertEqual(status['scope_candidates'], 3)
+            self.assertIn('valid_until', status)
+            generation = p.current_generation_name(self.home / 'exports')
+            ranked_path = p.export_file(self.home / 'exports', 'ranked.json')
+            status_path = p.export_file(self.home / 'exports', 'status.json')
+            ranked = json.loads(ranked_path.read_text(encoding='utf-8'))
+            for row in ranked:
+                row['valid_until'] = time.time() - 1
+            snapshot = json.loads(status_path.read_text(encoding='utf-8'))
+            snapshot['valid_until'] = time.time() - 1
+            p.atomic(ranked_path, json.dumps(ranked))
+            p.atomic(status_path, json.dumps(snapshot))
+            expired = client.get('/status').json()
+            self.assertEqual(expired['available'], 0)
+            self.assertTrue(expired['stale'])
+            self.assertEqual(client.get('/proxies').json()['count'], 0)
+            ranked_path.unlink()
+            self.assertEqual(client.get('/status').json()['available'], 0)
+            self.assertIsNotNone(generation)
 
     def test_token_and_network_binding(self):
         with self.assertRaises(ValueError):
