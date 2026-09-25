@@ -62,6 +62,19 @@ ENDPOINTS = {
 #: with the same vocabulary (CONTRACTS §5.4).
 FRESHNESS_MODES = ('fresh', 'expired', 'unknown', 'all')
 
+#: The file of a snapshot artifact that answers a requested ``format``.  The
+#: artifact always carries the whole set; the format only names the one the
+#: caller will download, so an unknown name is a refusal rather than a silent
+#: "here is something else".
+EXPORT_FORMAT_FILES = {
+    'json': 'ranked.json',
+    'txt': 'proxies.txt',
+    'csv': 'ranked.csv',
+    'pac': 'proxy.pac',
+    'clash': 'clash.yaml',
+    'singbox': 'singbox.json',
+}
+
 
 def is_loopback(host):
     if host == 'localhost':
@@ -119,7 +132,15 @@ def public_row(row, now=None):
         'profile_revision': row.get('profile_revision'),
         'age_seconds': row.get('age_seconds'),
         'admission_reason': row.get('admission_reason'),
-        'time_state': row.get('time_state'),
+        # One decision about the clock, taken now, for both fields: a row must
+        # not report one time state and the freshness of another.
+        'time_state': TIME_STATE_CODES.get(time_state_of(row)['state']),
+        # A legacy row that carries no recorded lifetime is read with a one-time
+        # backfill, and the fact that it was backfilled is visible here.  Without
+        # these two the API showed a fresh row with no way to tell it apart from
+        # one whose lifetime was really measured (CONTRACTS §2.4).
+        'max_age_seconds': row.get('max_age_seconds') or READ_POLICY.max_age_seconds,
+        'ttl_backfilled': bool(time_state_of(row).get('ttl_backfilled')),
         'freshness': freshness_of(row),
         'reputation_status': reputation_status(row),
         'reputation_sources': ','.join(item.get('zone', '') for item in dnsbl
@@ -132,6 +153,65 @@ READ_POLICY = core.Policy(max_age_seconds=core.DEFAULT_MAX_AGE_SECONDS,
                           allow_missing_identity=True)
 
 
+#: How a query flag is spelled when it arrives from a URL.  ``apiv1`` already
+#: coerces the declared boolean parameters, so these are the values a caller
+#: may still send by hand and the values a test passes in.
+TRUE_VALUES = ('1', 'true', 'yes', 'on')
+
+
+def _endpoint_values(body):
+    """The endpoint list of a request body, in the shape the route declares.
+
+    ``endpoint_ids`` is declared as a string, so a caller sends
+    ``"id1,id2"``; a list is accepted too because the same helper serves the
+    internal callers that already hold one.  Both spellings go through the one
+    parser, so a value never reaches the membership writer half-read.
+    """
+    raw = (body or {}).get('endpoint_ids')
+    if raw is None:
+        return []
+    items = raw if isinstance(raw, (list, tuple)) else str(raw).replace('\n', ',').split(',')
+    return [str(item).strip() for item in items if str(item).strip()]
+
+
+def _flag(query, name):
+    """Whether a declared boolean query parameter was asked for."""
+    value = (query or {}).get(name)
+    if isinstance(value, str):
+        return value.strip().lower() in TRUE_VALUES
+    return bool(value)
+
+
+#: The stable code of each time state (CONTRACTS §5.4, domain TIME).  ``core``
+#: classifies the clock; this is the one place its names become codes, so the
+#: API, the CLI and the report never spell the same state two ways.
+TIME_STATE_CODES = {
+    core.TIME_OK: None,
+    core.TIME_UNKNOWN: 'E_TIME_UNKNOWN',
+    core.TIME_FUTURE: 'E_TIME_FUTURE',
+    core.TIME_TTL_MISSING: 'E_TIME_TTL_MISSING',
+    core.TIME_EXPIRED: 'E_TIME_TTL_EXPIRED',
+    core.CLOCK_ROLLBACK: 'E_TIME_CLOCK_ROLLBACK',
+}
+
+#: The four explicit freshness views a mixed-age table needs (defect 3).
+FRESHNESS_BY_STATE = {
+    core.TIME_OK: 'fresh', core.TIME_EXPIRED: 'expired', core.TIME_TTL_MISSING: 'unknown',
+}
+
+
+def time_state_of(row, now=None):
+    """The one admission-time decision about a row's clock, from ``core``.
+
+    ``freshness`` and ``time_state`` are two spellings of this one answer, so
+    they are derived together here.  Reading ``time_state`` off the stored row
+    while recomputing ``freshness`` let a row say ``time_ok`` and
+    ``freshness='expired'`` at the same moment -- a consumer comparing the two
+    fields saw a contradiction that neither meant.
+    """
+    return core.time_state_of(row, time.time() if now is None else now, READ_POLICY)
+
+
 def freshness_of(row, now=None):
     """Which freshness view a row belongs to, decided by ``core`` alone.
 
@@ -141,9 +221,7 @@ def freshness_of(row, now=None):
     backfill of a legacy row that carries no recorded lifetime -- a reader must
     not grow its own idea of how long a result is good (CONTRACTS §2.4, §4.3).
     """
-    state = core.time_state_of(row, time.time() if now is None else now, READ_POLICY)['state']
-    return {core.TIME_OK: 'fresh', core.TIME_EXPIRED: 'expired',
-            core.TIME_TTL_MISSING: 'unknown'}.get(state, 'unknown')
+    return FRESHNESS_BY_STATE.get(time_state_of(row, now)['state'], 'unknown')
 
 
 class Exports:
@@ -520,11 +598,19 @@ class WorkbenchService(apiv1.Service):
                           int(status.get('profile_revision') or 1),
                           str(status.get('network_id') or 'default'))
 
-    def rows_for(self, query=None, mode='fresh'):
+    def rows_for(self, query=None, wanted=None):
+        """The rows a request may see, and the status of the generation they are from.
+
+        ``wanted`` is the set of freshness views the caller asked for; every row
+        keeps its own ``freshness`` value and its own reason, so a mixed-age set
+        stays mixed instead of being sorted into "there is nothing here"
+        (CONTRACTS §4.3, defect 3).
+        """
+        if wanted is None or wanted == {'fresh'}:
+            return self.exports.load()
         rows, status = self.exports.load()
-        if mode == 'all':
-            return self.exports.rows, status
-        return rows, status
+        views = wanted if isinstance(wanted, (set, frozenset)) else {str(wanted)}
+        return [row for row in self.exports.rows if row.get('freshness') in views], status
 
     def page(self, items, stream_id, offset=0, limit=None):
         """One page plus the ``(stream_id, seq)`` cursor the contract defines."""
@@ -615,17 +701,33 @@ class WorkbenchService(apiv1.Service):
         page['expires_at'] = status.get('expires_at')
         return page
 
+    def _freshness_view(self, query):
+        """Which freshness views a request asked for, from the declared parameters.
+
+        The route declares ``include_stale`` and ``include_unknown`` (CONTRACTS
+        §5.7: "the unknown and stale modes are explicit parameters, not a silent
+        exclusion of rows").  It never declared a ``freshness`` parameter, so
+        reading one here used to read a value that could not arrive: expired and
+        unknown rows were unreachable over ``/v1`` no matter what the caller
+        asked for.  The two flags are the documented spelling, and asking for
+        neither is still fresh rows only.
+        """
+        wanted = {'fresh'}
+        if _flag(query, 'include_stale'):
+            wanted.add('expired')
+        if _flag(query, 'include_unknown'):
+            wanted.add('unknown')
+        return wanted
+
     def _op_results_list(self, call):
-        mode = call.query.get('freshness') or 'fresh'
-        rows, status = self.rows_for(call.query, mode)
-        if mode == 'all':
-            rows = self.exports.rows
+        wanted = self._freshness_view(call.query)
+        rows, status = self.rows_for(call.query, wanted)
         rows = [row for row in rows if self._matches(row, call.query)]
         return self._result_page(call, self._guard_objects(rows, call, 'collection_id', 'collections'),
                                  status)
 
     def _op_results_random(self, call):
-        rows, status = self.rows_for(call.query, call.query.get('freshness') or 'fresh')
+        rows, status = self.rows_for(call.query, self._freshness_view(call.query))
         rows = [row for row in rows if self._matches(row, call.query)]
         rows = self._guard_objects(rows, call, 'collection_id', 'collections')
         limit = min(int(call.query.get('limit') or 1), 1000)
@@ -635,7 +737,7 @@ class WorkbenchService(apiv1.Service):
 
     def _op_results_top(self, call):
         limit = min(int(call.query.get('limit') or 10), 1000)
-        rows, status = self.rows_for(call.query, call.query.get('freshness') or 'fresh')
+        rows, status = self.rows_for(call.query, self._freshness_view(call.query))
         rows = [row for row in rows if self._matches(row, call.query)]
         return self._result_page(call,
                                  self._guard_objects(rows, call, 'collection_id', 'collections')[:limit],
@@ -698,10 +800,28 @@ class WorkbenchService(apiv1.Service):
         return {'item': dict(artifact, compat=artifact.get('compat') or {})}
 
     def _op_exports_download(self, call):
+        """Serve one file of a recorded artifact, and only that file.
+
+        ``export_artifact`` (migration 11) records the *generation*, not a
+        directory, so the directory is derived from the generation the export
+        published.  Reading ``artifact['directory']`` here raised a ``KeyError``
+        and the download answered 500 for every artifact the API had just
+        written.  The manifest recorded in the same row is the allow-list: a
+        name that is not in it is a 404 even if a file of that name exists.
+        """
         artifact = self._artifact(call.params.get('id'))
-        name = call.params.get('name')
-        target = Path(artifact['directory'])/str(name)
-        if not target.is_file() or target.resolve().parent != Path(artifact['directory']).resolve():
+        generation = str(artifact.get('generation') or '')
+        if not generation or not exportsvc.GENERATION_PATTERN.fullmatch(generation):
+            raise apiv1.ApiError('E_STATE_NOT_FOUND', status=404,
+                                 details={'id': call.params.get('id'), 'reason': 'no generation'})
+        directory = self.exports.directory / 'generations' / generation
+        name = str(call.params.get('name') or '')
+        recorded = (artifact.get('manifest_json') or {})
+        if name not in recorded:
+            raise apiv1.ApiError('E_STATE_NOT_FOUND', status=404,
+                                 details={'name': name, 'files': sorted(recorded)})
+        target = directory / name
+        if not target.is_file() or target.resolve().parent != directory.resolve():
             raise apiv1.ApiError('E_STATE_NOT_FOUND', status=404, details={'name': name})
         return {'data': target.read_bytes(), 'filename': target.name}
 
@@ -816,10 +936,108 @@ class WorkbenchService(apiv1.Service):
                 'profile_id': ref.profile_id, 'profile_revision': ref.revision}
 
     def _op_exports_create(self, call):
-        raise apiv1.ApiError('E_STATE_NOT_FOUND', status=409,
-                             details={'reason': 'export runs on the GUI or the CLI worker'},
-                             action=tr('запустите проверку через GUI или CLI',
-                                       'start the run from the GUI or the CLI'))
+        """Create an export artifact, through the engine's own export path.
+
+        This route used to answer 409 and tell the caller to use the GUI or the
+        CLI, which left the key the bootstrap hands out unable to finish a
+        check without a manual step.  An administrator with a key must be able
+        to import, check, read and export without leaving the API.
+
+        Only ``proxytool.export`` builds a generation, and only it decides
+        whether the active pointer moves: ``kind='published'`` publishes,
+        ``kind='selection'`` and ``kind='diagnostic'`` are separate artifacts
+        that never touch the active pool (CONTRACTS §4.5, defect 7).
+        """
+        from . import proxytool as engine
+
+        def action(workbench):
+            body = call.body or {}
+            kind = str(body.get('kind') or 'published')
+            if kind not in exportsvc.ARTIFACT_KINDS:
+                raise apiv1.field_error('kind', tr(
+                    f'вид артефакта: {", ".join(exportsvc.ARTIFACT_KINDS)}',
+                    f'artifact kind: {", ".join(exportsvc.ARTIFACT_KINDS)}'))
+            conn = workbench.conn
+            profile = str(body.get('profile_id') or self.published_profile_id())
+            if not conn.execute('SELECT 1 FROM profiles WHERE id=?', (profile,)).fetchone():
+                row = conn.execute('SELECT id FROM profiles ORDER BY created_at DESC LIMIT 1').fetchone()
+                if row is None:
+                    raise apiv1.ApiError(
+                        'E_STATE_NO_SNAPSHOT', status=409,
+                        details={'reason': 'no check profile has been measured yet'},
+                        action=tr('запустите проверку, затем повторите экспорт',
+                                  'run a check, then export again'))
+                profile = str(row[0])
+            collection = str(body.get('collection_id') or schema_public_collection())
+            # ``endpoint_ids`` is the selection: named endpoints become a
+            # ``kind='selection'`` artifact that never moves the active pool.
+            chosen = _endpoint_values(body)
+            if chosen and kind == 'published':
+                kind = 'selection'
+            selection = self._canonical_selection(workbench, chosen) if chosen else None
+            client_target = str(body.get('format') or '') or None
+            report = engine.export(
+                conn, profile, workbench.data / 'exports',
+                collection_id=collection,
+                profile_revision=int(body.get('profile_revision') or 1),
+                allowed_proxies=selection,
+                diagnostic=kind == 'diagnostic',
+                credentials='include' if body.get('include_secrets') else 'redact',
+                active_profile_path=None if kind == 'selection' else workbench.data / 'last-profile.txt')
+            written = list(report.get('files') or ())
+            if client_target:
+                wanted = EXPORT_FORMAT_FILES.get(client_target)
+                if wanted is None or wanted not in written:
+                    raise apiv1.ApiError(
+                        'E_VALIDATION_FIELD', status=400,
+                        details={'format': client_target, 'file': wanted, 'files': written},
+                        action=tr('выберите формат из написанных в артефакте',
+                                   'choose a format that the artifact carries'))
+            answer = {key: report[key] for key in ('kind', 'generation', 'state', 'stop_reason',
+                                                   'state_detail', 'exported', 'valid_until',
+                                                   'expires_at', 'max_age_seconds', 'complete',
+                                                   'files', 'directory', 'collection_id',
+                                                   'profile', 'profile_revision', 'compat')
+                      if key in report}
+            answer['format'] = client_target or 'txt'
+            answer['file'] = EXPORT_FORMAT_FILES.get(client_target or 'txt')
+            answer['artifact_id'] = self._artifact_id_of(report)
+            answer['job_id'] = self._record_job(workbench, f'export:{kind}', collection,
+                                                int(report.get('exported') or 0))
+            return answer
+        return self._with_workbench(action)
+
+    def _canonical_selection(self, workbench, values):
+        """Endpoint ids or canonical addresses as canonical addresses.
+
+        Object-level scope is checked by the route guard before this runs, so a
+        caller cannot name an endpoint outside its collections and get it
+        exported under someone else's scope.
+        """
+        conn = workbench.conn
+        resolved = []
+        for value in values:
+            row = conn.execute('SELECT canonical FROM endpoints WHERE id=? OR canonical=?',
+                               (value, value)).fetchone()
+            if row is not None:
+                resolved.append(str(row[0]))
+        if not resolved:
+            raise apiv1.ApiError('E_STATE_NOT_FOUND', status=404,
+                                 details={'endpoint_ids': values[:20]},
+                                 action=tr('укажите существующие адреса', 'name existing endpoints'))
+        return resolved
+
+    def _artifact_id_of(self, report):
+        """The ``export_artifact`` row the export just recorded, if it is there."""
+        conn = self.connection()
+        try:
+            row = conn.execute('SELECT id FROM export_artifact WHERE generation=? ORDER BY published_at DESC '
+                               'LIMIT 1', (report.get('generation'),)).fetchone() if conn is not None else None
+        except sqlite3.Error:
+            row = None
+        finally:
+            _close(conn)
+        return str(row[0]) if row is not None else None
 
     def _artifact(self, artifact_id):
         conn = self.connection()
@@ -1263,7 +1481,7 @@ class WorkbenchService(apiv1.Service):
         body = call.body or {}
         # The add route names one endpoint, the remove route names it in the
         # path; both end up in the same one-call change list.
-        values = [str(item) for item in (body.get('endpoint_ids') or []) if item]
+        values = _endpoint_values(body)
         if body.get('endpoint'):
             values.append(str(body['endpoint']))
         if call.params.get('endpoint_id'):
@@ -1978,13 +2196,15 @@ def _module_errors():
     """Every public error a module can raise, collected once.
 
     The service layer must not leak a module class to a client, so the set is
-    built from the modules themselves rather than restated here.
+    built from the modules themselves rather than restated here.  Every entry is
+    a *base* class of its module (``ImportProblem`` covers format, encoding,
+    size, revision, partial, cancelled, busy and an unknown collection), so a
+    refusal the module adds later is translated to a code instead of escaping
+    as a traceback out of a request.
     """
     from . import importer, jobs, pools, profiles, scheduler
     from . import secrets as secretstore
-    return (importer.ImportFormatError, importer.ImportEncodingError, importer.ImportTooLarge,
-            importer.ImportRevisionConflict, importer.ImportPartialBlocked, importer.ImportBusy,
-            importer.UnknownCollection, jobs.JobError, pools.PoolError, profiles.ProfileError,
+    return (importer.ImportProblem, jobs.JobError, pools.PoolError, profiles.ProfileError,
             scheduler.ScheduleError, secretstore.SecretError)
 
 
