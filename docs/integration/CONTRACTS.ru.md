@@ -129,21 +129,33 @@ observation {
 - в API — `select(rows, query)` (`api.py:229-246`);
 - в GUI — своя выборка с другим набором параметров (`gui.py:620-761`), к `api.select` не обращающаяся.
 
-**КОНТРАКТ.** Один admission-контракт `admit(row, scope, policy, now) -> Admission` с результатом:
+**КОНТРАКТ.** Один admission-контракт с результатом:
 
 ```
+admit(row, scope, access, policy, now) -> Admission
+
 Admission {
   admitted: bool,
   reason_code: str | null,     // канон из §5.4
   age_seconds: float | null,   // now - checked_at
-  checked_at, valid_until, published_at, // видимые потребителю
+  checked_at, valid_until, published_at, # видимые потребителю
   max_age_seconds,             // применённая политика
 }
 ```
 
-Обязательные входы: scope (collection, profile+revision, access+revision), наблюдения, TTL, exclusions (denylist, hosting, protocol, country), capabilities. `min_success`/`min_anonymity`/`strict` приходят из **ревизии профиля**, а не как параметр чтения (сейчас порог приходит аргументом в `export` и в `/api/results`, `proxytool.py:1651` и `gui.py:636`, из-за чего один и тот же снимок даёт pass или пустую выдачу в зависимости от значения параметра).
+`access` — обязательный отдельный аргумент, а не часть `scope`: §1.2 (1) требует, чтобы `access_revision` был частью admission, и без него подпись функции не выражает собственного правила контракта. `scope` несёт collection, `profile_id` и `profile_revision`; `access` несёт `access_id` и `access_revision`; `policy` несёт TTL, exclusions (denylist, hosting, protocol, country) и `min_success`/`min_anonymity`/`strict`, которые приходят из **ревизии профиля**, а не как параметр чтения (сейчас порог приходит аргументом в `export` и в `/api/results`, `proxytool.py:1651` и `gui.py:636`, из-за чего один и тот же снимок даёт pass или пустую выдачу в зависимости от значения параметра).
 
-GUI, CLI и API для одного `scope` + `profile_revision` обязаны давать одинаковый состав (F18, приёмка F29 №7).
+**Определение «одинаковый состав» (F18, приёмка F29 №7).** Не «примерно то же» и не «та же строка в том же порядке», а **точное равенство отсортированного множества пар `(canonical, admission_reason)`**. Канонизация до сравнения обязательна, иначе сравнение строк неустойчиво. Сравниваются только admitted-строки; отклонённые обязаны совпадать по `reason_code` и по своему отсортированному множеству `(canonical, reason_code)`.
+
+Проверка на одной ревизии — одна команда, сравнивающая выдачу трёх поверхностей на **одном и том же поколении и одной ревизии профиля**:
+
+```
+.venv/bin/python -m unittest tests.test_parity
+```
+
+Тест обязан: (1) взять одну generation, одну `profile_revision`, один `scope`; (2) получить список из `api.select`, из CLI-пути `get` и из `App.results`; (3) сравнить отсортированные множества `(canonical, admission_reason)` попарно. До интеграции `App.results` выбирает строки своим кодом (`gui.py:620-761`) и к `api.select` не обращается, поэтому равенство недостижимо одной командой — это и есть проверяемый критерий того, что интеграция закончена.
+
+**До интеграции модулям нужна одна общая фикстура.** Пока `admit` живёт в заголовочной части `proxytool.py`, каждый из семнадцати модулей напишет свои тестовые строки сам, и они разойдутся по составу, по именам полей и по кодам причин. `db.py` (первая волна, §HANDOFF) обязан поставить `tests/fixtures/admission.py` с общим конструктором строки и общим списком `(canonical, admission_reason)` для всех тестовых случаев, включая unknown-время, истёкшую строку и blocked. Модули обязаны импортировать её, а не собирать payload заново.
 
 ### 2.4 Unknown и аномалии часов
 
@@ -209,47 +221,57 @@ results(profile TEXT NOT NULL, proxy TEXT NOT NULL, payload TEXT NOT NULL, PRIMA
 
 **КОНТРАКТ.**
 
-- `SCHEMA_VERSION` — целое в Python, и `PRAGMA user_version` — зеркало того же числа в файле. Они обязаны совпадать; расхождение — ошибка чтения базы, а не повод «дописать».
-- `PRAGMA application_id` — фиксированное магическое число пакета. Несовпадение означает «это не наша база», отказ без записи.
+- `SCHEMA_VERSION = 14` — целое в Python, и `PRAGMA user_version` — зеркало того же числа в файле. Они обязаны совпадать; расхождение — ошибка чтения базы, а не повод «дописать». Миграции нумеруются `0..14`; после применения всех `user_version = 14`.
+- `PRAGMA application_id` — фиксированное магическое число пакета. Несовпадение означает «это не наша база», отказ без записи. **Правило распознавания legacy:** `user_version = 0` **и** `application_id` равен магическому числу — это наша база, созданная до версионирования, и она мигрируется; `user_version = 0` **и** `application_id != 0` — это база, созданная версионированным кодом до миграции 0; `application_id`, не равный ни 0, ни магическому числу, — чужая, отказ. Поэтому миграция 0 обязана входить в диапазон для legacy (§3.4), иначе эти три случаи сливаются.
 - Каждая миграция — функция в `proxy_workbench/db.py` с номером, выполняется в одной транзакции, идемпотентна, применяется строго по порядку.
-- `PRAGMA foreign_keys=ON` для всех новых соединений.
+- `PRAGMA foreign_keys=ON` для всех новых соединений, **включая соединение мигратора**. Порядок таблиц в §3.3 этому подчинён: `membership` идёт после `endpoints`.
 - Перед первой миграцией, которая что-то меняет в уже существующей базе, — технический backup согласованным путём SQLite (`VACUUM INTO` как минимальная гарантия целостности при закрытом writer, либо `sqlite3.Connection.backup`), плюс `manifest` с checksum, размером, датой и версией схемы.
 - Все `INSERT` в общих таблицах указывают список колонок явно. Это убирает зависимость от порядка колонок и делает добавление колонки безопасным.
 
 ### 3.3 Порядок миграций
 
-Порядок фиксирован здесь. Каждая строка — отдельная миграция; откат делается восстановлением pre-migration backup, а не обратной DDL.
+Порядок фиксирован здесь. Каждая строка — отдельная миграция; откат делается восстановлением pre-migration backup, а не обратной DDL. Колонка «пишет в `user_version`» названа явно, потому что без неё нельзя доказать, что legacy-база дошла до конца.
 
-| № | Что добавляется | Почему в этом месте | Владелец модуля |
+| № | Что добавляется | Пишет в `user_version` | Владелец модуля |
 | --- | --- | --- | --- |
-| **0** | Установить `application_id`; создать `schema_migrations(version INTEGER PRIMARY KEY, applied_at REAL, app_version TEXT, backup_path TEXT)` | Журнал нужен до первой настоящей миграции, иначе нечем доказать, что база уже мигрирована | `db.py` |
-| **1** | `collections(id, name, kind, archived_at, created_at)` + `membership(collection_id, endpoint_id, added_at, origin, PRIMARY KEY(collection_id, endpoint_id))` | Коллекции нужны раньше импорта и раньше secret/access: импорт с `collection_id` — уже отдельный модуль, а без таблиц он не сможет записать ни одной строки | `db.py` |
-| **2** | `endpoints(id, canonical, host, port, scheme, ip_version, country, country_source, country_at, asn, provider, hosting, cidr, first_seen_at, last_seen_at)` | Разделение endpoint и access требует отдельной строки endpoint; без неё §1.2 не выполняется | `db.py` + `geo.py` |
-| **3** | `accesses(id, endpoint_id, mode, secret_ref, access_revision, created_at, rotated_at)` | `secret_ref` — **непрозрачная ссылка** на vault, не значение. Значение секрета в SQLite не попадает никогда | `db.py` + `secrets.py` |
-| **4** | Колонки в `results`: `observation_id`, `access_id`, `access_revision`, `profile_revision`, `checked_at REAL`, `valid_until REAL`, `error_code`, `error_stage` | Ключ наблюдения перестаёт быть `(profile, proxy)`; `checked_at`/`valid_until` становятся колонками, без чего retention невыразим в SQL | `db.py` |
-| **5** | `job`, `job_item`, `job_event`, `checkpoint` | Задания должны пережить перезапуск, иначе не закрывается F11 | `jobs.py` |
-| **6** | `pools`, `pool_member`, `schedules`, `schedule_run` | Постоянный пул и расписание — сущности с собственным состоянием | `pools.py`, `scheduler.py` |
-| **7** | `api_keys(id, prefix, name, purpose, created_at, expires_at, last_used_at, revoked_at, permissions_json, resource_scope_json, rate_limit_json, concurrency_json, rotation_grace_until, verifier, verifier_salt, verifier_algo)` | `verifier` — только односторонний; plaintext секрета в базе нет | `apikeys.py` |
-| **8** | `profiles`: `name`, `revision`, `parent_id`, `digest`, `created_at`, `archived_at`, `is_default` + `profile_revision` в `results` | Именованные профили с историей версий (F05) | `profiles.py` |
-| **9** | `audit_log(at, key_id, operation, object_kind, object_id, scope_json, result, error_code)` | Локальный журнал без полных ключей, паролей, тел ответов и трафика | `apikeys.py` |
-| **10** | `export_artifact(id, kind, collection_id, profile_id, generation, published_at, expires_at, state, reason_code, manifest_json)` | Артефакты выделенного экспорта должны быть отдельными сущностями (дефект 7) | `exportsvc.py` |
-| **11** | `import_batch(id, collection_id, created_at, state, report_json, revision)` | Идемпотентный commit импорта и отчёт (F03) | `importer.py` |
-| **12** | Индексы: `results(profile_id, valid_until)`, `results(access_id, access_revision)`, `membership(endpoint_id)`, `job_item(job_id, state)`, `observations(endpoint_id, checked_at DESC)` | Retention и выборки по §2 невыразимы без них | `db.py` |
+| **0** | `PRAGMA application_id`; `schema_migrations(version INTEGER PRIMARY KEY, applied_at REAL, app_version TEXT, backup_path TEXT)` | 0 | `db.py` |
+| **1** | `endpoints(id TEXT PRIMARY KEY, canonical TEXT UNIQUE NOT NULL, host TEXT, port INTEGER, scheme TEXT, ip_version INTEGER, country TEXT, country_source TEXT, country_at REAL, asn INTEGER, provider TEXT, hosting INTEGER, cidr TEXT, first_seen_at REAL, last_seen_at REAL)` | 1 | `db.py` + `geo.py` |
+| **2** | `collections(id TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL, archived_at REAL, created_at REAL)` и `membership(collection_id TEXT REFERENCES collections(id), endpoint_id TEXT REFERENCES endpoints(id), added_at REAL, origin TEXT NOT NULL, PRIMARY KEY(collection_id, endpoint_id))` | 2 | `db.py` |
+| **3** | `accesses(id TEXT PRIMARY KEY, endpoint_id TEXT NOT NULL REFERENCES endpoints(id), mode TEXT NOT NULL, secret_ref TEXT, access_revision INTEGER NOT NULL, created_at REAL, rotated_at REAL)` | 3 | `db.py` + `secrets.py` |
+| **4** | `observations(id TEXT PRIMARY KEY, job_id TEXT, endpoint_id TEXT NOT NULL REFERENCES endpoints(id), access_id TEXT NOT NULL REFERENCES accesses(id), access_revision INTEGER NOT NULL, profile_id TEXT NOT NULL, profile_revision INTEGER NOT NULL, started_at REAL, finished_at REAL, verdict TEXT NOT NULL, error_code TEXT, error_stage TEXT)` — таблица наблюдения из §2.1, а не колонка | 4 | `db.py` |
+| **5** | Колонки в `results`: `observation_id TEXT REFERENCES observations(id)`, `endpoint_id TEXT REFERENCES endpoints(id)`, `access_id TEXT`, `access_revision INTEGER`, `profile_id TEXT`, `profile_revision INTEGER`, `checked_at REAL`, `valid_until REAL`, `error_code TEXT`, `error_stage TEXT`, `job_id TEXT`. **`profile_revision` и `profile_id` объявляются здесь и нигде больше** | 5 | `db.py` |
+| **6** | `job(id TEXT PRIMARY KEY, kind TEXT, state TEXT, scope_json TEXT, input_digest TEXT, profile_id TEXT, profile_revision INTEGER, collection_id TEXT, idempotency_key TEXT, created_at REAL, started_at REAL, finished_at REAL)`, `job_item(job_id TEXT NOT NULL REFERENCES job(id), item_id TEXT NOT NULL, endpoint_id TEXT, access_id TEXT, access_revision INTEGER, state TEXT, observation_id TEXT, error_code TEXT, PRIMARY KEY(job_id, item_id))`, `job_event(job_id TEXT, seq INTEGER, at REAL, type TEXT, code TEXT, data_json TEXT, PRIMARY KEY(job_id, seq))`, `checkpoint(job_id TEXT, name TEXT, at REAL, state_json TEXT, PRIMARY KEY(job_id, name))` | 6 | `db.py` + `jobs.py` |
+| **7** | `pools(id TEXT PRIMARY KEY, collection_id TEXT, profile_id TEXT, profile_revision INTEGER, policy_json TEXT, desired INTEGER, minimum INTEGER, reserve INTEGER, state TEXT, deficit_reason TEXT, next_attempt_at REAL)`; `pool_member(pool_id TEXT, endpoint_id TEXT, state TEXT, admitted_at REAL, released_at REAL, PRIMARY KEY(pool_id, endpoint_id))`; `schedules(id TEXT PRIMARY KEY, pool_id TEXT, kind TEXT, interval_minutes REAL, window_json TEXT, timezone TEXT, quiet_hours_json TEXT, budgets_json TEXT, next_run_at REAL, enabled INTEGER)`; `schedule_run(id TEXT PRIMARY KEY, schedule_id TEXT, started_at REAL, finished_at REAL, state TEXT, counters_json TEXT)` | 7 | `db.py` + `pools.py`, `scheduler.py` |
+| **8** | `api_keys(id TEXT PRIMARY KEY, prefix TEXT NOT NULL, name TEXT, purpose TEXT, created_at REAL, expires_at REAL, last_used_at REAL, revoked_at REAL, permissions_json TEXT NOT NULL, resource_scope_json TEXT NOT NULL, rate_limit_json TEXT, concurrency_json TEXT, rotation_grace_until REAL, verifier TEXT NOT NULL, verifier_salt TEXT NOT NULL, verifier_algo TEXT NOT NULL)` | 8 | `db.py` + `apikeys.py` |
+| **9** | `profiles`: `name TEXT`, `revision INTEGER NOT NULL DEFAULT 1`, `parent_id TEXT`, `digest TEXT NOT NULL`, `created_at REAL`, `archived_at REAL`, `is_default INTEGER NOT NULL DEFAULT 0` | 9 | `db.py` + `profiles.py` |
+| **10** | `audit_log(at REAL NOT NULL, key_id TEXT, operation TEXT NOT NULL, object_kind TEXT, object_id TEXT, scope_json TEXT, result TEXT, error_code TEXT)` | 10 | `db.py` + `apikeys.py` |
+| **11** | `export_artifact(id TEXT PRIMARY KEY, kind TEXT NOT NULL, collection_id TEXT, profile_id TEXT, profile_revision INTEGER, generation TEXT, published_at REAL, expires_at REAL, state TEXT, reason_code TEXT, manifest_json TEXT)` | 11 | `db.py` + `exportsvc.py` |
+| **12** | `import_batch(id TEXT PRIMARY KEY, collection_id TEXT, created_at REAL, state TEXT, report_json TEXT, revision INTEGER)` | 12 | `db.py` + `importer.py` |
+| **13** | **Пересборка `results` с новым первичным ключом.** Копирование в `results_new` с `PRIMARY KEY(profile_id, profile_revision, access_id, access_revision, endpoint_id, job_id)`, перенос данных, `DROP TABLE results`, `RENAME`. Явное исключение из правила «только аддитивные» — SQLite не меняет `PRIMARY KEY` иначе; это единственное неаддитивное место во всём наборе | 13 | `db.py` |
+| **14** | Индексы, каждый — только по уже существующим колонкам: `results(profile_id, valid_until)`, `results(access_id, access_revision)`, `results(endpoint_id, checked_at DESC)`, `membership(endpoint_id)`, `observations(endpoint_id, checked_at DESC)`, `job_item(job_id, state)`, `endpoints(canonical)`, `api_keys(prefix)` | 14 | `db.py` |
+
+Три ошибки, которые были в первой редакции этого документа и теперь закрыты, — проверено воспроизведением на временной БД:
+
+- **(a) Порядок.** `membership` ссылается на `endpoints(id)`, поэтому `endpoints` идёт в миграции 1, а `membership` — в миграции 2. При `PRAGMA foreign_keys=ON` (требование §3.2) обратный порядок не создаётся.
+- **(b) Дубль `profile_revision`.** Миграция 5 добавляет `profile_id` и `profile_revision` в `results`; миграция 9 добавляет `revision` в `profiles` и больше ничего в `results` не трогает.
+- **(c) Несуществующие цели индексов.** `results(profile_id, valid_until)` теперь указывает на колонку, которую создаёт миграция 5; `observations(endpoint_id, checked_at DESC)` — на таблицу, которую создаёт миграция 4. До правки в пакете не было ни одной строки `observations` (`grep -rn "observations" proxy_workbench/*.py tests/*.py` — ноль совпадений), то есть индекс ссылался на несуществующую таблицу.
+
+**Почему пересборка ключа (миграция 13) обязательна, а не опциональна.** Правило §1.2 (1) — «смена `access_revision` отзывает прошлое доказательство» — невыполнимо одними `ADD COLUMN`. Воспроизведено на временной БД: таблица с `PRIMARY KEY(profile, proxy)` (`proxytool.py:562-564`) после добавления всех колонок миграции 5 сохраняет `PRIMARY KEY(profile, proxy))`; две вставки одного и того же `(profile, proxy)` с `access_revision` 1 и 2 дают **одну** строку (`rows after 2 access revisions: 1`, `max access_revision: 2`). То есть вторая вставка затирает первую, и разделить доказательства разных паролей физически нечем — это ровно тот отказ, который F04 запрещает («Новый пароль не наследует успешную проверку старого», MASTER-PROMPT:166). Ключ `(profile_id, profile_revision, access_id, access_revision, endpoint_id, job_id)` решает и это, и §6.3: «повторная проверка в новом job создаёт новый item, а не перезаписывает старый» — `job_id` входит в ключ, иначе это утверждение невыполнимо.
 
 Правила совместимости:
-- Миграции только аддитивные. Удаление колонки — отдельная миграция с явным `retention` предыдущего шага, а не «почистить заодно».
-- Миграция обязана быть безопасна при повторном запуске (открытие уже мигрированной базы не меняет ничего).
-- Ни одна миграция не имеет `user_version` ниже текущего: файл с меньшей версией, чем у кода, — это «старая база», и она обязана открываться и мигрироваться, а не отвергаться. Файл с **большей** версией — отказ: «база новее этой программы».
+- Миграции аддитивные, **кроме одной явно названной**: миграции 13. Она обязана быть идемпотентной (повторный запуск на уже пересобранной таблице — no-op) и обязана идти после backup'а из §3.2.
+- Миграция обязана быть безопасна при повторном запуске: открытие уже мигрированной базы не меняет ничего.
+- Файл с `user_version` ниже текущего — «старая база», она обязана открываться и мигрироваться. Файл с `user_version` выше `SCHEMA_VERSION` — отказ: «база новее этой программы».
 - `candidates`/`candidate_meta`/`candidate_seen`/`results`/`profiles` остаются единственными таблицами, к которым имеют право обращаться сбор, скан и экспорт. Всё остальное строится поверх них через `endpoints`/`membership`.
 
 ### 3.4 Что происходит со старыми базами
 
 | Ситуация | Поведение |
 | --- | --- |
-| БД без `user_version` (= 0), созданная текущим кодом | Открывается. Применяются миграции 1–12 по порядку. До первой миграции, меняющей данные, создаётся pre-migration backup + manifest. Legacy-кандидаты переносятся в коллекцию с честным происхождением: `origin='legacy'`, `kind='public'`, имя «Ранее собранные». Метка «свои» не выдумывается (F02, дефект 11) |
-| БД с `user_version` равным текущей | Открывается без изменений, миграции пропускаются |
-| БД с `user_version` выше текущей | Отказ с сообщением «база создана более новой версией программы»; **никаких записей**, включая `user_version` |
-| `application_id` не совпадает | Отказ: «это не база Proxy Workbench» |
+| БД без `user_version` (= 0), созданная текущим кодом | Открывается. Применяются миграции **0–14** по порядку, начиная с 0. До первой миграции, меняющей данные, создаётся pre-migration backup + manifest. Legacy-кандидаты переносятся в `endpoints` и в коллекцию с честным происхождением: `origin='legacy'`, `kind='public'`, имя «Ранее собранные». Метка «свои» не выдумывается (F02, дефект 11) |
+| БД с `user_version` равным `SCHEMA_VERSION` | Открывается без изменений, миграции пропускаются |
+| БД с `user_version` выше `SCHEMA_VERSION` | Отказ с сообщением «база создана более новой версией программы»; **никаких записей**, включая `user_version` |
+| `application_id` не равен ни 0, ни магическому числу | Отказ: «это не база Proxy Workbench» |
 | Файл повреждён или открыт в WAL без согласованного пути | Отказ, а не пересоздание. Пересоздание пустого файла на месте существующего запрещено |
 | Перенос `data/` при смене пути (frozen ↔ checkout ↔ per-user) | `paths.default_data` (`paths.py:12-28`) переключается между вариантами без переноса содержимого. **КОНТРАКТ:** `db.py` предоставляет `migrate_data_path(old, new) -> preview`, и перенос выполняется только после согласия пользователя и с backup старой папки |
 
@@ -257,18 +279,20 @@ results(profile TEXT NOT NULL, proxy TEXT NOT NULL, payload TEXT NOT NULL, PRIMA
 
 Требование F24: «Старый binary не пишет в новую schema». Механизмы, каждый из которых нужен, потому что сегодня не работает ни один:
 
-1. **Версия в файле.** Старый код не знает про `user_version` и не проверит его — поэтому защита строится на том, что **новый** код виден старому, а не наоборот. Единственный надёжный барьер, доступный обоим: сделать так, чтобы новая схема ломала старый код **немедленно и без записи в БД**. Практически: добавить в `results` колонку с `NOT NULL DEFAULT` так, чтобы позиционный `INSERT ... VALUES (?,?,?)` (старый код) перестал работать. Старый воркер упадёт на первой записи, а не допишет мусор. Проверяемый сценарий: открыть мигрированную базу старым путём вставки → `OperationalError`, база не изменена.
-2. **Явные списки колонок в новом коде** — чтобы новая схема не ломала **новый** код при будущих `ADD COLUMN` (сегодня ровно наоборот: `proxytool.py:1386, 1300`).
-3. **Проверка версии на чтении и на записи.** `open_db` обязан: при `user_version > SCHEMA_VERSION` — отказ; при `user_version == 0` и `application_id` задан — «это база, созданная до версионирования», мигрировать; при несовпадении `application_id` — отказ.
-4. **Отказ = без записи.** Проверка версии выполняется **до** любого `CREATE`/`ALTER`/`INSERT`, включая `INSERT OR IGNORE INTO profiles` (старый код пишет его в начале скана, `proxytool.py:1300`).
-5. **Rollback** — восстановление pre-migration backup в отдельный путь; не обещать lossless downgrade неизвестных полей (F24). Мигрированная БД сохраняется отдельно и не затирается.
+1. **Версия в файле.** Старый код не знает про `user_version` и не проверит его — поэтому защита строится на том, что **новая** схема ломает старый код **немедленно и без записи в БД**. Практически: после миграции 13 таблица `results` имеет 14 колонок, и позиционный `INSERT ... VALUES (?,?,?)` (старый код) перестаёт работать. Проверено на временной БД после пересборки: `OperationalError: table results has 11 columns but 3 values were supplied` (11 — число колонок на том шаге, где пересборка уже добавила `access_id`/`access_revision`; после полного набора миграций сообщение будет о 14 колонках, механизм тот же).
+2. **Тот же приём на пути сбора — обязателен.** Первая редакция этого раздела закрывала только `results` и `profiles`, и это была дыра: `collect.add` пишет позиционно и в `candidates` (`proxytool.py:655`, `INSERT OR IGNORE INTO candidates VALUES (?)`), и в `candidate_seen` (`proxytool.py:660`, `INSERT OR IGNORE INTO candidate_seen VALUES (?, ?)`). Проверено: при пересобранной `results` старый воркер на `results` падает, а на этих двух вставках **проходит** и оставляет строки — `candidates now: 1`, `candidate_seen now: 1`. Значит «старый бинарник пишет в новую схему» было верно на всём пути сбора.
+   **КОНТРАКТ:** миграция 5 добавляет в `candidates` и `candidate_seen` по одной `NOT NULL DEFAULT` колонке (`endpoint_id` — соответственно `id` и `endpoint_id`), что ломает обе позиционные вставки. `candidate_meta` сегодня пишется **явным списком колонок** (`proxytool.py:663-666`), поэтому старый бинарник там не ломается; это осознанно переносимое отличие: `candidate_meta` не входит в защищаемый путь, потому что его схема и так совместима и в него пишется только `country`/`source` — метаданные источника, а не доказательство пригодности. Проверяемый сценарий на все три таблицы: старый путь вставки в `results`, `candidates`, `candidate_seen` → `OperationalError` в каждом, база не изменена.
+3. **Явные списки колонок в новом коде** — чтобы новая схема не ломала **новый** код при будущих `ADD COLUMN` (сегодня ровно наоборот: `proxytool.py:655, 660, 1300, 1386`).
+4. **Проверка версии на чтении и на записи.** `open_db` обязан: при `user_version > SCHEMA_VERSION` — отказ; при `user_version == 0` и `application_id`, равном магическому числу, — «наша база до версионирования», мигрировать; при `application_id`, не равном ни 0, ни магическому числу, — отказ.
+5. **Отказ = без записи.** Проверка версии выполняется **до** любого `CREATE`/`ALTER`/`INSERT`, включая `INSERT OR IGNORE INTO profiles` в начале скана (`proxytool.py:1300`).
+6. **Rollback** — восстановление pre-migration backup в отдельный путь; не обещать lossless downgrade неизвестных полей (F24). Мигрированная БД сохраняется отдельно и не затирается.
 
 ### 3.6 Retention и очистка
 
 **СЕЙЧАС.** Единственная ретенция — экспортные поколения: `EXPORT_GENERATION_RETENTION = 3` (`proxytool.py:418`), `prune_export_generations` (`proxytool.py:443-461`), вызовы на `proxytool.py:1694` и `proxytool.py:1925`, с явной ошибкой при невозможности удалить (`proxytool.py:1695-1696`). Очистка данных — `clear_runtime` (`maintenance.py:72-87`), деструктивная, без preview и без отчёта о размере; CLI печатает список удалённого уже после удаления (`proxytool.py:2346`).
 
 **КОНТРАКТ.**
-- Retention для `observations` и `results` задаётся политикой ревизии профиля и выражается в SQL по колонкам `checked_at`/`valid_until` (миграция 4). Значения по умолчанию — стартовые, не «правильные», и видимы пользователю.
+- Retention для `observations` и `results` задаётся политикой ревизии профиля и выражается в SQL по колонкам `checked_at`/`valid_until` (миграции 4 и 5). Значения по умолчанию — стартовые, не «правильные», и видимы пользователю.
 - `clear_runtime` получает режим `preview` (что будет удалено, сколько байт) и `execute`. Разделение runtime/user-файлов сохраняется: `RUNTIME_FILES`/`RUNTIME_DIRS` (`maintenance.py:14-32`) не включают `gui-settings.json` и `denylist.txt`, и это не должно измениться.
 - `clear`/`remove` инвалидирует потребителей и кэши явно, а не по факту исчезновения файла. Сегодня инвалидация работает как следствие (`api.Exports._clear`, `api.py:105-110`; пустой пул в шлюзе — `gateway.py:352-354` NO_PROXIES, без скрытого DIRECT), и это поведение нужно сохранить, а не дублировать.
 - Секреты при очистке не затрагиваются, если они живут в отдельном vault. Если vault окажется в `data/` — он добавляется в `RUNTIME_FILES` явно, отдельной строкой, владельцем `secrets.py`.
@@ -359,7 +383,7 @@ speed{mbps,bytes,ms,state}, listed_in, source_keys, recommended, tags
 - Три вида артефакта, различаемых полем `kind`: `published` (активный пул), `selection` (выделенные строки), `diagnostic` (прерванная проверка).
 - `kind='selection'` и `kind='diagnostic'` **никогда** не пишут `current.json` и не трогают `last-profile.txt`.
 - Активный пул меняется **только** действием `publish`/`bind` — явным, с подтверждением, и только для `kind='published'`.
-- `export_artifact` (миграция 10) хранит, какой collection/profile/generation лежит в артефакте, чтобы скачивание всегда отдавало файл той выборки, которую видит пользователь.
+- `export_artifact` (миграция 11) хранит, какой collection/profile/generation лежит в артефакте, чтобы скачивание всегда отдавало файл той выборки, которую видит пользователь.
 - Выделение привязано к scope: смена фильтров, коллекции или generation сбрасывает выделение либо показывает явное предупреждение, что выделение относится к прежнему scope (F19).
 
 ### 4.6 Пустой, истёкший и неподдерживаемый набор
@@ -446,6 +470,9 @@ admin.settings       admin.keys           admin.audit
 
 Требования к кодам:
 - `E_*` стабильны и документированы; перевод существует отдельно от кода (F10, F25).
+- **Перевод обязателен и делается существующим механизмом.** `E_*`-коды, строки `permissions`, значения `state_detail` (§4.3) и `reason_code` переводятся через уже существующий `i18n.tr(ru, en)` (`proxy_workbench/i18n.py`, функция `tr` в конце файла) — не через новый словарь и не через жёстко зашитый русский текст. Код остаётся машинным, текст — локализуемым; в JSON/CLI/логе код печатается вместе с переводом, в GUI отображается перевод при наличии ключа и сам код как запасной вариант.
+- Связка `gui.CHILD_ENV` (`gui.py:76`, `PROXY_WORKBENCH_LANG='ru'`, используется при запуске воркера на `gui.py:501` и `gui.py:572`) — **часть контракта**, а не деталь реализации: GUI переводит лог воркера, поэтому воркер обязан писать по-русски. Это закреплено тестом `tests/test_i18n.py:27` (`assertEqual(gui.CHILD_ENV['PROXY_WORKBENCH_LANG'], 'ru')`). Изменение `CHILD_ENV` или `i18n.detect` без синхронного обновления теста ломает перевод интерфейса и запрещено.
+- Владелец `proxy_workbench/i18n.py` — исполнитель поверхности интерфейса (см. `HANDOFF/README.ru.md` §1.2). Он же владеет ключами `messages{}` внутри `ui/app.js`, которые **передаются через handoff**, потому что сам `app.js` принадлежит интегратору.
 - Сегодня коды измерения существуют только литералами в коде (`proxytool.py:1043` кладёт `type(exc).__name__`, то есть `ConnectError`, `ConnectTimeout`, `ReadTimeout`, `ProxyError`, `SSLError` сливаются в одно) и не описаны ни в одном документе. **ОТКРЫТО:** справочника кодов в репозитории нет.
 - Каждая полезная ошибка содержит действие, а не только класс исключения (F25).
 
@@ -470,15 +497,22 @@ admin.settings       admin.keys           admin.audit
 ### 5.6 События
 
 - Structured events, а не разбор агрегированного лога (дефект 25, R17). Сегодня `update_progress` (`proxytool.py:2400-2403`) атомарно **перезаписывает** один агрегированный `gui-progress.json`, а живая лента в UI парсит `value.log` регуляркой `/\b(OK|PASS|SUCCESS|FAIL|ERR|ERROR)\b/i` (`ui/app.js`, контейнер `#live-ticker-list`; на момент написания — строка 2981).
-- Поток: `GET /v1/events?job_id=…&cursor=…` → `text/event-stream`. События: `job.state`, `job.progress`, `item.observation`, `item.verdict`, `generation.published`, `pool.state`, `quota.state`.
-- Формат события: `{"seq": int, "at": unix_seconds, "type": str, "job_id": str|None, "item_id": str|None, "code": str, "data": {...}}`.
-- `seq` монотонен в пределах потока и используется как курсор. Событие содержит `code` из §5.4, а не текст исключения.
+- Поток: `GET /v1/events?stream=…&cursor=…` → `text/event-stream`. События: `job.state`, `job.progress`, `item.observation`, `item.verdict`, `generation.published`, `pool.state`, `quota.state`.
+- Формат события: `{"stream": str, "seq": int, "at": unix_seconds, "type": str, "job_id": str|None, "item_id": str|None, "code": str, "data": {...}}`. `code` берётся из §5.4, а не из текста исключения.
 - Событие по измерению — одно на item, а не сводка: строка «Проверено 512/1000» (печатается в `proxytool.py:1485`) событием измерения **не является**.
 - Персональные данные и секретов в событиях нет; `access_id` передаётся без значения credentials.
+- Перевод: `code` переводится по правилам §5.4 через `i18n.tr(ru, en)`.
 
-### 5.7 Курсоры и пагинация
+### 5.7 Курсоры и пагинация — одна схема
 
-- Курсор — непрозрачная строка, кодирующая `(generation, sort, filter_digest, offset)`. Клиент не может изменить `filter_digest` и выйти за пределы выданного scope: несовпадение → `E_VALIDATION_FIELD`.
+В первой редакции этого документа были две несовместимые схемы (§5.6 «`seq` монотонен в пределах потока» и §5.7 «курсор = `(generation, sort, filter_digest, offset)`»), и обе попали в контракт как есть. При параллельных job и именованных пулах это неработоспособно: `seq` разных потоков пересекаются, а курсор пагинации не имеет смысла в потоке событий. Решение — **одна схема курсора для обоих случаев: `(stream_id, seq)`**.
+
+- `stream_id` — строка, однозначно называющая поток: `job:<job_id>`, `pool:<pool_id>`, `generation`, `system`. Поток всегда адресуем и всегда существует до первого события.
+- `seq` — целое, строго монотонное **в пределах одного `stream_id`**, без пропусков и повторов, начиная с 1. Именно это гарантирует `job_event` из миграции 6 с `PRIMARY KEY(job_id, seq)`.
+- Курсор в обоих случаях — одна и та же непрозрачная строка, кодирующая `(stream_id, seq)`. Никакого `offset` и никакого `filter_digest` в курсоре событий.
+- **Правило resume:** клиент передаёт последний полученный курсор; сервер отдаёт все события с `seq > cursor` в этом `stream_id` в порядке возрастания. Если курсор старше минимального хранимого `seq` потока (события вытеснены ограниченной историей) — ответ `E_CONFLICT_REVISION` с указанием, что клиент обязан перечитать состояние ресурса, а не молча получить дыру в потоке. Продолжение подписки по этому правилу — то, что F29 требует от «активных SSE/stream sessions корректно завершаются или перепроверяют срок по documented policy» (§5.2).
+- Глобальный порядок между потоками **не гарантируется и не должен выглядеть гарантированным**: `job:A/17` и `pool:B/3` несравнимы. Если потребуется сквозной порядок для отчётности, он реализуется отдельным `system`-потоком с тем же курсором, а не сравнением `seq` разных потоков.
+- Для пагинации выдачи (`/v1/proxies`, `/v1/results`) курсор — тот же `(stream_id, seq)`, где `stream_id = generation:<generation>`, а `seq` — **сквозной номер строки в этой generation в порядке сортировки**. Смена `generation`, сортировки или фильтра меняет `stream_id` или `seq`, поэтому старый курсор либо отвергается с `E_VALIDATION_FIELD`, либо однозначно означает другую выдачу. Клиент не может изменить фильтр и остаться в том же курсоре.
 - `limit` ограничен сверху. Сегодня `MAX_LIMIT = 1_000_000` (`api.py:31`) и `/proxies` сериализует весь массив за один запрос (`api.py:345`) — это запрещено («API отзывчиво во время scan», приёмка F29 №8).
 - Сортировка — из закрытого списка (`EXPORT_ORDERS` уже существует в `proxytool.py`; в API и GUI наборы различаются, что само по себе нарушает «один scope — один состав»).
 - `max_age` — фильтр по возрасту, выраженный в секундах (§2), а не только по `valid_until` поколения.
@@ -558,7 +592,7 @@ pending → prefiltered → probing → done
 - `unreachable` и `blocked` **не** обновляют `reputation` на `listed`. Сегодня при недоступности прежние сведения о чистоте теряются целиком (замена payload), что неверно ни в одну сторону: адрес не становится «listed», но и прежнее знание не должно бесследно исчезать.
 - `blocked` до измерения требует, чтобы denylist применялся **до** prefilter (дефект 19) — иначе заблокированный адрес успевает получить сетевое соединение.
 - `done` означает «есть наблюдение с явным временем», а не «свежо»: свежесть — отдельная ось (§2.3).
-- Item идентифицируется парой `(job_id, endpoint_id, access_id, profile_revision)`; повторная проверка в новом job создаёт новый item, а не перезаписывает старый.
+- Item идентифицируется ключом `(job_id, item_id)` — это `PRIMARY KEY(job_item)` из миграции 6, — и несёт `endpoint_id`, `access_id`, `access_revision`, `profile_revision`. Повторная проверка в новом job создаёт **новый** item, а не перезаписывает старый. Это утверждение невыполнимо без `job_id` в ключе строки результата, поэтому `job_id` входит и в `PRIMARY KEY` пересобранной `results` (миграция 13) — иначе старое измерение и новое для того же `(profile, access, endpoint)` схлопнулись бы в одно, как это воспроизведено в §3.3.
 
 ### 6.4 Идемпотентность и параллелизм
 
@@ -568,30 +602,119 @@ pending → prefiltered → probing → done
 
 ---
 
-## 7. Как контракты соотносятся с требованиями
+## 7. Таблица трассировки (MASTER-PROMPT §2)
 
-| Требование | Контракт | Разрыв, который закрывает |
+Семь колонок, как требует MASTER-PROMPT:98: **требование → current state → владелец → зависимости → implementation → проверка → статус**. Статусы: `todo`, `in_progress`, `implemented_unverified`, `verified`, `external_blocker`, `not_applicable_with_evidence`. «Отложили» не означает `verified`.
+
+Владельцы в колонке «владелец» — имена модулей и поверхностей из `HANDOFF/README.ru.md` §1–§3. `интегратор` = `proxytool.py` + `api.py` + `gui.py` + `ui/*`. Проверка в колонке «проверка» — либо команда, либо `не выполнено`; выполненной считается только реально запущенная в этой сессии.
+
+### 7.1 Функциональные направления F01–F29
+
+| Требование | Current state | Владелец | Зависимости | Implementation | Проверка | Статус |
+| --- | --- | --- | --- | --- | --- | --- |
+| F01 Режимы проверки | Частично: collect-only, TCP-prefilter, targets, recheck есть; отдельного basic без URL нет | `probes.py` | §2, §5.5 | `probes.py` | не выполнено | todo |
+| F02 Коллекции и scope | Нет сущности; `candidates` без scope | `db.py` + `importer.py` | §3.3 (1,2) | миграции 1–2, `membership` | не выполнено | todo |
+| F03 Импорт | Вход файлом есть; preview/merge/replace/отчёт отсутствуют | `importer.py` | §4.5, миграция 12 | `importer.py` | не выполнено | todo |
+| F04 hostname/auth-прокси | Fail-closed: userinfo отвергается (`proxytool.py:319`); поддержки нет | `secrets.py` | §1.2(1), миграции 3, 13 | `secrets.py`, `access.py` | не выполнено | todo |
+| F05 Профили и правила целей | Единственное правило «all» (`reputation.py:296-307`); имён и ревизий нет | `profiles.py` | §1.1, миграция 9 | `profiles.py` | не выполнено | todo |
+| F06 Каталог сервисов | 9 presets в `ui/app.js` (`TARGET_PRESETS`); манифеста нет | `servicecatalog.py` | §5.4 (перевод) | `servicecatalog.py` | не выполнено | todo |
+| F07 Расширенные параметры | Есть connect/timeout/attempts/max_bytes/statuses/contains/sha256 | `probes.py` | §5.5 | `probes.py` | не выполнено | todo |
+| F08 География | picker сохранён; unknown-policy, exit-фильтра, даты знания нет | `geo.py` | §4.4, миграция 1 | `geo.py` | `.venv/bin/python -m unittest tests.test_geo_want` — запуск в этой сессии не выполнялся | implemented_unverified |
+| F09 Freshness | TTL только в файле поколения, не в БД (`proxytool.py:1110-1112`) | `core.py` | §2 целиком, миграция 5 | `core.py` | не выполнено | todo |
+| F10 Диагностика | Агрегат есть; стадий и кодов нет | `diagnostics.py` | §5.4 | `diagnostics.py` | не выполнено | todo |
+| F11 Задания | Один job в памяти GUI; состояний нет | `jobs.py` | §6, миграция 6 | `jobs.py` | не выполнено | todo |
+| F12 Конвейер | Bounded queue и find-N есть (`proxytool.py:1371-1372`) | `pipeline.py` | §2.3 | `pipeline.py` | не выполнено | todo |
+| F13 Источники | Ветка `sources-catalog` вне интеграционной | `sourcedesk.py` | внешний handoff | `sourcedesk.py` | не выполнено | external_blocker |
+| F14 Постоянный пул | Не существует; watch только уменьшает (`proxytool.py:2506`) | `pools.py` | §1.2(5), миграция 7 | `pools.py` | не выполнено | todo |
+| F15 Расписания | Единственный `--watch` | `scheduler.py` | миграция 7 | `scheduler.py` | не выполнено | todo |
+| F16 Gateway | Ротация, sticky, cooldown есть (`gateway.py:85-184`) | поверхность `gateway` | §1.2(3,5) | `gateway.py` | не выполнено | implemented_unverified |
+| F17 Путь подключения | Страницы и QR переиспользованы; LAN по умолчанию `0.0.0.0` (`gui.py:1089`) | поверхность `web` + `gateway` | §5.1 | `gui.py`, `ui/*` | не выполнено | todo |
+| F18 Единое управление | GUI и CLI сходятся в одном валидаторе; API read-only | интегратор | §2.3, §5.4, §5.5 | `api.py`, `proxytool.py` | не выполнено | todo |
+| F19 Список результатов | Строка/bulk controls сохранены; scope all-matching нет | отдельный исполнитель `ui-views` (см. HANDOFF §1.4) | §4.5 | `ui/views/*` | не выполнено | todo |
+| F20 Дополнительные измерения | Bandwidth есть, окно измерения неверно | `probes.py` | §5.5 | `probes.py` | не выполнено | todo |
+| F21 Сравнение источников | `source_quality` = два целых числа (`proxytool.py:1742-1744`) | `sourcedesk.py` | миграция 7 (пулы/квоты) | `sourcedesk.py` | не выполнено | todo |
+| F22 Фоновая работа | Bounded termination есть (`gui.py:902-921`); tray, sleep/wake нет | `desktop.py` | — | `desktop.py` | не выполнено | todo |
+| F23 Поставка | Windows `.exe` в CI; macOS — только wheel | `desktop.py` | §3.4 (перенос data path) | `desktop.py`, `packaging/` | не выполнено | todo |
+| F24 Данные, backup, restore | `user_version = 0`; backup API нет; retention нет | `db.py` | §3 целиком | `db.py` | воспроизведено в этой сессии на временной БД (см. §3.1) | todo |
+| F25 Помощь и диагностика | `diagnostic.json` есть; справочника кодов нет | `diagnostics.py` | §5.4 | `diagnostics.py` | не выполнено | todo |
+| F26 OSS/доступность | `i18n.tr` и `CHILD_ENV` есть (`gui.py:76`); accessibility-пробелы | поверхность `web` (i18n) + `desktop.py` (документация) | §5.4 | `i18n.py`, `docs/` | `.venv/bin/python -m unittest tests.test_i18n` — запуск в этой сессии не выполнялся | implemented_unverified |
+| F27 URL-подписки | Пользовательские URL есть; коллекций, delta, expiry нет | `sourcedesk.py` | §3.3 (1,2) | `sourcedesk.py` | не выполнено | todo |
+| F28 Экспорты и snapshots | Поколения иммутабельны, fail-closed есть | `exportsvc.py` | §4 целиком | `exportsvc.py` | не выполнено | implemented_unverified |
+| F29 API и ключи | Read-only API + один токен; менеджера ключей нет | `apikeys.py` + `apiv1.py` | §5 целиком | `apikeys.py`, `apiv1.py` | не выполнено | todo |
+
+### 7.2 Дефекты 1–26
+
+| # | Current state | Владелец | Прямое следствие |
+| --- | --- | --- | --- |
+| 1 | TTL не пишется в БД (`proxytool.py:1380-1391`) | интегратор + `core.py` | Приёмка §7.7 не выполняется |
+| 2 | `done` опирается на `row_fresh` без TTL (`proxytool.py:1335-1340`) | интегратор + `core.py` | То же |
+| 3 | Статус обнуляет построчный список (`api.py:181-182`) | интегратор | Один истёкший убивает пул |
+| 4 | Будущий `checked_at` принимается (`proxytool.py:1092-1094`) | `core.py` | Фиктивная свежесть на 2–26 ч |
+| 5 | read-путь берёт writer-lock (`gui.py:363-367`) | поверхность `web` | Таблица и скачивание заблокированы |
+| 6 | Отмена сохраняет payload, но состояний нет | `jobs.py` | Crash recovery невозможен |
+| 7 | Экспорт выделенного публикует `current.json` | интегратор + `exportsvc.py` | Активный пул переключается |
+| 8 | Потребители следуют за глобальным указателем | интегратор + `gateway` | Проверка B перенаправляет A |
+| 9 | GUI откатывается к SQLite при битом указателе (`gui.py:626-653`) | поверхность `web` | GUI показывает то, чего не признаёт API |
+| 10 | Форма принимает hostname/private, сборщик отвергает | `importer.py` + интегратор | Записи теряются молча |
+| 11 | Коллекций нет | `db.py` | Свой список не изолирован |
+| 12 | Watch не передаёт `want` (`proxytool.py:2500-2511`) | интегратор + `pools.py` | Пул монотонно убывает |
+| 13 | `classify` не валидирует judge до elite; anonymity молча сбрасывается в any | `anonymity.py` → назначен в HANDOFF §1.2 | Ложный elite |
+| 14 | IPv6 reverse неверен; любой `127.*` = listed | `reputation.py` → назначен в HANDOFF §1.2 | Ложное «чисто» и ложный «listed» |
+| 15 | Окно скорости начинается с первого chunk | `probes.py` | Завышение Mbps в ~9 раз на loopback |
+| 16 | Резерв слота после `await` (`gateway.py:336-354`) | поверхность `gateway` | Превышение `max_per_proxy` |
+| 17 | Health = TCP-open (`gateway.py:350`) | поверхность `gateway` | Мёртвый прокси не отдыхает |
+| 18 | Один секрет на API/шлюз/GUI; LAN по умолчанию | интегратор + поверхность `gateway` | Управляющий секрет в QR |
+| 19 | Denylist не применяется в шлюзе | поверхность `gateway` | Отзыв не работает |
+| 20 | `singbox` не валидируется целевой версией | `exportsvc.py` | R14 открыт |
+| 21 | `pipeTo` + `close()` дважды; picker после `await` | поверхность `web` | Успех выглядит как сбой |
+| 22 | URL каталога; prune необратим | `sourcedesk.py` | R16 п.1, п.4 |
+| 23 | Quick test без общего deadline | интегратор + поверхность `web` | Один клик на десятки минут |
+| 24 | Сценарии не сбрасывают поля предыдущего | поверхность `web` | Elite-сценарий мерит YouTube |
+| 25 | Лента парсит агрегированный лог | поверхность `web` + `jobs.py` | Нет событий измерений |
+| 26 | Нет macOS-поставки; release notes пусты | `desktop.py` | R19, R20 |
+
+### 7.3 Замечания REVIEW R01–R20
+
+| # | Current state | Владелец | Связан с |
+| --- | --- | --- | --- |
+| R01 | TTL не проходит scanner → БД → выдача | интегратор + `core.py` | дефект 1 |
+| R02 | Первый истёкший опустошает snapshot | интегратор | дефект 3 |
+| R03 | Таблица и скачивание заблокированы | поверхность `web` | дефект 5 |
+| R04 | Экспорт выделенного меняет пул | интегратор + `exportsvc.py` | дефект 7 |
+| R05 | GUI обходит отказ reader'а | поверхность `web` | дефект 9 |
+| R06 | Hostname принимается формой, отбрасывается сборщиком | `importer.py` | дефект 10 |
+| R07 | Watch только уменьшает пул | `pools.py` | дефект 12 |
+| R08 | Анонимность может быть ложной | `anonymity.py` | дефект 13 |
+| R09 | IPv6 DNSBL и коды | `reputation.py` | дефект 14 |
+| R10 | Измерение Mbps прежнее | `probes.py` | дефект 15 |
+| R11 | Reservation и handshake deadline | поверхность `gateway` | дефект 16 |
+| R12 | LAN по умолчанию, общий секрет | интегратор + `gateway` | дефект 18 |
+| R13 | Denylist не отзывает выданный пул | поверхность `gateway` | дефект 19 |
+| R14 | Fail-closed sing-box без versioned validation | `exportsvc.py` | дефект 20 |
+| R15 | Скачивание в Chromium | поверхность `web` | дефект 21 |
+| R16 | Источники в main улучшены частично | `sourcedesk.py` | дефект 22 |
+| R17 | Presets и «живая лента» сильнее backend | поверхность `web` + `jobs.py` | дефекты 24, 25 |
+| R18 | Quick test диагностический, не обновление | интегратор + `web` | дефект 23 |
+| R19 | Desktop-цель не закрыта | `desktop.py` | дефект 26 |
+| R20 | Инженерная приёмка и документация отстают | `desktop.py` + интегратор | полный набор, §8.4 |
+
+### 7.4 Четыре независимых ревьюера
+
+Ревью выполняется по зафиксированному diff; **автор своего участка не является единственным и не является принимающим по умолчанию**. Четыре слота обязательны и не могут быть заняты авторами соответствующих модулей:
+
+| Слот | Зона | Что обязан отвергнуть |
 | --- | --- | --- |
-| F02, дефект 11 | §1.2 (2), §3.3 миграции 1–2 | Коллекции и membership; legacy → «Ранее собранные» с `origin='legacy'` |
-| F03 | §4.5, §3.3 миграция 11 | Preview/commit/merge-replace по коллекции; артефакт импорта |
-| F04 | §1.2 (1), §5.1 | `access_id` + `access_revision`; четыре разные identity; секрет только как ссылка |
-| F05 | §1.1 (Profile), §3.3 миграция 8 | Именованные профили, ревизии, история версий |
-| F07, F18 | §5.5 | Единицы, лимиты, одна валидация на три интерфейса |
-| F08 | §4.4 (`country_source`, `country_at`, `cidr`) | Происхождение и дата знания, явный unknown |
-| F09, дефекты 1–4 | §2 целиком | TTL в БД, построчный отбор, явные состояния времени, разделение `empty`/`stale` |
-| F10, F25 | §5.4 | Канон кодов ошибок с действием |
-| F11, дефект 6 | §6 целиком | Persisted job/item, идемпотентность, checkpoints |
-| F14, дефект 12 | §1.2 (5), §4.3 (`desired`, `deficit_reasons`, `next_attempt_at`) | Постоянный пул и watch/refill, который восстанавливает пул |
-| F16, дефект 8 | §1.2 (3), §1.2 (5) | Фиксация generation/pool/profile у потребителей |
-| F18 | §2.3, §5.4, §5.5 | Один service layer, общие коды и единицы |
-| F24 | §3 целиком | Версия схемы, backup, manifest, retention, гейт для старого бинарника |
-| F28, дефекты 7, 20 | §4 целиком | Артефакты вместо одного публикующего пути, fail-closed, совместимость |
-| F29 | §5 целиком | Ключи, права, scope, ошибки, события, курсоры |
+| Данные, миграции, согласованность | §3 целиком, §4.1–4.3 | Расхождение между тем, что схема объявляет, и тем, что делает; миграция, которая не идемпотентна; «старый бинарник пишет» |
+| Доступ, секреты, границы | §5.1–5.3, §1.2 | Ключ A, получающий данные ключа B; секрет в БД/логах/argv/JSON; молчаливое расширение прав |
+| Пользовательские сценарии и платформы | §4.4–4.5, §6 | Обещание шире проверки; потерянное наблюдение; обход freshness «избранным» |
+| Производительность, интеграция, полнота объёма | §2.3, §5.7, §7 | API, блокирующийся на время скана; растущий курсор; незакрытое требование, помеченное «почти готово» |
+
+Пока эти четыре слота не отработали, ни один результат не переходит в `verified`: максимум `implemented_unverified`.
 
 ## 8. Открытые вопросы и внешние зависимости
 
 1. **Источники.** Ветка `sources-catalog` в `/Users/main/Desktop/111/proxy-workbench-sources` не входит в `integration/ultra-2026-09-25` (`ls proxy_workbench/source_*.py` — пусто, `proxytool.py` не содержит ни `source_observation`, ни `source_scan_stat`). Приёмка её работы — **внешняя зависимость** (F13, MASTER-PROMPT §6 «Этап I»). Всё, что от неё не зависит, делается здесь: коллекции, импорт, provenance-схема. `proxy-workbench-sources` не редактируется.
-2. **`access_revision` не существует.** Приёмка F09 «новая версия доступа одинаково влияет на GUI/API/gateway/new connection» невыполнима до появления модели доступа. Это следствие §5.1, а не отдельный блокер.
+2. **`access_revision` не существует — и это не внешняя зависимость, а просроченный внутренний контракт.** Сущности нет ни в коде, ни в схеме: `grep -rn "access_revision" proxy_workbench/` даёт ноль совпадений. Пока её нет, не закрываются не только F04 и приёмка F09 («новая версия доступа одинаково влияет на GUI/API/gateway/new connection»), но и **два пункта полной сквозной приёмки MASTER-PROMPT §7**: собственный hostname проходит весь путь, и **смена пароля отзывает старое доказательство** (F04, MASTER-PROMPT:166). Причина в том, что сегодня ключ строки — `(profile, proxy)` (`proxytool.py:562-564`), и он физически не различает два пароля одного адреса; воспроизведено в §3.3: две ревизии доступа схлопываются в одну строку. **Владелец: `secrets.py` совместно с `db.py`** (миграции 3 и 13). **Срок: до интеграции.** Если к моменту интеграции `access_revision` не появится, это фиксируется как `external_blocker` с этой формулировкой, а не как «почти готово».
 3. **Репозиторий тестов сейчас фиксирует часть дефектного поведения.** `tests/test_freshness.py:87-99` (`test_resume_rechecks_unreachable_and_expired_rows`) вручную дописывает `valid_until = 1` в строку, полученную от реального `scan()`, — такой тест проходит и при текущем неверном поведении, и не поймал бы отсутствие TTL при записи. `tests/test_selection.py:275` закрепляет переключение активного пула при экспорте выделенного. `tests/test_anonymity.py:206-210` (`test_min_anonymity_is_ignored_without_judge`) закрепляет молчаливый сброс требования anonymity как правильное поведение. При смене контракта эти тесты должны быть переписаны **под правильное поведение**, а не удалены. Переписывание — работа владельца теста, не «помощь» со стороны.
-4. **Замечание к AGENTS.md.** В `AGENTS.md` есть требование не запускать тесты без запроса пользователя. MASTER-PROMPT §0 явно разрешает локальные unit/integration/browser-тесты на временных данных и моках. При расхождении считать действующим MASTER-PROMPT; в любом случае полный `discover -s tests` выполняет интегратор.
+4. **Замечание к AGENTS.md.** В `AGENTS.md` есть требование не запускать тесты без запроса пользователя. MASTER-PROMPT §0 явно разрешает локальные unit/integration/browser-тесты на временных данных и моках. При расхождении считать действующим MASTER-PROMPT. Кто именно выполняет полный набор — см. `HANDOFF/README.ru.md` §5: в исполняемом workflow он запускается **трижды безусловно** и **дважды условно**, а не «один раз интегратором».
 5. **Версия контракта.** Это документ версии 1. Любое изменение идентичностей, схемы, состояний или кодов, которое ломает уже написанные модули, требует бампа версии здесь и уведомления потребителей в `HANDOFF/` до интеграции — иначе параллельная работа разойдётся по двум разным схемам.
