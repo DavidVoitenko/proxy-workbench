@@ -672,6 +672,134 @@ class ControlApiTests(AcceptanceCase):
         self.assertNotIn(issued.secret, body)
         self.assertNotIn(CANARY, body)
 
+    def test_one_bootstrap_key_finishes_the_whole_journey_without_the_gui(self):
+        """bootstrap -> scoped key -> import -> check -> status -> read -> export -> revoke.
+
+        The route that used to answer 409 and send the caller to the GUI made
+        every one of these steps a dead end for a user who only has a key, so
+        the whole journey is asserted here end to end over a real socket.
+        """
+        issued = self.manager.create(
+            actor=self.admin, name='journey',
+            permissions=('read.status', 'read.results', 'read.export.artifact',
+                         'import.read', 'import.commit', 'jobs.read', 'jobs.submit',
+                         'collections.read', 'collections.write', 'export.create'))
+        journey = issued.secret
+
+        collection = self.call('POST', '/v1/collections', key=journey,
+                               body={'name': 'маршрут', 'kind': 'own'},
+                               headers={'Idempotency-Key': 'journey-collection'})
+        self.assertIn(collection.status_code, (200, 201), collection.body)
+        own = collection.json()['id']
+
+        imported = self.call('POST', f'/v1/collections/{own}/imports', key=journey,
+                             body={'format': 'uri', 'content': 'http://91.198.174.192:8080\n'},
+                             headers={'Idempotency-Key': 'journey-import'})
+        self.assertEqual(imported.status_code, 202, imported.body)
+        self.assertEqual(imported.json()['counts']['added'], 1)
+
+        started = self.call('POST', '/v1/checks/check', key=journey,
+                            body={'collection_id': own, 'max_seconds': 30},
+                            headers={'Idempotency-Key': 'journey-check'})
+        self.assertIn(started.status_code, (200, 202), started.body)
+        job = started.json()['job_id']
+        self.assertTrue(job, started.body)
+        status = self.call('GET', f'/v1/jobs/{job}', key=journey)
+        self.assertEqual(status.status_code, 200, status.body)
+        self.assertEqual(status.json()['collection_id'], own)
+
+        read = self.call('GET', '/v1/results', key=journey)
+        self.assertEqual(read.status_code, 200, read.body)
+
+        exported = self.call('POST', '/v1/exports', key=journey,
+                             body={'kind': 'published', 'format': 'txt'},
+                             headers={'Idempotency-Key': 'journey-export'})
+        self.assertIn(exported.status_code, (200, 202), exported.body)
+        answer = exported.json()
+        self.assertEqual(answer['state'], 'complete', exported.body)
+        self.assertEqual(answer['exported'], 1, exported.body)
+        self.assertTrue(answer['expires_at'], 'the set has a lifetime of its own')
+
+        artifact = self.call('GET', f"/v1/exports/{answer['artifact_id']}", key=journey)
+        self.assertEqual(artifact.status_code, 200, artifact.body)
+        self.assertEqual(artifact.json()['item']['kind'], 'published')
+
+        downloaded = self.call('GET', f"/v1/exports/{answer['artifact_id']}"
+                                     f"/download/{answer['file']}", key=journey)
+        self.assertEqual(downloaded.status_code, 200, downloaded.body)
+        self.assertIn(b'11.11.11.1', downloaded.body)
+
+        self.manager.revoke(self.key_id('journey'), actor=self.admin)
+        self.assertIn(self.call('GET', '/v1/results', key=journey).status_code, (401, 403))
+
+    def test_a_selection_export_over_the_api_does_not_move_the_active_pool(self):
+        """Defect 7 over the route a client actually calls.
+
+        The engine was already refusing to publish a selection; this asserts the
+        pointer stays on the published generation after the route answered, and
+        that a name outside the artifact is a refusal rather than a file read.
+        """
+        from proxy_workbench import exportsvc
+
+        permitted = self.manager.create(actor=self.admin, name='slice',
+                                        permissions=('export.create', 'read.export.artifact'))
+        pointer = exportsvc.read_pointer(self.home / 'exports')
+        self.assertTrue(pointer.generation, 'the setUp published a generation')
+
+        sliced = self.call('POST', '/v1/exports', key=permitted.secret,
+                           body={'kind': 'selection', 'endpoint_ids': 'http://11.11.11.1:80'},
+                           headers={'Idempotency-Key': 'journey-selection'})
+        self.assertIn(sliced.status_code, (200, 202), sliced.body)
+        self.assertEqual(sliced.json()['kind'], 'selection', sliced.body)
+        after = exportsvc.read_pointer(self.home / 'exports')
+        self.assertEqual(after.generation, pointer.generation,
+                         'a selection never repoints the active pool')
+        rows, _status = api.Exports(self.home / 'exports').load()
+        self.assertTrue(any(row['proxy'] == 'http://11.11.11.1:80' for row in rows),
+                        'the active pool still serves the published set')
+
+        stranger = self.call('GET', f"/v1/exports/{sliced.json()['artifact_id']}"
+                                    '/download/../current.json', key=permitted.secret)
+        self.assertEqual(stranger.status_code, 404, stranger.body)
+
+    def test_expired_and_unknown_rows_are_reachable_by_name(self):
+        """A mixed-age set stays mixed instead of becoming "nothing here".
+
+        ``/v1`` declares ``include_stale`` and ``include_unknown``; reading an
+        undeclared ``freshness`` parameter meant both flags were ignored and a
+        row that expired after publication could never be asked for.  The set
+        itself stays alive because a newer member's lifetime is the set's
+        lifetime (CONTRACTS §2.2, defect 3) -- that is what makes a mixed-age
+        answer possible at all.
+        """
+        short = 'http://11.11.11.2:80'
+        keeper = self.address('http://11.11.11.3:80')
+        # Measured now, but with a lifetime of a second and a half: the export
+        # admits it, and it is genuinely expired by the time the reader asks.
+        row = measured_row(short, checked_at=self.now)
+        add_candidate(self.db, (short,))
+        store_result(self.db, (PROFILE, short, json.dumps(row)), valid_until=self.now + 1.5)
+        self.db.commit()
+        self.export()
+        time.sleep(2.0)
+
+        permitted = self.manager.create(actor=self.admin, name='aged',
+                                        permissions=('read.results',))
+        fresh_only = self.call('GET', '/v1/results', key=permitted.secret).json()['items']
+        with_stale = self.call('GET', '/v1/results', key=permitted.secret,
+                               query='include_stale=1').json()['items']
+        self.assertNotIn(short, [item['proxy'] for item in fresh_only],
+                         'an expired row is not served as fresh')
+        self.assertIn(keeper, [item['proxy'] for item in fresh_only],
+                      'the set stays alive because of its newest member')
+        self.assertIn(short, [item['proxy'] for item in with_stale],
+                      'asking for stale rows returns them, labelled as such')
+        expired = next(item for item in with_stale if item['proxy'] == short)
+        self.assertEqual(expired['freshness'], 'expired')
+        self.assertEqual(expired['time_state'], 'E_TIME_TTL_EXPIRED')
+        self.assertIs(expired['ttl_backfilled'], False)
+        self.assertEqual(expired['max_age_seconds'], p.MIN_FRESHNESS_SECONDS)
+
 
 # ---------------------------------------------------------------------------
 # 16-18. The management surface: every module has a way in
