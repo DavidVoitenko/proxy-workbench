@@ -1,0 +1,10 @@
+{
+  "new-066": {
+    "row_fragment": true,
+    "columns": {
+      "ip": 0,
+      "port": 1,
+      "protocol": 2
+    }
+  }
+}

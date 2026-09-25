@@ -29,6 +29,8 @@ from .reputation import Denylist, normalize_zones, result_allowed
 from . import anonymity
 from . import api
 from . import gateway
+from . import source_catalog
+from . import source_management
 from .i18n import tr, utf8_output
 from . import paths
 from . import geoip
@@ -77,10 +79,59 @@ def public_sources(values):
     return [public_source(value) for value in values] if isinstance(values, list) else []
 
 
+def _source_id_flag(payload, flag):
+    """A catalog source id plus one explicit boolean from the request body."""
+    payload = payload if isinstance(payload, dict) else {}
+    source_id = payload.get('id')
+    if not isinstance(source_id, str) or not source_id or len(source_id) > 64:
+        raise ValueError('Некорректный ID источника.')
+    value = payload.get(flag)
+    if not isinstance(value, bool):
+        raise ValueError('Требуется явный параметр: ' + flag + '.')
+    return source_id, value
+
+
+def _source_id(payload):
+    payload = payload if isinstance(payload, dict) else {}
+    source_id = payload.get('id')
+    if not isinstance(source_id, str) or not source_id or len(source_id) > 64:
+        raise ValueError('Некорректный ID источника.')
+    return source_id
+
+
+def _known_source(catalog, settings, source_id):
+    if source_catalog.source_by_id(catalog, source_id) is not None:
+        return True
+    selection = settings.get('source_selection') or {}
+    if any(item.get('id') == source_id
+           for item in selection.get('custom_sources', []) if isinstance(item, dict)):
+        return True
+    # A source the accepted catalog retired stays known while the user's
+    # selection still names it: pausing or removing it must remain possible.
+    return source_id in set(selection.get('selected_ids', [])) | set(selection.get('download_disabled_ids', []))
+
+
+def _bundled_legacy_sources():
+    """The exact 55 pre-catalog specs, kept for a fresh legacy-compatible profile."""
+    catalog = source_catalog.load_bundled()
+    result = []
+    for source in catalog['sources']:
+        if source.get('relation_to_current') != 'already_used':
+            continue
+        result.extend(source.get('legacy_specs') or source.get('data_urls', []))
+    return result[:5000]
+
+
 def defaults():
-    return dict(settings_version=2, targets=[dict(name='example.com', url='https://example.com/', statuses=[200],
+    sources = _bundled_legacy_sources()
+    catalog = source_catalog.load_bundled()
+    ids = [source_catalog.legacy_aliases(catalog)[spec] for spec in sources
+           if spec in source_catalog.legacy_aliases(catalog)]
+    return dict(settings_version=3, targets=[dict(name='example.com', url='https://example.com/', statuses=[200],
                              contains='Example Domain', headers={}, method='GET')],
-                sources=json.loads((ROOT/'sources.json').read_text(encoding='utf-8')), use_sources=True,
+                sources=sources, source_selection=dict(schema_version=1, catalog_revision=catalog['revision'],
+                                                        selected_ids=ids, download_disabled_ids=[], sets=[], custom_sources=[]),
+                use_sources=True,
                 proxies='', attempts=3, timeout=8, workers=128, rate=100,
                 max_bytes=1048576, source_timeout=60, min_success=2/3, top=0, sort='recommended',
                 request_profile='workbench', denylist='',
@@ -94,11 +145,30 @@ def defaults():
 def validate(settings):
     if not isinstance(settings, dict):
         raise ValueError('Ожидаются настройки проверки.')
+    if settings.get('settings_version') in (1, 2) or 'source_selection' not in settings:
+        settings = source_catalog.migrate_settings(settings)
+    elif settings.get('settings_version') == 3 and settings.get('source_selection') == defaults()['source_selection'] \
+            and settings.get('sources') != defaults()['sources']:
+        # Older callers still construct a settings dict by replacing the flat
+        # ``sources`` list.  Rebuild the materialized selection for that
+        # explicit list; a genuinely customized v3 selection is left alone.
+        settings = source_catalog.migrate_settings({**settings, 'source_selection': None})
     clean = defaults()
     clean.update({k: settings[k] for k in clean if k in settings})
-    if clean['settings_version'] not in (1, 2):
+    if clean['settings_version'] not in (1, 2, 3):
         raise ValueError('Неизвестная версия настроек.')
-    clean['settings_version'] = 2
+    clean['settings_version'] = 3
+    selection = clean.get('source_selection')
+    if not isinstance(selection, dict) or not isinstance(selection.get('selected_ids'), list) \
+            or not isinstance(selection.get('download_disabled_ids', []), list):
+        raise ValueError('source_selection: повреждённые поля.')
+    selection = dict(selection, schema_version=1, custom_sources=list(selection.get('custom_sources', [])))
+    selection['selected_ids'] = list(dict.fromkeys(selection['selected_ids']))
+    selection['download_disabled_ids'] = list(dict.fromkeys(selection['download_disabled_ids']))
+    selection['specs'] = source_catalog.chosen_specs(selection.get('specs'))
+    for custom in selection['custom_sources']:
+        source_catalog.normalize_custom(custom)
+    clean['source_selection'] = selection
     if not isinstance(clean['request_profile'], str) or clean['request_profile'] not in REQUEST_PROFILES:
         raise ValueError('Неизвестный request-профиль.')
     if not isinstance(clean['denylist'], str) or len(clean['denylist']) > 2_000_000:
@@ -180,6 +250,27 @@ def validate(settings):
     return clean
 
 
+def save_settings(data, payload):
+    """The one writer of gui-settings.json: validate, then atomic replace.
+
+    The GUI and the CLI both go through it, so a selection changed from the
+    terminal is validated exactly like a change made in the browser.
+    """
+    settings = validate(payload)
+    core.atomic(Path(data)/'gui-settings.json', json.dumps(settings, ensure_ascii=False, indent=2))
+    return settings
+
+
+def read_settings(data):
+    """Current settings without a running server; None when the file is broken."""
+    app = App.__new__(App)
+    app.data = Path(data).resolve()
+    try:
+        return app.settings()
+    except (OSError, ValueError):
+        return None
+
+
 class App:
     def __init__(self, data):
         self.data = data.resolve()
@@ -206,6 +297,8 @@ class App:
         self.export_reader = api.Exports(self.data/'exports')
         self.stop_path = self.data/'gui-stop'
         self.progress_path = self.data/'gui-progress.json'
+        self.catalog_job = {'running': False, 'stage': 'idle'}
+        self._catalog_cache = None
 
     def settings(self):
         settings_path = self.data/'gui-settings.json'
@@ -232,15 +325,19 @@ class App:
                 stored['denylist'] = ''
             except (OSError, UnicodeError):
                 raise ValueError('Не удалось прочитать data/denylist.txt. Исправьте файл перед сохранением.') from None
-        return validate(stored)
+        result = validate(stored)
+        if settings_path.exists() and isinstance(stored, dict) and stored.get('settings_version') in (1, 2):
+            # Migration is one atomic replace.  A crash before this point
+            # leaves the legacy file untouched; the next start repeats it.
+            core.atomic(settings_path, json.dumps(result, ensure_ascii=False, indent=2))
+        return result
 
     def save(self, payload):
         if isinstance(payload, dict) and 'denylist' not in payload:
             payload = dict(payload)
             payload['denylist'] = self.settings().get('denylist', '')
-        settings = validate(payload)
         with self.mutex:
-            core.atomic(self.data/'gui-settings.json', json.dumps(settings, ensure_ascii=False, indent=2))
+            settings = save_settings(self.data, payload)
             core.atomic(self.data/'denylist.txt', settings['denylist'])
         return settings
 
@@ -273,26 +370,41 @@ class App:
         dead = [source for source in settings['sources']
                 if (stats := quality.get(core.source_key(source))) and stats.get('checked', 0) >= PRUNE_MIN_CHECKED
                 and not stats.get('passed')]
+        removed_ids = []
+        catalog = self.catalog()
+        aliases = source_catalog.legacy_aliases(catalog)
+        for source in dead:
+            removed_ids.append(aliases.get(source.strip(), source_catalog.custom_id(source)))
+        if removed_ids:
+            settings = source_catalog.remove_ids(settings, removed_ids, catalog)
         settings['sources'] = [source for source in settings['sources'] if source not in dead]
         saved = self.save(settings)
         return dict(settings=saved, removed=[public_source(source) for source in dead])
 
     def update_sources(self, payload):
-        """Add sources that were published after this version; never re-adds removed built-ins."""
+        """Refresh a flat list; a versioned catalog only reports unselected IDs."""
         settings = validate(payload)
         try:
             response = httpx.get(os.environ.get('PROXY_WORKBENCH_SOURCES_URL', SOURCES_URL), timeout=20,
                                  follow_redirects=False, trust_env=False)
             response.raise_for_status()
-            if len(response.content) > 1_000_000:
+            if len(response.content) > 8_000_000:
                 raise ValueError
             latest = response.json()
+            if isinstance(latest, dict):
+                catalog = source_catalog.validate_catalog(latest, allow_research=True, allow_unsafe=True)
+                selected = set(settings.get('source_selection', {}).get('selected_ids', []))
+                bundled_ids = set(defaults().get('source_selection', {}).get('selected_ids', []))
+                new_unselected = [item['id'] for item in catalog['sources']
+                                  if item['id'] not in selected and item['id'] not in bundled_ids]
+                return dict(settings=settings, added=[], new_unselected=new_unselected,
+                            revision=catalog['revision'])
             if not isinstance(latest, list):
                 raise ValueError
             latest = [source for source in latest if isinstance(source, str)]
             for source in latest:
                 core.source_spec(source)
-        except (httpx.HTTPError, ValueError):
+        except (httpx.HTTPError, ValueError, source_catalog.CatalogError):
             raise ValueError('Не удалось получить список источников с GitHub.') from None
         bundled = set(defaults()['sources'])
         known = set(settings['sources'])
@@ -300,6 +412,279 @@ class App:
         settings['sources'] = settings['sources'] + added
         saved = self.save(settings)
         return dict(settings=saved, added=[public_source(source) for source in added])
+
+    # --- Source catalog: the same one the CLI and the read-only API read ---
+
+    CATALOG_FILE = 'source-catalog.json'
+
+    def catalog(self):
+        """Last accepted remote catalog, or the bundled one when there is none."""
+        if self._catalog_cache is not None:
+            return self._catalog_cache
+        path = self.data/self.CATALOG_FILE
+        if path.is_file():
+            try:
+                self._catalog_cache = source_catalog.load_catalog(path, allow_research=False, allow_unsafe=True)
+                return self._catalog_cache
+            except (OSError, ValueError, source_catalog.CatalogError):
+                pass
+        self._catalog_cache = source_catalog.load_bundled()
+        return self._catalog_cache
+
+    def read_db(self):
+        """Short read-only connection; never takes the workbench lock."""
+        path = self.data/'proxies.sqlite3'
+        if not path.is_file():
+            return None
+        try:
+            return sqlite3.connect(path.as_uri()+'?mode=ro', uri=True, timeout=2)
+        except sqlite3.Error:
+            return None
+
+    @contextmanager
+    def source_db(self):
+        db = self.read_db()
+        try:
+            yield db
+        finally:
+            if db is not None:
+                db.close()
+
+    def source_view(self, query=None):
+        with self.source_db() as db:
+            runtime = source_management.runtime_snapshot(db)
+            return source_management.build_view(self.catalog(), self.settings(), runtime, query, db=db)
+
+    def source_row(self, source_id):
+        if not isinstance(source_id, str) or not source_id or len(source_id) > 64:
+            raise ValueError('Некорректный ID источника.')
+        with self.source_db() as db:
+            runtime = source_management.runtime_snapshot(db, source_ids=[source_id])
+            view = source_management.detail_view(self.catalog(), self.settings(), source_id, runtime, db)
+        if view is None:
+            raise ValueError('Такого источника нет в каталоге.')
+        return view
+
+    def _save_selection(self, settings):
+        return self.save(settings)
+
+    def apply_set(self, payload):
+        """Opt in to one catalog set.  Nothing is added implicitly."""
+        set_id = (payload or {}).get('set')
+        if not isinstance(set_id, str) or not set_id:
+            raise ValueError('Выберите набор источников.')
+        settings = self.settings()
+        if set_id not in {item['id'] for item in self.catalog()['sets']}:
+            raise ValueError('Неизвестный набор источников.')
+        result = source_management.apply_set(settings, set_id, self.catalog())
+        saved = self._save_selection(result)
+        return dict(settings=saved, set=set_id,
+                    members=[value for value in result['source_selection']['selected_ids']],
+                    disabled=saved['source_selection']['download_disabled_ids'])
+
+    def toggle_source(self, payload):
+        """One source: pause or resume its download.  Never changes the set."""
+        source_id, disabled = _source_id_flag(payload, 'disabled')
+        settings = self.settings()
+        if not _known_source(self.catalog(), settings, source_id):
+            raise ValueError('Такого источника нет в каталоге.')
+        result = source_management.set_downloads(settings, [source_id], disabled, self.catalog())
+        saved = self._save_selection(result)
+        return dict(settings=saved, id=source_id, download_disabled=disabled,
+                    in_set=source_id in saved['source_selection']['selected_ids'])
+
+    def select_source(self, payload):
+        source_id, selected = _source_id_flag(payload, 'selected')
+        settings = self.settings()
+        if not _known_source(self.catalog(), settings, source_id):
+            raise ValueError('Такого источника нет в каталоге.')
+        result = (source_management.select_ids(settings, [source_id], self.catalog()) if selected
+                  else source_management.remove_sources(settings, [source_id], self.catalog()))
+        saved = self._save_selection(result)
+        return dict(settings=saved, id=source_id, selected=selected,
+                    in_set=source_id in saved['source_selection']['selected_ids'])
+
+    def remove_source(self, payload):
+        """Remove a source from the active set.  Cache and history are kept."""
+        source_id = _source_id(payload)
+        settings = self.settings()
+        if not _known_source(self.catalog(), settings, source_id):
+            raise ValueError('Такого источника нет в каталоге.')
+        result = source_management.remove_sources(settings, [source_id], self.catalog())
+        saved = self._save_selection(result)
+        return dict(settings=saved, id=source_id, removed=True,
+                    in_set=source_id in saved['source_selection']['selected_ids'])
+
+    def add_source_url(self, payload):
+        """Add one of the user's own URLs with an explicitly chosen format."""
+        payload = payload or {}
+        url = payload.get('url')
+        kind = payload.get('kind') or 'http'
+        if not isinstance(url, str) or not url.strip():
+            raise ValueError('Укажите адрес списка.')
+        try:
+            descriptor = source_catalog.custom_source(url.strip(), kind)
+        except source_catalog.CatalogError as exc:
+            raise ValueError(str(exc)) from None
+        settings = self.settings()
+        selection = copy.deepcopy(settings.get('source_selection') or {})
+        custom = {item.get('id'): item for item in selection.get('custom_sources', []) if isinstance(item, dict)}
+        custom[descriptor['id']] = {'id': descriptor['id'], 'url': descriptor['url'],
+                                    'name': payload.get('name') or descriptor['url'],
+                                    'adapter': descriptor['adapter']}
+        selection['custom_sources'] = list(custom.values())
+        selection['selected_ids'] = list(dict.fromkeys(list(selection.get('selected_ids', [])) + [descriptor['id']]))
+        selection['download_disabled_ids'] = [value for value in selection.get('download_disabled_ids', [])
+                                              if value != descriptor['id']]
+        selection['catalog_revision'] = self.catalog()['revision']
+        settings['source_selection'] = selection
+        settings['settings_version'] = 3
+        saved = self._save_selection(source_catalog.migrate_settings(settings, self.catalog()))
+        return dict(settings=saved, id=descriptor['id'], url=descriptor['url'], kind=kind,
+                    adapter=descriptor['adapter']['kind'], added=True)
+
+    def _preview_plan(self, payload, settings):
+        """Resolve a preview request to one concrete plan, without writing it."""
+        payload = payload or {}
+        source_id = payload.get('id')
+        url = payload.get('url')
+        kind = payload.get('kind') or 'http'
+        if isinstance(url, str) and url.strip():
+            # A loopback target is only reachable with the explicit opt-in, the
+            # same switch the CLI calls --allow-private-sources.
+            allow_private = bool(payload.get('allow_private'))
+            try:
+                descriptor = source_catalog.custom_source(url.strip(), kind, allow_unsafe=allow_private)
+            except source_catalog.CatalogError as exc:
+                raise ValueError(str(exc)) from None
+            return source_id or descriptor['id'], descriptor['record'], allow_private
+        if not isinstance(source_id, str) or not source_id:
+            raise ValueError('Укажите источник или адрес списка.')
+        catalog = self.catalog()
+        selection = settings.get('source_selection') or {}
+        custom = {item.get('id'): item for item in selection.get('custom_sources', []) if isinstance(item, dict)}
+        item = source_catalog.source_by_id(catalog, source_id)
+        if item is None or not item.get('endpoints'):
+            # A stored custom entry is a {id, url, adapter} record: rebuild the
+            # plan the same way the collector does instead of rejecting it.
+            item = source_catalog._custom_plan(source_id, custom[source_id], []) if source_id in custom else None
+        if item is None:
+            raise ValueError('Такого источника нет в каталоге.')
+        return source_id, item, False
+
+    def preview_source(self, payload):
+        """Availability and format check.  Never writes candidates or settings."""
+        settings = self.settings()
+        source_id, plan, allow_private = self._preview_plan(payload, settings)
+        if not source_catalog.collectable_source(plan):
+            raise ValueError('Это не список прокси-адресов: формат источника не поддерживается сборщиком.')
+        timeout = float(settings.get('source_timeout') or 60)
+        denylist = Denylist.from_file(self.data/'denylist.txt', normalizer=core.normalize)
+        with self.source_db() as db:
+            report = asyncio.run(core.preview_collect(db, [plan], timeout, denylist=denylist,
+                                                      allow_private_sources=allow_private))
+        return source_management.preview_view(report, source_id, plan.get('name'))
+
+    def recover_source(self, payload):
+        """Clear transport backoff/quarantine.  Cache and last-good stay."""
+        source_id = _source_id(payload)
+        settings = self.settings()
+        if not _known_source(self.catalog(), settings, source_id):
+            raise ValueError('Такого источника нет в каталоге.')
+        with self.data_lock():
+            db = core.open_db(self.data/'proxies.sqlite3')
+            try:
+                cleared = core.recover_source(db, source_id)
+            finally:
+                db.close()
+        return dict(id=source_id, cleared=cleared, recovered=True)
+
+    def exclude_source_scope(self, payload):
+        """Exclude addresses this source already delivered from the current scope.
+
+        Provenance and cache are kept, so the action can be undone; nothing is
+        deleted from the database.
+        """
+        payload = payload or {}
+        source_id = _source_id(payload)
+        settings = self.settings()
+        if not _known_source(self.catalog(), settings, source_id):
+            raise ValueError('Такого источника нет в каталоге.')
+        include_shared = bool(payload.get('include_shared'))
+        if not payload.get('confirm'):
+            raise ValueError('Подтвердите исключение адресов из текущего scope.')
+        with self.data_lock():
+            db = core.open_db(self.data/'proxies.sqlite3')
+            try:
+                addresses = source_management.source_addresses(db, source_id, exclusive=not include_shared)
+                digest = core.scope_digest_for(settings['protocol'],
+                                           geoip.parse_countries(settings['countries']),
+                                           settings['max_latency'], settings['exclude_hosting'])
+                written = core.exclude_scope(db, addresses, reason='source', source_id=source_id,
+                                             scope_digest=digest)
+                total = source_management.source_addresses(db, source_id, exclusive=False)
+                excluded = core.scope_excluded(db, digest)
+            finally:
+                db.close()
+        return dict(id=source_id, excluded=written, delivered=len(total),
+                    shared=len(total) - len(addresses) if not include_shared else 0,
+                    already_excluded=len(excluded & total), scope_digest=digest)
+
+    def scope_exclusions(self):
+        settings = self.settings()
+        digest = core.scope_digest_for(settings['protocol'], geoip.parse_countries(settings['countries']),
+                                   settings['max_latency'], settings['exclude_hosting'])
+        with self.source_db() as db:
+            excluded = core.scope_excluded(db, digest) if db is not None else set()
+            return dict(scope_digest=digest, count=len(excluded), proxies=sorted(excluded)[:500])
+
+    def clear_scope_exclusions(self, payload):
+        settings = self.settings()
+        digest = core.scope_digest_for(settings['protocol'], geoip.parse_countries(settings['countries']),
+                                   settings['max_latency'], settings['exclude_hosting'])
+        with self.data_lock():
+            db = core.open_db(self.data/'proxies.sqlite3')
+            try:
+                removed = db.execute('DELETE FROM candidate_scope_exclusion WHERE scope_digest=?', (digest,)).rowcount
+                db.commit()
+            finally:
+                db.close()
+        return dict(scope_digest=digest, removed=removed)
+
+    def refresh_catalog(self, payload=None):
+        """Fetch the published catalog.  It never changes the user's selection."""
+        with self.mutex:
+            if self.catalog_job.get('running'):
+                return dict(self.catalog_job)
+            self.catalog_job = {'running': True, 'stage': 'starting', 'started_at': time.time(),
+                                'added': 0, 'changed': 0, 'retired': 0}
+        job = self.catalog_job
+
+        def work():
+            url = os.environ.get('PROXY_WORKBENCH_SOURCES_URL', SOURCES_URL)
+            try:
+                job['stage'] = 'downloading'
+                result = asyncio.run(core.fetch_catalog(url, current=source_catalog.load_bundled(), timeout=20))
+                job['stage'] = 'validating'
+                incoming = result.get('catalog')
+                if result.get('state') == 'not_modified':
+                    job.update(running=False, stage='done', not_modified=True, error=None)
+                    return
+                if not isinstance(incoming, dict):
+                    raise ValueError('Каталог источников недоступен.')
+                diff = source_catalog.catalog_diff(self.catalog(), incoming)
+                core.atomic(self.data/self.CATALOG_FILE, json.dumps(incoming, ensure_ascii=False))
+                self._catalog_cache = incoming
+                job.update(running=False, stage='done', error=None, **diff)
+            except (httpx.HTTPError, ValueError, OSError, source_catalog.CatalogError, RuntimeError) as exc:
+                reason = str(exc) if isinstance(exc, ValueError) else type(exc).__name__
+                job.update(running=False, stage='error', error=reason or type(exc).__name__)
+        threading.Thread(target=work, daemon=True).start()
+        return dict(self.catalog_job)
+
+    def catalog_update_status(self):
+        with self.mutex:
+            return dict(self.catalog_job)
 
     def running(self):
         return self.process is not None and (self.process.poll() is None or self.log_handle is not None)
@@ -806,6 +1191,17 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond(204, b'')
             if path.path == '/api/settings':
                 return self.respond(200, self.app.settings())
+            if path.path == '/api/source-catalog':
+                return self.respond(200, self.app.source_view(path.query))
+            if path.path.startswith('/api/source-catalog/'):
+                source_id = path.path[len('/api/source-catalog/'):]
+                if '/' in source_id or '..' in source_id:
+                    return self.respond(404, dict(error='Не найдено.'))
+                return self.respond(200, self.app.source_row(source_id))
+            if path.path == '/api/sources/scope':
+                return self.respond(200, self.app.scope_exclusions())
+            if path.path == '/api/sources/update-status':
+                return self.respond(200, self.app.catalog_update_status())
             if path.path == '/api/geoip':
                 return self.respond(200, self.app.geo_status())
             if path.path == '/api/defaults':
@@ -866,6 +1262,26 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond(200, self.app.prune_sources(payload))
             if path == '/api/sources/update':
                 return self.respond(200, self.app.update_sources(payload))
+            if path == '/api/sources/refresh':
+                return self.respond(200, self.app.refresh_catalog(payload))
+            if path == '/api/sources/set':
+                return self.respond(200, self.app.apply_set(payload))
+            if path == '/api/sources/toggle':
+                return self.respond(200, self.app.toggle_source(payload))
+            if path == '/api/sources/select':
+                return self.respond(200, self.app.select_source(payload))
+            if path == '/api/sources/remove':
+                return self.respond(200, self.app.remove_source(payload))
+            if path == '/api/sources/add':
+                return self.respond(200, self.app.add_source_url(payload))
+            if path in ('/api/sources/preview', '/api/sources/check'):
+                return self.respond(200, self.app.preview_source(payload))
+            if path == '/api/sources/recover':
+                return self.respond(200, self.app.recover_source(payload))
+            if path == '/api/sources/exclude-scope':
+                return self.respond(200, self.app.exclude_source_scope(payload))
+            if path == '/api/sources/scope/clear':
+                return self.respond(200, self.app.clear_scope_exclusions(payload))
             if path == '/api/geoip/update':
                 return self.respond(200, self.app.update_geo())
             if path == '/api/clear-data':

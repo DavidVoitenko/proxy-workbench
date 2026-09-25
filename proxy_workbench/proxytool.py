@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import copy
 from contextlib import asynccontextmanager
 import csv
 import hashlib
@@ -27,13 +28,16 @@ from urllib.parse import urlsplit, urlunsplit, urljoin, parse_qsl, urlencode
 
 import httpx
 
-from .branding import DEFAULT_REQUEST_PROFILE, PRODUCT_NAME, PRODUCT_VERSION, REQUEST_PROFILES, merge_headers, profile_digest, validate_profile
+from .branding import DEFAULT_REQUEST_PROFILE, PRODUCT_NAME, PRODUCT_VERSION, REQUEST_PROFILES, SOURCES_URL, merge_headers, profile_digest, validate_profile
 from .reputation import Denylist, make_policy, result_allowed, screen_proxy, verdict_blocks
 from .maintenance import clear_runtime, exclusive_lock
 from . import anonymity
 from . import geoip
 from . import socks4
 from . import formats
+from . import source_catalog
+from . import source_adapters
+from . import source_management
 from .i18n import tr, utf8_output
 from . import paths
 
@@ -45,6 +49,23 @@ SAFE_TARGET_HEADERS = {'accept', 'accept-encoding', 'accept-language', 'cache-co
 # Source fetching is deliberately bounded before a response is handed to a parser.
 # These defaults are finite so a public list cannot consume unbounded memory or CPU.
 DEFAULT_SOURCE_MAX_BYTES = 32 * 1024 * 1024
+# A preview answers "is it reachable and what format is it", so it reads a
+# bounded prefix of the body instead of the whole list.  Both callers (the GUI
+# "Проверить" action and ``sources check``) go through :func:`preview_collect`
+# and report the bound in the result, so a truncated preview never reads as a
+# complete one.
+# The budget is the collector's own byte budget: a list the collector reads must
+# not become un-previewable because a check allows less, and the records already
+# read are still counted.  Beyond it the preview keeps the prefix it has instead
+# of discarding the whole body.
+PREVIEW_MAX_BYTES = DEFAULT_SOURCE_MAX_BYTES
+# A dense list hits the record cap long before the byte cap.
+PREVIEW_MAX_CANDIDATES = 200_000
+#: Adapter refusals that mean "the read hit a bound", not "the source is bad".
+ADAPTER_LIMIT_CODES = frozenset((
+    'SOURCE_RECORD_LIMIT', 'SOURCE_HTML_NODE_LIMIT', 'SOURCE_HTML_DEPTH', 'SOURCE_HTML_STRING_TOO_LARGE',
+    'SOURCE_JSON_DEPTH', 'SOURCE_COLUMN_LIMIT', 'SOURCE_PAGE_LIMIT', 'SOURCE_DEADLINE',
+))
 DEFAULT_SOURCE_MAX_LINE_BYTES = 64 * 1024
 DEFAULT_SOURCE_MAX_CANDIDATES = 500_000
 DEFAULT_SOURCE_MAX_REDIRECTS = 5
@@ -52,6 +73,19 @@ MAX_SOURCE_BYTES = 512 * 1024 * 1024
 MAX_SOURCE_LINE_BYTES = 16 * 1024 * 1024
 MAX_SOURCE_CANDIDATES = 10_000_000
 MAX_SOURCE_REDIRECTS = 20
+MAX_SOURCE_PARALLELISM = 32
+MAX_SOURCE_HOST_PARALLELISM = 4
+DEFAULT_SOURCE_PARALLELISM = 8
+DEFAULT_SOURCE_HOST_PARALLELISM = 1
+DEFAULT_SOURCE_HOST_INTERVAL = 0.0
+DEFAULT_SOURCE_DEADLINE = 300
+MAX_SOURCE_DEADLINE = 3600
+DEFAULT_SOURCE_PAGES = 500
+MAX_SOURCE_PAGES = 5000
+DEFAULT_CACHE_BYTES = 256 * 1024 * 1024
+MAX_CACHE_BYTES = 2 * 1024 * 1024 * 1024
+DEFAULT_SOURCE_CACHE_BYTES = 32 * 1024 * 1024
+SOURCE_DB_SCHEMA_VERSION = 1
 SOURCE_REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 SOURCE_METADATA_HOSTS = frozenset({
     'metadata', 'metadata.google.internal', 'metadata.goog', 'metadata.azure.internal',
@@ -67,10 +101,11 @@ SOURCE_METADATA_HOSTS = frozenset({
 class SourceFetchError(ValueError):
     """A source error that can be recorded without exposing response contents."""
 
-    def __init__(self, code, *, retryable=False):
+    def __init__(self, code, *, retryable=False, retry_after=None):
         super().__init__(code)
         self.code = code
         self.retryable = retryable
+        self.retry_after = retry_after
 
 
 class PinnedSourceTransport(httpx.AsyncBaseTransport):
@@ -217,17 +252,17 @@ async def _validate_source_destination(value, allow_private=False):
 
 
 @asynccontextmanager
-async def _source_stream(client, url, allow_private=False):
+async def _source_stream(client, url, allow_private=False, headers=None):
     _, hostname, _, address = await _validate_source_destination(url, allow_private)
     if address is None:
-        async with client.stream('GET', url) as response:
+        async with client.stream('GET', url, headers=headers) as response:
             yield response
         return
     transport = PinnedSourceTransport(address, hostname)
     pinned_client = httpx.AsyncClient(transport=transport, trust_env=False, verify=TLS,
                                        follow_redirects=False, timeout=15)
     try:
-        async with pinned_client.stream('GET', url) as response:
+        async with pinned_client.stream('GET', url, headers=headers) as response:
             yield response
     finally:
         await pinned_client.aclose()
@@ -253,34 +288,57 @@ def _declared_response_length(response):
     return length if length >= 0 else None
 
 
-async def _read_bounded_body(response, budget, max_bytes):
+async def _read_bounded_body(response, budget, max_bytes, *, prefix=False):
+    """Read at most ``max_bytes`` of the body into memory.
+
+    ``prefix=True`` is the preview's mode: a body larger than the bound is cut
+    at the bound and reported through ``budget['truncated']`` instead of being
+    rejected, so a check still says what the part it read contains.  A collect
+    keeps refusing the whole body — an unbounded read is exactly what the bound
+    exists to prevent.
+    """
     remaining = max_bytes - budget['used']
     declared = _declared_response_length(response)
     if declared is not None and declared > remaining:
-        raise SourceFetchError('SOURCE_TOO_LARGE')
+        if not prefix:
+            raise SourceFetchError('SOURCE_TOO_LARGE')
+        budget['truncated'] = True
     body = bytearray()
     async for chunk in response.aiter_bytes():
         if len(chunk) > remaining:
-            raise SourceFetchError('SOURCE_TOO_LARGE')
+            if not prefix:
+                raise SourceFetchError('SOURCE_TOO_LARGE')
+            body.extend(chunk[:remaining])
+            budget['used'] += remaining
+            budget['truncated'] = True
+            break
         body.extend(chunk)
         budget['used'] += len(chunk)
         remaining -= len(chunk)
     return bytes(body)
 
 
-async def _read_bounded_lines(response, budget, max_bytes, max_line_bytes, on_line):
+async def _read_bounded_lines(response, budget, max_bytes, max_line_bytes, on_line, *, prefix=False):
     remaining = max_bytes - budget['used']
     declared = _declared_response_length(response)
     if declared is not None and declared > remaining:
-        raise SourceFetchError('SOURCE_TOO_LARGE')
+        if not prefix:
+            raise SourceFetchError('SOURCE_TOO_LARGE')
+        budget['truncated'] = True
     pending = bytearray()
     chunks = response.aiter_bytes()
     async for chunk in chunks:
         if len(chunk) > remaining:
-            raise SourceFetchError('SOURCE_TOO_LARGE')
-        pending.extend(chunk)
-        budget['used'] += len(chunk)
-        remaining -= len(chunk)
+            if not prefix:
+                raise SourceFetchError('SOURCE_TOO_LARGE')
+            pending.extend(chunk[:remaining])
+            budget['used'] += remaining
+            remaining = 0
+            budget['truncated'] = True
+        else:
+            pending.extend(chunk)
+            budget['used'] += len(chunk)
+            remaining -= len(chunk)
         start = 0
         while True:
             newline = pending.find(b'\n', start)
@@ -301,7 +359,11 @@ async def _read_bounded_lines(response, budget, max_bytes, max_line_bytes, on_li
             on_line(line)
         if start:
             del pending[:start]
-    if pending:
+        if budget.get('truncated'):
+            break
+    # A record the bound cut in half is not a record: it is dropped with the
+    # rest of the unread list rather than reported as a malformed line.
+    if pending and not budget.get('truncated'):
         if len(pending) > max_line_bytes:
             raise SourceFetchError('SOURCE_LINE_TOO_LARGE')
         on_line(bytes(pending))
@@ -441,16 +503,181 @@ def open_db(path):
         CREATE TABLE IF NOT EXISTS profiles(id TEXT PRIMARY KEY, config TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS candidate_seen(proxy TEXT NOT NULL, source TEXT NOT NULL,
             PRIMARY KEY(proxy, source)) WITHOUT ROWID;
+        CREATE TABLE IF NOT EXISTS candidate_seen_meta(
+            proxy TEXT NOT NULL, source TEXT NOT NULL, first_seen_at REAL, last_seen_at REAL,
+            first_observation_id INTEGER, last_observation_id INTEGER,
+            legacy INTEGER NOT NULL DEFAULT 1, PRIMARY KEY(proxy, source)) WITHOUT ROWID;
         CREATE TABLE IF NOT EXISTS results(
             profile TEXT NOT NULL, proxy TEXT NOT NULL, payload TEXT NOT NULL,
             PRIMARY KEY(profile, proxy));
+        CREATE TABLE IF NOT EXISTS result_run(
+            profile TEXT NOT NULL, proxy TEXT NOT NULL, run_id TEXT NOT NULL,
+            checked_at REAL NOT NULL, PRIMARY KEY(profile, proxy)) WITHOUT ROWID;
+        CREATE TABLE IF NOT EXISTS catalog_state(
+            key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at REAL NOT NULL);
+        CREATE TABLE IF NOT EXISTS source_observation(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id TEXT NOT NULL, source_id TEXT NOT NULL, endpoint_id TEXT NOT NULL,
+            started_at REAL NOT NULL, ended_at REAL, http_state TEXT NOT NULL,
+            parse_state TEXT NOT NULL, cache_state TEXT NOT NULL, outcome TEXT NOT NULL,
+            status INTEGER, attempts INTEGER NOT NULL DEFAULT 0, pages INTEGER NOT NULL DEFAULT 0,
+            bytes INTEGER NOT NULL DEFAULT 0, received INTEGER NOT NULL DEFAULT 0,
+            recognized INTEGER NOT NULL DEFAULT 0, accepted INTEGER NOT NULL DEFAULT 0,
+            rejected INTEGER NOT NULL DEFAULT 0, duplicate INTEGER NOT NULL DEFAULT 0,
+            duplicates_existing INTEGER NOT NULL DEFAULT 0, blocked INTEGER NOT NULL DEFAULT 0,
+            new_endpoints INTEGER NOT NULL DEFAULT 0, partial INTEGER NOT NULL DEFAULT 0,
+            error TEXT, retryable INTEGER NOT NULL DEFAULT 0, body_sha256 TEXT,
+            fallback_used INTEGER NOT NULL DEFAULT 0, profile_digest TEXT, retry_after REAL,
+            UNIQUE(run_id, source_id, endpoint_id));
+        CREATE TABLE IF NOT EXISTS source_generation(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_id TEXT NOT NULL, observation_id INTEGER, state TEXT NOT NULL,
+            active INTEGER NOT NULL DEFAULT 0, last_good INTEGER NOT NULL DEFAULT 0,
+            created_at REAL NOT NULL, record_count INTEGER NOT NULL DEFAULT 0,
+            estimated_bytes INTEGER NOT NULL DEFAULT 0, profile_digest TEXT,
+            endpoint_url TEXT);
+        CREATE TABLE IF NOT EXISTS source_generation_entry(
+            generation_id INTEGER NOT NULL, proxy TEXT NOT NULL, metadata_json TEXT,
+            PRIMARY KEY(generation_id, proxy)) WITHOUT ROWID;
+        CREATE TABLE IF NOT EXISTS source_state(
+            source_id TEXT NOT NULL, endpoint_id TEXT NOT NULL,
+            final_url TEXT, etag TEXT, last_modified TEXT,
+            last_attempt_at REAL, last_success_at REAL, last_body_at REAL,
+            last_304_at REAL, current_generation INTEGER, last_good_generation INTEGER,
+            consecutive_failures INTEGER NOT NULL DEFAULT 0, backoff_until REAL,
+            quarantine_until REAL, retry_after REAL, last_error TEXT,
+            profile_digest TEXT, PRIMARY KEY(source_id, endpoint_id)) WITHOUT ROWID;
+        CREATE TABLE IF NOT EXISTS source_metadata(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            proxy TEXT NOT NULL, source_id TEXT NOT NULL, generation_id INTEGER,
+            country TEXT, asn INTEGER, asn_org TEXT, anonymity TEXT,
+            source_last_checked REAL, claimed_exit_ip TEXT, supports_https INTEGER,
+            extra_json TEXT, subject TEXT NOT NULL DEFAULT 'endpoint',
+            origin TEXT NOT NULL DEFAULT 'source_claimed', declared_at REAL,
+            ingested_at REAL NOT NULL, valid_until REAL,
+            UNIQUE(proxy, source_id, generation_id, subject));
+        CREATE TABLE IF NOT EXISTS source_identity(
+            source_id TEXT PRIMARY KEY, family_id TEXT, publisher_id TEXT,
+            metadata_json TEXT);
+        CREATE TABLE IF NOT EXISTS source_scan_stat(
+            app_run_id TEXT NOT NULL, profile_digest TEXT NOT NULL,
+            scope_digest TEXT NOT NULL, source_id TEXT NOT NULL,
+            checked_by_app INTEGER NOT NULL DEFAULT 0,
+            passed_profile INTEGER NOT NULL DEFAULT 0,
+            global_unique_checked INTEGER NOT NULL DEFAULT 0,
+            global_unique_passed INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY(app_run_id, profile_digest, scope_digest, source_id)) WITHOUT ROWID;
+        CREATE TABLE IF NOT EXISTS candidate_scope_exclusion(
+            proxy TEXT NOT NULL, reason TEXT NOT NULL, source_id TEXT,
+            scope_digest TEXT, created_at REAL NOT NULL, expires_at REAL,
+            PRIMARY KEY(proxy, scope_digest)) WITHOUT ROWID;
+        CREATE TABLE IF NOT EXISTS source_db_meta(
+            key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        CREATE VIEW IF NOT EXISTS candidate_seen_provenance AS
+            SELECT c.proxy,c.source,m.first_seen_at,m.last_seen_at,m.first_observation_id,
+                   m.last_observation_id,m.legacy
+            FROM candidate_seen c LEFT JOIN candidate_seen_meta m
+              ON m.proxy=c.proxy AND m.source=c.source;
     ''')
+    # The two-column candidate_seen shape is a public compatibility contract:
+    # older callers insert into it without naming columns.  Provenance dates
+    # live in a sibling table instead of changing that insert contract.
     columns = {row[1] for row in db.execute('PRAGMA table_info(candidate_meta)')}
     if 'source' not in columns:
-        # Added in 1.6: which source list first delivered each candidate.
         db.execute('ALTER TABLE candidate_meta ADD COLUMN source TEXT')
+    observation_columns = {row[1] for row in db.execute('PRAGMA table_info(source_observation)')}
+    if 'retry_after' not in observation_columns:
+        db.execute('ALTER TABLE source_observation ADD COLUMN retry_after REAL')
+    exclusion_columns = {row[1] for row in db.execute('PRAGMA table_info(candidate_scope_exclusion)')}
+    if 'expires_at' not in exclusion_columns:
+        db.execute('ALTER TABLE candidate_scope_exclusion ADD COLUMN expires_at REAL')
+    seen_columns = {row[1] for row in db.execute('PRAGMA table_info(candidate_seen)')}
+    if len(seen_columns) > 2:
+        db.execute('DROP VIEW IF EXISTS candidate_seen_provenance')
+        extended = {'first_seen_at', 'last_seen_at', 'first_observation_id', 'last_observation_id', 'legacy'}
+        if extended <= seen_columns:
+            db.execute('''INSERT OR IGNORE INTO candidate_seen_meta(
+                            proxy,source,first_seen_at,last_seen_at,first_observation_id,last_observation_id,legacy)
+                          SELECT proxy,source,first_seen_at,last_seen_at,first_observation_id,last_observation_id,legacy
+                          FROM candidate_seen''')
+        db.executescript('''
+            CREATE TABLE candidate_seen_compact(proxy TEXT NOT NULL, source TEXT NOT NULL,
+                PRIMARY KEY(proxy, source)) WITHOUT ROWID;
+            INSERT OR IGNORE INTO candidate_seen_compact(proxy,source)
+                SELECT proxy,source FROM candidate_seen;
+            DROP TABLE candidate_seen;
+            ALTER TABLE candidate_seen_compact RENAME TO candidate_seen;
+        ''')
+    db.executescript('''
+        CREATE TRIGGER IF NOT EXISTS candidate_seen_meta_insert AFTER INSERT ON candidate_seen
+        BEGIN
+            INSERT OR IGNORE INTO candidate_seen_meta(proxy,source,legacy) VALUES (NEW.proxy,NEW.source,1);
+        END;
+        CREATE TRIGGER IF NOT EXISTS candidate_seen_meta_delete AFTER DELETE ON candidate_seen
+        BEGIN
+            DELETE FROM candidate_seen_meta WHERE proxy=OLD.proxy AND source=OLD.source;
+        END;
+    ''')
+    if len(seen_columns) > 2:
+        db.executescript('''
+            CREATE TRIGGER IF NOT EXISTS candidate_seen_meta_insert AFTER INSERT ON candidate_seen
+            BEGIN
+                INSERT OR IGNORE INTO candidate_seen_meta(proxy,source,legacy) VALUES (NEW.proxy,NEW.source,1);
+            END;
+            CREATE TRIGGER IF NOT EXISTS candidate_seen_meta_delete AFTER DELETE ON candidate_seen
+            BEGIN
+                DELETE FROM candidate_seen_meta WHERE proxy=OLD.proxy AND source=OLD.source;
+            END;
+        ''')
+    if len(seen_columns) > 2:
+        db.execute('''CREATE VIEW IF NOT EXISTS candidate_seen_provenance AS
+                      SELECT c.proxy,c.source,m.first_seen_at,m.last_seen_at,m.first_observation_id,
+                             m.last_observation_id,m.legacy
+                      FROM candidate_seen c LEFT JOIN candidate_seen_meta m
+                        ON m.proxy=c.proxy AND m.source=c.source''')
+    try:
+        db.execute('BEGIN')
+        db.execute('''INSERT OR IGNORE INTO candidate_seen_meta(proxy,source,legacy)
+                      SELECT proxy,source,1 FROM candidate_seen''')
+        # candidate_meta.source was the pre-catalog first-source compatibility
+        # field.  Preserve it as one legacy membership, without assigning a
+        # fabricated observation timestamp.
+        db.execute('''INSERT OR IGNORE INTO candidate_seen(proxy, source)
+                      SELECT proxy, source FROM candidate_meta WHERE source IS NOT NULL''')
+        db.execute('''INSERT OR IGNORE INTO candidate_seen_meta(proxy,source,legacy)
+                      SELECT proxy,source,1 FROM candidate_seen''')
+        db.execute('''INSERT INTO source_metadata(proxy,source_id,country,subject,origin,declared_at,ingested_at)
+                      SELECT proxy,COALESCE(source,'legacy'),country,'endpoint',
+                             CASE WHEN source IS NOT NULL THEN 'source_claimed' ELSE 'legacy_unattributed' END,
+                             NULL,?
+                      FROM candidate_meta WHERE country IS NOT NULL
+                      AND NOT EXISTS (SELECT 1 FROM source_metadata m WHERE m.proxy=candidate_meta.proxy
+                                      AND m.source_id=COALESCE(candidate_meta.source,'legacy') AND m.subject='endpoint'
+                                      AND m.origin IN ('source_claimed','legacy_unattributed'))''', (time.time(),))
+        db.execute("INSERT OR REPLACE INTO source_db_meta(key,value) VALUES ('schema_version',?)",
+                   (str(SOURCE_DB_SCHEMA_VERSION),))
         db.commit()
+    except Exception:
+        db.rollback()
+        db.close()
+        raise
     return db
+
+
+def catalog_state(db, key='current', default=None):
+    row = db.execute('SELECT value FROM catalog_state WHERE key=?', (key,)).fetchone()
+    if not row:
+        return default
+    try:
+        return json.loads(row[0])
+    except (TypeError, ValueError):
+        return default
+
+
+def store_catalog_state(db, key, value):
+    db.execute('INSERT OR REPLACE INTO catalog_state(key,value,updated_at) VALUES (?,?,?)',
+               (key, json.dumps(value, ensure_ascii=False, sort_keys=True), time.time()))
+    db.commit()
 
 
 def source_key(entry):
@@ -474,7 +701,8 @@ class Rate:
             self.next = time.monotonic() + self.interval
 
 
-SOURCE_KINDS = ('http', 'https', 'socks4', 'socks5', 'socks5h', 'auto', 'text', 'geonode', 'http-fields')
+SOURCE_KINDS = ('http', 'https', 'socks4', 'socks5', 'socks5h', 'auto', 'text', 'geonode', 'http-fields',
+                'json-records', 'fields', 'page-json', 'html-table')
 DETECT_PROTOCOLS = ('http', 'socks4', 'socks5')
 # ip:port inside free text: "1.2.3.4:8080", "1.2.3.4 8080", CSV and HTML table cells.
 LOOSE_ADDRESS = re.compile(r'(?<![\d.])(?:(https?|socks[45]h?)://)?(\d{1,3}(?:\.\d{1,3}){3})'
@@ -488,7 +716,7 @@ def loose_addresses(line):
 
 def source_spec(value):
     if not isinstance(value, str):
-        raise ValueError('Источник должен быть строкой URL или «socks4 URL» / «socks5 URL» / «geonode URL».')
+        raise ValueError('Источник должен быть строкой URL или «socks4 URL» / «socks5 URL» / «geonode URL» / «json-records URL».')
     parts = value.strip().split(None, 1)
     kind, url = (parts if len(parts) == 2 else ('http', parts[0] if parts else ''))
     if kind not in SOURCE_KINDS:
@@ -500,12 +728,12 @@ def source_spec(value):
     return kind, url
 
 
-async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
+async def _collect_legacy(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                   allow_private_sources=False, detect_protocols=False,
                   max_source_bytes=DEFAULT_SOURCE_MAX_BYTES,
                   max_source_line_bytes=DEFAULT_SOURCE_MAX_LINE_BYTES,
                   max_source_candidates=DEFAULT_SOURCE_MAX_CANDIDATES,
-                  max_source_redirects=DEFAULT_SOURCE_MAX_REDIRECTS):
+                  max_source_redirects=DEFAULT_SOURCE_MAX_REDIRECTS, bounded_prefix=False):
     if not isinstance(allow_private_sources, bool):
         raise ValueError('allow_private_sources: ожидается bool')
     max_source_bytes = _source_limit(max_source_bytes, 'max_source_bytes', maximum=MAX_SOURCE_BYTES)
@@ -540,6 +768,12 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
         if source:
             # How many lists offer an address: rare ones are less crowded and tend to live longer.
             db.execute('INSERT OR IGNORE INTO candidate_seen VALUES (?, ?)', (proxy, source))
+            db.execute('''INSERT INTO candidate_seen_meta(proxy,source,first_seen_at,last_seen_at,legacy)
+                          VALUES (?, ?, ?, ?, 0)
+                          ON CONFLICT(proxy,source) DO UPDATE SET
+                            first_seen_at=COALESCE(candidate_seen_meta.first_seen_at,excluded.first_seen_at),
+                            last_seen_at=excluded.last_seen_at,legacy=0''',
+                       (proxy, source, time.time(), time.time()))
         if country or source:
             # The first source that delivered an address keeps the credit.
             db.execute('''INSERT INTO candidate_meta(proxy, country, source) VALUES (?, ?, ?)
@@ -581,6 +815,15 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
         async def fetch(index, kind, url):
             nonlocal total_rows
             key = source_key(urls[index - 1])
+            _ensure_state(db, key, 'primary')
+            saved_state = _state_row(db, key, 'primary')
+            saved_state = dict(zip([column[0] for column in db.execute('SELECT * FROM source_state LIMIT 0').description], saved_state)) if saved_state else {}
+            conditional = {}
+            if (not saved_state.get('final_url') or saved_state.get('final_url') == url):
+                if saved_state.get('etag'):
+                    conditional['If-None-Match'] = saved_state['etag']
+                if saved_state.get('last_modified'):
+                    conditional['If-Modified-Since'] = saved_state['last_modified']
             count = invalid = blocked = pages = attempts = 0
             candidate_count = 0
             endpoint_count = 0
@@ -652,10 +895,15 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                     blocked += blocked_here
                     invalid += not blocked_here
 
-            async def request_source(request_url, expected_page=None):
+            not_modified = False
+            last_etag = last_modified = final_url = url
+
+            async def request_source(request_url, expected_page=None, send_conditional=False):
+                nonlocal not_modified, last_etag, last_modified, final_url
                 current_url = request_url
                 for redirect_count in range(max_source_redirects + 1):
-                    async with _source_stream(client, current_url, allow_private_sources) as response:
+                    async with _source_stream(client, current_url, allow_private_sources,
+                                              conditional if send_conditional and not redirect_count else None) as response:
                         status = response.status_code
                         if status in SOURCE_REDIRECT_STATUSES:
                             location = response.headers.get('location')
@@ -674,11 +922,21 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                                 raise SourceFetchError('SOURCE_REDIRECT_DOWNGRADE')
                             current_url = next_url
                             continue
+                        if status == 304:
+                            not_modified = True
+                            final_url = current_url
+                            return None
                         if 300 <= status < 400:
                             raise SourceFetchError('SOURCE_REDIRECT_INVALID')
+                        last_etag = response.headers.get('etag') or last_etag
+                        last_modified = response.headers.get('last-modified') or last_modified
+                        final_url = current_url
                         response.raise_for_status()
                         if kind == 'geonode':
-                            body = await _read_bounded_body(response, budget, max_source_bytes)
+                            body = await _read_bounded_body(response, budget, max_source_bytes,
+                                                             prefix=bounded_prefix)
+                            if budget.get('truncated'):
+                                raise SourceFetchError('SOURCE_TRUNCATED')
                             try:
                                 data = json.loads(body.decode('utf-8'))
                             except UnicodeDecodeError as exc:
@@ -692,9 +950,11 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                             return data
                         if kind == 'text':
                             # Whole page at once: HTML tables often split host and port across lines.
-                            consume_line(await _read_bounded_body(response, budget, max_source_bytes))
+                            consume_line(await _read_bounded_body(response, budget, max_source_bytes,
+                                                                 prefix=bounded_prefix))
                             return None
-                        await _read_bounded_lines(response, budget, max_source_bytes, line_limit, consume_line)
+                        await _read_bounded_lines(response, budget, max_source_bytes, line_limit, consume_line,
+                                                  prefix=bounded_prefix)
                         return None
                 raise SourceFetchError('SOURCE_REDIRECT_TOO_MANY')
 
@@ -713,9 +973,12 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                         attempts += 1
                         try:
                             async with asyncio.timeout(timeout):
-                                data = await request_source(page_url, page)
+                                data = await request_source(page_url, page, send_conditional=(page == 1 and not not_modified))
                             succeeded = True
-                            error = None
+                            # The rows already recognised stay, but a read the
+                            # check's own byte bound cut short is not a
+                            # complete list and must not be reported as one.
+                            error = 'SOURCE_TRUNCATED' if budget.get('truncated') else None
                             break
                         except asyncio.CancelledError:
                             raise
@@ -727,8 +990,15 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                                 await asyncio.sleep(1)
                     if not succeeded:
                         break
+                    if not_modified:
+                        error = None
+                        db.execute('''UPDATE source_state SET last_304_at=?,last_attempt_at=?,
+                                      consecutive_failures=0,backoff_until=NULL,quarantine_until=NULL,
+                                      retry_after=NULL,last_error=NULL WHERE source_id=? AND endpoint_id=?''',
+                                   (time.time(), time.time(), key, 'primary'))
+                        break
                     pages += 1
-                    if kind != 'geonode':
+                    if kind != 'geonode' or error == 'SOURCE_TRUNCATED':
                         break
                     batch = data['data']
                     try:
@@ -756,8 +1026,18 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                     db.commit()
                     await asyncio.sleep(.1)
             total_rows += count
+            truncated = error == 'SOURCE_TRUNCATED'
+            if not not_modified:
+                db.execute('''UPDATE source_state SET last_attempt_at=?,final_url=?,etag=COALESCE(?,etag),
+                              last_modified=COALESCE(?,last_modified),last_error=?,last_success_at=?
+                              WHERE source_id=? AND endpoint_id=?''',
+                           (time.time(), final_url, last_etag, last_modified, error,
+                            time.time() if error is None else None, key, 'primary'))
             reports.append(dict(source=index, rows=count, invalid=invalid, blocked=blocked, pages=pages,
-                                attempts=attempts, complete=error is None, error=error, format=kind))
+                                attempts=attempts, complete=error is None, error=error, format=kind,
+                                http_state='not_modified' if not_modified else
+                                           ('http_2xx_nonempty' if error is None or truncated else 'http_error'),
+                                final_url=final_url))
             db.commit()
             publish()
             print(tr(f'Источник {index}: строк {count}, заблокировано {blocked}, страниц {pages}, ошибка {error or "нет"}',
@@ -770,6 +1050,1025 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
     return dict(raw_rows=total_rows, unique=db.execute('SELECT count(*) FROM candidates').fetchone()[0],
                 blocked=sum(r.get('blocked', 0) for r in reports), denylist_error=denylist.error,
                 sources_total=len(specs), sources=reports)
+
+
+def _catalog_cached():
+    global _BUNDLED_CATALOG
+    if _BUNDLED_CATALOG is None:
+        _BUNDLED_CATALOG = source_catalog.load_bundled()
+    return _BUNDLED_CATALOG
+
+
+_BUNDLED_CATALOG = None
+
+
+def resolve_sources_file(path, *, bundled=False):
+    """Read the collector's source list while accepting both catalog shapes.
+
+    An arbitrary legacy file remains an authoritative flat list.  The bundled
+    object contributes only the 55 pre-catalog specs until a user explicitly
+    materializes a new selection, so a catalog update never silently expands a
+    user's scope.
+    """
+    path = Path(path)
+    try:
+        value = json.loads(path.read_text(encoding='utf-8'))
+    except FileNotFoundError:
+        raise
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError('Не удалось прочитать список источников.') from exc
+    if isinstance(value, list):
+        return value
+    if not isinstance(value, dict):
+        raise ValueError('sources: ожидается JSON-массив или каталог источников')
+    catalog = source_catalog.validate_catalog(value, allow_research=True, allow_unsafe=True)
+    selection = value.get('source_selection')
+    if isinstance(selection, dict) and isinstance(selection.get('selected_ids'), list):
+        return source_catalog.materialize_selection({'source_selection': selection}, catalog)
+    if bundled:
+        result = []
+        for source in catalog['sources']:
+            if source.get('relation_to_current') == 'already_used':
+                result.extend(source.get('legacy_specs') or source.get('data_urls', []))
+        return result
+    return catalog['sources']
+
+
+async def fetch_catalog(url, *, current=None, timeout=20, max_bytes=8 * 1024 * 1024,
+                        allow_private_sources=False, etag=None, last_modified=None):
+    """The single bounded owner for fetching a remote catalog.
+
+    It reuses the same URL validation, DNS pinning, redirect and downgrade
+    policy as proxy sources.  The body is decoded only by the pure catalog
+    validator; no response data is imported or evaluated.
+    """
+    current_url = url
+    try:
+        allowed_catalog_host = urlsplit(url).hostname
+    except ValueError:
+        allowed_catalog_host = None
+    validators = {}
+    if etag:
+        validators['If-None-Match'] = etag
+    if last_modified:
+        validators['If-Modified-Since'] = last_modified
+    for redirect_count in range(DEFAULT_SOURCE_MAX_REDIRECTS + 1):
+        try:
+            if allowed_catalog_host and urlsplit(current_url).hostname != allowed_catalog_host:
+                raise SourceFetchError('SOURCE_REDIRECT_HOST')
+            async with httpx.AsyncClient(trust_env=False, verify=TLS, follow_redirects=False,
+                                         timeout=timeout) as client:
+                async with _source_stream(client, current_url, allow_private_sources,
+                                          validators if not redirect_count else None) as response:
+                    if response.status_code == 304:
+                        return dict(state='not_modified', catalog=current, etag=etag, last_modified=last_modified)
+                    if response.status_code in SOURCE_REDIRECT_STATUSES:
+                        location = response.headers.get('location')
+                        if not isinstance(location, str) or not location.strip():
+                            raise SourceFetchError('SOURCE_REDIRECT_INVALID')
+                        if redirect_count >= DEFAULT_SOURCE_MAX_REDIRECTS:
+                            raise SourceFetchError('SOURCE_REDIRECT_TOO_MANY')
+                        next_url = urljoin(current_url, location.strip())
+                        old_parsed, _, _ = _parse_source_url(current_url)
+                        new_parsed, _, _ = _parse_source_url(next_url)
+                        if old_parsed.scheme == 'https' and new_parsed.scheme != 'https':
+                            raise SourceFetchError('SOURCE_REDIRECT_DOWNGRADE')
+                        current_url = next_url
+                        continue
+                    if response.status_code >= 400:
+                        raise SourceFetchError('SOURCE_HTTP_ERROR', retryable=response.status_code >= 500)
+                    body = await _read_bounded_body(response, {'used': 0}, max_bytes)
+                    catalog = source_catalog.decode_catalog_bytes(body, current, max_bytes=max_bytes)
+                    return dict(state='available', catalog=catalog,
+                                etag=response.headers.get('etag'), last_modified=response.headers.get('last-modified'),
+                                body_sha256=hashlib.sha256(body).hexdigest())
+        except SourceFetchError:
+            raise
+    raise SourceFetchError('SOURCE_REDIRECT_TOO_MANY')
+
+
+def _rich_plan(value):
+    if isinstance(value, dict):
+        if value.get('endpoints') and value.get('adapter'):
+            raw = dict(value)
+            if 'id' not in raw:
+                raw['id'] = source_catalog.custom_id(raw.get('endpoints', [{}])[0].get('url', 'custom'))
+            if raw.get('endpoints'):
+                endpoint_urls = [endpoint.get('url') for endpoint in raw['endpoints']
+                                 if isinstance(endpoint, dict) and endpoint.get('url')]
+                if endpoint_urls:
+                    raw['data_urls'] = endpoint_urls[:1]
+                    raw['fallback_urls'] = endpoint_urls[1:]
+            try:
+                return source_catalog.normalize_source(raw)
+            except source_catalog.CatalogError:
+                # A custom descriptor may intentionally use a registered
+                # profile without carrying research metadata.
+                adapter = raw['adapter']
+                return dict(raw, id=raw['id'], family_id=raw.get('family_id', raw['id']),
+                            endpoints=raw['endpoints'], adapter=adapter)
+        if value.get('id'):
+            catalog = _catalog_cached()
+            item = source_catalog.source_by_id(catalog, value['id'])
+            if item is not None and not item.get('endpoints'):
+                adapter = item.get('adapter') or {}
+                kind = ((adapter.get('config') or {}).get('legacy_kind') or 'http')
+                prefix = '' if kind in ('http', 'https') else kind + ' '
+                item = source_catalog._custom_record(value['id'], prefix + item.get('url', ''))
+                item['adapter'] = adapter
+            if item is not None:
+                return item
+        raise ValueError('Некорректный план источника.')
+    if not isinstance(value, str):
+        raise ValueError('Источник должен быть строкой URL или формата.')
+    text = value.strip()
+    parts = text.split(None, 1)
+    if len(parts) == 2 and parts[0] in ('json-records', 'fields', 'page-json', 'html-table'):
+        kind, url = parts
+        try:
+            source_spec((kind + ' ' + url))
+        except ValueError:
+            raise
+        return {'id': source_catalog.custom_id(text), 'name': source_catalog.custom_id(text),
+                'publisher': {'id': 'local', 'name': 'Пользователь'}, 'family_id': source_catalog.custom_id(text),
+                'category': 'custom', 'endpoints': [{'id': 'primary', 'url': url, 'role': 'primary', 'relation': 'custom'}],
+                'data_urls': [url], 'fallback_urls': [], 'protocols': [], 'protocol_hints': [],
+                'adapter': {'kind': kind, 'profile': 'generic-v1', 'config': {}}, 'access': {'kind': 'public'},
+                'rights': {}, 'evidence': {}, 'limits': {}, 'collection_allowed': True,
+                'legacy_specs': [text], 'publisher_id': 'local', 'publisher_name': 'Пользователь'}
+    catalog = _catalog_cached()
+    item = source_catalog.source_by_id(catalog, text)
+    if item is not None:
+        return item
+    raise ValueError('Неизвестный формат источника или ID.')
+
+
+def _rich_kind(value):
+    if isinstance(value, str):
+        parts = value.strip().split(None, 1)
+        return parts[0] if len(parts) == 2 and parts[0] in source_adapters.ADAPTER_KINDS else None
+    if isinstance(value, dict):
+        adapter = value.get('adapter')
+        if isinstance(adapter, dict):
+            return adapter.get('kind')
+        if isinstance(adapter, str):
+            return adapter
+    return None
+
+
+def _parse_retry_after(value, now=None):
+    if not isinstance(value, str) or not value.strip():
+        return None
+    now = time.time() if now is None else now
+    try:
+        return max(0.0, float(value.strip()))
+    except ValueError:
+        pass
+    try:
+        from email.utils import parsedate_to_datetime
+        parsed = parsedate_to_datetime(value.strip())
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=__import__('datetime').timezone.utc)
+        return max(0.0, parsed.timestamp() - now)
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+async def _sleep_value(value, sleep):
+    result = sleep(value)
+    if result is not None:
+        await result
+
+
+def _state_row(db, source_id, endpoint_id):
+    return db.execute('SELECT * FROM source_state WHERE source_id=? AND endpoint_id=?',
+                      (source_id, endpoint_id)).fetchone()
+
+
+def _ensure_state(db, source_id, endpoint_id):
+    db.execute('INSERT OR IGNORE INTO source_state(source_id,endpoint_id) VALUES (?,?)', (source_id, endpoint_id))
+
+
+def _record_observation(db, run_id, source_id, endpoint_id, started, report, profile_digest=''):
+    now = time.time()
+    db.execute('''INSERT OR REPLACE INTO source_observation(
+        run_id,source_id,endpoint_id,started_at,ended_at,http_state,parse_state,cache_state,
+        outcome,status,attempts,pages,bytes,received,recognized,accepted,rejected,duplicate,
+        duplicates_existing,blocked,new_endpoints,partial,error,retryable,body_sha256,
+        fallback_used,profile_digest,retry_after)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+        (run_id, source_id, endpoint_id, started, now, report.get('http_state', 'not_attempted'),
+         report.get('parse_state', 'not_run'), report.get('cache_state', 'none'), report.get('outcome', 'unavailable'),
+         report.get('status'), report.get('attempts', 0), report.get('pages', 0), report.get('bytes', 0),
+         report.get('received', 0), report.get('recognized', 0), report.get('accepted', 0),
+         report.get('rejected', 0), report.get('duplicate', 0), report.get('duplicates_existing', 0),
+         report.get('blocked', 0), report.get('new_endpoints', 0), int(bool(report.get('partial'))),
+         report.get('error'), int(bool(report.get('retryable'))), report.get('body_sha256'),
+         int(bool(report.get('fallback_used'))), profile_digest, report.get('retry_after')))
+    return db.execute(
+        'SELECT id FROM source_observation WHERE run_id=? AND source_id=? AND endpoint_id=?',
+        (run_id, source_id, endpoint_id)).fetchone()[0]
+
+
+def _update_observation(db, observation_id, report):
+    db.execute('''UPDATE source_observation SET ended_at=?,http_state=?,parse_state=?,cache_state=?,outcome=?,
+                  status=?,attempts=?,pages=?,bytes=?,received=?,recognized=?,accepted=?,rejected=?,duplicate=?,
+                  duplicates_existing=?,blocked=?,new_endpoints=?,partial=?,error=?,retryable=?,body_sha256=?,
+                  fallback_used=?,retry_after=? WHERE id=?''',
+               (time.time(), report.get('http_state', 'not_attempted'), report.get('parse_state', 'not_run'),
+                report.get('cache_state', 'none'), report.get('outcome', 'unavailable'), report.get('status'),
+                report.get('attempts', 0), report.get('pages', 0), report.get('bytes', 0), report.get('received', 0),
+                report.get('recognized', 0), report.get('accepted', 0), report.get('rejected', 0),
+                report.get('duplicate', 0), report.get('duplicates_existing', 0), report.get('blocked', 0),
+                report.get('new_endpoints', 0), int(bool(report.get('partial'))), report.get('error'),
+                int(bool(report.get('retryable'))), report.get('body_sha256'), int(bool(report.get('fallback_used'))),
+                report.get('retry_after'), observation_id))
+
+
+def _last_good_age(db, source_id, now=None):
+    row = db.execute('SELECT last_success_at FROM source_state WHERE source_id=? AND last_success_at IS NOT NULL ORDER BY last_success_at DESC LIMIT 1', (source_id,)).fetchone()
+    if not row or not row[0]:
+        return None
+    return max(0, (time.time() if now is None else now) - row[0])
+
+
+def _cache_entries(db, source_id):
+    state = db.execute('''SELECT last_good_generation FROM source_state
+                          WHERE source_id=? AND last_good_generation IS NOT NULL
+                          ORDER BY last_good_generation DESC LIMIT 1''', (source_id,)).fetchone()
+    if not state or not state[0]:
+        return []
+    return [row[0] for row in db.execute('SELECT proxy FROM source_generation_entry WHERE generation_id=?', (state[0],))]
+
+
+def _source_identity(db, source):
+    publisher = source.get('publisher') if isinstance(source.get('publisher'), dict) else {}
+    db.execute('''INSERT OR REPLACE INTO source_identity(source_id,family_id,publisher_id,metadata_json)
+                  VALUES (?,?,?,?)''',
+               (source.get('id', ''), source.get('family_id'), publisher.get('id'),
+                json.dumps({'name': publisher.get('name')}, ensure_ascii=False)))
+
+
+def _add_rich_record(db, record, source_id, observation_id, generation_id, denylist, counters):
+    values = record.get('values') or [record.get('value', '')]
+    accepted = 0
+    for value in values:
+        counters['endpoint_attempts'] += 1
+        proxy = normalize(value)
+        if not proxy:
+            counters['rejected'] += 1
+            counters.setdefault('reject_reasons', {})['not_a_public_proxy'] = \
+                counters.setdefault('reject_reasons', {}).get('not_a_public_proxy', 0) + 1
+            continue
+        if denylist.match(proxy):
+            counters['blocked'] += 1
+            counters.setdefault('reject_reasons', {})['denylisted'] = \
+                counters.setdefault('reject_reasons', {}).get('denylisted', 0) + 1
+            continue
+        existed = db.execute('SELECT 1 FROM candidates WHERE proxy=?', (proxy,)).fetchone() is not None
+        membership_existed = db.execute('SELECT 1 FROM candidate_seen WHERE proxy=? AND source=?', (proxy, source_id)).fetchone() is not None
+        seen_here = proxy in counters.setdefault('seen_proxies', set())
+        if seen_here:
+            counters['duplicate'] = counters.get('duplicate', 0) + 1
+        elif membership_existed:
+            counters['duplicates_existing'] = counters.get('duplicates_existing', 0) + 1
+        db.execute('INSERT OR IGNORE INTO candidates VALUES (?)', (proxy,))
+        if not existed:
+            counters['new_endpoints'] = counters.get('new_endpoints', 0) + 1
+        counters.setdefault('seen_proxies', set()).add(proxy)
+        db.execute('INSERT OR IGNORE INTO candidate_seen VALUES (?, ?)', (proxy, source_id))
+        db.execute('''INSERT INTO candidate_seen_meta(proxy,source,first_seen_at,last_seen_at,
+                      first_observation_id,last_observation_id,legacy)
+                      VALUES (?,?,?,?,?,?,0)
+                      ON CONFLICT(proxy,source) DO UPDATE SET
+                        first_seen_at=COALESCE(candidate_seen_meta.first_seen_at,excluded.first_seen_at),
+                        last_seen_at=excluded.last_seen_at,last_observation_id=excluded.last_observation_id,legacy=0''',
+                   (proxy, source_id, time.time(), time.time(), observation_id, observation_id))
+        declared = record.get('declared') if isinstance(record.get('declared'), dict) else {}
+        country = declared.get('country') or declared.get('country_code')
+        if isinstance(country, str) and geoip.COUNTRY_CODE.fullmatch(country.upper()):
+            country = country.upper()
+        else:
+            country = None
+        asn = declared.get('asn')
+        try:
+            asn = int(str(asn).upper().removeprefix('AS')) if asn is not None else None
+        except (TypeError, ValueError):
+            asn = None
+        extra = {key: value for key, value in declared.items()
+                 if key not in ('country', 'country_code', 'asn', 'asn_org', 'anonymity', 'last_checked', 'exit_ip', 'supports_https')}
+        claimed_checked = source_adapters.normalize_timestamp(declared.get('last_checked'))
+        if declared.get('last_checked') is not None and claimed_checked is None:
+            extra['last_checked_raw'] = str(declared['last_checked'])[:256]
+        try:
+            extra_json = json.dumps(extra, ensure_ascii=False, separators=(',', ':')) if extra else None
+        except (TypeError, ValueError):
+            extra_json = None
+        db.execute('''INSERT OR REPLACE INTO source_metadata(
+            proxy,source_id,generation_id,country,asn,asn_org,anonymity,source_last_checked,
+            claimed_exit_ip,supports_https,extra_json,subject,origin,declared_at,ingested_at,valid_until)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                   (proxy, source_id, generation_id, country, asn, declared.get('asn_org'),
+                    declared.get('anonymity'), claimed_checked, declared.get('exit_ip'),
+                    int(bool(declared.get('supports_https'))) if declared.get('supports_https') is not None else None,
+                    extra_json, 'endpoint', 'source_claimed', time.time(), time.time(), None))
+        db.execute('''INSERT OR IGNORE INTO candidate_meta(proxy,country,source) VALUES (?,?,?)
+                      ON CONFLICT(proxy) DO UPDATE SET country=COALESCE(excluded.country,candidate_meta.country),
+                      source=COALESCE(candidate_meta.source,excluded.source)''',
+                   (proxy, country, source_id))
+        accepted += 1
+        counters['accepted'] += 1
+        if generation_id:
+            db.execute('INSERT OR IGNORE INTO source_generation_entry(generation_id,proxy,metadata_json) VALUES (?,?,?)',
+                       (generation_id, proxy, extra_json))
+    return accepted
+
+
+def _cache_generation(db, source_id, observation_id, report, records, state, *, complete, now=None, cache_bytes=DEFAULT_CACHE_BYTES):
+    if not records and complete:
+        return None
+    estimated = int(report.get('bytes', 0) or 0)
+    active_bytes = db.execute('SELECT COALESCE(sum(estimated_bytes),0) FROM source_generation WHERE active=1 OR last_good=1').fetchone()[0]
+    if estimated > DEFAULT_SOURCE_CACHE_BYTES or int(active_bytes) + estimated > cache_bytes:
+        report['cache_state'] = 'cache_evicted'
+        return None
+    # Keep active and one rollback generation per source.  Eviction is
+    # explicit in the observation and never removes the active last-good row.
+    db.execute('''INSERT INTO source_generation(source_id,observation_id,state,active,last_good,
+                    created_at,record_count,estimated_bytes,profile_digest,endpoint_url)
+                  VALUES (?,?,?,?,?,?,?,?,?,?)''',
+               (source_id, observation_id, 'complete' if complete else 'partial', 0, int(complete),
+                time.time() if now is None else now, len(records), estimated,
+                report.get('profile_digest', ''), report.get('final_url', '')))
+    generation = db.execute('SELECT last_insert_rowid()').fetchone()[0]
+    for record in records:
+        for value in record.get('values') or [record.get('value', '')]:
+            proxy = normalize(value)
+            if proxy:
+                db.execute('INSERT OR IGNORE INTO source_generation_entry(generation_id,proxy,metadata_json) VALUES (?,?,?)',
+                           (generation, proxy, json.dumps(record.get('declared', {}), ensure_ascii=False)))
+    if complete:
+        db.execute('UPDATE source_generation SET active=1,last_good=1 WHERE id=?', (generation,))
+        db.execute('UPDATE source_generation SET active=0,last_good=0 WHERE source_id=? AND id!=?', (source_id, generation))
+        for old in db.execute('SELECT id FROM source_generation WHERE source_id=? AND id!=? ORDER BY id DESC LIMIT 20', (source_id, generation)).fetchall():
+            db.execute('UPDATE source_generation SET active=0,last_good=0 WHERE id=?', (old[0],))
+        stale = db.execute('''SELECT id FROM source_generation WHERE source_id=? AND active=0 AND last_good=0
+                              AND id NOT IN (SELECT current_generation FROM source_state WHERE current_generation IS NOT NULL
+                                             UNION SELECT last_good_generation FROM source_state WHERE last_good_generation IS NOT NULL)
+                              ORDER BY id DESC LIMIT -1 OFFSET 1''', (source_id,)).fetchall()
+        for old in stale:
+            db.execute('DELETE FROM source_generation_entry WHERE generation_id=?', (old[0],))
+            db.execute('DELETE FROM source_metadata WHERE generation_id=?', (old[0],))
+            db.execute('DELETE FROM source_generation WHERE id=?', (old[0],))
+        db.execute('''UPDATE source_state SET current_generation=?,last_good_generation=?,
+                      last_success_at=?,consecutive_failures=0,backoff_until=NULL,
+                      quarantine_until=NULL,retry_after=NULL,last_error=NULL
+                      WHERE source_id=? AND endpoint_id=?''',
+                   (generation, generation, time.time(), source_id, state.get('endpoint_id', 'primary')))
+    else:
+        db.execute('''UPDATE source_state SET current_generation=COALESCE(current_generation,?)
+                      WHERE source_id=? AND endpoint_id=?''',
+                   (generation, source_id, state.get('endpoint_id', 'primary')))
+    return generation
+
+
+async def _collect_rich_sources(db, plans, inputs, timeout, on_progress, denylist, *,
+                                 allow_private_sources, max_source_bytes, max_source_candidates,
+                                 max_source_redirects, detect_protocols=False, preview=False,
+                                 bounded_prefix=False,
+                                 parallelism=DEFAULT_SOURCE_PARALLELISM,
+                                 host_parallelism=DEFAULT_SOURCE_HOST_PARALLELISM,
+                                 host_interval=DEFAULT_SOURCE_HOST_INTERVAL,
+                                 deadline=DEFAULT_SOURCE_DEADLINE, cache_bytes=DEFAULT_CACHE_BYTES,
+                                 max_pages=DEFAULT_SOURCE_PAGES,
+                                 clock=None, sleep=None, run_id=None):
+    clock = clock or time.time
+    sleep = sleep or asyncio.sleep
+    parallelism = _source_limit(parallelism, 'parallelism', maximum=MAX_SOURCE_PARALLELISM)
+    host_parallelism = _source_limit(host_parallelism, 'host_parallelism', maximum=MAX_SOURCE_HOST_PARALLELISM)
+    if (isinstance(host_interval, bool) or not isinstance(host_interval, (int, float))
+            or not math.isfinite(host_interval) or host_interval < 0 or host_interval > 3600):
+        raise ValueError('host_interval: ожидается число от 0 до 3600 секунд')
+    if (isinstance(deadline, bool) or not isinstance(deadline, (int, float))
+            or not math.isfinite(deadline) or deadline <= 0 or deadline > MAX_SOURCE_DEADLINE):
+        raise ValueError('deadline: ожидается число от 0 до 3600 секунд')
+    cache_bytes = _source_limit(cache_bytes, 'cache_bytes', maximum=MAX_CACHE_BYTES)
+    max_pages = _source_limit(max_pages, 'max_pages', maximum=MAX_SOURCE_PAGES)
+    run_id = run_id or hashlib.sha256(f'{clock()}:{id(db)}'.encode()).hexdigest()[:20]
+    bundled = _catalog_cached()
+    store_catalog_state(db, 'bundled', dict(revision=bundled['revision'], digest=source_catalog.catalog_digest(bundled),
+                                           source_count=len(bundled['sources'])))
+    denylist = denylist or Denylist.empty()
+    reports = []
+    total_rows = 0
+    total_gate = asyncio.Semaphore(parallelism)
+    host_gates = {}
+    host_times = {}
+    identity = {}
+    for plan in plans:
+        _source_identity(db, plan)
+        identity[plan['id']] = plan
+        for spec in plan.get('legacy_specs', []):
+            old_id = source_key(spec)
+            if old_id == plan['id']:
+                continue
+            db.execute('INSERT OR REPLACE INTO source_identity(source_id,family_id,publisher_id) VALUES (?,?,?)',
+                       (old_id, plan.get('family_id'), (plan.get('publisher') or {}).get('id')))
+            old_rows = db.execute('SELECT proxy,first_seen_at,last_seen_at,first_observation_id,last_observation_id,legacy '
+                                 'FROM candidate_seen_meta WHERE source=?', (old_id,)).fetchall()
+            for proxy, first_seen, last_seen, first_obs, last_obs, legacy in old_rows:
+                db.execute('INSERT OR IGNORE INTO candidate_seen VALUES (?,?)', (proxy, plan['id']))
+                db.execute('''INSERT OR IGNORE INTO candidate_seen_meta(proxy,source,first_seen_at,last_seen_at,
+                              first_observation_id,last_observation_id,legacy) VALUES (?,?,?,?,?,?,?)''',
+                           (proxy, plan['id'], first_seen, last_seen, first_obs, last_obs, legacy))
+                db.execute('''UPDATE candidate_meta SET source=COALESCE(source,?) WHERE proxy=?''', (plan['id'], proxy))
+
+    def publish():
+        if on_progress:
+            on_progress(dict(phase='collecting', sources_done=len(reports), sources_total=len(plans),
+                             sources=reports, raw_rows=sum(item.get('rows', 0) for item in reports),
+                             candidates=db.execute('SELECT count(*) FROM candidates').fetchone()[0]))
+
+    def state_for(source_id, endpoint_id):
+        _ensure_state(db, source_id, endpoint_id)
+        row = _state_row(db, source_id, endpoint_id)
+        return dict(zip([description[0] for description in db.execute('SELECT * FROM source_state LIMIT 0').description], row)) if row else {}
+
+    def cached_add(source_id):
+        values = _cache_entries(db, source_id)
+        for proxy in values:
+            db.execute('INSERT OR IGNORE INTO candidates VALUES (?)', (proxy,))
+        return len(values)
+
+    async def request_body(client, url, headers, budget, *, allowed_host=None, allowed_path_prefix=None):
+        current_url = url
+        sent_validators = False
+        for redirect_count in range(max_source_redirects + 1):
+            if allowed_host or allowed_path_prefix:
+                parsed_current = urlsplit(current_url)
+                if allowed_host and parsed_current.hostname != allowed_host:
+                    raise SourceFetchError('SOURCE_REDIRECT_HOST')
+                if allowed_path_prefix and not parsed_current.path.startswith(allowed_path_prefix):
+                    raise SourceFetchError('SOURCE_REDIRECT_PATH')
+            async with _source_stream(client, current_url, allow_private_sources,
+                                      headers if not sent_validators else None) as response:
+                status = response.status_code
+                if status in SOURCE_REDIRECT_STATUSES:
+                    location = response.headers.get('location')
+                    if not isinstance(location, str) or not location.strip():
+                        raise SourceFetchError('SOURCE_REDIRECT_INVALID')
+                    if redirect_count >= max_source_redirects:
+                        raise SourceFetchError('SOURCE_REDIRECT_TOO_MANY')
+                    next_url = urljoin(current_url, location.strip())
+                    current_parsed, _, _ = _parse_source_url(current_url)
+                    next_parsed, _, _ = _parse_source_url(next_url)
+                    if current_parsed.scheme == 'https' and next_parsed.scheme != 'https':
+                        raise SourceFetchError('SOURCE_REDIRECT_DOWNGRADE')
+                    current_url = next_url
+                    sent_validators = False
+                    continue
+                if status == 304:
+                    return response, b'', current_url, True
+                if 300 <= status < 400:
+                    raise SourceFetchError('SOURCE_REDIRECT_INVALID')
+                if status == 429:
+                    retry = _parse_retry_after(response.headers.get('retry-after'), clock())
+                    raise SourceFetchError('SOURCE_RATE_LIMITED', retryable=True, retry_after=retry) from None
+                if status >= 400:
+                    raise SourceFetchError('SOURCE_HTTP_ERROR', retryable=status in (408, 425, 500, 502, 503, 504))
+                body = await _read_bounded_body(response, budget, max_source_bytes, prefix=bounded_prefix)
+                return response, body, current_url, False
+        raise SourceFetchError('SOURCE_REDIRECT_TOO_MANY')
+
+    async def fetch(index, plan):
+        nonlocal total_rows
+        source_id = plan['id']
+        adapter = plan.get('adapter') or {}
+        kind = adapter.get('kind')
+        if kind == 'unsupported' or not plan.get('collection_allowed', True):
+            report = dict(source=index, source_id=source_id, rows=0, invalid=0, blocked=0, pages=0,
+                          attempts=0, complete=False, error='SOURCE_NOT_ELIGIBLE', format=kind or 'unsupported',
+                          http_state='not_attempted', parse_state='not_run', cache_state='none', outcome='unavailable',
+                          reject_reasons={})
+            reports.append(report)
+            db.commit(); publish()
+            return
+        endpoints = plan.get('endpoints') or [{'id': 'primary', 'url': plan.get('data_urls', [''])[0]}]
+        endpoint_reports = []
+        source_deadline_at = clock() + deadline
+        for endpoint_index, endpoint in enumerate(endpoints):
+            endpoint_id = str(endpoint.get('id') or ('primary' if endpoint_index == 0 else f'fallback-{endpoint_index}'))
+            url = endpoint.get('url')
+            report = dict(source=index, source_id=source_id, endpoint=endpoint_id, rows=0, invalid=0, blocked=0,
+                          pages=0, attempts=0, complete=False, error=None, format=kind,
+                          http_state='not_attempted', parse_state='not_run', cache_state='none', outcome='unavailable',
+                          received=0, recognized=0, accepted=0, rejected=0, duplicate=0,
+                          duplicates_existing=0, new_endpoints=0, partial=False, retryable=False,
+                          fallback_used=endpoint_index > 0, final_url=url, bytes=0, status=None,
+                          retry_after=None, reject_reasons={},
+                          profile_digest=hashlib.sha256(json.dumps(adapter, sort_keys=True).encode()).hexdigest()[:20])
+            report['_recorded'] = False
+            started = clock()
+            deadline_at = source_deadline_at
+            budget = {'used': 0}
+            truncated = False
+            state = state_for(source_id, endpoint_id)
+            now = clock()
+            retry_after = _parse_retry_after(state.get('retry_after'), now)
+            if state.get('quarantine_until') and state['quarantine_until'] > now:
+                report.update(error='SOURCE_QUARANTINED', http_state='not_attempted', cache_state='stale_last_good' if _cache_entries(db, source_id) else 'none')
+                if report['cache_state'] != 'none':
+                    report['rows'] = cached_add(source_id)
+                    report['cache_state'] = 'stale_last_good'
+                _record_observation(db, run_id, source_id, endpoint_id, started, report, report['profile_digest'])
+                report.pop('_recorded', None)
+                endpoint_reports.append(report)
+                continue
+            if state.get('backoff_until') and state['backoff_until'] > now:
+                report.update(error='SOURCE_BACKOFF', http_state='not_attempted', cache_state='stale_last_good' if _cache_entries(db, source_id) else 'none')
+                _record_observation(db, run_id, source_id, endpoint_id, started, report, report['profile_digest'])
+                report.pop('_recorded', None)
+                endpoint_reports.append(report)
+                continue
+            if retry_after and retry_after > now:
+                report.update(error='SOURCE_RETRY_AFTER', http_state='not_attempted',
+                              cache_state='stale_last_good' if _cache_entries(db, source_id) else 'none')
+                _record_observation(db, run_id, source_id, endpoint_id, started, report, report['profile_digest'])
+                report.pop('_recorded', None)
+                endpoint_reports.append(report)
+                continue
+            headers = {}
+            same_endpoint = not state.get('final_url') or state.get('final_url') == url
+            if same_endpoint and state.get('etag'):
+                headers['If-None-Match'] = state['etag']
+            if same_endpoint and state.get('last_modified'):
+                headers['If-Modified-Since'] = state['last_modified']
+            host = urlsplit(url).hostname if isinstance(url, str) else None
+            allowed_host = host if kind == 'html-table' else None
+            allowed_path_prefix = (adapter.get('config') or {}).get('path_prefix') if kind == 'html-table' else None
+            gate = host_gates.setdefault(host, asyncio.Semaphore(host_parallelism))
+            retry_delay = 0.0
+            retry_after_value = retry_after
+            body = b''
+            response = None
+            final_url = url
+            try:
+                async with total_gate, gate:
+                    if host_interval:
+                        wait = host_interval - (clock() - host_times.get(host, 0.0))
+                        if wait > 0:
+                            await _sleep_value(wait, sleep)
+                        host_times[host] = clock()
+                    last_error = None
+                    for attempt in range(2):
+                        report['attempts'] = attempt + 1
+                        if clock() >= deadline_at:
+                            raise SourceFetchError('SOURCE_DEADLINE', retryable=True)
+                        if retry_delay:
+                            await _sleep_value(retry_delay, sleep)
+                            retry_delay = 0
+                        try:
+                            async with asyncio.timeout(min(timeout, max(0.001, deadline_at - clock()))):
+                                async with httpx.AsyncClient(trust_env=False, verify=TLS, follow_redirects=False,
+                                                             timeout=timeout) as client:
+                                    response, body, final_url, not_modified = await request_body(
+                                        client, url, headers, budget, allowed_host=allowed_host,
+                                        allowed_path_prefix=allowed_path_prefix)
+                            report['status'] = response.status_code
+                            report['http_state'] = 'http_2xx_nonempty'
+                            report['final_url'] = final_url
+                            if not_modified:
+                                report.update(http_state='not_modified', parse_state='not_run', cache_state='not_modified',
+                                              complete=True, outcome='available', last_304_at=clock())
+                                _ensure_state(db, source_id, endpoint_id)
+                                db.execute('''UPDATE source_state SET last_304_at=?,last_attempt_at=?,
+                                              consecutive_failures=0,backoff_until=NULL,quarantine_until=NULL,
+                                              retry_after=NULL,last_error=NULL WHERE source_id=? AND endpoint_id=?''',
+                                           (clock(), clock(), source_id, endpoint_id))
+                                _record_observation(db, run_id, source_id, endpoint_id, started, report, report['profile_digest'])
+                                report['_recorded'] = True
+                                db.commit()
+                                break
+                            break
+                        except asyncio.CancelledError:
+                            raise
+                        except SourceFetchError as exc:
+                            last_error = exc
+                            retry_after_value = exc.retry_after
+                            if not exc.retryable or attempt:
+                                break
+                            await _sleep_value(min(float(exc.retry_after or 1), 5), sleep)
+                        except (httpx.TimeoutException, TimeoutError):
+                            last_error = SourceFetchError('SOURCE_TIMEOUT', retryable=True)
+                            if attempt:
+                                break
+                            await _sleep_value(1, sleep)
+                        except (httpx.HTTPError, OSError, ValueError, OverflowError) as exc:
+                            last_error = exc
+                            break
+                    if response is None and last_error is not None:
+                        raise last_error
+                    # A read the check's own byte bound cut short is a prefix,
+                    # not a source that cannot be read: the records below come
+                    # from that prefix and the report says so.
+                    truncated = bool(budget.get('truncated'))
+                    if not report.get('complete') and response is not None and response.status_code != 304:
+                        report['bytes'] = len(body)
+                        report['body_sha256'] = hashlib.sha256(body).hexdigest() if body else None
+                        if not body:
+                            report.update(http_state='empty_body', parse_state='empty', cache_state='last_good' if _cache_entries(db, source_id) else 'none',
+                                          complete=True, outcome='empty')
+                            _record_observation(db, run_id, source_id, endpoint_id, started, report, report['profile_digest'])
+                            report['_recorded'] = True
+                        else:
+                            if truncated:
+                                # What the parser sees below is a prefix, so the
+                                # observation is recorded as a partial one.
+                                report.update(partial=True, error='SOURCE_TRUNCATED')
+                            observed_profile = {**adapter, 'kind': kind}
+                            page_records = []
+                            page_number = 1
+                            expected_total = None
+                            signatures = set()
+                            page_url = url
+                            def persist_records(records, complete):
+                                limited = []
+                                endpoint_attempts = 0
+                                for record in records:
+                                    values = record.get('values') or [record.get('value', '')]
+                                    if endpoint_attempts + len(values) > max_source_candidates:
+                                        report['error'] = 'SOURCE_CANDIDATE_LIMIT'
+                                        report['partial'] = True
+                                        complete = False
+                                        break
+                                    endpoint_attempts += len(values)
+                                    limited.append(record)
+                                records = limited
+                                report['parse_state'] = 'confirmed' if complete else 'partial'
+                                report['outcome'] = ('available' if complete and records else 'empty') if complete else 'partial'
+                                observation_id = _record_observation(db, run_id, source_id, endpoint_id, started, report, report['profile_digest'])
+                                generation_id = _cache_generation(db, source_id, observation_id, report, records,
+                                                                 {'endpoint_id': endpoint_id}, complete=complete, cache_bytes=cache_bytes)
+                                counters = dict(endpoint_attempts=0, rejected=report['rejected'], blocked=0, accepted=0,
+                                                new_endpoints=0, reject_reasons={})
+                                for record in records:
+                                    values = record.get('values') or [record.get('value', '')]
+                                    if counters['endpoint_attempts'] + len(values) > max_source_candidates:
+                                        report['error'] = 'SOURCE_CANDIDATE_LIMIT'
+                                        report['partial'] = True
+                                        report['complete'] = False
+                                        break
+                                    _add_rich_record(db, record, source_id, observation_id, generation_id, denylist, counters)
+                                report['accepted'] = counters['accepted']
+                                report['rows'] = counters['accepted']
+                                report['rejected'] = counters['rejected']
+                                report['blocked'] = counters['blocked']
+                                report['duplicate'] = counters.get('duplicate', 0)
+                                report['duplicates_existing'] = counters.get('duplicates_existing', 0)
+                                report['new_endpoints'] = counters['new_endpoints']
+                                for reason, count in counters.get('reject_reasons', {}).items():
+                                    report['reject_reasons'][reason] = report['reject_reasons'].get(reason, 0) + count
+                                report['complete'] = complete
+                                if report.get('cache_state') != 'cache_evicted':
+                                    report['cache_state'] = 'last_good' if complete and generation_id else ('partial' if generation_id else 'none')
+                                _update_observation(db, observation_id, report)
+                                report['_recorded'] = True
+                                return counters
+                            while page_number <= max_pages:
+                                report['pages'] = page_number
+                                budget_page = {'used': budget['used']}
+                                try:
+                                    if clock() >= deadline_at:
+                                        raise SourceFetchError('SOURCE_DEADLINE', retryable=True)
+                                    if page_number == 1:
+                                        page_body = body
+                                    else:
+                                        # The endpoint-level gate is already
+                                        # held for this source; acquiring it
+                                        # again for a page would deadlock.
+                                        async with asyncio.timeout(min(timeout, max(0.001, deadline_at - clock()))):
+                                            async with httpx.AsyncClient(trust_env=False, verify=TLS, follow_redirects=False, timeout=timeout) as client:
+                                                response, page_body, page_url, not_modified = await request_body(
+                                                    client, page_url, {}, {'used': budget['used']},
+                                                    allowed_host=allowed_host, allowed_path_prefix=allowed_path_prefix)
+                                        if not_modified:
+                                            raise SourceFetchError('SOURCE_NOT_MODIFIED_WITHOUT_PAGE_CACHE')
+                                    if page_number > 1:
+                                        budget['used'] += len(page_body)
+                                    parsed = source_adapters.parse_page(page_body, observed_profile,
+                                                                       {'page': page_number, 'url': page_url},
+                                                                       {'max_records': max_source_candidates, 'max_bytes': max_source_bytes})
+                                    parsed_records = parsed.get('records', [])
+                                    report['received'] += len(parsed_records)
+                                    report['recognized'] += len(parsed_records)
+                                    report['rejected'] += sum(parsed.get('rejects', {}).values())
+                                    # Reasons are a per-run observation, not durable
+                                    # provenance: a preview must be able to say why
+                                    # records were dropped without a second parser.
+                                    for reason, count in (parsed.get('rejects') or {}).items():
+                                        report['reject_reasons'][reason] = report['reject_reasons'].get(reason, 0) + count
+                                    page_records.extend(parsed_records)
+                                    if kind == 'page-json':
+                                        try:
+                                            envelope = json.loads(page_body.decode('utf-8-sig'))
+                                            info = source_adapters.page_info(envelope, observed_profile)
+                                            if info['page'] != page_number:
+                                                raise SourceFetchError('SOURCE_PAGE_MISMATCH')
+                                            if expected_total is None and info['total'] is not None:
+                                                expected_total = info['total']
+                                            signature = hashlib.sha256(json.dumps(info['records'], sort_keys=True).encode()).hexdigest()
+                                            if signature in signatures:
+                                                raise SourceFetchError('SOURCE_PAGINATION_REPEAT')
+                                            signatures.add(signature)
+                                            if not info['records'] and expected_total is not None and len(page_records) < expected_total:
+                                                raise SourceFetchError('SOURCE_PAGINATION_EMPTY')
+                                            if expected_total is not None and len(page_records) >= expected_total:
+                                                break
+                                            if info['has_more'] is False:
+                                                break
+                                            next_url = source_adapters.next_page_url(url, info, observed_profile, page_number + 1)
+                                            if not next_url:
+                                                raise SourceFetchError('SOURCE_PAGINATION_EMPTY')
+                                            page_url = next_url
+                                            page_number += 1
+                                            continue
+                                        except SourceFetchError:
+                                            raise
+                                        except (ValueError, TypeError, KeyError, json.JSONDecodeError):
+                                            raise SourceFetchError('SOURCE_INVALID_PAGINATION')
+                                    break
+                                except asyncio.CancelledError:
+                                    if page_records:
+                                        report['partial'] = True
+                                        report['error'] = 'SOURCE_CANCELED'
+                                        persist_records(page_records, False)
+                                        db.commit()
+                                    raise
+                                except SourceFetchError as exc:
+                                    report['error'] = exc.code
+                                    report['retryable'] = exc.retryable
+                                    if page_records:
+                                        report['partial'] = True
+                                        persist_records(page_records, False)
+                                        db.commit()
+                                    raise
+                                except source_adapters.AdapterError as exc:
+                                    report['error'] = exc.code
+                                    report['partial'] = bool(page_records) or exc.partial
+                                    if page_records:
+                                        persist_records(page_records, False)
+                                        db.commit()
+                                    raise
+                            if kind == 'page-json' and page_number > max_pages and not report.get('error'):
+                                report['error'] = 'SOURCE_PAGE_LIMIT'
+                                report['partial'] = bool(page_records)
+                            persist_records(page_records, not report.get('partial') and not report.get('error'))
+                            db.commit()
+            except asyncio.CancelledError:
+                raise
+            except SourceFetchError as exc:
+                report['error'] = exc.code
+                report['retryable'] = exc.retryable
+                report['retry_after'] = getattr(exc, 'retry_after', None)
+                report['http_state'] = {'SOURCE_RATE_LIMITED': 'http_429', 'SOURCE_TIMEOUT': 'timeout'}.get(exc.code, 'http_error')
+                report['outcome'] = {'SOURCE_RATE_LIMITED': 'rate_limited', 'SOURCE_TIMEOUT': 'timeout',
+                                     'SOURCE_DEADLINE': 'partial', 'SOURCE_TOO_LARGE': 'limit_exceeded', 'SOURCE_LINE_TOO_LARGE': 'limit_exceeded',
+                                     'SOURCE_CANDIDATE_LIMIT': 'limit_exceeded'}.get(exc.code, 'unavailable')
+            except source_adapters.AdapterError as exc:
+                report['error'] = exc.code
+                report['retryable'] = False
+                report['http_state'] = 'http_2xx_nonempty' if response is not None else 'http_error'
+                report['parse_state'] = 'invalid'
+                report['outcome'] = 'html_placeholder' if exc.code == 'SOURCE_HTML_PLACEHOLDER' else 'invalid_json' if exc.code == 'SOURCE_INVALID_JSON' else 'limit_exceeded' if exc.code in ADAPTER_LIMIT_CODES else 'unavailable'
+            except (httpx.HTTPError, TimeoutError, OSError, ValueError, OverflowError) as exc:
+                timed_out = isinstance(exc, (TimeoutError, httpx.TimeoutException))
+                report['error'] = 'SOURCE_TIMEOUT' if timed_out else type(exc).__name__
+                report['http_state'] = 'timeout' if timed_out else 'http_error'
+                report['outcome'] = 'timeout' if timed_out else 'unavailable'
+            if truncated:
+                # Whatever the read or the parser said about the rest of the
+                # body, the body the check saw stopped at its own bound: that
+                # is a partial read, not a verdict on the source.
+                report.update(error='SOURCE_TRUNCATED', retryable=False, retry_after=None,
+                              http_state='http_2xx_nonempty', parse_state='partial',
+                              outcome='partial', partial=True, complete=False)
+            if not report.get('_recorded'):
+                if not report.get('parse_state') or report['parse_state'] == 'not_run':
+                    report['parse_state'] = 'invalid' if report.get('error') else 'not_run'
+                _record_observation(db, run_id, source_id, endpoint_id, started, report, report['profile_digest'])
+                report['_recorded'] = True
+            if report.get('error') and not truncated:
+                if report.get('http_state') == 'not_attempted':
+                    report['http_state'] = 'http_error'
+                failures = int(state.get('consecutive_failures') or 0) + 1
+                delay = (60, 300, 1800, 7200, 21600)[min(failures - 1, 4)] * random.uniform(.8, 1.2)
+                backoff_at = clock() + delay
+                quarantine_at = backoff_at if failures >= 3 else None
+                db.execute('''UPDATE source_state SET last_attempt_at=?,final_url=?,etag=COALESCE(?,etag),
+                              last_modified=COALESCE(?,last_modified),last_error=?,consecutive_failures=consecutive_failures+1,
+                              backoff_until=?,quarantine_until=?,retry_after=? WHERE source_id=? AND endpoint_id=?''',
+                           (clock(), final_url, response.headers.get('etag') if response is not None else None,
+                            response.headers.get('last-modified') if response is not None else None,
+                            report['error'], backoff_at, quarantine_at,
+                            retry_after_value if response is None else _parse_retry_after(response.headers.get('retry-after'), clock()),
+                            source_id, endpoint_id))
+                if _cache_entries(db, source_id):
+                    report['cache_state'] = 'stale_last_good'
+                    report['served_from'] = 'last_good'
+                    report['last_good_age_seconds'] = _last_good_age(db, source_id, clock())
+                    report['rows'] = cached_add(source_id)
+                    if report.get('fallback_used'):
+                        report['outcome'] = 'fallback_used'
+            else:
+                db.execute('''UPDATE source_state SET last_attempt_at=?,last_body_at=?,final_url=?,etag=COALESCE(?,etag),
+                              last_modified=COALESCE(?,last_modified),last_error=NULL WHERE source_id=? AND endpoint_id=?''',
+                           (clock(), clock() if body else None, final_url, response.headers.get('etag') if response is not None else None,
+                            response.headers.get('last-modified') if response is not None else None, source_id, endpoint_id))
+            if report.get('complete') and not report.get('error'):
+                report['outcome'] = report.get('outcome') or 'available'
+            report.pop('_recorded', None)
+            endpoint_reports.append(report)
+            db.commit()
+            # A valid complete primary is authoritative; malformed/empty/
+            # failed primary may use a declared fallback URL.
+            if report.get('complete') and report.get('outcome') in ('available', 'empty') and not report.get('error'):
+                break
+        reports.append(endpoint_reports[-1] if endpoint_reports else dict(source=index, source_id=source_id, error='SOURCE_NO_ENDPOINT', complete=False))
+        total_rows += sum(item.get('rows', 0) for item in endpoint_reports)
+        db.commit(); publish()
+
+    publish()
+    # Fault isolation is explicit: an unexpected adapter exception becomes a
+    # source observation and cannot cancel unrelated source tasks.
+    async def safe_fetch(index, plan):
+        try:
+            await fetch(index, plan)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            # Only a source that actually has stored rows can serve them again;
+            # a crash on a source that never cached anything is not "stale".
+            cached = _cache_entries(db, plan.get('id'))
+            report = dict(source=index, source_id=plan.get('id'), rows=len(cached) if cached else 0, invalid=0, blocked=0, pages=0,
+                          attempts=0, complete=False, error='SOURCE_ADAPTER_ERROR', format=plan.get('adapter', {}).get('kind'),
+                          http_state='http_error', parse_state='invalid',
+                          cache_state='stale_last_good' if cached else 'none', outcome='unavailable',
+                          partial=True, retryable=False, bytes=0, received=0, recognized=0, accepted=0,
+                          rejected=0, duplicate=0, duplicates_existing=0, new_endpoints=0,
+                          reject_reasons={})
+            if cached:
+                report['served_from'] = 'last_good'
+            _record_observation(db, run_id, plan.get('id'), 'primary', clock(), report, '')
+            reports.append(report)
+            db.commit(); publish()
+    async with httpx.AsyncClient(trust_env=False, verify=TLS, follow_redirects=False, timeout=timeout) as client:
+        # The client is intentionally created here as the sole network owner;
+        # request_body uses short-lived clients for DNS-pinned destinations.
+        del client
+        async with asyncio.TaskGroup() as group:
+            for index, plan in enumerate(plans, 1):
+                group.create_task(safe_fetch(index, plan))
+    db.commit(); publish()
+    return dict(raw_rows=total_rows, unique=db.execute('SELECT count(*) FROM candidates').fetchone()[0],
+                blocked=sum(item.get('blocked', 0) for item in reports), sources_total=len(plans),
+                sources=reports, run_id=run_id, partial=any(item.get('partial') for item in reports))
+
+
+async def preview_collect(db, urls, timeout=60, denylist=None, allow_private_sources=False, **kwargs):
+    """Bounded availability/format check on a throwaway database.
+
+    Same fetch, adapter, validation and limit path as a real collection run,
+    but capped so one click on a multi-megabyte list cannot pull hundreds of
+    megabytes or build a full candidate set in memory.  A body past the byte
+    budget is read as a prefix and reported as a prefix, never as a source that
+    cannot be read.
+    """
+    return await collect(db, urls, [], timeout, denylist=denylist,
+                         allow_private_sources=allow_private_sources, preview=True,
+                         bounded_prefix=True,
+                         max_source_bytes=PREVIEW_MAX_BYTES,
+                         max_source_candidates=PREVIEW_MAX_CANDIDATES, **kwargs)
+
+
+def _record_legacy_provenance(db, reports, source_values, run_id):
+    """Give the built-in line formats the same observable provenance tables.
+
+    Their network reader stays untouched (and their historical 16-hex report
+    keys stay compatible); only the runtime observation/generation layer is
+    added here.
+    """
+    for report in reports:
+        if 'source' not in report and 'input' not in report:
+            continue
+        if 'source' in report:
+            index = int(report['source'])
+            source_id = source_key(source_values[index - 1]) if index <= len(source_values) else 'local'
+        else:
+            source_id = 'local'
+        db.execute('INSERT OR IGNORE INTO source_identity(source_id,family_id,publisher_id) VALUES (?,?,?)',
+                   (source_id, source_id, None))
+        started = time.time()
+        normalized = dict(report)
+        # A read the check's own byte bound cut short is neither a complete list
+        # nor a broken one: it is a prefix, and it says so.
+        partial = report.get('error') == 'SOURCE_TRUNCATED'
+        normalized.update(http_state=report.get('http_state', 'http_2xx_nonempty' if report.get('complete') else 'http_error'),
+                          parse_state='not_run' if report.get('http_state') == 'not_modified' else
+                                      ('partial' if partial else ('confirmed' if report.get('complete') else 'invalid')),
+                          cache_state='not_modified' if report.get('http_state') == 'not_modified' else 'none',
+                          outcome='partial' if partial else ('available' if report.get('complete') else 'unavailable'),
+                          accepted=max(0, report.get('rows', 0) - report.get('invalid', 0) - report.get('blocked', 0)),
+                          recognized=report.get('rows', 0), received=report.get('rows', 0),
+                          rejected=report.get('invalid', 0), new_endpoints=0, bytes=0,
+                          profile_digest=hashlib.sha256(str(report.get('format', '')).encode()).hexdigest()[:20])
+        observation_id = _record_observation(db, run_id, source_id, 'primary', started, normalized, normalized['profile_digest'])
+        if report.get('complete') and report.get('rows', 0) > 0:
+            records = [{'value': proxy, 'values': [proxy]} for (proxy,) in db.execute(
+                'SELECT proxy FROM candidate_seen WHERE source=?', (source_id,))]
+            _cache_generation(db, source_id, observation_id, normalized, records, {'endpoint_id': 'primary'}, complete=True)
+    db.commit()
+
+
+async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
+                  allow_private_sources=False, detect_protocols=False,
+                  max_source_bytes=DEFAULT_SOURCE_MAX_BYTES,
+                  max_source_line_bytes=DEFAULT_SOURCE_MAX_LINE_BYTES,
+                  max_source_candidates=DEFAULT_SOURCE_MAX_CANDIDATES,
+                  max_source_redirects=DEFAULT_SOURCE_MAX_REDIRECTS,
+                  *, preview=False, bounded_prefix=False, parallelism=DEFAULT_SOURCE_PARALLELISM,
+                  host_parallelism=DEFAULT_SOURCE_HOST_PARALLELISM,
+                  host_interval=DEFAULT_SOURCE_HOST_INTERVAL,
+                  deadline=DEFAULT_SOURCE_DEADLINE, cache_bytes=DEFAULT_CACHE_BYTES,
+                  max_pages=DEFAULT_SOURCE_PAGES, clock=None, sleep=None, run_id=None):
+    values = list(urls or [])
+    rich_values = []
+    legacy_values = []
+    for value in values:
+        kind = _rich_kind(value)
+        if isinstance(value, dict) or kind in source_adapters.ADAPTER_KINDS or (isinstance(value, str) and value.strip() in {item['id'] for item in _catalog_cached()['sources']}):
+            rich_values.append(value)
+        else:
+            legacy_values.append(value)
+    if preview:
+        # Preview has the same fetch/adapter/limit path but a private temporary
+        # database, so it cannot change candidates, provenance or last-good.
+        with tempfile.TemporaryDirectory(prefix='proxy-workbench-preview-') as directory:
+            temporary = open_db(Path(directory) / 'preview.sqlite3')
+            try:
+                preview_report = await collect(
+                    temporary, values, inputs, timeout, on_progress, denylist, allow_private_sources,
+                    detect_protocols, max_source_bytes, max_source_line_bytes, max_source_candidates,
+                    max_source_redirects, preview=False, bounded_prefix=bounded_prefix,
+                    parallelism=parallelism,
+                    host_parallelism=host_parallelism, host_interval=host_interval,
+                    deadline=deadline, cache_bytes=cache_bytes,
+                    max_pages=max_pages, clock=clock, sleep=sleep, run_id=run_id)
+            finally:
+                sample = [row[0] for row in temporary.execute(
+                    'SELECT proxy FROM candidates ORDER BY proxy LIMIT 50')]
+                temporary.close()
+            preview_report['preview'] = True
+            preview_report['sample'] = sample
+            return preview_report
+    legacy_values = list(dict.fromkeys(legacy_values))
+    reports = []
+    effective_run_id = run_id
+    if legacy_values or inputs:
+        legacy = await _collect_legacy(db, legacy_values, inputs, timeout, on_progress, denylist,
+                                       allow_private_sources, detect_protocols, max_source_bytes,
+                                       max_source_line_bytes, max_source_candidates, max_source_redirects,
+                                       bounded_prefix=bounded_prefix)
+        legacy_reports = legacy.pop('sources', [])
+        effective_run_id = run_id or hashlib.sha256(f'{time.time()}:{id(db)}'.encode()).hexdigest()[:20]
+        _record_legacy_provenance(db, legacy_reports, legacy_values, effective_run_id)
+        reports.extend(legacy_reports)
+    if rich_values:
+        plans = []
+        seen_plans = set()
+        for value in rich_values:
+            plan = _rich_plan(value)
+            key = (plan.get('id'), tuple(endpoint.get('url', '') for endpoint in plan.get('endpoints', [])))
+            if key not in seen_plans:
+                seen_plans.add(key); plans.append(plan)
+        rich = await _collect_rich_sources(db, plans, [], timeout, on_progress, denylist,
+                                           allow_private_sources=allow_private_sources,
+                                           max_source_bytes=max_source_bytes, max_source_candidates=max_source_candidates,
+                                           max_source_redirects=max_source_redirects, detect_protocols=detect_protocols,
+                                           preview=preview, bounded_prefix=bounded_prefix,
+                                           parallelism=parallelism, host_parallelism=host_parallelism,
+                                           host_interval=host_interval, deadline=deadline, cache_bytes=cache_bytes, max_pages=max_pages,
+                                           clock=clock, sleep=sleep, run_id=effective_run_id)
+        offset = len(reports)
+        for item in rich.get('sources', []):
+            item['source'] = int(item.get('source', 0)) + offset
+        reports.extend(rich.get('sources', []))
+        effective_run_id = rich.get('run_id', effective_run_id)
+    db.commit()
+    return dict(raw_rows=sum(item.get('rows', 0) for item in reports),
+                unique=db.execute('SELECT count(*) FROM candidates').fetchone()[0],
+                blocked=sum(item.get('blocked', 0) for item in reports),
+                denylist_error=(denylist.error if denylist else None), sources_total=len(reports),
+                sources=reports, run_id=effective_run_id)
 
 
 def target_config(args, denylist=None):
@@ -1145,7 +2444,7 @@ def blocked_result(proxy, verdict):
 
 async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_proxy, progress=True, on_progress=None, min_success=2/3, screen=None, denylist=None, min_anonymity='any', protocol='all', max_latency=None,
                countries=(), country_of=None, want=0, recheck_passing=False, prefilter=0, prefilter_timeout=3,
-               exclude_hosting=False, provider_of=None, run_state=None):
+               exclude_hosting=False, provider_of=None, run_state=None, app_run_id=None, scope_digest='default'):
     """Check every pending candidate of the profile.
 
     With ``prefilter`` connections a cheap TCP connect runs first: most public
@@ -1163,8 +2462,11 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
     db.execute('INSERT OR IGNORE INTO profiles VALUES (?, ?)', (profile, encoded))
     countries = frozenset(countries or ())
     country_of = country_of or (lambda proxy: None)
+    excluded_scope = scope_excluded(db, scope_digest or 'default')
 
     def selected(proxy):
+        if proxy in excluded_scope:
+            return False
         # Protocol and country narrow which candidates are checked; they are not
         # part of the profile, so a later wider run reuses these results.
         if protocol not in (None, 'all') and proxy_protocol(proxy) != protocol:
@@ -1241,6 +2543,9 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
         row['history'] = next_history(previous.get(proxy), result_allowed(row, min_success), row.get('checked_at', time.time()))
         db.execute('INSERT OR REPLACE INTO results VALUES (?, ?, ?)',
                    (profile, proxy, json.dumps(row, ensure_ascii=False)))
+        if app_run_id:
+            db.execute('INSERT OR REPLACE INTO result_run(profile,proxy,run_id,checked_at) VALUES (?,?,?,?)',
+                       (profile, proxy, app_run_id, time.time()))
         completed += 1
         status = (row.get('reputation') or {}).get('status', 'clean')
         status_counts[status] = status_counts.get(status, 0) + 1
@@ -1359,6 +2664,10 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
     finally:
         db.commit()
         publish()
+    if app_run_id:
+        record_source_scan_stats(db, app_run_id, hashlib.sha256(profile.encode()).hexdigest()[:20], scope_digest or 'default', profile,
+                                 min_success=min_success, countries=countries, country_of=country_of,
+                                 protocol=protocol, max_latency=max_latency)
     return profile
 
 
@@ -1380,16 +2689,37 @@ def row_country(row, country_of=None):
     return row.get('country') or (country_of(row.get('proxy', '')) if country_of else None)
 
 
-def country_resolver(db, geo=None):
-    """Country from source metadata first, then the offline GeoIP database."""
-    meta = dict(db.execute('SELECT proxy, country FROM candidate_meta WHERE country IS NOT NULL'))
+def country_resolver(db, geo=None, origin='effective'):
+    """Country by explicit origin: measured, declared, or compatibility effective."""
+    if origin not in ('effective', 'measured_endpoint', 'declared_endpoint'):
+        raise ValueError('country origin: ожидается measured_endpoint/declared_endpoint/effective')
+    declared = dict(db.execute('SELECT proxy, country FROM candidate_meta WHERE country IS NOT NULL'))
+    measured = {}
     cache = {}
 
     def country_of(proxy):
         if proxy not in cache:
-            cache[proxy] = meta.get(proxy) or (geo.country_of(proxy) if geo else None)
+            if origin == 'declared_endpoint':
+                cache[proxy] = declared.get(proxy)
+            elif origin == 'measured_endpoint':
+                cache[proxy] = geo.country_of(proxy) if geo else None
+            else:
+                cache[proxy] = declared.get(proxy) or (geo.country_of(proxy) if geo else None)
         return cache[proxy]
     return country_of
+
+
+def country_origin(country, db=None, proxy=None):
+    """Label a country value so a source claim is not presented as a measurement."""
+    if not country:
+        return 'unknown', None
+    if db is not None and proxy:
+        try:
+            if db.execute('SELECT 1 FROM source_metadata WHERE proxy=? AND country=? LIMIT 1', (proxy, country)).fetchone():
+                return 'source_claimed', None
+        except sqlite3.Error:
+            pass
+    return 'app_measured', None
 
 
 def exit_country(row, country_of=None):
@@ -1400,12 +2730,132 @@ def exit_country(row, country_of=None):
     return country_of(f'http://[{address}]:1' if ':' in address else f'http://{address}:1')
 
 
-def listed_counts(db):
-    """How many distinct lists offered each address (databases before 2.2 have no record: 1)."""
+def listed_counts(db, *, group_mirrors=True):
+    """Distinct independent lists offering each address.
+
+    Catalog source IDs carry a family identity.  Two mirror feeds in the same
+    family are one independent contribution; legacy rows without that identity
+    keep the historical count.
+    """
     try:
-        return dict(db.execute('SELECT proxy, count(*) FROM candidate_seen GROUP BY proxy'))
+        rows = db.execute('SELECT proxy,source FROM candidate_seen').fetchall()
+        families = {}
+        if group_mirrors:
+            families = dict(db.execute('SELECT source_id,family_id FROM source_identity WHERE family_id IS NOT NULL'))
     except sqlite3.Error:
         return {}
+    grouped = {}
+    for proxy, source in rows:
+        key = families.get(source, source)
+        grouped.setdefault(proxy, set()).add(key)
+    return {proxy: len(values) for proxy, values in grouped.items()}
+
+
+def source_contributions(db, source_ids=None):
+    """Exclusive/leave-one-out contribution over the active generations."""
+    ids = list(source_ids or [row[0] for row in db.execute('SELECT source_id FROM source_generation GROUP BY source_id')])
+    sets = {}
+    for source_id in ids:
+        row = db.execute('''SELECT id FROM source_generation
+                            WHERE source_id=? ORDER BY active DESC,last_good DESC,id DESC LIMIT 1''', (source_id,)).fetchone()
+        sets[source_id] = {item[0] for item in db.execute('SELECT proxy FROM source_generation_entry WHERE generation_id=?', (row[0],))} if row else set()
+    union = set().union(*sets.values()) if sets else set()
+    result = {}
+    for source_id, values in sets.items():
+        other = set().union(*(candidate for key, candidate in sets.items() if key != source_id)) if len(sets) > 1 else set()
+        result[source_id] = dict(accepted=len(values), exclusive=len(values - other),
+                                 leave_one_out=len(union - other),
+                                 share=(len(values & other) / len(values)) if values else 0.0)
+    return result
+
+
+def recover_source(db, source_id, endpoint_id=None):
+    """Clear transport quarantine without deleting cache or last-good data."""
+    if endpoint_id is None:
+        cursor = db.execute('''UPDATE source_state SET backoff_until=NULL,quarantine_until=NULL,retry_after=NULL,
+                               consecutive_failures=0,last_error=NULL WHERE source_id=?''', (source_id,))
+    else:
+        cursor = db.execute('''UPDATE source_state SET backoff_until=NULL,quarantine_until=NULL,retry_after=NULL,
+                               consecutive_failures=0,last_error=NULL WHERE source_id=? AND endpoint_id=?''',
+                            (source_id, endpoint_id))
+    db.commit()
+    return cursor.rowcount
+
+
+def record_source_scan_stats(db, app_run_id, profile_digest, scope_digest, profile, *, min_success=2/3,
+                             countries=(), country_of=None, protocol='all', max_latency=None):
+    """Store per-run source statistics without making pass=0 a health verdict."""
+    if not app_run_id:
+        return {}
+    sources = [row[0] for row in db.execute('SELECT DISTINCT source FROM candidate_seen')]
+    try:
+        rows = {row[0]: json.loads(row[1]) for row in db.execute('SELECT proxy,payload FROM results WHERE profile=?', (profile,))}
+        run_rows = {row[0] for row in db.execute('SELECT proxy FROM result_run WHERE profile=? AND run_id=?', (profile, app_run_id))}
+    except sqlite3.Error:
+        rows, run_rows = {}, set()
+    per_source = {}
+    for source_id in sources:
+        checked = set()
+        passed = set()
+        for proxy, source in db.execute('SELECT proxy,source FROM candidate_seen WHERE source=?', (source_id,)):
+            row = rows.get(proxy)
+            if not row or proxy not in run_rows:
+                continue
+            checked.add(proxy)
+            if result_allowed(row, min_success) and matches_selection(row, protocol, max_latency, countries, country_of):
+                passed.add(proxy)
+        per_source[source_id] = (checked, passed)
+    global_checked = set().union(*(value[0] for value in per_source.values())) if per_source else set()
+    global_passed = set().union(*(value[1] for value in per_source.values())) if per_source else set()
+    result = {}
+    for source_id, (checked, passed) in per_source.items():
+        db.execute('''INSERT OR REPLACE INTO source_scan_stat(
+            app_run_id,profile_digest,scope_digest,source_id,checked_by_app,passed_profile,
+            global_unique_checked,global_unique_passed)
+            VALUES (?,?,?,?,?,?,?,?)''', (app_run_id, profile_digest, scope_digest, source_id,
+                                          len(checked), len(passed), len(global_checked), len(global_passed)))
+        result[source_id] = dict(checked_by_app=len(checked), passed_profile=len(passed),
+                                 global_unique_checked=len(global_checked), global_unique_passed=len(global_passed))
+    db.commit()
+    return result
+
+
+def scope_digest_for(protocol='all', countries=(), max_latency=0, exclude_hosting=False, query=''):
+    """Stable id of one check scope; shared by the CLI, the GUI and the API.
+
+    Country codes are normalized here because the three callers hand the same
+    scope over in different shapes: ``geoip.parse_countries('')`` is an empty
+    tuple while ``''.split(',')`` is ``['']``.  Without normalization the two
+    would compute different digests and an exclusion made by one of them would
+    be invisible to the others.
+    """
+    codes = sorted({str(value).strip().upper() for value in (countries or ()) if str(value).strip()})
+    return hashlib.sha256(json.dumps({
+        'protocol': protocol, 'countries': codes, 'max_latency': max_latency,
+        'exclude_hosting': bool(exclude_hosting), 'query': query}, sort_keys=True).encode()).hexdigest()[:20]
+
+
+def exclude_scope(db, proxies, *, reason='user', source_id=None, scope_digest='default', ttl=None):
+    values = [normalize(value) for value in proxies or []]
+    now = time.time()
+    expires = now + float(ttl) if ttl is not None else None
+    for proxy in values:
+        if proxy:
+            db.execute('''INSERT OR REPLACE INTO candidate_scope_exclusion(proxy,reason,source_id,scope_digest,created_at,expires_at)
+                          VALUES (?,?,?,?,?,?)''', (proxy, reason, source_id, scope_digest, now, expires))
+    db.commit()
+    return len([value for value in values if value])
+
+
+def scope_excluded(db, scope_digest='default', now=None):
+    try:
+        current = time.time() if now is None else now
+        return {row[0] for row in db.execute('''SELECT proxy FROM candidate_scope_exclusion
+                                               WHERE scope_digest=? AND (expires_at IS NULL OR expires_at>?)''',
+                                            (scope_digest, current))}
+    except sqlite3.Error:
+        return set()
+
 
 
 def recommender(source_quality, listed, sources, min_success=2/3):
@@ -1467,7 +2917,7 @@ def matches_selection(row, protocol='all', max_latency=None, countries=(), count
 
 def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, denylist=None, local_override=None, min_anonymity='any',
            protocol='all', max_latency=None, countries=(), country_of=None, exclude_hosting=False, provider_of=None,
-           watch_minutes=0, allowed_proxies=None, run_state=None, diagnostic=False, query=''):
+           watch_minutes=0, allowed_proxies=None, run_state=None, diagnostic=False, query='', scope_digest='default'):
     if not db.execute('SELECT 1 FROM profiles WHERE id=?', (profile,)).fetchone():
         raise ValueError('Профиль проверки не найден')
     denylist = denylist or Denylist.empty()
@@ -1501,6 +2951,7 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
     if active_denylist is not None and active_denylist.error:
         raise ValueError('Не удалось прочитать локальный denylist; экспорт остановлен.')
     directory = Path(directory)
+    excluded_scope = scope_excluded(db, scope_digest or 'default')
     directory.mkdir(parents=True, exist_ok=True)
     published_at = time.time()
     generations = directory/'generations'
@@ -1524,6 +2975,8 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
     selection_eligible = set()
 
     def in_scope(proxy):
+        if proxy in excluded_scope:
+            return False
         if protocol not in (None, 'all') and proxy_protocol(proxy) != protocol:
             return False
         if countries and (country_of(proxy) if country_of else None) not in countries:
@@ -1718,23 +3171,358 @@ EPILOG_RU = """примеры:
 PROXY_WORKBENCH_LANG=en — сообщения на английском."""
 
 
+SOURCE_SUBCOMMANDS = ('list', 'show', 'sets', 'set', 'enable', 'disable', 'add', 'remove',
+                       'check', 'update', 'recover', 'status', 'exclude-scope')
+SOURCE_ACTIONS = ('set', 'enable', 'disable', 'add', 'remove', 'update', 'recover', 'exclude-scope')
+
+
+def _sources_catalog(args):
+    """The accepted remote catalog when one is stored, else the bundled file."""
+    path = Path(args.data) / 'source-catalog.json'
+    if path.is_file():
+        try:
+            return source_catalog.load_catalog(path, allow_research=False, allow_unsafe=True)
+        except (OSError, ValueError, source_catalog.CatalogError):
+            pass
+    return source_catalog.load_bundled()
+
+
+def _sources_read_db(args):
+    path = Path(args.data) / 'proxies.sqlite3'
+    if not path.is_file():
+        return None
+    try:
+        return sqlite3.connect(path.as_uri() + '?mode=ro', uri=True, timeout=2)
+    except sqlite3.Error:
+        return None
+
+
+def _sources_settings(args, parser):
+    settings = source_management.read_settings(args.data)
+    if settings is None:
+        parser.error(tr('Файл gui-settings.json повреждён или недоступен; исправьте его перед продолжением.',
+                        'gui-settings.json is damaged or unreadable; fix it before continuing.'))
+    return settings
+
+
+def _sources_save(args, settings, parser):
+    try:
+        with exclusive_lock(Path(args.data) / 'gui-instance.lock'):
+            return source_management.write_settings(args.data, settings)
+    except (OSError, ValueError, RuntimeError) as exc:
+        parser.error(str(exc))
+
+
+def _sources_out(args, value, lines, parser, found=None):
+    """Exit 0 when something matched, 1 when nothing did, 2 on a usage error."""
+    if args.format == 'json':
+        print(json.dumps(value, ensure_ascii=False, indent=1))
+        return 0
+    if args.format != 'txt':
+        parser.error(tr('Для sources доступен только --format txt или --format json.',
+                        'sources supports --format txt or --format json only.'))
+    for line in lines:
+        print(line, flush=True)
+    return 0 if (bool(value) if found is None else found) else 1
+
+
+def _age_text(seconds):
+    if not seconds:
+        return tr('нет данных', 'no data')
+    if seconds < 3600:
+        return tr(f'{int(seconds // 60)} мин назад', f'{int(seconds // 60)} min ago')
+    if seconds < 86400:
+        return tr(f'{int(seconds // 3600)} ч назад', f'{int(seconds // 3600)} h ago')
+    return tr(f'{int(seconds // 86400)} дн назад', f'{int(seconds // 86400)} d ago')
+
+
+def _source_lines(rows):
+    lines = []
+    for row in rows:
+        flags = []
+        if row['selection_state'] == 'selected':
+            flags.append(tr('в наборе', 'in set'))
+        elif row['selection_state'] == 'disabled':
+            flags.append(tr('загрузка выключена', 'download paused'))
+        if row['access_group'] in source_management.PROVIDER_GROUPS:
+            flags.append(tr(f'условия: {row["access"]}', f'access: {row["access"]}'))
+        if not row['collectable']:
+            flags.append(tr('не список прокси-адресов', 'not a list of proxy addresses'))
+        runtime = row['runtime']
+        detail = [row['state']]
+        if runtime.get('http_state'):
+            detail.append(f"HTTP {runtime['http_state']}")
+        if runtime.get('parse_state'):
+            detail.append(f"формат {runtime['parse_state']}")
+        if runtime.get('cache_state') and runtime['cache_state'] != 'none':
+            detail.append(tr(f"кэш {runtime['cache_state']}", f"cache {runtime['cache_state']}"))
+        if runtime.get('last_good_age_seconds'):
+            detail.append(tr(f"данные {_age_text(runtime['last_good_age_seconds'])}",
+                             f"data {_age_text(runtime['last_good_age_seconds'])}"))
+        if runtime.get('error'):
+            detail.append(runtime['error'])
+        contribution = runtime.get('contribution') or {}
+        if contribution:
+            detail.append(tr(f"принято {contribution.get('accepted')}, уникально в срезе {contribution.get('exclusive')}",
+                             f"accepted {contribution.get('accepted')}, unique in this snapshot {contribution.get('exclusive')}"))
+        lines.append(f"{row['id']:24} {row['name'][:44]:44} {'; '.join(flags)} | {'; '.join(detail)}")
+    return lines
+
+
+def sources_command(args, parser):
+    """Catalog, sets, preview and recovery.  Same ids and words as the GUI."""
+    subcommand = args.items[0] if args.items else 'list'
+    rest = args.items[1:]
+    if subcommand not in SOURCE_SUBCOMMANDS:
+        parser.error(tr('Неизвестная команда sources. Доступно: ' + ', '.join(SOURCE_SUBCOMMANDS),
+                        'Unknown sources command. Available: ' + ', '.join(SOURCE_SUBCOMMANDS)))
+    catalog = _sources_catalog(args)
+    settings = _sources_settings(args, parser)
+    selection = settings.get('source_selection') or {}
+    custom = {item.get('id'): item for item in selection.get('custom_sources', []) if isinstance(item, dict)}
+
+    def require_ids():
+        if not rest:
+            parser.error(tr('Укажите ID источника.', 'Give a source id.'))
+        return list(rest)
+
+    if subcommand in ('list', 'status'):
+        query = dict(q=args.source_query, set=args.source_set, category=args.source_category,
+                     protocol=args.source_protocol, format=args.source_format_filter,
+                     access=args.source_access, state=args.source_state, limit=args.source_limit,
+                     offset=args.source_offset)
+        db = _sources_read_db(args)
+        try:
+            runtime = source_management.runtime_snapshot(db)
+            view = source_management.build_view(catalog, settings, runtime, query, db=db)
+        finally:
+            if db is not None:
+                db.close()
+        if args.format != 'json':
+            print(tr(f'Каталог {view["revision"]}, опубликован {view["published_at"]}, записей: {view["total"]}',
+                     f'Catalog {view["revision"]}, published {view["published_at"]}, entries: {view["total"]}'), flush=True)
+        return _sources_out(args, view, _source_lines(view['sources']), parser, found=bool(view['sources']))
+    if subcommand == 'sets':
+        view = source_management.sets_view(catalog, selection)
+        lines = [f"{item['id']:18} {item['name'][:34]:34} {item['kind']:9} записей: {item['members']}"
+                 + (tr(', применён', ', applied') if item['applied'] else '')
+                 + (tr(f", в наборе {item['selected_members']}", f", {item['selected_members']} in set") if item['selected_members'] else '')
+                 for item in view]
+        return _sources_out(args, view, lines, parser)
+    if subcommand == 'show':
+        source_id = rest[0] if rest else ''
+        db = _sources_read_db(args)
+        try:
+            runtime = source_management.runtime_snapshot(db)
+            detail = source_management.detail_view(catalog, settings, source_id, runtime, db)
+        finally:
+            if db is not None:
+                db.close()
+        if detail is None:
+            parser.error(tr(f'Неизвестный источник: {source_id}', f'Unknown source: {source_id}'))
+        lines = [
+            f"{detail['id']} — {detail['name']}",
+            tr(f"  издатель: {detail['publisher'].get('name') or '—'}", f"  publisher: {detail['publisher'].get('name') or '—'}"),
+            tr(f"  категория: {detail['category']}; протоколы: {', '.join(detail['protocols']) or '—'}; формат: {detail['adapter']}",
+               f"  category: {detail['category']}; protocols: {', '.join(detail['protocols']) or '—'}; adapter: {detail['adapter']}"),
+            tr(f"  условия доступа: {detail['access']}; дата проверки: {detail['checked_at'] or '—'}",
+               f"  access: {detail['access']}; checked at: {detail['checked_at'] or '—'}"),
+            tr(f"  первоисточник условий: {detail['terms_url'] or '—'}", f"  terms: {detail['terms_url'] or '—'}"),
+        ]
+        for key, value in detail['evidence'].items():
+            lines.append(f"  {key}: {value.get('state')} ({value.get('checked_at') or '—'})")
+        lines.append('  ' + tr('прокси проверены: нет — это приложение не проверяет прокси источника',
+                                'proxies verified: no — this application does not check a source\'s proxies'))
+        return _sources_out(args, detail, lines, parser)
+    if subcommand == 'set':
+        set_id = rest[0] if rest else ''
+        if set_id not in {item['id'] for item in catalog['sets']}:
+            parser.error(tr(f'Неизвестный набор: {set_id}', f'Unknown set: {set_id}'))
+        result = source_management.apply_set(settings, set_id, catalog)
+        saved = _sources_save(args, result, parser)
+        ids = saved['source_selection']['selected_ids']
+        print(tr(f'Набор {set_id} применён: выбрано {len(ids)} источников. Ничего не добавлялось молча.',
+                 f'Set {set_id} applied: {len(ids)} sources selected. Nothing was added implicitly.'), flush=True)
+        for source_id in ids:
+            print(source_id, flush=True)
+        return 0
+    if subcommand in ('enable', 'disable'):
+        ids = require_ids()
+        for source_id in ids:
+            if source_catalog.source_by_id(catalog, source_id) is None and source_id not in custom:
+                parser.error(tr(f'Неизвестный источник: {source_id}', f'Unknown source: {source_id}'))
+        disabled = subcommand == 'disable'
+        saved = _sources_save(args, source_management.set_downloads(settings, ids, disabled, catalog), parser)
+        print(tr('Загрузка выключена: ' if disabled else 'Загрузка включена: ',
+                 'Download paused: ' if disabled else 'Download enabled: ') + ', '.join(ids), flush=True)
+        return 0 if ids else 1
+    if subcommand == 'remove':
+        ids = require_ids()
+        saved = _sources_save(args, source_management.remove_sources(settings, ids, catalog), parser)
+        print(tr('Убраны из набора (кэш и история сохранены): ', 'Removed from the set (cache and history kept): ')
+              + ', '.join(ids), flush=True)
+        return 0 if saved else 1
+    if subcommand == 'add':
+        url = rest[0] if rest else ''
+        kind = args.source_format or 'http'
+        try:
+            descriptor = source_catalog.custom_source(url, kind, allow_unsafe=args.allow_private_sources)
+        except source_catalog.CatalogError as exc:
+            parser.error(tr(str(exc), str(exc)))
+        updated = copy_settings_with_custom(settings, descriptor, catalog)
+        saved = _sources_save(args, updated, parser)
+        print(tr(f'Источник добавлен: {descriptor["id"]} ({kind}) — {saved["sources"][-1]}',
+                 f'Source added: {descriptor["id"]} ({kind}) — {saved["sources"][-1]}'), flush=True)
+        return 0
+    if subcommand == 'check':
+        ids = require_ids()
+        db = _sources_read_db(args)
+        try:
+            plans = []
+            for source_id in ids:
+                item = source_catalog.source_by_id(catalog, source_id)
+                if item is None or not item.get('endpoints'):
+                    # A stored custom entry has no endpoint yet; rebuild its plan.
+                    item = source_catalog._custom_plan(source_id, custom[source_id], []) if source_id in custom else None
+                if item is None:
+                    parser.error(tr(f'Неизвестный источник: {source_id}', f'Unknown source: {source_id}'))
+                if not source_catalog.collectable_source(item):
+                    print(tr(f'{source_id}: не список прокси-адресов, формат не поддерживается сборщиком',
+                             f'{source_id}: not a list of proxy addresses, unsupported by the collector'), flush=True)
+                    continue
+                plans.append(item)
+            results = [asyncio.run(preview_collect(db, [plan], args.source_timeout,
+                                                   allow_private_sources=args.allow_private_sources))
+                       for plan in plans]
+        finally:
+            if db is not None:
+                db.close()
+        rows = [source_management.preview_view(report, plan.get('id'), plan.get('name'))
+                for report, plan in zip(results, plans)]
+        labels = (tr('распознано', 'recognized'), tr('принято', 'accepted'), tr('отклонено', 'rejected'))
+        lines = []
+        for row in rows:
+            parts = [row['http_state'], row['parse_state'],
+                     f"{labels[0]} {row['recognized']}", f"{labels[1]} {row['accepted']}",
+                     f"{labels[2]} {row['rejected']}"]
+            for reason, count in sorted(row['reject_reasons'].items()):
+                parts.append(f"{reason}={count}")
+            if row['error']:
+                parts.append(row['error'])
+            if row['truncated']:
+                parts.append(tr(f'предпросмотр ограничен: {row["limits"]["max_bytes"]} байт, '
+                                f'{row["limits"]["max_candidates"]} записей',
+                                f'preview bounded: {row["limits"]["max_bytes"]} bytes, '
+                                f'{row["limits"]["max_candidates"]} records'))
+            parts.append(tr('прокси не проверялись', 'no proxy was checked'))
+            lines.append(f"{row['source_id']:24} " + '; '.join(str(part) for part in parts))
+        return _sources_out(args, rows, lines, parser)
+    if subcommand == 'update':
+        url = os.environ.get('PROXY_WORKBENCH_SOURCES_URL', SOURCES_URL)
+        try:
+            fetched = asyncio.run(fetch_catalog(url, current=source_catalog.load_bundled(),
+                                                timeout=args.source_timeout,
+                                                allow_private_sources=args.allow_private_sources))
+        except (SourceFetchError, httpx.HTTPError, TimeoutError, OSError, ValueError) as exc:
+            reason = str(exc) if isinstance(exc, (SourceFetchError, ValueError)) else type(exc).__name__
+            print(tr(f'Каталог не обновлён: {reason}. Локальная копия сохранена.',
+                     f'Catalog not updated: {reason}. The local copy is kept.'), file=sys.stderr)
+            return 2
+        if fetched.get('state') == 'not_modified':
+            print(tr('Каталог не изменился на сервере.', 'The published catalog did not change.'), flush=True)
+            return 0
+        incoming = fetched.get('catalog')
+        diff = source_catalog.catalog_diff(_sources_catalog(args), incoming)
+        atomic(Path(args.data) / 'source-catalog.json', json.dumps(incoming, ensure_ascii=False))
+        selected = set(selection.get('selected_ids', []))
+        unselected = [value for value in diff['added'] if value not in selected]
+        print(tr(f"Каталог обновлён до {incoming['revision']}: добавлено {len(diff['added'])}, "
+                 f"изменено {len(diff['changed'])}, ушло {len(diff['retired'])}.",
+                 f"Catalog updated to {incoming['revision']}: {len(diff['added'])} added, "
+                 f"{len(diff['changed'])} changed, {len(diff['retired'])} retired."), flush=True)
+        print(tr(f'Из них не выбрано: {len(unselected)}. Ничего не включается автоматически — '
+                 f'включите нужные источники вручную.',
+                 f'Of those, unselected: {len(unselected)}. Nothing is enabled automatically — '
+                 f'turn on the ones you need by hand.'), flush=True)
+        for source_id in unselected[:50]:
+            print(source_id, flush=True)
+        return 0
+    if subcommand == 'recover':
+        ids = require_ids()
+        if not (Path(args.data) / 'proxies.sqlite3').is_file():
+            print(tr('Локальной базы ещё нет: восстанавливать нечего.', 'No local database yet: nothing to recover.'), flush=True)
+            return 0
+        with exclusive_lock(Path(args.data) / 'workbench.lock'):
+            db = open_db(Path(args.data) / 'proxies.sqlite3')
+            try:
+                cleared = {source_id: recover_source(db, source_id) for source_id in ids}
+            finally:
+                db.close()
+        print(tr('Снята пауза и карантин (кэш и последние данные сохранены): ',
+                 'Backoff and quarantine cleared (cache and last data kept): '), flush=True)
+        for source_id in ids:
+            print(f'{source_id:24} {cleared[source_id]}', flush=True)
+        return 0
+    # exclude-scope
+    source_id = rest[0] if rest else ''
+    if not source_id:
+        parser.error(tr('Укажите ID источника.', 'Give a source id.'))
+    if not args.yes:
+        parser.error(tr('exclude-scope требует явного --yes', 'exclude-scope needs an explicit --yes'))
+    if source_catalog.source_by_id(catalog, source_id) is None and source_id not in custom:
+        parser.error(tr(f'Неизвестный источник: {source_id}', f'Unknown source: {source_id}'))
+    with exclusive_lock(Path(args.data) / 'workbench.lock'):
+        db = open_db(Path(args.data) / 'proxies.sqlite3')
+        try:
+            addresses = source_management.source_addresses(db, source_id, exclusive=not args.include_shared)
+            total = source_management.source_addresses(db, source_id, exclusive=False)
+            digest = scope_digest_for(settings['protocol'], settings['countries'].split(','),
+                                      settings['max_latency'], settings['exclude_hosting'])
+            written = exclude_scope(db, addresses, reason='source', source_id=source_id, scope_digest=digest)
+        finally:
+            db.close()
+    print(tr(f'Исключено из текущего scope: {written} из {len(total)} адресов источника {source_id}. '
+             f'Данные и provenance сохранены; отменить: удалить scope_exclusions.',
+             f'Excluded from the current scope: {written} of {len(total)} addresses delivered by {source_id}. '
+             f'Data and provenance are kept; undo by clearing the scope exclusions.'), flush=True)
+    return 0
+
+
+def copy_settings_with_custom(settings, descriptor, catalog=None):
+    """Add one user URL to the selection; the adapter choice is explicit."""
+    result = copy.deepcopy(settings)
+    selection = copy.deepcopy(result.get('source_selection') or {})
+    custom = {item.get('id'): item for item in selection.get('custom_sources', []) if isinstance(item, dict)}
+    custom[descriptor['id']] = {'id': descriptor['id'], 'url': descriptor['url'],
+                                'name': descriptor['url'], 'adapter': descriptor['adapter']}
+    selection['custom_sources'] = list(custom.values())
+    selection['selected_ids'] = list(dict.fromkeys(list(selection.get('selected_ids', [])) + [descriptor['id']]))
+    selection['download_disabled_ids'] = [value for value in selection.get('download_disabled_ids', [])
+                                          if value != descriptor['id']]
+    result['source_selection'] = selection
+    result['settings_version'] = 3
+    return source_catalog.migrate_settings(result, catalog)
+
+
 def parser():
     # Installed and `python -m` runs show the command people actually type.
     prog = None if Path(sys.argv[0]).name == 'proxytool.py' else 'proxy-workbench'
     p = argparse.ArgumentParser(prog=prog, formatter_class=argparse.RawDescriptionHelpFormatter, epilog=tr(EPILOG_RU, EPILOG_EN),
                                 description=tr(f'{PRODUCT_NAME}: сбор и полная проверка публичных прокси под HTTP-сервис', f'{PRODUCT_NAME}: collect public proxies and fully check them against your HTTP services'))
     p.add_argument('--version', action='version', version=f'{PRODUCT_NAME} {PRODUCT_VERSION}')
-    p.add_argument('command', choices=['collect', 'scan', 'run', 'export', 'get', 'test', 'serve', 'gateway', 'clear-data', 'update-geoip'],
+    p.add_argument('command', choices=['collect', 'scan', 'run', 'export', 'get', 'test', 'serve', 'gateway', 'clear-data', 'update-geoip', 'sources'],
                    help=tr('run — собрать и проверить; collect — только собрать; scan — только проверить; '
                            'export — пересобрать файлы; get — вывести готовые прокси; test — проверить свои прокси; '
                            'serve — локальное API; gateway — ротирующий прокси; '
                            'update-geoip — база стран; '
-                           'clear-data — удалить результаты',
+                           'clear-data — удалить результаты; '
+                           'sources — каталог источников, наборы, проверка и восстановление',
                            'run: collect and check; collect: only collect; scan: only check; '
                            'export: rebuild the files; get: print working proxies; test: check given proxies; '
                            'serve: local API; gateway: rotating proxy; '
                            'update-geoip: country database; '
-                           'clear-data: delete results'))
+                           'clear-data: delete results; '
+                           'sources: source catalog, sets, availability check and recovery'))
     p.add_argument('items', nargs='*', metavar='PROXY',
                    help=tr('test: прокси для проверки, например socks5://1.2.3.4:1080', 'test: proxies to check, e.g. socks5://1.2.3.4:1080'))
     p.add_argument('--format', choices=['txt', 'hostport', 'json'], default='txt',
@@ -1846,6 +3634,26 @@ def parser():
     p.add_argument('--session-ttl', type=float, default=10,
                    help=tr('gateway: сколько минут сессия (session-… в имени пользователя) держит один прокси',
                            'gateway: minutes a session (session-… in the user name) keeps one proxy'))
+    p.add_argument('--source-query', default='', help=tr('sources list: поиск по названию, ID, издателю или хосту',
+                                                         'sources list: search by name, id, publisher or host'))
+    p.add_argument('--source-set', default='', help=tr('sources list: фильтр по набору', 'sources list: filter by set'))
+    p.add_argument('--source-category', default='', help=tr('sources list: фильтр по категории', 'sources list: filter by category'))
+    p.add_argument('--source-protocol', default='', help=tr('sources list: фильтр по протоколу', 'sources list: filter by protocol'))
+    p.add_argument('--source-format-filter', default='', help=tr('sources list: фильтр по формату данных',
+                                                                 'sources list: filter by data format'))
+    p.add_argument('--source-access', default='', help=tr('sources list: фильтр по условиям доступа',
+                                                         'sources list: filter by access conditions'))
+    p.add_argument('--source-state', default='', choices=list(source_management.FILTER_STATES),
+                   help=tr('sources list: фильтр по состоянию проверки', 'sources list: filter by observed state'))
+    p.add_argument('--source-limit', type=int, default=50, help=tr('sources list: сколько строк показать',
+                                                                   'sources list: how many rows to show'))
+    p.add_argument('--source-offset', type=int, default=0, help=tr('sources list: смещение', 'sources list: offset'))
+    p.add_argument('--source-format', default='http', choices=list(source_catalog.USER_SOURCE_FORMATS),
+                   help=tr('sources add: формат данных по этому адресу',
+                           'sources add: the data format at that address'))
+    p.add_argument('--include-shared', action='store_true',
+                   help=tr('sources exclude-scope: включить адреса, которые дают и другие источники',
+                           'sources exclude-scope: include addresses other sources also offer'))
     p.add_argument('--api-token', default=os.environ.get('PROXY_WORKBENCH_API_TOKEN') or None,
                    help=tr('serve: токен доступа к API (или переменная PROXY_WORKBENCH_API_TOKEN); '
                         'обязателен, если API слушает не loopback-адрес', 'serve: API access token (or PROXY_WORKBENCH_API_TOKEN); '
@@ -2070,6 +3878,8 @@ def main(argv=None):
             p.error(str(exc))
     os.umask(0o077)
     args.data.mkdir(parents=True, exist_ok=True)
+    if args.command == 'sources':
+        return sources_command(args, p)
     if args.command == 'serve':
         return serve(args)
     if args.command == 'gateway':
@@ -2158,6 +3968,8 @@ def main(argv=None):
     scan_in_progress = False
     current_published = False
     scan_interrupted = False
+    app_run_id = hashlib.sha256(f'{time.time()}:{os.getpid()}'.encode()).hexdigest()[:20]
+    scope_digest = scope_digest_for(args.protocol, countries, args.max_latency, args.no_hosting, export_query)
 
     def update_progress(values):
         latest.update(values, updated_at=time.time())
@@ -2174,7 +3986,8 @@ def main(argv=None):
                       countries=countries, country_of=country_of,
                       exclude_hosting=args.no_hosting or args.export_hosting == 'hide',
                       provider_of=provider_of, watch_minutes=args.watch, query=export_query,
-                      allowed_proxies=selected, run_state=run_state, diagnostic=diagnostic)
+                      allowed_proxies=selected, run_state=run_state, diagnostic=diagnostic,
+                      scope_digest=scope_digest)
 
     try:
         if args.command in ('scan', 'run'):
@@ -2183,7 +3996,8 @@ def main(argv=None):
                 collect_denylist = Denylist.empty()
             profile = hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()[:20]
         if args.command in ('collect', 'run'):
-            urls = [] if args.no_sources else json.loads(args.sources.read_text(encoding='utf-8'))
+            urls = [] if args.no_sources else resolve_sources_file(
+                args.sources, bundled=(args.sources.resolve() == (ROOT / 'sources.json').resolve()))
             if not isinstance(urls, list):
                 raise ValueError('sources: ожидается JSON-массив http(s) URL')
             report = asyncio.run(stoppable(collect(
@@ -2236,7 +4050,8 @@ def main(argv=None):
                                                country_of=country_of, prefilter=prefilter,
                                                exclude_hosting=args.no_hosting, provider_of=provider_of,
                                                prefilter_timeout=min(args.prefilter_timeout, args.connect_timeout),
-                                               run_state=state, **options), args.stop_file))
+                                               run_state=state, app_run_id=app_run_id,
+                                               scope_digest=scope_digest, **options), args.stop_file))
                 except (KeyboardInterrupt, asyncio.CancelledError):
                     scan_interrupted = True
                     state.update(state='partial', stop_reason='stopped')
