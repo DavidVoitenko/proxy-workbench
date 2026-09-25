@@ -82,7 +82,10 @@ class PinnedSourceTransport(httpx.AsyncBaseTransport):
         self.transport = httpx.AsyncHTTPTransport(verify=TLS)
 
     async def handle_async_request(self, request):
-        headers = dict(request.headers)
+        # httpx already renders a Host header on the request; copying it verbatim and
+        # then setting Host again produces a duplicate header and httpcore rejects the
+        # request with LocalProtocolError: "Found multiple Host: headers".
+        headers = {key: value for key, value in request.headers.items() if key.lower() != 'host'}
         host_header = f'[{self.hostname}]' if ':' in self.hostname else self.hostname
         port = request.url.port
         if port and port not in (80, 443):
