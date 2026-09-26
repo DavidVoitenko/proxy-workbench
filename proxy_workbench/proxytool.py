@@ -391,10 +391,20 @@ def normalize(value):
 
 
 def public_url(value):
+    """A URL reduced to scheme, host and port.
+
+    Values reach this from a stored database and from a remote catalog, so
+    anything that is not a non-empty string has to come back as "no URL"
+    rather than raise inside a request handler.
+    """
+    if not isinstance(value, str) or not value.strip():
+        return ''
     try:
         parsed = urlsplit(value)
         port = parsed.port
     except (TypeError, ValueError):
+        return ''
+    if not parsed.scheme or not parsed.hostname:
         return ''
     host = parsed.hostname or ''
     if ':' in host and not host.startswith('['):

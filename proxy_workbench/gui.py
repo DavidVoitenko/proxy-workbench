@@ -54,10 +54,16 @@ def read_json(path, fallback):
 
 
 def public_source(value):
+    """A source spec as the UI may show it: no credentials, path or query.
+
+    The prefix may be any format the app accepts, not only the collector's
+    legacy kinds — a stored spec such as "line https://…" must not be handed
+    to public_url whole, which would treat the whole string as an authority.
+    """
     if not isinstance(value, str):
         return ''
     parts = value.strip().split(None, 1)
-    if len(parts) == 2 and parts[0] in core.SOURCE_KINDS:
+    if len(parts) == 2 and parts[0] in set(core.SOURCE_KINDS) | set(source_catalog.USER_SOURCE_FORMATS):
         return parts[0] + ' ' + core.public_url(parts[1])
     return core.public_url(value)
 
@@ -1265,7 +1271,10 @@ class Handler(BaseHTTPRequestHandler):
                     return self.respond(409, dict(error=str(exc)))
                 return
             self.respond(404, dict(error='Не найдено.'))
-        except (ValueError, OSError, sqlite3.Error):
+        except (ValueError, OSError, sqlite3.Error, KeyError, TypeError, AttributeError, RuntimeError):
+            # A stored row or a catalog record with the wrong shape must not
+            # take the handler down: the connection would close with no answer
+            # and the screen would look broken rather than reporting a problem.
             self.respond(400, dict(error='Не удалось прочитать данные. Повторите после завершения операции.'))
 
     def do_POST(self):

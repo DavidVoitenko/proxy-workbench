@@ -761,6 +761,11 @@ def cache_state(db, source_id, now=None):
                              FROM source_generation WHERE source_id=? ORDER BY id DESC LIMIT 10''', (source_id,))
         generations = [dict(zip(('id', 'state', 'active', 'last_good', 'created_at', 'record_count',
                                  'estimated_bytes', 'endpoint_url'), row)) for row in rows]
+        # The stored endpoint is the URL after every redirect, query string
+        # included. A CDN that signs its list would leak that signature through
+        # the API, so it is redacted the same way every other shown URL is.
+        for item in generations:
+            item['endpoint_url'] = _endpoint_url(item.get('endpoint_url'), True)
         totals = dict(db.execute('SELECT source_id,COALESCE(SUM(estimated_bytes),0) FROM source_generation'
                                  ' GROUP BY source_id').fetchall()).get(source_id, 0)
     except sqlite3.Error:
