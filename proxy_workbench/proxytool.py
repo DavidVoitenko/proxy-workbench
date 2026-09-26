@@ -2146,7 +2146,8 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
            protocol='all', max_latency=None, countries=(), country_of=None, exclude_hosting=False, provider_of=None,
            watch_minutes=0, allowed_proxies=None, run_state=None, diagnostic=False, query='', quick='',
            active_profile_path=None, collection_id=None, profile_revision=1, max_age_seconds=None,
-           access=None, credentials='redact', client_target=None, client_binary=None):
+           access=None, credentials='redact', client_target=None, client_binary=None,
+           secret_grant=None):
     """Write one immutable generation and, for a real run, publish it.
 
     The files, the status and the pointer are produced by the snapshot service
@@ -2232,11 +2233,18 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
     breakdown = {'protocols': {}, 'countries': {}}
     scope_candidates = len(collection_candidates(db, collection_id))
     rows = []
-    for (payload,) in db.execute('SELECT payload FROM results WHERE profile=?', (profile,)):
+    # The endpoint id comes from the column, not from the payload: it is the
+    # identity of the address, and a row written before the column existed has
+    # none in its JSON.  Without it a published row cannot be addressed at all --
+    # `GET /v1/results/{id}` had nothing stable to compare the path segment with.
+    for payload, endpoint_id in db.execute(
+            'SELECT payload, endpoint_id FROM results WHERE profile=?', (profile,)):
         try:
             row = json.loads(payload)
         except (TypeError, ValueError):
             continue
+        if endpoint_id:
+            row['endpoint_id'] = endpoint_id
         proxy = row.get('proxy', '')
         # Source health is an independent measurement.  Count only rows that
         # would be handed to a client on their own, never the current export's
@@ -2353,7 +2361,7 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
         query=query, quick=quick, sort=sort, top=int(top or 0))
     artifact = exportsvc.write_snapshot(directory, selected, scope=export_scope, options=options,
                                         kind=kind, policy=policy, selection=selection, now=published_at,
-                                        run_state=run_state, extra=extra)
+                                        run_state=run_state, extra=extra, grant=secret_grant)
     report = artifact.status.as_dict()
     report['exported'] = len(selected)
     # ``complete`` answers a different question from ``state``: it says the run
@@ -2923,6 +2931,14 @@ def parser():
     p.add_argument('--watch', type=float, default=0,
                    help=tr('после проверки перепроверять рабочие прокси каждые N минут и обновлять экспорт; 0 — выключено', 'after the scan, re-check working proxies every N minutes and refresh the export; 0 = off'))
     p.add_argument('--top', type=int, default=0, help=tr('сколько сохранить; 0 — все прошедшие', 'how many to save; 0 = all that pass'))
+    # `exportsvc` imports constants from this module, so it is imported inside a
+    # function -- at parse time the module is fully loaded and the cycle is closed.
+    from . import exportsvc as _exportsvc
+    p.add_argument('--credentials', choices=list(_exportsvc.CREDENTIALS_MODES), default='redact',
+                   help=tr('что писать для адресов, измеренных через учётные данные: redact — без доступа, '
+                           'reference — ссылка на запись хранилища (само значение секрета в артефакт не попадает)',
+                           'what to write for addresses measured with credentials: redact writes nothing, '
+                           'reference writes a reference to the vault entry (never the secret value)'))
     p.add_argument('--sort', choices=list(SORTS), default='recommended',
                    help=tr('quality: стабильность + скорость; speed: задержка; stability: разброс; uptime: живучесть; '
                            'bandwidth: Мбит/с (нужен --speedtest-url); recommended: качество + живучесть + '
@@ -2959,6 +2975,16 @@ def parser():
                    help=tr('serve: токен доступа к API (или переменная PROXY_WORKBENCH_API_TOKEN); '
                         'обязателен, если API слушает не loopback-адрес', 'serve: API access token (or PROXY_WORKBENCH_API_TOKEN); '
                         'required when the API listens on a non-loopback address'))
+    # The gateway password is a different identity from the API token (CONTRACTS
+    # §5.1, defect 18).  `gateway` used to read `--api-token`, so one value was
+    # both the rotating-proxy password and the read-only bearer token: whoever
+    # knew the password from a phone in the LAN could read the whole published
+    # snapshot, and a leaked API token was a working proxy.
+    p.add_argument('--gateway-token', default=os.environ.get('PROXY_WORKBENCH_GATEWAY_TOKEN') or None,
+                   help=tr('gateway: пароль клиентов шлюза (или переменная PROXY_WORKBENCH_GATEWAY_TOKEN); '
+                           'не связан с --api-token; на сетевом bind генерируется, если не задан',
+                           'gateway: client password for the gateway (or PROXY_WORKBENCH_GATEWAY_TOKEN); '
+                           'unrelated to --api-token; generated on a network bind when not given'))
 
     # Management commands.  These are the user path to the modules the engine is
     # built on: an import, a source, a key, a pool, a schedule, a profile, a
@@ -3108,9 +3134,19 @@ def run_gateway(args, countries):
         return 2
     filters = dict(protocol=args.protocol, countries=countries, anonymity=args.min_anonymity,
                    max_latency=args.max_latency)
+    # `args.api_token` is deliberately not read for the gateway: the password is a
+    # separate identity (CONTRACTS §5.1, defect 18).  On a LAN bind the gateway makes
+    # its own and prints it, so a password a phone was given is never a control
+    # secret and a leaked API token is never a working proxy.
+    gateway_token = getattr(args, 'gateway_token', None)
+    if gateway_token and args.api_token and gateway_token == args.api_token:
+        print(tr('Пароль шлюза не должен совпадать с токеном API: задайте --gateway-token.',
+                 'the gateway password must not equal the API token: set --gateway-token'),
+              file=sys.stderr)
+        return 2
 
     async def run():
-        server = await gateway.start(args.data, args.host, port, args.api_token, filters, args.rotate,
+        server = await gateway.start(args.data, args.host, port, gateway_token, filters, args.rotate,
                                      max(0, args.max_per_proxy), max(0.0, args.session_ttl) * 60)
         pool = server.gateway.pool
         shown = f'[{args.host}]' if ':' in args.host else args.host
@@ -3956,6 +3992,9 @@ def main(argv=None):
         # The published generation is a statement about one scope (F02): a row
         # measured in another collection is not part of it.  Without
         # ``--collection`` the scope is the public base, exactly as before.
+        from . import exportsvc  # imported here: it imports constants from this module
+        credentials = getattr(args, 'credentials', exportsvc.CREDENTIALS_REDACT) \
+            or exportsvc.CREDENTIALS_REDACT
         return export(db, profile, args.data / 'exports', top=args.top,
                       sort=args.sort, min_success=args.min_success, denylist=denylist,
                       local_override=args.local_denylist, min_anonymity=args.min_anonymity,
@@ -3965,6 +4004,9 @@ def main(argv=None):
                       provider_of=provider_of, watch_minutes=args.watch, query=export_query, quick=export_quick,
                       allowed_proxies=selected, run_state=run_state, diagnostic=diagnostic,
                       collection_id=args.collection or None,
+                      credentials=credentials,
+                      secret_grant=(exportsvc.SecretGrant(allowed=True, issued_by='local-cli')
+                                    if credentials == exportsvc.CREDENTIALS_REFERENCE else None),
                       active_profile_path=None if diagnostic else args.data / 'last-profile.txt')
 
     try:

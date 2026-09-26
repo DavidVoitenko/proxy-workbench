@@ -107,6 +107,11 @@ def public_row(row, now=None):
         source_keys = []
     return {
         'proxy': proxy,
+        # The stable id of the address.  A path segment cannot carry a full
+        # address (`ID_PATTERN` has no `/`), so this is what `/v1/results/{id}`
+        # and `/v1/results/{id}/observations` are addressed by; without it those
+        # two declared operations could never find anything.
+        'endpoint_id': row.get('endpoint_id'),
         'protocol': proxy_protocol(proxy),
         'host': host.strip('[]'),
         'port': int(port),
@@ -743,30 +748,73 @@ class WorkbenchService(apiv1.Service):
                                  self._guard_objects(rows, call, 'collection_id', 'collections')[:limit],
                                  status)
 
+    def _find_row(self, wanted):
+        """The published row a path segment names, or ``None``.
+
+        A path segment cannot carry a full address: `ID_PATTERN` allows
+        `[A-Za-z0-9._:-]` and every scheme contains `://`.  A row is therefore
+        addressed by its `endpoint_id` (published for this) or by `host:port`;
+        the full URL is still accepted for a caller that percent-encoded it, and
+        a row that names none of the three is simply not found.
+
+        The snapshot is loaded first: reading `exports.rows` straight off the
+        reader returned whatever was cached when the server started, so a row
+        published after the process came up was not found at all.
+        """
+        text = str(wanted or '').strip()
+        if not text:
+            return None
+        self.exports.load()
+        candidates = {text}
+        if '://' not in text:
+            candidates.add('http://' + text)
+            candidates.add('https://' + text)
+            candidates.add('socks5://' + text)
+        for row in self.exports.rows:
+            if row.get('endpoint_id') == text or row.get('proxy') in candidates:
+                return row
+        return None
+
+    def _guarded_row(self, call, wanted):
+        """One published row, refused when the key's scope does not name it."""
+        row = self._find_row(wanted)
+        if row is None:
+            raise apiv1.ApiError('E_STATE_NOT_FOUND', status=404, details={'id': wanted})
+        if not self._guard_objects([row], call, 'collection_id', 'collections'):
+            # Same code as a missing row: a key must not learn that an
+            # out-of-scope object exists (CONTRACTS §5.3).
+            raise apiv1.ApiError('E_STATE_NOT_FOUND', status=404, details={'id': wanted})
+        return row
+
     def _op_results_detail(self, call):
-        wanted = call.params.get('id')
-        rows = self.exports.rows
-        for row in rows:
-            if row.get('proxy') == wanted or row.get('endpoint_id') == wanted:
-                return {'item': row, 'generation': self.exports.status.get('generation')}
-        raise apiv1.ApiError('E_STATE_NOT_FOUND', status=404, details={'id': wanted})
+        row = self._guarded_row(call, call.params.get('id'))
+        return {'item': row, 'generation': self.exports.status.get('generation')}
 
     def _op_results_observations(self, call):
         wanted = call.params.get('id')
+        row = self._guarded_row(call, wanted)
+        endpoint = row.get('endpoint_id')
+        if not endpoint:
+            conn = self.connection()
+            try:
+                endpoint = schema_endpoint_id(conn, row['proxy']) if conn is not None else None
+            finally:
+                if conn is not None:
+                    conn.close()
         conn = self.connection()
         try:
             if conn is None:
                 return {'items': [], 'stream_id': 'observations', 'next_seq': None}
             rows = conn.execute(
-                'SELECT o.* FROM observations o JOIN endpoints e ON e.id = o.endpoint_id '
-                'WHERE e.canonical = ? ORDER BY o.finished_at DESC LIMIT 200', (wanted,)).fetchall()
-            items = [dict(row) for row in rows]
+                'SELECT o.* FROM observations o WHERE o.endpoint_id = ?'
+                ' ORDER BY o.finished_at DESC LIMIT 200', (endpoint,)).fetchall()
+            items = [dict(item) for item in rows]
         except sqlite3.Error:
             items = []
         finally:
             if conn is not None:
                 conn.close()
-        return {'items': items, 'stream_id': f'observations:{wanted}', 'next_seq': None}
+        return {'items': items, 'stream_id': f'observations:{endpoint}', 'next_seq': None}
 
     def _matches(self, row, query):
         if not query:
@@ -791,12 +839,27 @@ class WorkbenchService(apiv1.Service):
         body['version'] = PRODUCT_VERSION
         return body
 
+    def _guarded_artifact(self, call, artifact_id):
+        """The artifact, but only when the key's scope names its collection.
+
+        The three artifact reads declared no ``scope=`` on their routes and looked
+        the row up by primary key alone, so a key restricted to collection A read
+        and downloaded the artifact of collection B.  The backstop guard could not
+        catch it: it inspects the top level of the answer, and these operations
+        return ``{"item": {...}}`` (F29, acceptance 5).
+        """
+        artifact = self._artifact(artifact_id)
+        if not self._guard_objects([artifact], call, 'collection_id', 'collections'):
+            raise apiv1.ApiError('E_STATE_NOT_FOUND', status=404, details={'id': artifact_id},
+                                 action=apiv1.tr('объект вне scope ключа',
+                                                  'the object is outside the key scope'))
+        return artifact
+
     def _op_exports_status(self, call):
-        artifact = self._artifact(call.params.get('id'))
-        return {'item': artifact}
+        return {'item': self._guarded_artifact(call, call.params.get('id'))}
 
     def _op_exports_compatibility(self, call):
-        artifact = self._artifact(call.params.get('id'))
+        artifact = self._guarded_artifact(call, call.params.get('id'))
         return {'item': dict(artifact, compat=artifact.get('compat') or {})}
 
     def _op_exports_download(self, call):
@@ -809,7 +872,7 @@ class WorkbenchService(apiv1.Service):
         written.  The manifest recorded in the same row is the allow-list: a
         name that is not in it is a 404 even if a file of that name exists.
         """
-        artifact = self._artifact(call.params.get('id'))
+        artifact = self._guarded_artifact(call, call.params.get('id'))
         generation = str(artifact.get('generation') or '')
         if not generation or not exportsvc.GENERATION_PATTERN.fullmatch(generation):
             raise apiv1.ApiError('E_STATE_NOT_FOUND', status=404,
@@ -976,13 +1039,23 @@ class WorkbenchService(apiv1.Service):
                 kind = 'selection'
             selection = self._canonical_selection(workbench, chosen) if chosen else None
             client_target = str(body.get('format') or '') or None
+            # `include_secrets` asks for credential *references*, never values: the
+            # mode name is `reference`, and it was `include` -- a value outside
+            # `CREDENTIALS_MODES`, so `ExportOptions` refused the request after the
+            # `export.secret` check had already passed and the caller saw a 500
+            # instead of an artifact (F29, F28).
+            wants_secrets = bool(body.get('include_secrets'))
             report = engine.export(
                 conn, profile, workbench.data / 'exports',
                 collection_id=collection,
                 profile_revision=int(body.get('profile_revision') or 1),
                 allowed_proxies=selection,
                 diagnostic=kind == 'diagnostic',
-                credentials='include' if body.get('include_secrets') else 'redact',
+                credentials=(exportsvc.CREDENTIALS_REFERENCE if wants_secrets
+                             else exportsvc.CREDENTIALS_REDACT),
+                secret_grant=exportsvc.SecretGrant(
+                    allowed=wants_secrets, issued_by=call.principal.key_id
+                    if call.principal is not None else None) if wants_secrets else None,
                 active_profile_path=None if kind == 'selection' else workbench.data / 'last-profile.txt')
             written = list(report.get('files') or ())
             if client_target:
@@ -1162,11 +1235,22 @@ class WorkbenchService(apiv1.Service):
         return {'items': self._guard_objects(items, call, 'endpoint_id', 'collections'),
                 'stream_id': f'collection:{wanted}', 'next_seq': None}
 
-    def _guard_objects(self, items, call, field, kind):
-        """Never reveal an object the caller's resource scope does not name."""
+    def _guard_objects(self, items, call, field, kind, collection_field='collection_id'):
+        """Never reveal an object the caller's resource scope does not name.
+
+        A key's scope names collections and pools (CONTRACTS §5.3).  An object of
+        any other kind -- a job, a schedule -- is visible when the collection it
+        belongs to is in the scope.  Before this rule the filter asked
+        :func:`_scope_values` for a kind the principal does not carry, was told
+        ``None`` and read it as "unrestricted", so a key scoped to one collection
+        received every other collection's job list (F29, acceptance 5).
+        """
         allowed = _scope_values(call.principal, kind)
         if allowed is None:
             return items
+        if kind not in SCOPE_KINDS:
+            allowed = _scope_values(call.principal, 'collections') or frozenset()
+            return [item for item in items if _collection_of(item, collection_field) in allowed]
         return [item for item in items if item.get(field) in allowed]
 
     # -- profiles -----------------------------------------------------------
@@ -1352,7 +1436,11 @@ class WorkbenchService(apiv1.Service):
     def _op_pools_members(self, call):
         store, conn = self._pool_store()
         try:
-            items = [dict(member) for member in store.members(call.params.get('id'))] if store is not None else []
+            # `pools.Member` is a dataclass, not a mapping: `dict(member)` raised
+            # `TypeError` and the route answered 500 for every pool, so the
+            # membership a refill had just written was never visible over /v1.
+            items = [_member_dict(member)
+                     for member in store.members(call.params.get('id'))] if store is not None else []
         finally:
             _close(conn)
         return {'items': self._guard_objects(items, call, 'endpoint_id', 'pools'),
@@ -1383,10 +1471,11 @@ class WorkbenchService(apiv1.Service):
         try:
             return action(workbench)
         except engine.WorkbenchError as exc:
-            raise apiv1.ApiError(exc.code, status=_error_status(exc.code), message=str(exc)) from None
+            raise apiv1.ApiError(_api_code(exc.code), status=_error_status(exc.code),
+                                 message=str(exc)) from None
         except _MODULE_ERRORS as exc:
             code = getattr(exc, 'code', None) or 'E_VALIDATION_FIELD'
-            raise apiv1.ApiError(code if isinstance(code, str) and code.startswith('E_')
+            raise apiv1.ApiError(_api_code(code) if isinstance(code, str) and code.startswith('E_')
                                  else 'E_VALIDATION_FIELD',
                                  status=_error_status(code), message=str(exc)) from None
         except (sqlite3.Error, OSError) as exc:
@@ -1654,26 +1743,85 @@ class WorkbenchService(apiv1.Service):
         return self._with_workbench(action)
 
     def _op_pools_start(self, call):
-        return self._with_workbench(lambda workbench: self._pool_transition(
-            workbench, call.params.get('id'), 'start'))
+        """Starting a pool means filling it, not only writing a state word.
+
+        `start` used to save `STATE_EMPTY` and return: the pool stayed 0/desired
+        until something else refilled it, and nothing else did (F14, §7.13).  The
+        save itself was broken too -- it passed a whole `PoolStatus` where
+        `save_status` wants the state string and two keywords, so the route
+        answered 500.
+        """
+        def action(workbench):
+            pool_id = str(call.params.get('id'))
+            store = workbench.pools()
+            started = pools_state_for('start', store.status(pool_id))
+            store.save_status(pool_id, started.state,
+                              deficit_reason=started.deficit_reason,
+                              next_attempt_at=started.next_attempt_at)
+            return _status_dict(workbench.pool_refill(pool_id,
+                                                      pool_candidate_source(workbench.conn)))
+        return self._with_workbench(action)
 
     def _op_pools_pause(self, call):
         return self._with_workbench(lambda workbench: self._pool_transition(
             workbench, call.params.get('id'), 'pause'))
 
     def _pool_transition(self, workbench, pool_id, action):
-        from . import proxytool as engine
         store = workbench.pools()
-        status = store.status(str(pool_id))
-        store.save_status(str(pool_id), pools_state_for(action, status))
-        del engine
+        moved = pools_state_for(action, store.status(str(pool_id)))
+        store.save_status(str(pool_id), moved.state,
+                          deficit_reason=moved.deficit_reason,
+                          next_attempt_at=moved.next_attempt_at)
         return _status_dict(store.status(str(pool_id)))
 
     def _op_pools_refill(self, call):
-        return self._submit_collection_job(call, 'pool_refill')
+        """Refill *this* pool and report what it can serve afterwards.
+
+        The route answered 202 and queued a check of whatever collection the body
+        named -- by default the public base -- while `call.params['id']`, the pool
+        the caller actually asked about, was never read.  `pools.refill` and
+        `Workbench.pool_refill` existed and nothing called them, so a pool created
+        with `--desired 5` stayed 0/5 and the caller was told "job queued" (F14,
+        §7.13 "Maintained N is restored from the reserve/sources").
+        """
+        def action(workbench):
+            from . import pools as pools_module
+            status = workbench.pool_refill(
+                str(call.params.get('id')),
+                pool_candidate_source(workbench.conn))
+            body = _status_dict(status)
+            body['kind'] = 'pool_refill'
+            body['pool_id'] = str(call.params.get('id'))
+            return body
+        return self._with_workbench(action)
 
     def _op_pools_recheck(self, call):
-        return self._submit_collection_job(call, 'pool_recheck')
+        """Queue a measurement of the pool's own collection, not of the body's."""
+        def action(workbench):
+            from . import proxytool as engine
+            from . import jobs as jobs_module
+            pool_id = str(call.params.get('id'))
+            spec = workbench.pools().require(pool_id)
+            collection = str(spec.collection_id)
+            conn = workbench.conn
+            members = [row[0] for row in conn.execute(
+                'SELECT e.canonical FROM membership m JOIN endpoints e ON e.id = m.endpoint_id '
+                'WHERE m.collection_id=? ORDER BY e.canonical', (collection,)).fetchall()]
+            items = [jobs_module.QueueItem(endpoint_id=schema_endpoint_id(conn, value),
+                                           access_id=engine.PUBLIC_ACCESS_ID, access_revision=1)
+                     for value in members]
+            conn.commit()
+            job = workbench.jobs().submit(
+                'pool_recheck',
+                jobs_module.Scope(collection_id=collection, profile_id=spec.profile_id,
+                                  profile_revision=int(spec.profile_revision),
+                                  profile_digest=spec.profile_id,
+                                  filters={'protocol': (call.body or {}).get('protocol', 'all')},
+                                  budgets={'max_seconds': (call.body or {}).get('max_seconds')}),
+                items, idempotency_key=call.idempotency_key)
+            return {'job_id': job.id, 'kind': 'pool_recheck', 'state': job.state,
+                    'pool_id': pool_id, 'collection_id': collection, 'items': len(items)}
+        return self._with_workbench(action)
 
     # -- schedules ----------------------------------------------------------
 
@@ -2172,6 +2320,17 @@ def _hhmm(value):
     return int(hours) * 60 + int(minutes)
 
 
+#: A module code the API answers with a different, canonical one.  A missing
+#: object and a forbidden one must look alike, and `E_POOL_UNKNOWN` is a missing
+#: object; the module's own vocabulary stays visible in the details.
+API_CODE_ALIASES = {'E_POOL_UNKNOWN': 'E_STATE_NOT_FOUND'}
+
+
+def _api_code(code):
+    name = str(code or '')
+    return API_CODE_ALIASES.get(name, name)
+
+
 def _error_status(code):
     """The HTTP status the code canonically carries (CONTRACTS §5.4).
 
@@ -2183,6 +2342,11 @@ def _error_status(code):
         return 401 if 'EXPIRED' in name or 'FAILED' in name else 403
     if name.startswith(('E_CONFLICT_', 'E_STATE_')):
         return 409
+    if name.startswith(('E_POOL_', 'E_EXPORT_', 'E_IMPORT_')):
+        # A pool/export/import refusal names the state of an object, so it is a
+        # conflict, not a malformed request.  `E_POOL_UNKNOWN` in particular is
+        # "no such pool": a missing and a forbidden object must answer alike.
+        return 409 if name != 'E_POOL_UNKNOWN' else 404
     if name.startswith(('E_LIMIT_',)):
         return 429
     if name.startswith(('E_VALIDATION_', 'E_SECRET_')):
@@ -2225,34 +2389,92 @@ def schema_endpoint_id(conn, canonical):
     return schema.upsert_endpoint(conn, canonical)
 
 
+def pool_candidate_source(conn, *, min_success=1.0):
+    """The candidate source `pools.refill` asks, served from the local database.
+
+    A pool's candidates are the members of *its own* collection, and the tiers are
+    served honestly: the reserve is the pool's own current members, `known` is the
+    collection rows that already carry a measurement, and `sources` is the rest --
+    offered with ``allowed=False``, which is what puts them in ``recheck_due``
+    instead of pretending they work.  The admission verdict is the shared
+    contract's, never a second calculation here (CONTRACTS §2.3).
+
+    Nothing is dialled: a candidate is a stored row, and the measurement that
+    turns `sources` into `known` is the `pool_recheck` job.
+    """
+    from . import db as schema
+    from . import pools as pools_module
+    from .reputation import result_allowed
+
+    def source(spec, kind, budget, now):
+        limit = max(0, int(budget or 0))
+        if not limit:
+            return []
+        try:
+            members = {row[0] for row in conn.execute(
+                'SELECT endpoint_id FROM pool_member WHERE pool_id=?', (spec.id,)).fetchall()}
+        except sqlite3.Error:
+            members = set()
+        rows = conn.execute(
+            'SELECT e.id AS endpoint_id, e.canonical AS canonical, r.payload AS payload,'
+            ' r.checked_at AS checked_at, r.valid_until AS valid_until'
+            ' FROM membership m JOIN endpoints e ON e.id = m.endpoint_id'
+            ' LEFT JOIN results r ON r.endpoint_id = e.id AND r.profile_id=?'
+            ' WHERE m.collection_id=? ORDER BY e.canonical LIMIT ?',
+            (spec.profile_id, spec.collection_id, limit)).fetchall()
+        offered = []
+        for row in rows:
+            is_member = row['endpoint_id'] in members
+            if kind == pools_module.SOURCE_RESERVE and not is_member:
+                continue
+            if kind != pools_module.SOURCE_RESERVE and is_member:
+                continue
+            payload = {}
+            if row['payload']:
+                try:
+                    payload = json.loads(row['payload'])
+                except (TypeError, ValueError):
+                    payload = {}
+            measured = row['checked_at'] is not None
+            allowed = bool(measured and kind == pools_module.SOURCE_KNOWN
+                           and result_allowed(payload, min_success))
+            offered.append(pools_module.Candidate(
+                endpoint_id=row['endpoint_id'], canonical=row['canonical'],
+                collection_id=spec.collection_id, allowed=allowed,
+                admission_reason=(None if allowed or kind == pools_module.SOURCE_RESERVE
+                                  else (pools_module.REASON_TIME_MISSING if not measured
+                                        else pools_module.REASON_DENIED)),
+                checked_at=row['checked_at'], valid_until=row['valid_until'],
+                protocol=proxytool_proxy(row['canonical']),
+                origin_domain=pools_module.DOMAIN_OWN))
+        return offered
+
+    return source
+
+
+def proxytool_proxy(canonical):
+    from .proxytool import proxy_protocol
+    try:
+        return proxy_protocol(str(canonical))
+    except Exception:  # a malformed address is unknown, never an exception here
+        return ''
+
+
 def pools_state_for(action, status):
-    """The pool state after ``start``/``pause``; the module owns the vocabulary."""
+    """The pool state after ``start``/``pause``; the module owns the vocabulary.
+
+    Built with `dataclasses.replace`, not by naming every field: `PoolStatus` grew
+    a dozen counters (deficit_reasons, budget_spent, recheck_due, source_errors, …)
+    and the hand-written constructor call stopped listing them, so both
+    `POST /v1/pools/{id}/start` and `.../pause` answered 500 with
+    `missing 12 required positional arguments`.  `replace` carries every field the
+    module adds next without a second edit here.
+    """
+    from dataclasses import replace
     from . import pools as pools_module
     if action == 'start':
-        return pools_module.PoolStatus(pool_id=status.pool_id, state=pools_module.STATE_EMPTY,
-                                       at=status.at, collection_id=status.collection_id,
-                                       collection_kind=status.collection_kind,
-                                       profile_id=status.profile_id,
-                                       profile_revision=status.profile_revision,
-                                       desired=status.desired, minimum=status.minimum,
-                                       reserve=status.reserve, counts=status.counts,
-                                       served=status.served, shortfall=status.shortfall,
-                                       below_minimum=status.below_minimum,
-                                       ready_for_clients=status.ready_for_clients,
-                                       deficit_reason=status.deficit_reason,
-                                       next_attempt_at=status.next_attempt_at)
-    return pools_module.PoolStatus(pool_id=status.pool_id, state=status.state, at=status.at,
-                                   collection_id=status.collection_id,
-                                   collection_kind=status.collection_kind,
-                                   profile_id=status.profile_id,
-                                   profile_revision=status.profile_revision,
-                                   desired=status.desired, minimum=status.minimum,
-                                   reserve=status.reserve, counts=status.counts,
-                                   served=status.served, shortfall=status.shortfall,
-                                   below_minimum=status.below_minimum,
-                                   ready_for_clients=False,
-                                   deficit_reason=status.deficit_reason,
-                                   next_attempt_at=status.next_attempt_at)
+        return replace(status, state=pools_module.STATE_EMPTY)
+    return replace(status, state=status.state, ready_for_clients=False)
 
 
 def _job_dict(job):
@@ -2303,6 +2525,15 @@ def _status_dict(status):
     return {k: v for k, v in vars(status).items()}
 
 
+def _member_dict(member):
+    """One pool member as JSON; the module's own shape, never a guessed one."""
+    if hasattr(member, 'as_dict'):
+        return member.as_dict()
+    if hasattr(member, '__dict__'):
+        return dict(vars(member))
+    return dict(member)
+
+
 #: The API says "own" and "public" in the user's words; the schema stores the
 #: kinds of the contract.  An unknown kind is an error, never a silent default.
 COLLECTION_KINDS = {'own': 'private', 'private': 'private',
@@ -2348,6 +2579,25 @@ def collection_kind(value):
     return COLLECTION_KINDS[text]
 
 
+#: The kinds a key's resource scope is expressed in (CONTRACTS §5.3: a key is
+#: limited to named `collection_id` and `pool_id`).  Every other kind is filtered
+#: by the collection the object belongs to, never by a scope list that cannot exist.
+SCOPE_KINDS = ('collections', 'pools')
+
+
+def _collection_of(item, field='collection_id'):
+    """The collection an object belongs to, read from the row or from its scope."""
+    value = item.get(field)
+    if isinstance(value, str) and value:
+        return value
+    scope = item.get('scope')
+    if isinstance(scope, dict):
+        value = scope.get('collection_id')
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
 def _scope_values(principal, kind):
     """The resource scope of a principal, or ``None`` when it is unrestricted.
 
@@ -2355,7 +2605,17 @@ def _scope_values(principal, kind):
     documented meaning of an unset scope -- so only a non-empty list narrows
     anything.  A missing object and a forbidden one answer alike, so a caller
     cannot probe for the existence of a scope it may not see.
+
+    A kind the scope is not expressed in -- a job, a schedule, a profile, a source
+    -- answers with the *collections*, because that is the only thing such an object
+    can be inside.  Returning ``None`` there used to read as "this key is
+    unrestricted": the principal carries no ``jobs`` attribute, so a key scoped to
+    one collection received every other collection's object list (F29).  The same
+    rule withholds the shared configuration a scoped key has no claim to: a source
+    row carries the provider URL verbatim, credential included.
     """
+    if kind not in SCOPE_KINDS:
+        kind = 'collections'
     scope = getattr(principal, 'resource_scope', None) or {}
     values = scope.get(kind) if isinstance(scope, dict) else None
     if values is None:

@@ -193,6 +193,36 @@ def field_error(name, detail, *, code='E_VALIDATION_FIELD', action=None):
     return ApiError(code, action=action, details={'field': name, 'reason': detail})
 
 
+#: A domain refusal the service layer already decided on, by the domain of its code.
+#: The catalogue has no entry for a code it does not know, so the exception's own
+#: message is used; the code itself stays the one the layer produced.
+DOMAIN_STATUS = (
+    ('E_AUTH_', 403), ('E_VALIDATION_', 400), ('E_CONFLICT_', 409),
+    ('E_SECRET_', 409), ('E_LIMIT_', 429), ('E_TIME_', 409),
+    ('E_STATE_', 409), ('E_EXPORT_', 409), ('E_DATA_', 409), ('E_GATEWAY_', 502),
+)
+
+
+def _domain_refusal(exc):
+    """Translate a domain error of the service layer into the API's own answer.
+
+    Every exception used to become ``E_SERVICE_UNAVAILABLE`` -- "the operation is
+    not wired to the service layer" -- so a refusal the engine had already decided
+    on (no snapshot, credentials not granted, nothing to export) reached the
+    caller as a broken feature.  A refusal is a refusal, not an outage (F29,
+    F24: a defect must not be reported as a missing function).
+    """
+    code = getattr(exc, 'code', None)
+    if not isinstance(code, str) or not code.startswith('E_'):
+        return None
+    status = next((value for prefix, value in DOMAIN_STATUS if code.startswith(prefix)), 409)
+    message = getattr(exc, 'message', None) or str(exc)
+    if code in MESSAGES:
+        return ApiError(code, status=status)
+    return ApiError(code, status=status, message=tr(message, message),
+                    details={'reason': type(exc).__name__})
+
+
 # --------------------------------------------------------------------------
 # validation
 # --------------------------------------------------------------------------
@@ -1312,13 +1342,19 @@ ROUTES = (
           mutating=True, body=(), scope=(('pool', 'id'),), tags=('pools',)),
     Route('POST', '/v1/pools/{id}/pause', 'pools.pause', 'pools.write', 'pause a pool',
           mutating=True, body=(), scope=(('pool', 'id'),), tags=('pools',)),
-    Route('POST', '/v1/pools/{id}/refill', 'pools.refill', 'pools.write', 'refill a pool as a job',
-          mutating=True, async_job=True, scope=(('pool', 'id'),),
+    # A refill reads stored rows and rewrites membership: it is a local, bounded
+    # operation, not a measurement.  It used to be declared `async_job` and answer
+    # 202 without touching the pool, so the job id pointed at nothing.
+    Route('POST', '/v1/pools/{id}/refill', 'pools.refill', 'pools.write',
+          'refill this pool from its collection and report what it can serve',
+          mutating=True, scope=(('pool', 'id'),),
           body=(Field('budget', 'object', shape=(Field('max_requests', 'int', minimum=1),
                                                   Field('max_seconds', 'int', minimum=1))),),
           tags=('pools',)),
     Route('POST', '/v1/pools/{id}/recheck', 'pools.recheck', 'pools.write',
-          'recheck a pool as a job', mutating=True, async_job=True, body=(),
+          'measure the pool collection again as a job', mutating=True, async_job=True,
+          body=(Field('protocol', 'string', choices=('all', 'http', 'https', 'socks4', 'socks5')),
+                Field('max_seconds', 'int', minimum=1, maximum=86400)),
           scope=(('pool', 'id'),), tags=('pools',)),
     Route('GET', '/v1/pools/{id}/members', 'pools.members', 'pools.read', 'members of a pool',
           paginated=True, query=PAGE_QUERY, scope=(('pool', 'id'),), tags=('pools',)),
@@ -1540,23 +1576,52 @@ def _redact(value, principal):
     return value
 
 
-def _guard_scope(principal, body):
-    """Backstop: a response naming an out-of-scope object is not returned."""
-    if not isinstance(body, dict) or principal is None:
-        return body
+#: The envelopes a service answer may put the object in.  The guard looks inside
+#: them: the three artifact reads and every list answer `{"item": {...}}` or
+#: `{"items": [...]}`, so a guard that only inspected the top level saw no
+#: `collection_id` at all and let another collection's object through (F29).
+#: The list is explicit -- the walk is one level deep on purpose, not a search.
+SCOPE_ENVELOPES = ('item', 'items')
+
+
+def _names_out_of_scope(principal, body):
+    """True when the answer names a collection or a pool the key does not cover."""
+    if not isinstance(body, dict):
+        return False
     for kind, key in (('collection', 'collection_id'), ('pool', 'pool_id')):
         value = body.get(key)
         if isinstance(value, str) and not principal.allows(kind, value):
-            raise ApiError('E_STATE_NOT_FOUND', status=404,
-                           action=tr('объект вне scope ключа', 'the object is outside the key scope'))
+            return True
     scope = body.get('scope')
     if isinstance(scope, dict):
         for kind, key in (('collection', 'collection_id'), ('pool', 'pool_id')):
             value = scope.get(key)
             if isinstance(value, str) and not principal.allows(kind, value):
-                raise ApiError('E_STATE_NOT_FOUND', status=404,
-                               action=tr('объект вне scope ключа',
-                                         'the object is outside the key scope'))
+                return True
+    return False
+
+
+def _guard_scope(principal, body):
+    """Backstop: a response naming an out-of-scope object is not returned.
+
+    One object out of scope answers 404 -- the same code a missing one gives, so a
+    caller cannot probe for what it may not see.  A *list* keeps the rows it may
+    see and loses the rest: refusing the whole page would also refuse the caller's
+    own objects, and the acceptance item only asks that the other collection's
+    objects do not arrive.
+    """
+    if not isinstance(body, dict) or principal is None:
+        return body
+    if _names_out_of_scope(principal, body):
+        raise ApiError('E_STATE_NOT_FOUND', status=404,
+                       action=tr('объект вне scope ключа', 'the object is outside the key scope'))
+    for name in SCOPE_ENVELOPES:
+        inner = body.get(name)
+        if isinstance(inner, dict):
+            _guard_scope(principal, inner)
+        elif isinstance(inner, list):
+            body[name] = [item for item in inner
+                          if not _names_out_of_scope(principal, item)]
     return body
 
 
@@ -1872,6 +1937,10 @@ class ApiV1:
             self._audit(route, request, params, principal, 'error', exc.code, body)
             raise
         except Exception as exc:
+            refusal = _domain_refusal(exc)
+            if refusal is not None:
+                self._audit(route, request, params, principal, 'error', refusal.code, body)
+                raise refusal from exc
             self._audit(route, request, params, principal, 'error', 'E_SERVICE_UNAVAILABLE', body)
             raise ApiError('E_SERVICE_UNAVAILABLE',
                            status=503 if isinstance(exc, NotImplementedError) else 500,
@@ -2019,6 +2088,11 @@ class ApiV1:
             data = result['data']
             if not isinstance(data, (bytes, bytearray)):
                 data = str(data).encode('utf-8')
+            # The object guard runs before the bytes leave.  A raw file used to be
+            # returned straight out of `result`, so a redacted identity (a
+            # subscription) got a file the rest of the API would have scrubbed, and
+            # a body naming another collection was never noticed at all (F29).
+            _guard_scope(principal, result if isinstance(result, dict) else {})
             if result.get('filename'):
                 headers.append(('Content-Disposition',
                                 'attachment; filename='

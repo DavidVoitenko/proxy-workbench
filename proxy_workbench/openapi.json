@@ -6479,141 +6479,27 @@
             }
           }
         ],
-        "responses": {
-          "202": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            },
-            "description": "job id and location"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "description": "documented error with a stable E_* code"
-          },
-          "401": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "description": "documented error with a stable E_* code"
-          },
-          "403": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "description": "documented error with a stable E_* code"
-          },
-          "404": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "description": "documented error with a stable E_* code"
-          },
-          "409": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "description": "documented error with a stable E_* code"
-          },
-          "413": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "description": "documented error with a stable E_* code"
-          },
-          "429": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            },
-            "description": "documented error with a stable E_* code"
-          }
-        },
-        "security": [
-          {
-            "bearerKey": []
-          }
-        ],
-        "summary": "recheck a pool as a job",
-        "tags": [
-          "pools"
-        ]
-      }
-    },
-    "/v1/pools/{id}/refill": {
-      "post": {
-        "description": "mutation: Idempotency-Key is required, If-Match or body revision guards concurrent changes. long operation: 202 with a job id, the request is not held",
-        "operationId": "pools.refill",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "description": "one key, one answer; a repeat returns the first one",
-            "in": "header",
-            "name": "Idempotency-Key",
-            "required": true,
-            "schema": {
-              "maxLength": 128,
-              "type": "string"
-            }
-          }
-        ],
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
                 "additionalProperties": false,
                 "properties": {
-                  "budget": {
-                    "properties": {
-                      "max_requests": {
-                        "minimum": 1,
-                        "type": "integer"
-                      },
-                      "max_seconds": {
-                        "minimum": 1,
-                        "type": "integer"
-                      }
-                    },
-                    "type": "object"
+                  "max_seconds": {
+                    "maximum": 86400,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "protocol": {
+                    "enum": [
+                      "all",
+                      "http",
+                      "https",
+                      "socks4",
+                      "socks5"
+                    ],
+                    "maxLength": 4096,
+                    "type": "string"
                   }
                 },
                 "type": "object"
@@ -6709,7 +6595,150 @@
             "bearerKey": []
           }
         ],
-        "summary": "refill a pool as a job",
+        "summary": "measure the pool collection again as a job",
+        "tags": [
+          "pools"
+        ]
+      }
+    },
+    "/v1/pools/{id}/refill": {
+      "post": {
+        "description": "mutation: Idempotency-Key is required, If-Match or body revision guards concurrent changes",
+        "operationId": "pools.refill",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "one key, one answer; a repeat returns the first one",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "budget": {
+                    "properties": {
+                      "max_requests": {
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "max_seconds": {
+                        "minimum": 1,
+                        "type": "integer"
+                      }
+                    },
+                    "type": "object"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "result"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "documented error with a stable E_* code"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "documented error with a stable E_* code"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "documented error with a stable E_* code"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "documented error with a stable E_* code"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "documented error with a stable E_* code"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "documented error with a stable E_* code"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            },
+            "description": "documented error with a stable E_* code"
+          }
+        },
+        "security": [
+          {
+            "bearerKey": []
+          }
+        ],
+        "summary": "refill this pool from its collection and report what it can serve",
         "tags": [
           "pools"
         ]

@@ -390,7 +390,10 @@ class ControlTests(unittest.TestCase):
         self.assertEqual(self.call('POST', '/v1/pools/p1/start').status_code, 200)
         self.assertEqual(self.call('POST', '/v1/pools/p1/pause').status_code, 200)
         refill = self.call('POST', '/v1/pools/p1/refill', {'budget': {'max_requests': 100}})
-        self.assertEqual(refill.status_code, 202)
+        # A refill rewrites membership from stored rows: it is a local, bounded
+        # operation and answers 200 with the resulting status, not a 202 for a job
+        # id that pointed at nothing.
+        self.assertEqual(refill.status_code, 200, refill.body)
         self.assertEqual(self.call('POST', '/v1/pools/p1/recheck').status_code, 202)
         self.assertEqual(self.call('GET', '/v1/pools/p1/members').status_code, 200)
         self.assertEqual(self.call('GET', '/v1/pools/p1/status').status_code, 200)

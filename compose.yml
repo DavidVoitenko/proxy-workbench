@@ -3,9 +3,17 @@
 #   api      serves them over HTTP (http://127.0.0.1:8765/random, /proxies, /pac, /clash)
 #   gateway  rotating proxy on 127.0.0.1:8899 (HTTP and SOCKS5)
 #
-#   PROXY_WORKBENCH_API_TOKEN=change-me docker compose up -d
+#   PROXY_WORKBENCH_API_TOKEN=change-me \
+#   PROXY_WORKBENCH_GATEWAY_TOKEN=another-secret docker compose up -d
 #
-# Clients use the token as a Bearer token (API) or as the proxy password (gateway).
+# Two identities, two variables.  `PROXY_WORKBENCH_API_TOKEN` is the Bearer token of
+# the read-only API; `PROXY_WORKBENCH_GATEWAY_TOKEN` is the password a proxy client
+# gives the gateway.  They are deliberately never the same value: whoever knows the
+# gateway password (a phone on the LAN, a QR code) must not be able to read the
+# published snapshot, and a leaked API token must not be a working proxy
+# (CONTRACTS §5.1, defect 18).  Leave the gateway variable unset and the gateway
+# makes its own password and prints it in its log.
+#
 # Edit the check command to test your own service: --url https://example.org/health
 x-workbench: &workbench
   image: ghcr.io/davidvoitenko/proxy-workbench:latest
@@ -30,7 +38,9 @@ services:
     <<: *workbench
     command: ["gateway", "--host", "0.0.0.0"]
     environment:
-      PROXY_WORKBENCH_API_TOKEN: ${PROXY_WORKBENCH_API_TOKEN:?set PROXY_WORKBENCH_API_TOKEN}
+      # Not the API token: the gateway password is a separate identity.  Unset is
+      # fine -- the gateway then generates one and prints it.
+      PROXY_WORKBENCH_GATEWAY_TOKEN: ${PROXY_WORKBENCH_GATEWAY_TOKEN:-}
     ports:
       - "127.0.0.1:8899:8899"
 
