@@ -22155,3 +22155,46 @@ summary {
   .compact-block-title { flex-wrap: wrap !important; row-gap: 8px !important; }
   .compact-block-title h2, .compact-block-title .block-title { flex: 1 1 100% !important; white-space: normal !important; }
 }
+
+/* ── Round 7 QA fixes (user-reported defects) ────────────────────────────── */
+/* 1. DNSBL timeout: caption above, input + unit inline (unit no longer wraps) */
+.dnsbl-timeout-label {
+  display: grid !important;
+  grid-template-columns: auto auto 1fr !important;
+  align-items: center !important;
+  column-gap: 8px !important;
+  row-gap: 6px !important;
+  width: 100% !important;
+}
+.dnsbl-timeout-label > span:first-child { grid-column: 1 / -1 !important; }
+.dnsbl-timeout-label input { justify-self: start !important; }
+/* 2. Results header: tidy wrap, compact saved-views select, equal buttons */
+.view-tools { flex-wrap: wrap !important; row-gap: 8px !important; align-items: center !important; }
+#saved-views { width: auto !important; max-width: 210px !important; }
+.view-tools .button { height: 34px !important; }
+/* 3. Empty table row: never show hover accent / left bars */
+.results-table tbody tr:has(> td.empty),
+.results-table tbody tr:has(> td.empty):hover { background: transparent !important; }
+.results-table tbody tr:has(> td.empty) td,
+.results-table tbody tr:has(> td.empty):hover td {
+  background: transparent !important;
+  border-left: none !important;
+  box-shadow: none !important;
+}
+/* 4. Mobile ticker: natural spacing instead of stretched justify */
+@media (max-width: 680px) {
+  .ticker-item { gap: 8px !important; }
+  .ticker-text { flex: 1 1 auto !important; text-align: left !important; word-spacing: normal !important; letter-spacing: normal !important; }
+}
+/* 5. Gauge caption: wrap to two lines instead of clipping mid-word */
+.gauge-caption {
+  max-width: 120px !important;
+  white-space: normal !important;
+  line-height: 1.25 !important;
+  overflow-wrap: anywhere !important;
+  text-overflow: clip !important;
+  letter-spacing: 0.04em !important;
+}
+/* 6. Sheen appears only on hover (CTA no longer looks washed out at rest) */
+.button.primary::after { opacity: 0 !important; transition: opacity 120ms ease !important; }
+.button.primary:hover:not(:disabled)::after { opacity: 1 !important; }
