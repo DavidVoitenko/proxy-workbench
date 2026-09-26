@@ -53,7 +53,8 @@ __all__ = [
     'SUBSCRIPTION_FORMATS', 'SUPPORTED_OUTCOMES', 'UserSource', 'find_secret_leaks',
     'feed_diagnostics', 'import_clash', 'import_singbox', 'import_subscription', 'is_ref',
     'make_ref', 'parse_document', 'plan_refresh', 'plan_rotation', 'quota_from_response',
-    'redact_headers', 'redact_url', 'resolve_headers', 'resolve_url', 'user_source',
+    'redact_headers', 'redact_url', 'resolve_headers', 'resolve_url', 'retry_after_from_response',
+    'user_source',
     # F21
     'BIAS_CODES', 'BiasNote', 'Cohort', 'CostPerAdmitted', 'FAMILY_JACCARD_DEFAULT',
     'FetchState', 'Family', 'INERT_ACCESS_KINDS', 'OverlapPair', 'ProviderNote', 'SAMPLE_FLOOR',
@@ -916,6 +917,10 @@ class QuotaInfo:
     reset_at: float | None = None
     token_expires_at: float | None = None
     origin: str = 'header'
+    #: Absolute unix time the provider asked us to wait until.  This is the
+    #: one header a rate-limited response is *required* to carry, so it is read
+    #: here rather than left for the caller to remember.
+    retry_after: float | None = None
 
     @property
     def exhausted(self):
@@ -1095,6 +1100,12 @@ def _quota_diagnostics(quota, state, now, policy):
         elif quota.token_expires_at <= now + policy.token_expiry_slack_seconds:
             found.append(Diagnostic('E_SOURCE_TOKEN_EXPIRING', 'Срок действия токена скоро истечёт.',
                                     now, quota.token_expires_at))
+    if quota.retry_after is not None and quota.retry_after > now:
+        # The provider named a moment; repeating it earlier is the one thing a
+        # Retry-After is there to prevent.
+        found.append(Diagnostic('E_SOURCE_RETRY_AFTER',
+                                'Провайдер попросил не повторять запрос до указанного времени.',
+                                now, quota.retry_after))
     return found
 
 
@@ -1328,8 +1339,30 @@ def _parse_retry_after(value, now):
     return moment.timestamp()
 
 
+RETRY_AFTER_HEADERS = ('retry-after', 'x-retry-after', 'x-ratelimit-retry-after')
+
+
+def retry_after_from_response(headers, *, now=0.0):
+    """The absolute time a rate-limited response asked us to wait until.
+
+    ``Retry-After`` is the one header RFC 9110 requires on 429/503.  Both
+    accepted forms are read: a number of seconds and an HTTP date.  Anything
+    unparseable is ``None`` -- "we did not understand the provider" must not
+    become "retry immediately", and it must not become a fabricated delay
+    either.
+    """
+    if not isinstance(headers, Mapping):
+        return None
+    for name, value in headers.items():
+        if str(name).lower() in RETRY_AFTER_HEADERS:
+            parsed = _parse_retry_after(str(value), now)
+            if parsed is not None:
+                return parsed
+    return None
+
+
 def quota_from_response(headers, *, now=0.0, token_expires_at=None):
-    """Read quota and token evidence from response headers.
+    """Read quota, retry and token evidence from response headers.
 
     A header that is absent yields ``None``, never a zero: an unknown quota is
     unknown, and a fake ``remaining=0`` would switch a working feed off.
@@ -1357,10 +1390,11 @@ def quota_from_response(headers, *, now=0.0, token_expires_at=None):
                 token_expires = seconds
     if token_expires_at is not None:
         token_expires = float(token_expires_at)
-    if not found and reset_at is None and token_expires is None:
+    retry_after = retry_after_from_response(headers, now=now)
+    if not found and reset_at is None and token_expires is None and retry_after is None:
         return None
     return QuotaInfo(limit=found.get('limit'), remaining=found.get('remaining'),
-                     reset_at=reset_at, token_expires_at=token_expires)
+                     reset_at=reset_at, token_expires_at=token_expires, retry_after=retry_after)
 
 
 # --------------------------------------------------------------------------
@@ -2402,13 +2436,21 @@ def _measure_window(conn, cohort, endpoints):
     return records
 
 
-def _families(attribution, sources, threshold):
+def _families(attribution, sources, threshold, dataset_groups=None):
     """Group publishers whose address sets overlap at or above ``threshold``.
 
     The grouping is a union-find over pairs, so a chain of near-duplicates
     collapses into one group -- a mirror of a mirror is still a mirror.  The
     result is a pure function of the sets: the order the sources arrived in
     cannot change a single membership.
+
+    ``dataset_groups`` adds the catalog's own statement of identity.  A source
+    research pass that compared two full snapshots may know that two records
+    from different publishers served byte-identical lists; without that prior
+    the pair merges only once the addresses are actually observed, and a source
+    that has not been collected yet would still be read as a second independent
+    opinion.  The prior joins the same union-find and is consumed in sorted
+    order, so it cannot introduce an order dependence either.
     """
     parent = {source_id: source_id for source_id in sources}
 
@@ -2424,6 +2466,17 @@ def _families(attribution, sources, threshold):
             # Sorted so the representative does not depend on arrival order.
             low, high = sorted((left_root, right_root))
             parent[high] = low
+
+    if isinstance(dataset_groups, dict) and dataset_groups:
+        by_group = {}
+        for source_id in sources:
+            group = dataset_groups.get(source_id)
+            if group:
+                by_group.setdefault(group, []).append(source_id)
+        for group in sorted(by_group):
+            members = sorted(by_group[group])
+            for other in members[1:]:
+                union(members[0], other)
 
     for index, left in enumerate(sources):
         left_set = attribution.get(left) or frozenset()
@@ -2466,7 +2519,7 @@ def _overlaps(attribution, sources):
 
 
 def compare_sources(conn, *, sources, cohort, family_jaccard=FAMILY_JACCARD_DEFAULT,
-                    sample_floor=SAMPLE_FLOOR, with_survival=False):
+                    sample_floor=SAMPLE_FLOOR, with_survival=False, dataset_groups=None):
     """Compare publishers on observed measurements, inside one cohort.
 
     ``sources`` are the ids as they appear in ``candidate_seen.source`` or
@@ -2474,6 +2527,11 @@ def compare_sources(conn, *, sources, cohort, family_jaccard=FAMILY_JACCARD_DEFA
     of them is the supplier comparison and works exactly like a larger one: the
     cohort is shared, so the terms are shared by construction rather than by
     promise.
+
+    ``dataset_groups`` is the catalog's ``{source_id: dataset group}`` map.  It
+    is optional, and without it nothing changes: two publishers are one family
+    only when their delivered addresses prove it.  With it, a pair the catalog
+    already records as one identical dataset is one family from the start.
 
     The result is a pure function of the rows.  Permuting ``sources`` cannot
     change a count, a family, a cost or a bias note: every set operation runs on
@@ -2507,7 +2565,7 @@ def compare_sources(conn, *, sources, cohort, family_jaccard=FAMILY_JACCARD_DEFA
 
     # A family is a set of publishers; what it adds is measured against every
     # other source in the comparison, not only against its own members.
-    grouped = _families(attribution, ordered, threshold)
+    grouped = _families(attribution, ordered, threshold, dataset_groups)
     family_of = {source_id: root for root, members in grouped.items() for source_id in members}
     family_endpoints = {}
     for source_id, root in family_of.items():
@@ -2780,7 +2838,12 @@ def survival_across_windows(conn, *, sources, profile_id='', profile_revision=1,
         steps.append(SurvivalStep(index=index, start=from_at, end=to_at, entered=len(entered),
                                   alive=still, dead=dead, censored=censored,
                                   rate=(still / judged) if judged else None,
-                                  rate_of_entered=still / len(entered)))
+                                  # The share-of-entered view is only a number
+                                  # when something was judged.  With every
+                                  # address censored it would read as "all of
+                                  # them died in this window", which is the very
+                                  # sentence this function refuses to produce.
+                                  rate_of_entered=(still / len(entered)) if judged else None))
         alive = survivors
     return tuple(steps)
 
@@ -2843,7 +2906,7 @@ def compare_suppliers(conn, left, right, *, cohort, **kwargs):
                               equal_terms=equal, warnings=tuple(warnings), comparison=comparison)
 
 
-def compare_cohorts(conn, *, sources, cohorts):
+def compare_cohorts(conn, *, sources, cohorts, **kwargs):
     """Per-cohort breakdowns plus an explicit warning when they are not comparable.
 
     Comparing two runs of different profile revisions, or of windows that do not
@@ -2873,7 +2936,7 @@ def compare_cohorts(conn, *, sources, cohorts):
     windows = [(item.start, item.end) for item in items]
     if any(windows[index][1] <= windows[index + 1][0] for index in range(len(windows) - 1)):
         warnings.append('окна не пересекаются: измерения в них относятся к разным моментам времени')
-    breakdowns = tuple(compare_sources(conn, sources=sources, cohort=item) for item in items)
+    breakdowns = tuple(compare_sources(conn, sources=sources, cohort=item, **kwargs) for item in items)
     return tuple(breakdowns), tuple(warnings)
 
 

@@ -16,8 +16,8 @@ from urllib.parse import urlsplit
 
 CATALOG_SCHEMA_VERSION = 1
 CATALOG_ID = "proxy-workbench.sources"
-DEFAULT_REVISION = 2026092501
-DEFAULT_PUBLISHED_AT = "2026-09-25T14:01:37Z"
+DEFAULT_REVISION = 2026092502
+DEFAULT_PUBLISHED_AT = "2026-09-26T09:12:00Z"
 DEFAULT_MINIMUM_APP_VERSION = "2.3.0"
 ID_RE = re.compile(r"[a-z0-9][a-z0-9._-]{2,63}\Z")
 HEX_RE = re.compile(r"[0-9a-f]{16,64}\Z")
@@ -121,7 +121,7 @@ _SOURCE_KEYS = {
     "publisher_name", "rights", "evidence", "limits", "maturity", "catalog_state",
     "tags", "collection_allowed", "family", "protocol_hints", "checked_at",
     "rights_approved", "rights_status",
-    "verification_level", "load_settings", "source_sets",
+    "verification_level", "load_settings", "source_sets", "dataset_group",
 }
 _SET_KEYS = {"id", "name", "kind", "catalog_revision", "members", "auto_add_new"}
 
@@ -131,6 +131,8 @@ class CatalogError(ValueError):
 
 
 def bundled_path():
+    # The integration ships the built catalog under its own name so the legacy
+    # flat URL list keeps its meaning. Either name is accepted for a download.
     catalog_path = Path(__file__).with_name("source-catalog.json")
     if catalog_path.is_file():
         return catalog_path
@@ -237,6 +239,8 @@ def _adapter(value, raw):
         result["config"].setdefault("legacy_kind", result["legacy_kind"])
         if result["legacy_kind"] in ("http", "https", "socks4", "socks5", "socks5h"):
             result["config"].setdefault("default_protocol", "socks5" if result["legacy_kind"] == "socks5h" else result["legacy_kind"])
+    if "config" in result and not isinstance(result["config"], dict):
+        raise CatalogError("adapter.config: ожидается объект")
     # Kind defaults fill in whatever the record did not state, so a config that
     # only carries a legacy kind still gets its pagination and field mapping.
     defaults = _adapter_config(str(raw.get("id", "")), kind)
@@ -344,6 +348,36 @@ def _legacy_specs(raw):
     return result
 
 
+def _string_list(value, name):
+    """A list of non-empty strings; a bare string is not silently a character list."""
+    if value is None:
+        return []
+    if isinstance(value, str) or not isinstance(value, (list, tuple)):
+        raise CatalogError(f"{name}: ожидается список строк")
+    return [str(item) for item in value if isinstance(item, str) and item.strip()]
+
+
+def _evidence_field(raw, source_id):
+    """The evidence mapping, or a stated error when the record brought junk."""
+    value = raw.get("evidence")
+    if value is None or value == {}:
+        return _evidence(raw)
+    if not isinstance(value, dict):
+        raise CatalogError(f"{source_id}.evidence: ожидается объект")
+    for key, item in value.items():
+        if not isinstance(item, dict):
+            raise CatalogError(f"{source_id}.evidence.{key}: ожидается объект")
+        allowed = EVIDENCE_STATES.get(key)
+        state = item.get("state")
+        # A key this project does not define, or a state outside that key, is a
+        # claim the application cannot interpret and must not store silently.
+        if allowed is None:
+            raise CatalogError(f"{source_id}.evidence: неизвестный признак {key!r}")
+        if state not in allowed:
+            raise CatalogError(f"{source_id}.evidence.{key}: недопустимое состояние {state!r}")
+    return deepcopy(value)
+
+
 def normalize_source(raw):
     if not isinstance(raw, dict):
         raise CatalogError("sources: запись должна быть объектом")
@@ -358,6 +392,15 @@ def normalize_source(raw):
     family = raw.get("family_id") or raw.get("family") or source_id
     if not isinstance(family, str) or not family:
         raise CatalogError(f"{source_id}.family_id: ожидается строка")
+    # A publisher family is a claim about who publishes; a dataset group is a
+    # claim about *what bytes come back*.  Two different publishers can serve
+    # one identical list, and a research pass that compared full snapshots can
+    # show that.  Counting such a pair as two independent observations is the
+    # error the overlap view exists to catch, so the catalog states it as data
+    # and not only as prose in ``priority_reason``.
+    dataset_group = raw.get("dataset_group") or family
+    if not isinstance(dataset_group, str) or not dataset_group:
+        raise CatalogError(f"{source_id}.dataset_group: ожидается строка")
     urls = raw.get("data_urls")
     if urls is None:
         urls = [item.get("url") for item in raw.get("endpoints", []) if isinstance(item, dict)]
@@ -417,7 +460,8 @@ def normalize_source(raw):
         "paid", "temporary_trial", "free_with_api_key", "own_infrastructure", "snapshot_unavailable"}
     return {
         "id": source_id, "name": name, "publisher": publisher,
-        "family_id": family, "category": raw.get("category", "unknown"),
+        "family_id": family, "dataset_group": dataset_group,
+        "category": raw.get("category", "unknown"),
         "homepage": raw.get("homepage", ""), "documentation_url": raw.get("documentation_url", ""),
         "terms_url": raw.get("terms_url", ""), "data_urls": [item["url"] for item in endpoints[:len(urls)]],
         "fallback_urls": [item["url"] for item in endpoints[len(urls):]],
@@ -432,14 +476,14 @@ def normalize_source(raw):
         "load_settings": deepcopy(raw.get("load_settings") or {}),
         "priority": raw.get("priority", "normal"), "priority_reason": raw.get("priority_reason", ""),
         "relation_to_current": raw.get("relation_to_current", "new_source"),
-        "research_refs": list(raw.get("research_refs") or [source_id]),
+        "research_refs": _string_list(raw.get("research_refs") or [source_id], f"{source_id}.research_refs"),
         "legacy_specs": _legacy_specs({**raw, "adapter": raw.get("adapter") or adapter}),
         "payload_role": raw.get("payload_role", "proxy_list" if adapter.get("kind") in ADAPTERS - {"unsupported"} else "unknown"),
         "rights": rights, "rights_approved": rights_approved,
         "rights_status": rights.get("data_license", "unknown"),
-        "evidence": deepcopy(raw.get("evidence") or _evidence(raw)),
+        "evidence": _evidence_field(raw, source_id),
         "limits": deepcopy(raw.get("limits") or {}), "maturity": raw.get("maturity", "unknown"),
-        "catalog_state": raw.get("catalog_state", "listed"), "tags": list(raw.get("tags") or []),
+        "catalog_state": raw.get("catalog_state", "listed"), "tags": _string_list(raw.get("tags"), f"{source_id}.tags"),
         "collection_allowed": collection_allowed, "checked_at": raw.get("checked_at") or verification.get("checked_at_utc"),
         "verification_level": raw.get("verification_level", "documented"),
     }
@@ -653,6 +697,77 @@ def collectable_source(item):
     return bool(item.get("collection_allowed", True))
 
 
+def dataset_group_of(item):
+    """The identity of the *bytes* a source is expected to serve.
+
+    Defaults to the publisher family, so a catalog that says nothing extra
+    behaves exactly as before.  A research pass that compared full snapshots
+    can set ``dataset_group`` on two records whose payloads were byte-identical
+    and whose publishers are different people; every "is this an independent
+    observation?" question is then answered with the same key.
+    """
+    if not isinstance(item, dict):
+        return ''
+    return str(item.get("dataset_group") or item.get("family_id") or item.get("id") or '')
+
+
+def dataset_groups(catalog, source_ids=None):
+    """``{source_id: dataset group}`` for the ids a caller is looking at."""
+    wanted = set(source_ids) if source_ids is not None else None
+    result = {}
+    for source in catalog.get('sources', []) if isinstance(catalog, dict) else []:
+        source_id = source.get('id')
+        if not source_id or (wanted is not None and source_id not in wanted):
+            continue
+        result[source_id] = dataset_group_of(source)
+    return result
+
+
+#: The five states F13 asks a reader to be able to tell apart.  They are
+#: derived, never stored: two of them are about the payload, one is about
+#: access, and one is about how much the record has been exercised.
+SUPPORT_STATES = ("supported", "needs_adapter", "needs_auth", "unsupported", "experimental")
+NEEDS_AUTH_ACCESS = {"paid", "temporary_trial", "free_with_api_key"}
+#: Payloads that are not a list of addresses under any access terms at all.
+#: A provider's marketing page is deliberately *not* here: whether that page
+#: can be used is decided by its access terms, not by the shape of the page.
+NEVER_A_LIST_ROLES = {"documentation", "self_hosted", "subscription_config", "snapshot_unavailable"}
+
+
+def support_status(item):
+    """The one-word answer to "can this application use this record?".
+
+    The order matters.  A record that needs an account is reported as
+    ``needs_auth`` even when its payload is a vendor page rather than a list,
+    because the access terms are the blocker the reader has to clear first --
+    that is the whole honest answer for a paid or trial provider this
+    application has no account with.  ``experimental`` is not a weaker
+    ``supported``: it says the record is readable and is simply not one this
+    application is willing to switch on by default.
+    """
+    if not isinstance(item, dict):
+        return 'unsupported'
+    role = item.get("payload_role", "unknown")
+    adapter_kind = (item.get("adapter") or {}).get("kind")
+    if role in NEVER_A_LIST_ROLES:
+        return 'unsupported'
+    if (item.get("access") or {}).get("account_required") or item.get("account_required") \
+            or (item.get("access") or {}).get("kind") in NEEDS_AUTH_ACCESS:
+        return 'needs_auth'
+    if role == "commercial_page":
+        return 'unsupported'
+    if role == "proxy_list" and adapter_kind in ADAPTERS - {"unsupported"}:
+        # A readable record is still experimental when the catalog is not
+        # willing to switch it on by default, and for an experimental record
+        # whose own priority says so.
+        if item.get("priority") == "experimental" or not item.get("collection_allowed", True):
+            return 'experimental'
+        return 'supported'
+    if role == "proxy_list":
+        return 'needs_adapter'
+    return 'unsupported'
+
+
 def custom_source(url, kind="http", *, allow_unsafe=False):
     """Validated descriptor for a user-supplied URL and a supported format."""
     url = _url(url, "custom.url", allow_unsafe=allow_unsafe)
@@ -780,8 +895,26 @@ def migrate_settings(settings, catalog=None, *, data_dir=None):
             if source_id not in selected:
                 selected.append(source_id)
             chosen[source_id] = spec.strip()
-        disabled = [value for value in result.get("download_disabled_ids", [])
-                    if isinstance(value, str) and value not in selected]
+        # Old versions let a source sit in the list and stay paused, and they
+        # wrote that pause as a URL or as an id.  Both are resolved through the
+        # same alias table as the list itself, and the entry is kept even when
+        # the source is also selected: ``selection_ids`` is what turns the
+        # pair back into an active set, so dropping the pause here would
+        # silently re-enable a source the user had deliberately turned off.
+        disabled = []
+        for value in result.get("download_disabled_ids", []):
+            if not isinstance(value, str) or not value.strip():
+                continue
+            text = value.strip()
+            source_id = aliases.get(text) or text
+            if source_id not in selected:
+                kind, url = _canonical_legacy(text)
+                matches = [item["id"] for item in catalog["sources"]
+                           if any(endpoint["url"] == url for endpoint in item["endpoints"])]
+                if len(matches) == 1:
+                    source_id = matches[0]
+            if source_id not in disabled:
+                disabled.append(source_id)
         # Existing versions used a list as the authoritative selection.  A
         # disabled ID is retained in the migration metadata but not active.
         selection = {"schema_version": 1, "catalog_revision": catalog["revision"],
@@ -809,10 +942,14 @@ def migrate_settings(settings, catalog=None, *, data_dir=None):
         "custom_sources": [normalize_custom(item) for item in selection.get("custom_sources", custom)],
     }
     records = list(result["source_selection"]["custom_sources"])
+    # Membership is tracked by id: comparing whole records made this quadratic in
+    # the size of the selection, and the selection is what every click touches.
+    seen = {entry.get("id") for entry in records if isinstance(entry, dict)}
     for source_id in result["source_selection"]["selected_ids"] + result["source_selection"]["download_disabled_ids"]:
         item = source_by_id(catalog, source_id, records)
-        if item is not None:
-            records.append(item) if item not in records else None
+        if item is not None and item.get("id") not in seen:
+            seen.add(item.get("id"))
+            records.append(item)
     specs = result["source_selection"]["specs"]
     materialized = []
     for source_id in result["source_selection"]["selected_ids"]:
@@ -865,7 +1002,13 @@ def normalize_custom(item):
     adapter = item.get("adapter") or {"kind": "line", "profile": "custom-v1", "config": {}}
     if not isinstance(adapter, dict) or adapter.get("kind") not in ADAPTERS:
         raise ValueError("custom_sources.adapter: неизвестный адаптер.")
-    return {"id": source_id, "url": url, "adapter": deepcopy(adapter), "spec": custom_spec(url, adapter)}
+    # A name the user typed is kept: without it a custom entry reverts to its id
+    # on the next migration, which is exactly what the user typed to avoid.
+    name = item.get("name")
+    record = {"id": source_id, "url": url, "adapter": deepcopy(adapter), "spec": custom_spec(url, adapter)}
+    if isinstance(name, str) and name.strip():
+        record["name"] = name.strip()[:160]
+    return record
 
 
 def _custom_plan(source_id, item, custom_sources):
@@ -1029,7 +1172,7 @@ def source_specs_for_ids(source_ids, catalog=None, custom_sources=None):
 
 
 COMPARED_FIELDS = ("name", "category", "protocols", "formats", "data_urls", "access",
-                   "adapter", "evidence", "rights", "collection_allowed")
+                   "adapter", "evidence", "rights", "collection_allowed", "dataset_group")
 
 
 def source_fingerprint(source):
