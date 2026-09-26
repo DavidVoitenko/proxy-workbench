@@ -332,9 +332,53 @@ curl -x socks5h://127.0.0.1:8899 https://example.org/
 - Если прокси не ответил, то же соединение повторяется через другой (до 3 раз). Прокси, который ошибся дважды, отдыхает 5 минут.
 - Обычные `http://`-запросы идут в HTTP-прокси напрямую, потому что многие из них разрешают CONNECT только на порт 443.
 
-На сервере шлюз запускает `./run.sh gateway`; пул сужается обычными фильтрами, например `gateway --protocol socks5 --country DE --max-latency 1500`. Для сетевого адреса (`--host 0.0.0.0`) нужен пароль `--api-token <секрет>`. Клиенты входят с любым именем и этим паролем через HTTP Basic или логин/пароль SOCKS5.
+На сервере шлюз запускает `./run.sh gateway`; пул сужается обычными фильтрами, например `gateway --protocol socks5 --country DE --max-latency 1500`. Для сетевого адреса (`--host 0.0.0.0`) нужен пароль: `--gateway-token <секрет>` или переменная `PROXY_WORKBENCH_GATEWAY_TOKEN`; если он не задан, шлюз придумывает свой и печатает его. Клиенты входят с любым именем и этим паролем через HTTP Basic или логин/пароль SOCKS5.
+
+**Пароль шлюза — не токен API.** Это разные идентичности намеренно (CONTRACTS §5.1): тот, кому вы дали пароль для телефона в сети, не должен читать опубликованный снапшот, а утёкший токен API не должен работать как прокси. `serve` получает `--api-token`, `gateway` — `--gateway-token`; в `compose.yml` показаны обе переменные.
 
 Браузер без расширений: укажите `http://127.0.0.1:8765/pac` как адрес автоматической настройки прокси. Он отдаёт 10 лучших подходящих прокси и принимает те же фильтры, что API, например `/pac?country=DE`. `/clash` возвращает готовый конфиг Clash / Mihomo.
+
+## API и ключи: `/v1`
+
+Read-only адреса ниже ключа не требуют: они отвечают только на loopback. Всё, что под `/v1`, — управляющий API, и ключ ему нужен.
+
+**Первый ключ выдаёт сама машина.** Bootstrap — локальная операция: панель Help в GUI или CLI на этом компьютере. Секрет показывается один раз.
+
+```sh
+./run.sh api-key bootstrap                       # первый административный секрет
+./run.sh api-key list
+./run.sh api-key add reader --permission read.results
+./run.sh api-key rotate <key-id>
+./run.sh api-key revoke <key-id>
+```
+
+**Ключ передаётся как bearer-токен.** Машиночитаемое описание всех операций — `proxy_workbench/openapi.json`; работающая служба отдаёт его же на `GET /v1`.
+
+```sh
+curl -H "Authorization: Bearer $PROXY_WORKBENCH_KEY" http://127.0.0.1:8766/v1/status
+curl -H "Authorization: Bearer $PROXY_WORKBENCH_KEY" http://127.0.0.1:8766/v1/results
+```
+
+```python
+import httpx
+
+key = open("/path/to/key").read().strip()
+r = httpx.get("http://127.0.0.1:8766/v1/results",
+              headers={"Authorization": f"Bearer {key}"}, timeout=10)
+print(r.json()["items"][0]["proxy"])
+```
+
+```js
+const key = process.env.PROXY_WORKBENCH_KEY;
+const r = await fetch("http://127.0.0.1:8766/v1/results", {
+  headers: { Authorization: `Bearer ${key}` },
+});
+console.log((await r.json()).items[0].proxy);
+```
+
+**Что разрешено ключу.** Права (`read.results`, `jobs.submit`, `export.create`, `admin.keys`, …) говорят, *какие* операции доступны; resource scope — *над чем*: ключ, ограниченный одной коллекцией, не видит результаты, задания, артефакты экспорта и пулы другой коллекции, а объект вне scope отвечает ровно так же, как отсутствующий. Учётные данные прокси не покидают хранилище: чувствительный экспорт пишет ссылку на запись хранилища, а сам запрос — отдельное право (`export.secret`).
+
+`./run.sh diagnose zero` (и `GET /v1/diagnostics/zero`) отвечает на вопрос «почему 0 результатов» кодом, стадией, счётчиками и действием — без чтения traceback.
 
 ## Локальное API: прокси в своих программах
 

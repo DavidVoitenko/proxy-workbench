@@ -250,9 +250,53 @@ curl -x socks5h://127.0.0.1:8899 https://example.org/
 - If a proxy fails, the same connection is retried through another one (up to 3). A proxy that fails twice rests for 5 minutes.
 - Plain `http://` requests reach HTTP proxies directly, because many of them allow CONNECT only to port 443.
 
-On a server, start it with `./run.sh gateway` and narrow the pool with the usual filters, for example `gateway --protocol socks5 --country DE --max-latency 1500`. Binding to a network address (`--host 0.0.0.0`) requires a password: `--api-token <secret>`. Clients then log in with any user name and that password, over HTTP Basic or SOCKS5 user/password.
+On a server, start it with `./run.sh gateway` and narrow the pool with the usual filters, for example `gateway --protocol socks5 --country DE --max-latency 1500`. Binding to a network address (`--host 0.0.0.0`) requires a password: `--gateway-token <secret>`, or the `PROXY_WORKBENCH_GATEWAY_TOKEN` variable; when it is not given the gateway makes one and prints it. Clients then log in with any user name and that password, over HTTP Basic or SOCKS5 user/password.
+
+**The gateway password is not the API token.** They are separate identities on purpose (`CONTRACTS §5.1`): whoever knows the password you handed to a phone must not be able to read the published snapshot, and a leaked API token must not be a working proxy. Pass `--api-token` to `serve` and `--gateway-token` to `gateway`; `compose.yml` shows both variables.
 
 Browser without extensions: use `http://127.0.0.1:8765/pac` as the automatic proxy configuration URL. It serves the 10 best matching proxies and accepts the same filters as the API, for example `/pac?country=DE`. `/clash` returns a complete Clash / Mihomo config.
+
+## 🔑 API and keys: `/v1`
+
+The read-only endpoints below need no key because they only answer on loopback. Everything under `/v1` is the control API, and it needs one.
+
+**Get the first key from the machine itself.** The bootstrap is a local-only operation: the GUI's Help panel and the CLI on this computer. The secret is shown once.
+
+```sh
+./run.sh api-key bootstrap                       # print the first administrator secret
+./run.sh api-key list
+./run.sh api-key add reader --permission read.results
+./run.sh api-key rotate <key-id>
+./run.sh api-key revoke <key-id>
+```
+
+**Send it as a bearer token.** The machine-readable description of every operation is `proxy_workbench/openapi.json`; the running service also serves it at `GET /v1`.
+
+```sh
+curl -H "Authorization: Bearer $PROXY_WORKBENCH_KEY" http://127.0.0.1:8766/v1/status
+curl -H "Authorization: Bearer $PROXY_WORKBENCH_KEY" http://127.0.0.1:8766/v1/results
+```
+
+```python
+import httpx
+
+key = open("/path/to/key").read().strip()
+r = httpx.get("http://127.0.0.1:8766/v1/results",
+              headers={"Authorization": f"Bearer {key}"}, timeout=10)
+print(r.json()["items"][0]["proxy"])
+```
+
+```js
+const key = process.env.PROXY_WORKBENCH_KEY;
+const r = await fetch("http://127.0.0.1:8766/v1/results", {
+  headers: { Authorization: `Bearer ${key}` },
+});
+console.log((await r.json()).items[0].proxy);
+```
+
+**What a key may do.** Permissions (`read.results`, `jobs.submit`, `export.create`, `admin.keys`, …) say *which* operations are allowed; the resource scope says *over what*: a key scoped to a collection does not see another collection's results, jobs, export artifacts or pool, and an object outside the scope answers exactly as a missing one does. A proxy's credentials never leave the vault — a secret-bearing export writes a reference to the vault entry, and asking for it is a separate permission (`export.secret`).
+
+`./run.sh diagnose zero` (and `GET /v1/diagnostics/zero`) answers "why did I get zero proxies" with a code, a stage, the counters and the action to take, instead of a traceback.
 
 ## 🔌 Local API: use the proxies from your own code
 
