@@ -101,7 +101,9 @@ class CommitTests(unittest.TestCase):
         self.assertEqual(len(members(self.db, self.first)), 8)
 
     def test_crash_mid_commit_rolls_back_everything(self):
-        imp.commit(self.db, self.plan('11.0.0.1:8080\n11.0.0.2:8080\n'))
+        # Coarse Windows clocks can give consecutive imports the same timestamp.
+        stamp = 1_800_000_000.0
+        imp.commit(self.db, self.plan('11.0.0.1:8080\n11.0.0.2:8080\n'), now=stamp)
         before = members(self.db, self.first)
         plan = self.plan('\n'.join(f'11.2.0.{index}:8080' for index in range(1, 6)), mode='replace')
         written = []
@@ -112,11 +114,11 @@ class CommitTests(unittest.TestCase):
                 raise RuntimeError('процесс упал')
 
         with self.assertRaises(RuntimeError):
-            imp.commit(self.db, plan, on_progress=crash)
+            imp.commit(self.db, plan, on_progress=crash, now=stamp)
         self.assertEqual(written, [3], 'the crash happened inside the write loop')
         self.assertEqual(members(self.db, self.first), before)
-        self.assertEqual(self.db.execute('SELECT state FROM import_batch ORDER BY created_at DESC')
-                         .fetchone()[0], 'failed')
+        self.assertEqual(self.db.execute('SELECT state FROM import_batch WHERE id=?',
+                                         (plan.batch_id,)).fetchone()[0], 'failed')
 
     def test_stale_preview_is_refused_with_the_revision(self):
         stale = self.plan('11.0.0.7:8080\n')
