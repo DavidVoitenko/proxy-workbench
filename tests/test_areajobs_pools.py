@@ -107,10 +107,12 @@ class AcceptanceScenarioTest(PoolTestCase):
         self.assertEqual(allowed.served, 5)
 
     def test_the_target_state_survives_a_crash_and_the_next_refill_finishes_it(self):
+        from contextlib import ExitStack
         import tempfile
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory() as directory, ExitStack() as cleanup:
             path = Path(directory) / db.DB_FILENAME
             store = pools.PoolStore.open(path, migrate=db.migrate)
+            cleanup.callback(store.close)
             store.create('main', collection_id=self.collection_id, profile_id='p1',
                          profile_revision=2, desired=5, minimum=3, reserve=2, policy=POLICY)
             source = FakeSource({pools.SOURCE_SOURCES: self.candidates(20)})
@@ -120,7 +122,7 @@ class AcceptanceScenarioTest(PoolTestCase):
             store.close()  # the process is gone; nothing was shut down gracefully
 
             reopened = pools.PoolStore.open(path, migrate=db.migrate)
-            self.addCleanup(reopened.close)
+            cleanup.callback(reopened.close)
             after = reopened.status('main', now=self.now)
 
             self.assertEqual(after.served, before.served)
@@ -132,7 +134,7 @@ class AcceptanceScenarioTest(PoolTestCase):
             reopened.set_target('main', desired=7)
             reopened.close()
             third = pools.PoolStore.open(path, migrate=db.migrate)
-            self.addCleanup(third.close)
+            cleanup.callback(third.close)
             self.assertEqual(third.get('main').desired, 7)
             finished = pools.refill(third, 'main', source, now=self.now + 1)
             self.assertEqual(finished.served, 7)
@@ -467,11 +469,12 @@ class ConcurrentWriterTest(PoolTestCase):
         self.assertEqual(status.served, 2)
 
     def test_a_crash_between_the_phase_changes_and_the_admissions_leaves_a_pool_a_refill_finishes(self):
+        from contextlib import ExitStack
         import tempfile
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory() as directory, ExitStack() as cleanup:
             path = Path(directory) / db.DB_FILENAME
             store = pools.PoolStore.open(path, migrate=db.migrate)
-            self.addCleanup(store.close)
+            cleanup.callback(store.close)
             store.create('main', collection_id=self.collection_id, profile_id='p1',
                          profile_revision=2, desired=5, minimum=3, reserve=2, policy=POLICY)
             rows = self.candidates(10)
@@ -483,7 +486,7 @@ class ConcurrentWriterTest(PoolTestCase):
             # a process that dies inside the measurement: phases committed, verdicts not
             store.close()
             reopened = pools.PoolStore.open(path, migrate=db.migrate)
-            self.addCleanup(reopened.close)
+            cleanup.callback(reopened.close)
             members = {m.endpoint_id: m.state for m in reopened.members('main')}
             self.assertEqual(len(members), 7, 'no member is lost by a crash mid-measurement')
             self.assertEqual(sorted(members), ['ep-01', 'ep-02', 'ep-03', 'ep-04',

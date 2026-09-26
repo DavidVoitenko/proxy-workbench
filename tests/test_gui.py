@@ -37,13 +37,17 @@ class GuiTests(unittest.TestCase):
         self.temp.cleanup()
 
     def await_job(self):
-        deadline = time.monotonic() + 10
+        # These checks launch a fresh interpreter and exercise real loopback
+        # sockets; loaded CI runners need room for process startup as well as
+        # the request deadlines.  A failure still reports the worker's state.
+        deadline = time.monotonic() + 30
+        result = {}
         while time.monotonic() < deadline:
             result = self.client.get('/api/state').json()
             if not result['running'] and 'exit_code' in result['job']:
                 return result
             time.sleep(.05)
-        self.fail('job did not finish')
+        self.fail(f'job did not finish: {result.get("progress")}; {result.get("log")}')
 
     def test_local_api_security_and_settings(self):
         response = self.client.get('/')
@@ -390,10 +394,12 @@ class GuiTests(unittest.TestCase):
     def test_real_worker_checks_two_services_and_stop_button(self):
         from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
         requested=[]
+        request_started = threading.Event()
         class Proxy(BaseHTTPRequestHandler):
             def log_message(self,*args): pass
             def do_GET(self):
                 requested.append(self.path)
+                request_started.set()
                 if self.server.slow:
                     time.sleep(2)
                 body=b'healthy'
@@ -416,7 +422,7 @@ class GuiTests(unittest.TestCase):
             db.commit();db.close()
             settings=gui.defaults()
             settings.update(targets=[dict(url='http://service.invalid/'+name,contains='healthy',statuses=[200]) for name in ('one','two')],
-                            workers=2,rate=0,timeout=5,min_success=1)
+                            workers=2,rate=0,timeout=5,min_success=1,use_sources=False)
             self.client.post('/api/start',json=dict(action='scan',settings=settings)).raise_for_status()
             result=self.await_job()
             self.assertEqual(result['job']['exit_code'],0,result['log'])
@@ -430,11 +436,9 @@ class GuiTests(unittest.TestCase):
             self.assertEqual(len(requested),8)
             self.assertEqual(self.client.get('/api/download/proxies.txt').text.strip(),proxies[0])
             servers[0].slow=True;servers[1].slow=True
+            request_started.clear()
             self.client.post('/api/start',json=dict(action='recheck',settings=settings)).raise_for_status()
-            deadline=time.monotonic()+5
-            while time.monotonic()<deadline:
-                if self.client.get('/api/state').json()['progress'].get('phase')=='scanning': break
-                time.sleep(.03)
+            self.assertTrue(request_started.wait(30), 'recheck did not reach the local proxy')
             self.client.post('/api/stop',json={}).raise_for_status()
             result=self.await_job()
             self.assertEqual(result['job']['exit_code'],130,result['log'])
@@ -450,9 +454,11 @@ class GuiTests(unittest.TestCase):
 
     def test_cancelled_new_profile_keeps_previous_active_profile(self):
         from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        request_started = threading.Event()
         class Proxy(BaseHTTPRequestHandler):
             def log_message(self,*args): pass
             def do_GET(self):
+                request_started.set()
                 if self.server.slow:
                     time.sleep(2)
                 body=b'healthy'
@@ -471,7 +477,7 @@ class GuiTests(unittest.TestCase):
             db.commit(); db.close()
             settings=gui.defaults()
             settings.update(targets=[dict(url='http://service.invalid/one',contains='healthy',statuses=[200])],
-                            workers=1,rate=0,timeout=5,min_success=1)
+                            workers=1,rate=0,timeout=5,min_success=1,use_sources=False)
             self.client.post('/api/start',json=dict(action='scan',settings=settings)).raise_for_status()
             first=self.await_job()
             self.assertEqual(first['job']['exit_code'],0,first['log'])
@@ -479,12 +485,9 @@ class GuiTests(unittest.TestCase):
 
             settings['targets'][0]['url']='http://service.invalid/new'
             server.slow=True
+            request_started.clear()
             self.client.post('/api/start',json=dict(action='scan',settings=settings)).raise_for_status()
-            deadline=time.monotonic()+5
-            while time.monotonic()<deadline:
-                if self.client.get('/api/state').json()['progress'].get('phase')=='scanning':
-                    break
-                time.sleep(.03)
+            self.assertTrue(request_started.wait(30), 'scan did not reach the local proxy')
             self.client.post('/api/stop',json={}).raise_for_status()
             cancelled=self.await_job()
             self.assertEqual(cancelled['job']['exit_code'],130,cancelled['log'])
@@ -509,7 +512,7 @@ class GuiTests(unittest.TestCase):
             db.commit();db.close()
             settings=gui.defaults()
             settings.update(targets=[dict(url='http://service.invalid/one',contains='healthy',statuses=[200])],
-                            workers=1,rate=0,timeout=5,min_success=1,watch=1)
+                            workers=1,rate=0,timeout=5,min_success=1,watch=1,use_sources=False)
             self.client.post('/api/start',json=dict(action='scan',settings=settings)).raise_for_status()
             deadline=time.monotonic()+30
             while time.monotonic()<deadline:

@@ -71,7 +71,9 @@ def log_tail(path, limit=8000):
 def main(command):
     if not command:
         raise SystemExit('pass an installed proxy-workbench command or executable')
-    command = [str(Path(shutil.which(command[0]) or command[0]).resolve()), *command[1:]]
+    # Preserve a virtualenv interpreter symlink: resolving it selects the base
+    # interpreter and loses the dependencies installed in that virtualenv.
+    command = [str(Path(shutil.which(command[0]) or command[0]).absolute()), *command[1:]]
     try:
         version = subprocess.run([*command, '--version'], capture_output=True, text=True, timeout=120)
     except OSError as exc:
@@ -83,6 +85,8 @@ def main(command):
     data = Path(tempfile.mkdtemp())
     env = child_environment(data / 'home', {'PROXY_WORKBENCH_DATA': str(data),
                                          'PYTHONUNBUFFERED': '1',
+                                         # Match Windows: schedules must use the shipped IANA database.
+                                         'PYTHONTZPATH': '',
                                          'HTTP_PROXY': '', 'HTTPS_PROXY': '', 'ALL_PROXY': '',
                                          'NO_PROXY': '127.0.0.1,localhost'})
     gui = None
@@ -173,9 +177,11 @@ def main(command):
         assert answer == 'healthy', answer
         # A schedule must reach the durable worker while the application is
         # awake; recording a requested slot alone used to look like success.
-        client.post('/api/schedules/action', json={'action': 'add', 'id': 'package-smoke',
-                                                   'interval_minutes': 60,
-                                                   'budgets': {'requests': 5}}).raise_for_status()
+        created = client.post('/api/schedules/action', json={'action': 'add', 'id': 'package-smoke',
+                                                            'interval_minutes': 60,
+                                                            'timezone': 'Europe/Berlin',
+                                                            'budgets': {'requests': 5}})
+        assert created.is_success, f'schedule creation failed: {created.status_code} {created.text}'
         requested = client.post('/api/schedules/action', json={'action': 'run-now', 'id': 'package-smoke'})
         requested.raise_for_status()
         run_id = requested.json()['run_id']

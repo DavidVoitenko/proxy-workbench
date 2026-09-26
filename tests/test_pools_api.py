@@ -21,7 +21,7 @@ import time
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from proxy_workbench import api, apiv1, db
+from proxy_workbench import api, apiv1, db, pools
 from proxy_workbench import proxytool as engine
 from tests.workbench_support import add_candidate, store_result
 
@@ -57,6 +57,8 @@ class PoolRouteTests(unittest.TestCase):
                          collection_id=collection, checked_at=_NOW, valid_until=_NOW + 900)
         self.db.commit()
         self.manager = api.key_manager(self.home)
+        self.addCleanup(self.manager.conn.close)
+        self.addCleanup(pools.watch_registry(self.home).stop_all)
         self.service = api.WorkbenchService(self.home,
                                             exports=api.Exports(self.home / 'exports'),
                                             key_store=self.manager)
@@ -167,6 +169,7 @@ class ResultDetailTests(unittest.TestCase):
                       min_success=1)
 
         self.manager = api.key_manager(self.home)
+        self.addCleanup(self.manager.conn.close)
         self.service = api.WorkbenchService(self.home,
                                             exports=api.Exports(self.home / 'exports'),
                                             key_store=self.manager)

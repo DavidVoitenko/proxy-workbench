@@ -87,7 +87,7 @@ lock.release()
         host.defer_to_interface.return_value = -1
         host.argv = ['--no-browser']
         host.background = False
-        with mock.patch.dict(os.environ, {}, clear=True), \
+        with mock.patch.dict(os.environ, {'HOME': str(self.root), 'USERPROFILE': str(self.root)}, clear=True), \
                 mock.patch.object(desktop, 'DesktopHost', return_value=host) as constructor, \
                 mock.patch.object(gui, 'main', return_value=0) as gui_main:
             self.assertEqual(desktop.main(['--data', str(target), '--no-browser']), 0)
@@ -121,7 +121,8 @@ lock.release()
 
     def test_data_before_status_reads_only_the_selected_workspace(self):
         output = io.StringIO()
-        with mock.patch.dict(os.environ, {}, clear=True), contextlib.redirect_stdout(output):
+        with mock.patch.dict(os.environ, {'HOME': str(self.root), 'USERPROFILE': str(self.root)}, clear=True), \
+                contextlib.redirect_stdout(output):
             result = entry.main(['--data', str(self.layout.data), '--status'])
         self.assertEqual(result, 1)
         self.assertEqual(json.loads(output.getvalue()), {'running': False, 'data': str(self.layout.data)})
@@ -347,6 +348,35 @@ class ScheduleBridgeTests(unittest.TestCase):
 
 
 class ScheduleExecutionTests(unittest.TestCase):
+    def test_schedules_work_without_a_system_timezone_database(self):
+        # Windows has no system IANA database. Use a fresh interpreter so a
+        # cached ZoneInfo object from another test cannot hide a missing wheel
+        # dependency; regional zones also need tzdata's nested resource files.
+        child = '''
+import json
+import zoneinfo
+from datetime import datetime
+from proxy_workbench import scheduler
+assert not zoneinfo.TZPATH, zoneinfo.TZPATH
+engine = scheduler.Scheduler(scheduler.InMemoryScheduleStore(), clock=lambda: 1780000000,
+                             power_reader=scheduler.PowerSignal.unknown)
+offsets = {}
+for name in ('UTC', 'Europe/Berlin', 'Asia/Tokyo'):
+    spec = engine.add(scheduler.ScheduleSpec(id=name.replace('/', '-'), timezone=name,
+                                              interval_minutes=60))
+    assert engine.run_now(spec.id) is not None
+    tz = zoneinfo.ZoneInfo(name)
+    offsets[name] = [datetime(2026, month, 1, tzinfo=tz).utcoffset().total_seconds()
+                     for month in (1, 7)]
+print(json.dumps(offsets))
+'''
+        result = subprocess.run([sys.executable, '-c', child], cwd=ROOT,
+                                env=dict(os.environ, PYTHONTZPATH='', PYTHONUTF8='1'),
+                                capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(json.loads(result.stdout), {
+            'UTC': [0, 0], 'Europe/Berlin': [3600, 7200], 'Asia/Tokyo': [32400, 32400]})
+
     def test_persisted_schedule_reaches_shared_executor_and_records_spend(self):
         from proxy_workbench import jobrunner, scheduler
         with tempfile.TemporaryDirectory(prefix='pw-scheduled-execution-') as directory:

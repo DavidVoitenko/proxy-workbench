@@ -15,11 +15,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from proxy_workbench import gui
 from proxy_workbench import proxytool as p
 
-#: A result fixture describes a measurement that just happened; the
-#: admission contract has no "fresh forever" state (CONTRACTS §2.4).
-_NOW = time.time()
-
-
 def scan_config(targets=1, attempts=3, fail_fast=None):
     cfg = dict(version=2, targets=[dict(url=f'http://service{i}.invalid/check', method='GET', statuses=[200],
                                         headers={}, contains='healthy', sha256=None) for i in range(targets)],
@@ -30,8 +25,9 @@ def scan_config(targets=1, attempts=3, fail_fast=None):
 
 
 def result_row(proxy, latency, jitter, score):
+    # Fresh when used, even if discovery happened before a long earlier test.
     return dict(proxy=proxy, reliability=1, min_target_reliability=1, latency_ms=latency, jitter_ms=jitter,
-                score=score, successes=3, requests=3, checked_at=_NOW, samples=[])
+                score=score, successes=3, requests=3, checked_at=time.time(), samples=[])
 
 
 class FailFastTests(unittest.IsolatedAsyncioTestCase):

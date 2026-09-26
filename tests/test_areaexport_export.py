@@ -27,6 +27,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from proxy_workbench import core, exportsvc as es, formats
+from tests.client_check_support import client_checker
 
 NOW = 1_700_000_000.0
 ROWS = [dict(proxy='http://203.0.113.7:8080', country='DE', latency_ms=120.0, score=88.0,
@@ -286,18 +287,14 @@ class ClientTargetResolutionTests(Temp):
                 self.assertNotIn('{', caught.exception.detail)
 
     def test_a_client_that_rejects_the_file_stops_the_generation(self):
-        script = self.home / 'fake-sing-box'
-        script.write_text('#!/bin/sh\necho "unsupported outbound" >&2\nexit 1\n', encoding='utf-8')
-        script.chmod(0o755)
+        script = client_checker(self.home, accepts=False)
         with self.assertRaises(es.ExportError) as caught:
             self.write(ROWS, options=options(client_target='1.14.0', client_binary=str(script)))
         self.assertEqual(caught.exception.code, 'E_EXPORT_CLIENT_REJECTED')
         self.assertEqual(list((self.home / 'generations').iterdir()), [])
 
     def test_a_client_that_accepts_the_file_is_recorded_as_passed(self):
-        script = self.home / 'fake-sing-box'
-        script.write_text('#!/bin/sh\nexit 0\n', encoding='utf-8')
-        script.chmod(0o755)
+        script = client_checker(self.home, accepts=True)
         artifact = self.write(ROWS, options=options(client_target='1.14.0', client_binary=str(script)))
         singbox = self.status(artifact)['compat']['files']['singbox.json']
         self.assertEqual(singbox['client_check'], 'passed')

@@ -25,6 +25,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from proxy_workbench import core, exportsvc as es, formats
+from tests.client_check_support import client_checker
 
 NOW = 1_700_000_000.0
 ROWS = [dict(proxy='http://203.0.113.7:8080', country='DE', checked_at=NOW, valid_until=NOW + 600),
@@ -233,36 +234,26 @@ class ClientCheckTests(unittest.TestCase):
             self.assertEqual(status['client_target'], '1.12.0')
 
     def test_a_client_that_rejects_the_file_stops_the_generation(self):
-        script = Path(tempfile.gettempdir()) / 'fake-sing-box-rejects'
-        script.write_text('#!/bin/sh\necho "unsupported outbound" >&2\nexit 1\n', encoding='utf-8')
-        script.chmod(0o755)
-        try:
-            with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as home:
-                with self.assertRaises(es.ExportError) as caught:
-                    es.write_snapshot(home, ROWS, scope=scope(),
-                                      options=es.ExportOptions(published_at=NOW, client_target='1.12.0',
-                                                               client_binary=str(script)),
-                                      now=NOW)
-                self.assertEqual(caught.exception.code, 'E_EXPORT_CLIENT_REJECTED')
-                self.assertEqual(list((Path(home) / 'generations').iterdir()), [])
-        finally:
-            script.unlink()
+        with tempfile.TemporaryDirectory() as home:
+            script = client_checker(home, accepts=False)
+            with self.assertRaises(es.ExportError) as caught:
+                es.write_snapshot(home, ROWS, scope=scope(),
+                                  options=es.ExportOptions(published_at=NOW, client_target='1.12.0',
+                                                           client_binary=str(script)),
+                                  now=NOW)
+            self.assertEqual(caught.exception.code, 'E_EXPORT_CLIENT_REJECTED')
+            self.assertEqual(list((Path(home) / 'generations').iterdir()), [])
 
     def test_a_client_that_accepts_the_file_is_recorded_as_passed(self):
-        script = Path(tempfile.gettempdir()) / 'fake-sing-box-accepts'
-        script.write_text('#!/bin/sh\nexit 0\n', encoding='utf-8')
-        script.chmod(0o755)
-        try:
-            with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as home:
-                artifact = es.write_snapshot(home, ROWS, scope=scope(),
-                                             options=es.ExportOptions(published_at=NOW,
-                                                                      client_target='1.12.0',
-                                                                      client_binary=str(script)),
-                                             now=NOW)
-                status = json.loads((artifact.directory / 'status.json').read_text(encoding='utf-8'))
-                self.assertEqual(status['compat']['files']['singbox.json']['client_check'], 'passed')
-        finally:
-            script.unlink()
+        with tempfile.TemporaryDirectory() as home:
+            script = client_checker(home, accepts=True)
+            artifact = es.write_snapshot(home, ROWS, scope=scope(),
+                                         options=es.ExportOptions(published_at=NOW,
+                                                                  client_target='1.12.0',
+                                                                  client_binary=str(script)),
+                                         now=NOW)
+            status = json.loads((artifact.directory / 'status.json').read_text(encoding='utf-8'))
+            self.assertEqual(status['compat']['files']['singbox.json']['client_check'], 'passed')
 
 
 if __name__ == '__main__':

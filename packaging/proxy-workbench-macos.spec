@@ -51,8 +51,8 @@ analysis = Analysis(
     datas=[(str(package / 'ui'), 'proxy_workbench/ui'),
            (str(package / 'sources.json'), 'proxy_workbench'), (str(package / 'source-catalog.json'), 'proxy_workbench'), (str(package / 'openapi.json'), 'proxy_workbench'),
            (str(tray), tray_helper.BUNDLE_SUBFOLDER)],
-    # PyInstaller's keyring hook collects the platform backends and entry-point metadata.
-    hiddenimports=['socksio', 'keyring', 'proxy_workbench.desktop', 'proxy_workbench.gui', 'proxy_workbench.proxytool',
+    # Hooks collect keyring backends and tzdata's IANA files and resource packages.
+    hiddenimports=['socksio', 'keyring', 'tzdata', 'proxy_workbench.desktop', 'proxy_workbench.gui', 'proxy_workbench.proxytool',
                    'proxy_workbench.__main__'],
     excludes=['tkinter', 'unittest', 'pydoc'],
 )

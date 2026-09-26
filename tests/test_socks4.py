@@ -13,11 +13,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from proxy_workbench import proxytool as p
 from proxy_workbench import socks4
 
-#: A result fixture describes a measurement that just happened; the
-#: admission contract has no "fresh forever" state (CONTRACTS §2.4).
-_NOW = time.time()
-
-
 def scan_config(url):
     return dict(version=2, targets=[dict(url=url, method='GET', statuses=[200], headers={}, contains='healthy',
                                          sha256=None)], attempts=2, timeout=3, max_bytes=1024)
@@ -109,7 +104,7 @@ class Socks4FormatTests(unittest.TestCase):
             db = p.open_db(home / 'db.sqlite3')
             db.execute('INSERT INTO profiles(id, config) VALUES (?, ?)', ('fx', json.dumps(dict(targets=[dict(url='https://one.invalid/')]))))
             row = dict(proxy='socks4://11.0.0.5:4145', reliability=1, min_target_reliability=1, latency_ms=100,
-                       jitter_ms=1, score=90, successes=3, requests=3, checked_at=_NOW, samples=[])
+                       jitter_ms=1, score=90, successes=3, requests=3, checked_at=time.time(), samples=[])
             add_candidate(db, (row['proxy']))
             store_result(db, ('fx', row['proxy'], json.dumps(row)))
             db.commit()

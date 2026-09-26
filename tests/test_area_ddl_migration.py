@@ -97,7 +97,9 @@ class MigrationSequenceTests(unittest.TestCase):
         migrate_upto(self.path, PREVIOUS_HEAD, app_version="old")
         first = db.migrate(self.path, app_version="test")
         self.assertEqual([item[0] for item in first.applied], list(range(PREVIOUS_HEAD, db.SCHEMA_VERSION + 1)))
-        before = db.describe(db.connect(self.path))
+        before_conn = db.connect(self.path)
+        self.addCleanup(before_conn.close)
+        before = db.describe(before_conn)
         second = db.migrate(self.path, app_version="test")
         self.assertEqual(second.applied, ())
         conn = db.connect(self.path)
@@ -120,7 +122,9 @@ class MigrationSequenceTests(unittest.TestCase):
 
     def test_a_migration_failure_leaves_the_previous_version_and_the_schema(self):
         migrate_upto(self.path, db.SCHEMA_VERSION - 1, app_version="old")
-        before = db.describe(db.connect(self.path))
+        before_conn = db.connect(self.path)
+        self.addCleanup(before_conn.close)
+        before = db.describe(before_conn)
         conn = db.connect(self.path)
         self.addCleanup(conn.close)
 

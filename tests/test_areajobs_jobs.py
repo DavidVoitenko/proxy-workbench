@@ -66,13 +66,15 @@ class StopKeepsFinishedObservationsTest(JobFixture):
     def test_no_stage_of_a_stop_drops_a_finished_observation(self):
         for stage in ('before-judgement', 'cancel', 'pause', 'deadline', 'crash'):
             with self.subTest(stage=stage):
+                # Close the previous fixture before replacing its temporary
+                # directory; an open SQLite file cannot be removed on Windows.
+                self.tearDown()
                 self.setUp()
                 before, after, progress = self._run_and_stop_at(stage)
                 self.assertTrue(set(before) <= set(after),
                                 f'{stage}: lost {set(before) - set(after)}')
                 self.assertGreaterEqual(progress.finished, 2,
                                         f'{stage}: two items were measured before the stop')
-                self.tearDown()
 
     def test_a_cancel_keeps_the_queue_of_unfinished_items_readable(self):
         job = self.submit(*MEMBERS)
@@ -234,12 +236,13 @@ class BoundedWritersTest(JobFixture):
         self.store.start(first.id)
         second = self.submit('ep-02')
         self.conn.close()
+        other_conn = sqlite3.connect(str(self.path), isolation_level=None)
         try:
-            other = jobs.JobStore(sqlite3.connect(str(self.path), isolation_level=None),
-                                  clock=self.clock)
+            other = jobs.JobStore(other_conn, clock=self.clock)
             with self.assertRaises(jobs.Busy):
                 other.start(second.id)
         finally:
+            other_conn.close()
             self.conn = sqlite3.connect(str(self.path), isolation_level=None)
             self.store = jobs.JobStore(self.conn, clock=self.clock)
 

@@ -108,15 +108,34 @@ class TotalsTests(unittest.TestCase):
         self.assertLess(result.metrics.measured, 40)
 
     def test_a_deadline_ends_the_run(self):
-        result = run(pl.run_pipeline(support.config(
-            [support.chunk_source('s', corpus(200))],
-            pl.Runners(cheap=support.recording_runner(ok=True, latency_s=0.01), basic=None,
-                       expensive=None),
-            run_basic=False, budgets=pl.Budgets(deadline_s=0.05, max_inflight=4, max_open_fds=12,
-                                               max_requests=None, max_bytes=None))))
+        started, released = [], []
+
+        async def scenario():
+            pending = asyncio.Event()
+
+            async def blocked_runner(item, *, stage, limit):
+                started.append(item.endpoint)
+                try:
+                    # A short sleep can finish early on the coarse Windows
+                    # clock. Unfinished I/O must instead be cancelled by the
+                    # pipeline deadline, regardless of timer resolution.
+                    await pending.wait()
+                finally:
+                    released.append(item.endpoint)
+
+            return await asyncio.wait_for(pl.run_pipeline(support.config(
+                [support.chunk_source('s', corpus(200))],
+                pl.Runners(cheap=blocked_runner, basic=None, expensive=None),
+                run_basic=False, budgets=pl.Budgets(deadline_s=0.05, max_inflight=4, max_open_fds=12,
+                                                   max_requests=None, max_bytes=None))), 1.0)
+
+        result = run(scenario())
         self.assertEqual(result.state, 'budget')
         self.assertEqual(result.counters.stage_failures.get('stop'), pl.DEADLINE_EXCEEDED)
         self.assertLess(result.metrics.measured, 200)
+        self.assertTrue(started)
+        self.assertCountEqual(released, started)
+        self.assertEqual(result.resources.inflight, 0)
 
     def test_the_deadline_is_handed_to_the_runner_as_remaining_time(self):
         seen = []

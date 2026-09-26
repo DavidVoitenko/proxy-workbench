@@ -168,6 +168,9 @@ class GatewayCase(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self):
         self.temp = tempfile.TemporaryDirectory()
+        # Close registered database connections before removing their files;
+        # Windows does not permit unlinking an open SQLite database.
+        self.addCleanup(self.temp.cleanup)
         self.home = Path(self.temp.name)
         self.servers = []
         self.ups = []
@@ -189,7 +192,6 @@ class GatewayCase(unittest.IsolatedAsyncioTestCase):
             server.close()
             with contextlib.suppress(Exception):
                 await server.wait_closed()
-        self.temp.cleanup()
 
     # --- plumbing ----------------------------------------------------------
 
