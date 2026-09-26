@@ -234,6 +234,8 @@ def _adapter(value, raw):
         result["config"].setdefault("legacy_kind", result["legacy_kind"])
         if result["legacy_kind"] in ("http", "https", "socks4", "socks5", "socks5h"):
             result["config"].setdefault("default_protocol", "socks5" if result["legacy_kind"] == "socks5h" else result["legacy_kind"])
+    if "config" in result and not isinstance(result["config"], dict):
+        raise CatalogError("adapter.config: ожидается объект")
     # Kind defaults fill in whatever the record did not state, so a config that
     # only carries a legacy kind still gets its pagination and field mapping.
     defaults = _adapter_config(str(raw.get("id", "")), kind)
@@ -341,6 +343,36 @@ def _legacy_specs(raw):
     return result
 
 
+def _string_list(value, name):
+    """A list of non-empty strings; a bare string is not silently a character list."""
+    if value is None:
+        return []
+    if isinstance(value, str) or not isinstance(value, (list, tuple)):
+        raise CatalogError(f"{name}: ожидается список строк")
+    return [str(item) for item in value if isinstance(item, str) and item.strip()]
+
+
+def _evidence_field(raw, source_id):
+    """The evidence mapping, or a stated error when the record brought junk."""
+    value = raw.get("evidence")
+    if value is None or value == {}:
+        return _evidence(raw)
+    if not isinstance(value, dict):
+        raise CatalogError(f"{source_id}.evidence: ожидается объект")
+    for key, item in value.items():
+        if not isinstance(item, dict):
+            raise CatalogError(f"{source_id}.evidence.{key}: ожидается объект")
+        allowed = EVIDENCE_STATES.get(key)
+        state = item.get("state")
+        # A key this project does not define, or a state outside that key, is a
+        # claim the application cannot interpret and must not store silently.
+        if allowed is None:
+            raise CatalogError(f"{source_id}.evidence: неизвестный признак {key!r}")
+        if state not in allowed:
+            raise CatalogError(f"{source_id}.evidence.{key}: недопустимое состояние {state!r}")
+    return deepcopy(value)
+
+
 def normalize_source(raw):
     if not isinstance(raw, dict):
         raise CatalogError("sources: запись должна быть объектом")
@@ -429,14 +461,14 @@ def normalize_source(raw):
         "load_settings": deepcopy(raw.get("load_settings") or {}),
         "priority": raw.get("priority", "normal"), "priority_reason": raw.get("priority_reason", ""),
         "relation_to_current": raw.get("relation_to_current", "new_source"),
-        "research_refs": list(raw.get("research_refs") or [source_id]),
+        "research_refs": _string_list(raw.get("research_refs") or [source_id], f"{source_id}.research_refs"),
         "legacy_specs": _legacy_specs({**raw, "adapter": raw.get("adapter") or adapter}),
         "payload_role": raw.get("payload_role", "proxy_list" if adapter.get("kind") in ADAPTERS - {"unsupported"} else "unknown"),
         "rights": rights, "rights_approved": rights_approved,
         "rights_status": rights.get("data_license", "unknown"),
-        "evidence": deepcopy(raw.get("evidence") or _evidence(raw)),
+        "evidence": _evidence_field(raw, source_id),
         "limits": deepcopy(raw.get("limits") or {}), "maturity": raw.get("maturity", "unknown"),
-        "catalog_state": raw.get("catalog_state", "listed"), "tags": list(raw.get("tags") or []),
+        "catalog_state": raw.get("catalog_state", "listed"), "tags": _string_list(raw.get("tags"), f"{source_id}.tags"),
         "collection_allowed": collection_allowed, "checked_at": raw.get("checked_at") or verification.get("checked_at_utc"),
         "verification_level": raw.get("verification_level", "documented"),
     }
@@ -862,7 +894,13 @@ def normalize_custom(item):
     adapter = item.get("adapter") or {"kind": "line", "profile": "custom-v1", "config": {}}
     if not isinstance(adapter, dict) or adapter.get("kind") not in ADAPTERS:
         raise ValueError("custom_sources.adapter: неизвестный адаптер.")
-    return {"id": source_id, "url": url, "adapter": deepcopy(adapter), "spec": custom_spec(url, adapter)}
+    # A name the user typed is kept: without it a custom entry reverts to its id
+    # on the next migration, which is exactly what the user typed to avoid.
+    name = item.get("name")
+    record = {"id": source_id, "url": url, "adapter": deepcopy(adapter), "spec": custom_spec(url, adapter)}
+    if isinstance(name, str) and name.strip():
+        record["name"] = name.strip()[:160]
+    return record
 
 
 def _custom_plan(source_id, item, custom_sources):
