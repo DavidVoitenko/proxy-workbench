@@ -1,0 +1,101 @@
+name: Windows desktop artifact
+
+# The Windows half of F23.  A .exe can only be built and started on Windows,
+# so a macOS or Linux build never proves anything about this one: the job below
+# is what makes the claim checkable by whoever has a Windows machine, and by
+# everyone else through the run log.
+#
+# What it proves, and what it does not:
+#   proves    both binaries build, the GUI one really is windowed and the CLI
+#             one really has a console (read out of the PE header), the GUI
+#             program starts without Python, serves its interface on loopback,
+#             writes only into a per-user folder, a second start reaches the
+#             first, the per-user installer compiles, and the manifest verifies;
+#   does not  sign anything.  Signing needs a certificate that is already in
+#   prove      the Windows certificate store, named by
+#             PROXY_WORKBENCH_SIGN_THUMBPRINT.  The artifacts of this job are
+#             unsigned and the manifest says so.  There is no menu bar on
+#             Windows, and none is claimed.
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHONDONTWRITEBYTECODE: "1"
+  PYTHONUTF8: "1"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  ALL_PROXY: ""
+  HTTP_PROXY: ""
+  HTTPS_PROXY: ""
+  NO_PROXY: "127.0.0.1,localhost"
+
+jobs:
+  windows-artifact:
+    name: Windows x64 artifact
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install pinned dependencies
+        run: python -m pip install --requirement requirements.txt pyinstaller==6.22.3
+
+      # Builds both binaries, reads their PE subsystem, starts the GUI one with
+      # a throwaway %LOCALAPPDATA%, checks a second start, and compiles the
+      # per-user installer.  A path with spaces is part of the test: the
+      # runner's workspace is on D:, and the installer paths are passed in
+      # rather than assumed.
+      - name: Build and verify the desktop artifact
+        run: python packaging/build_windows.py --dist dist --installer
+
+      - name: Smoke test the console CLI executable
+        run: python packaging/smoke.py dist/proxy-workbench-cli.exe
+
+      # The GUI executable is windowed, so it has nowhere to print: what it
+      # prints is the log the build already produced.
+      - name: Report what the build recorded
+        shell: pwsh
+        run: |
+          $manifest = Get-Content dist/proxy-workbench-*.manifest.json -Raw | ConvertFrom-Json
+          Write-Host "version:   $($manifest.version)"
+          Write-Host "subsystems: $($manifest.subsystems | ConvertTo-Json -Compress)"
+          Write-Host "verified:  $($manifest.verified.launched)"
+          Write-Host "second launch: $($manifest.verified.detail.second_launch | ConvertTo-Json -Compress)"
+          Write-Host "installer: $($manifest.installer.built) - $($manifest.installer.note)"
+          foreach ($artifact in $manifest.artifacts) {
+            Write-Host "  $($artifact.name): signed=$($artifact.signature.signed) ($($artifact.signature.reason))"
+          }
+          if (-not $manifest.verified.launched) { throw "the GUI executable was not verified" }
+          if ($manifest.subsystems.'proxy-workbench-gui.exe' -ne 'windows-gui') { throw "the GUI build is not windowed" }
+          if ($manifest.subsystems.'proxy-workbench-cli.exe' -ne 'windows-console') { throw "the CLI build has no console" }
+
+      - name: Verify the manifest against the files on disk
+        run: python packaging/verify_release.py (Get-ChildItem dist/proxy-workbench-*.manifest.json).FullName
+
+      - name: Upload the artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: proxy-workbench-windows-x64
+          if-no-files-found: error
+          path: |
+            dist/proxy-workbench-gui.exe
+            dist/proxy-workbench-cli.exe
+            dist/proxy-workbench-*.zip
+            dist/proxy-workbench-*-setup.exe
+            dist/proxy-workbench-*.manifest.json

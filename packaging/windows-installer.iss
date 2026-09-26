@@ -1,16 +1,23 @@
 ; Per-user installer for the Windows desktop build.
 ;
-;   iscc /DProductVersion=2.2.1 /DOutDir=..\dist packaging\windows-installer.iss
+;   iscc /DProductVersion=2.3.0 /DOutDir=C:\path\to\dist /DSourceDir=C:\path\to\dist packaging\windows-installer.iss
 ;
 ; PrivilegesRequired=lowest is the whole point: the app writes to per-user
 ; folders, so it never needs an administrator, and it never installs anything
 ; into Program Files where the data would become read-only.
+;
+; SourceDir is where the built binaries are, and it is passed rather than
+; assumed: a relative path is resolved against the compiler's working
+; directory, and every path a user builds in can contain spaces.
 
 #ifndef ProductVersion
   #error ProductVersion is required: pass /DProductVersion=<version>
 #endif
 #ifndef OutDir
   #define OutDir "..\dist"
+#endif
+#ifndef SourceDir
+  #define SourceDir "..\dist"
 #endif
 
 #define AppName "Proxy Workbench"
@@ -27,7 +34,7 @@ AppPublisher={#AppPublisher}
 DefaultDirName={localappdata}\Programs\Proxy Workbench
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
-OutputDir={#OutDir}
+OutputDir="{#OutDir}"
 OutputBaseFilename=proxy-workbench-{#ProductVersion}-windows-x64-setup
 Compression=lzma2
 SolidCompression=yes
@@ -47,9 +54,12 @@ Name: "addtopath"; Description: "Add the command line tool to PATH"; GroupDescri
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Shortcuts:"
 
 [Files]
-Source: "..\dist\proxy-workbench-gui.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\dist\proxy-workbench-cli.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\dist\portable-README.txt"; DestDir: "{app}"; Flags: ignoreversion
+; The note about where data goes ships with the installed program as well as
+; in the portable zip: it is the only place a user is told that a per-user
+; folder is used and that portable mode has to be asked for.
+Source: "{#SourceDir}\proxy-workbench-gui.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceDir}\proxy-workbench-cli.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourceDir}\portable-README.txt"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"

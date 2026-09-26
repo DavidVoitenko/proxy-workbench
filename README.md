@@ -92,18 +92,30 @@ Pick one way to install:
 
 | Way | How | Needs |
 | --- | --- | --- |
-| **Windows app** | Download `proxy-workbench-…-windows-x64.exe` from the [latest release](https://github.com/DavidVoitenko/proxy-workbench/releases/latest) and double-click it | nothing else |
-| **pipx** (Windows, macOS, Linux) | `pipx install git+https://github.com/DavidVoitenko/proxy-workbench` then `proxy-workbench` | Python 3.11+ and [pipx](https://pipx.pypa.io/) |
+| **macOS app** | Download `proxy-workbench-…-macos-arm64.dmg` from the [latest release](https://github.com/DavidVoitenko/proxy-workbench/releases/latest) and drag `Proxy Workbench.app` into Applications | macOS 11+, Apple Silicon |
+| **Windows app** | Download `proxy-workbench-…-windows-x64-setup.exe` from the [latest release](https://github.com/DavidVoitenko/proxy-workbench/releases/latest) and run it; there is a portable `.zip` too, and a separate `proxy-workbench-cli.exe` for the command line | nothing else |
+| **pipx** (Windows, macOS, Linux) | `pipx install git+https://github.com/DavidVoitenko/proxy-workbench` then `proxy-workbench` | Python 3.11+ and [pipx](https://pypa.io/pipx/) |
 | **Source folder** | Download the code (**Code → Download ZIP** or `git clone`), then double-click `Start.bat` (Windows) / `Start.command` (macOS) or run `./run.sh` (Linux) | Python 3.11+ |
 | **Docker** | `docker compose up -d` with the bundled [`compose.yml`](compose.yml) (checker + API + rotating proxy) | Docker |
 
-`proxy-workbench` without arguments opens the GUI in your browser; `proxy-workbench run …` and the other commands below work the same way as `./run.sh …`. The `.exe` keeps its data in a `data` folder next to itself; pipx installs keep it in your user profile (`%LOCALAPPDATA%\proxy-workbench`, `~/Library/Application Support/proxy-workbench` or `~/.local/share/proxy-workbench`); `PROXY_WORKBENCH_DATA` overrides both. The Windows executable is not code-signed yet, so SmartScreen may ask you to confirm the first start (**More info → Run anyway**); every release lists its SHA-256 checksum.
+`proxy-workbench` without arguments starts the application: the interface opens in your browser, and on macOS a menu bar item shows what is happening and offers pause, start, “start at login” and quit. Starting it a second time reaches the one that is already running instead of opening a rival. `proxy-workbench run …` and the other commands below work the same way as `./run.sh …`.
+
+```sh
+proxy-workbench                  # the application: interface + menu bar + one instance
+proxy-workbench gui              # the interface alone, no menu bar
+proxy-workbench --no-desktop     # the same, spelled the other way
+proxy-workbench --print-paths    # which data/cache/log folders this launch would use
+```
+
+Installed builds keep their data in your own per-user folders (`%LOCALAPPDATA%\proxy-workbench`, `~/Library/Application Support/proxy-workbench` or `~/.local/share/proxy-workbench`) and never write into their own program folder; a source checkout keeps `data/` next to the project; `PROXY_WORKBENCH_DATA` overrides all of it. Portable mode is opt-in — see [docs/packaging/README.md](docs/packaging/README.md).
+
+Release artifacts are **not code-signed**: this project has no signing certificate, and the release notes and the manifest say `signed: false` rather than claiming otherwise. macOS Gatekeeper therefore asks you to confirm the first start, and Windows SmartScreen may too (**More info → Run anyway**). Every release lists its SHA-256 checksum, which proves the file is the one that was published — it does not identify a publisher.
 
 1. **Scan** tab: add one or more service URLs, allowed status codes and (recommended) a text that must appear in the response.
 2. Press **Find and check** (“Найти и проверить”). Watch progress, speed, ETA and the number of matching proxies.
 3. **Results** tab: choose order, success threshold and how many to keep, press **Build export**, then download TXT / CSV / JSON.
 
-Close the app with `Ctrl+C` in its terminal window — progress is saved.
+Closing the browser tab does not stop the check. Quitting from the menu bar (or `Ctrl+C` in a terminal launch) stops it.
 
 ## 🧭 How it works
 
@@ -174,6 +186,13 @@ cp service.example.json data/service.json
 ./run.sh run --no-fail-fast   # always run every attempt, e.g. for research
 ./run.sh run --dnsbl --dnsbl-zone bl.example.org --strict-clean
 
+# Bound what one run may spend, and say what --want is counting
+./run.sh run --max-requests 500000 --run-max-bytes 2147483648
+./run.sh run --want 20 --count-what exit
+
+# Measure the pipeline on a local fixture: no network, no public proxies
+./run.sh bench --bench-items 2000 --bench-n 20
+
 # Delete local databases and exports (keeps settings and denylist)
 ./run.sh clear-data --yes
 ```
@@ -231,7 +250,17 @@ Remote lists are streamed with limits (32 MiB, 64 KiB per line, 500,000 candidat
 <details>
 <summary><b>All CLI options</b></summary>
 
-Run `./run.sh --help` for the complete list: `--input`, `--sources`, `--no-sources`, `--source-timeout`, `--url`, `--config`, `--request-profile`, `--attempts`, `--timeout`, `--workers`, `--rate`, `--max-bytes`, `--denylist-file`, `--local-denylist/--no-local-denylist`, `--dnsbl`, `--dnsbl-zone`, `--reputation-timeout`, `--strict-clean`, `--judge-url`, `--min-anonymity`, `--connect-timeout`, `--fail-fast/--no-fail-fast`, `--protocol`, `--max-latency`, `--country`, `--want`, `--geoip-db`, `--recheck`, `--recheck-passing`, `--watch`, the `update-geoip` and `serve` commands with `--host`, `--port`, `--api-token`, `--top`, `--sort`, `--min-success`, `--data`.
+Run `./run.sh --help` for the complete list: `--input`, `--sources`, `--no-sources`, `--source-timeout`, `--url`, `--config`, `--request-profile`, `--attempts`, `--timeout`, `--workers`, `--rate`, `--max-bytes`, `--denylist-file`, `--local-denylist/--no-local-denylist`, `--dnsbl`, `--dnsbl-zone`, `--reputation-timeout`, `--strict-clean`, `--judge-url`, `--min-anonymity`, `--connect-timeout`, `--fail-fast/--no-fail-fast`, `--protocol`, `--max-latency`, `--country`, `--want`, `--count-what`, `--max-requests`, `--run-max-bytes`, `--geoip-db`, `--recheck`, `--recheck-passing`, `--watch`, the `bench`, `update-geoip` and `serve` commands with `--bench-items`, `--bench-n`, `--host`, `--port`, `--api-token`, `--top`, `--sort`, `--min-success`, `--data`.
+
+| Flag | What it actually is |
+| --- | --- |
+| `--workers N` | **A ceiling, not a number of simultaneous checks.** The pipeline starts fewer threads when there is less work, when the source list is small, or when the rate limit says so; `N` is the most that may ever run at once. Raising it above the default (128) can only help a run that is genuinely concurrency-bound. |
+| `--rate N` | Requests per second across the whole run. With a rate set, concurrency is reduced to whatever the rate allows, so `--workers` stops being the binding constraint. |
+| `--max-requests N` | Request budget for one run. `0` means no ceiling. When the budget is spent the run **stops**; it does not go on recording the addresses it never got to as failed. |
+| `--run-max-bytes N` | Byte budget for one run, counted over what the run actually transferred. `0` means no ceiling. Same rule as above. |
+| `--want N` | Stop once N usable proxies are found; `0` (default) checks everything. |
+| `--count-what endpoint\|ip\|exit` | What `--want` counts: candidate endpoints, unique IPs behind them, or IPs a check confirmed as the exit address. These are three different numbers, and the default (`endpoint`) is the one that is easiest to reach. |
+| `bench` | Runs the pipeline against a **local synthetic fixture** and prints throughput, time to first result and time to N. No sockets, no DNS, no public proxies — a number from `bench` is a measurement of the pipeline, not of the internet. |
 
 </details>
 
@@ -353,7 +382,16 @@ Every release also publishes a ready image to the GitHub Container Registry. It 
 
 ## 📁 Where your data lives
 
-Everything is written to the data folder: `data/` in a source checkout (git-ignored) or next to the `.exe`, your user profile for pipx installs, or `PROXY_WORKBENCH_DATA`:
+Everything is written to one data folder. Which folder that is depends on how you run the product, and the answer is printed by `./run.sh --print-paths`:
+
+| How you run it | Data folder |
+| --- | --- |
+| Source checkout (`./run.sh`, `Start.bat`, `Start.command`) | `data/` next to the project (git-ignored) |
+| pipx / `pip install` | the same `data/`-style folder next to the installed command, or your user profile |
+| Installed build (`.app`, `.exe`) | your own per-user folders: `~/Library/Application Support/proxy-workbench` on macOS, `%LOCALAPPDATA%\proxy-workbench` on Windows, `$XDG_DATA_HOME/proxy-workbench` on Linux |
+| Portable build (only if you ask for it) | next to the program, inside the `.app` or beside the `.exe` |
+
+An installed program **never** writes into its own folder: `.app` bundles and `Program Files` are read-only, and a build that tried would not start. Portable mode is opt-in and never happens just because a folder happens to be writable — see `docs/packaging/README.md`.
 
 | Path | Content |
 | --- | --- |
