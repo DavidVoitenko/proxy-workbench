@@ -1,5 +1,6 @@
 """Migrations of proxy_workbench/db.py: versioning, the legacy scenario, rollback."""
 from pathlib import Path
+import json
 import sqlite3
 import sys
 import tempfile
@@ -63,7 +64,7 @@ class MigrationTests(unittest.TestCase):
         self.assertEqual(report.schema_version, db.SCHEMA_VERSION)
         conn = db.connect(self.db_path)
         self.addCleanup(conn.close)
-        self.assertEqual(db.read_header(conn), (14, db.APPLICATION_ID))
+        self.assertEqual(db.read_header(conn), (db.SCHEMA_VERSION, db.APPLICATION_ID))
         self.assertEqual(sorted(db.tables(conn)), sorted(CONTRACT_TABLES))
         applied = [row[0] for row in conn.execute(
             "SELECT version FROM schema_migrations ORDER BY version")]
@@ -84,13 +85,13 @@ class MigrationTests(unittest.TestCase):
         report = db.migrate(self.db_path, app_version="test")
         self.assertEqual(report.status, "migrated")
         self.assertEqual(report.previous_version, 0)
-        self.assertEqual([item[0] for item in report.applied], list(range(15)))
+        self.assertEqual([item[0] for item in report.applied], list(range(db.SCHEMA_VERSION + 1)))
         self.assertEqual(report.legacy_candidates, len(LEGACY_ROWS))
 
         conn = db.connect(self.db_path)
         self.addCleanup(conn.close)
         self.assertEqual(db.primary_key(conn, "results"),
-                         list(db.RESULTS_NEW_KEY))
+                         list(db.RESULTS_KEY))
         # Legacy data survives: candidates, results and profiles are still there.
         self.assertEqual(conn.execute("SELECT count(*) FROM candidates").fetchone()[0],
                          len(LEGACY_ROWS))
@@ -105,9 +106,24 @@ class MigrationTests(unittest.TestCase):
         self.assertEqual(db.legacy_summary(conn)["endpoints"], len(LEGACY_ROWS))
         # The measured row kept its payload and gained a real endpoint reference.
         row = conn.execute("SELECT * FROM results WHERE profile = ?", ("profile0001",)).fetchone()
-        self.assertEqual(json_payload(row), '{"score": 80}')
         self.assertEqual(row["profile_id"], "profile0001")
         self.assertEqual(row["endpoint_id"], db.endpoint_id(LEGACY_ROWS[0]))
+        # The recovered identity reached the payload, which is the only thing
+        # `export()` and the GUI table read.  Without this the row failed admission
+        # on a collection it was never measured in, and every historic result was
+        # lost from the export until a full recheck (F02, F24).
+        payload = json.loads(row["payload"])
+        self.assertEqual(payload["score"], 80)
+        self.assertEqual(payload["proxy"], LEGACY_ROWS[0])
+        self.assertEqual(payload["profile_id"], "profile0001")
+        self.assertEqual(payload["profile_revision"], 1)
+        self.assertEqual(payload["access_id"], db.PUBLIC_ACCESS_ID)
+        self.assertEqual(payload["access_revision"], 1)
+        self.assertEqual(payload["collection_id"], db.LEGACY_COLLECTION_ID)
+        # What a 2.x file never recorded stays absent: no invented network, no
+        # invented lifetime.
+        self.assertNotIn("network_id", payload)
+        self.assertIsNone(row["valid_until"])
         self.assertIn(row["endpoint_id"],
                       [endpoint[0] for endpoint in conn.execute("SELECT id FROM endpoints")])
 
@@ -318,13 +334,20 @@ class MigrationTests(unittest.TestCase):
         self.assertEqual([row["access_revision"] for row in rows], [1, 2])
         self.assertEqual([json_payload(row) for row in rows],
                          ['{"rev": 1}', '{"rev": 2}'])
-        # A repeat measurement in a new job is a new row, not an overwrite.
+        # A repeat measurement in a new job replaces the row of the same
+        # (profile, access, endpoint): one address is one row, so a fresh failure
+        # cannot leave a stale success standing beside it in every artifact
+        # (F28, F09).  The per-job item is `job_item(job_id, item_id)`, not this key.
         conn.execute(
-            "INSERT INTO results(profile, proxy, payload, endpoint_id, access_id,"
+            "INSERT OR REPLACE INTO results(profile, proxy, payload, endpoint_id, access_id,"
             " access_revision, profile_id, profile_revision, job_id, checked_at)"
             " VALUES (?,?,?,?,?,?,?,?,?,?)",
-            ("p", "http://1.2.3.4:8080", '{"rev": 1}', endpoint, "acc-1", 1, "p", 1, "job-2", 1002.0))
-        self.assertEqual(conn.execute("SELECT count(*) FROM results").fetchone()[0], 3)
+            ("p", "http://1.2.3.4:8080", '{"rev": 3}', endpoint, "acc-1", 1, "p", 1, "job-2", 1002.0))
+        self.assertEqual(conn.execute("SELECT count(*) FROM results").fetchone()[0], 2)
+        remeasured = conn.execute("SELECT job_id, payload FROM results"
+                                  " WHERE access_revision = 1").fetchone()
+        self.assertEqual(remeasured["job_id"], "job-2")
+        self.assertEqual(json_payload(remeasured), '{"rev": 3}')
 
     def test_old_key_would_have_collapsed_those_rows(self):
         legacy_database(self.db_path, results=False)

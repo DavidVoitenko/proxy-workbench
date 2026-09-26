@@ -79,7 +79,7 @@ __all__ = [
 # version identity
 # ---------------------------------------------------------------------------
 
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 #: Magic number of this package. 0 means "no application id yet" (pre-versioning file).
 APPLICATION_ID = 0x50574231
 DB_FILENAME = "proxies.sqlite3"
@@ -89,6 +89,10 @@ MANIFEST_SCHEMA = 1
 
 PUBLIC_COLLECTION_ID = "public-base"
 LEGACY_COLLECTION_ID = "legacy-collected"
+#: The credential-free access identity.  A measurement made without a credential is
+#: attributed to it, and a legacy file that has no `accesses` rows at all measured
+#: nothing else.  `proxytool.PUBLIC_ACCESS_ID` names the same identity.
+PUBLIC_ACCESS_ID = "default"
 PUBLIC_COLLECTION_NAME = "Публичная база"
 LEGACY_COLLECTION_NAME = "Ранее собранные"
 COLLECTION_KINDS = ("public", "private")
@@ -791,15 +795,21 @@ def _m12(conn, context):
         revision INTEGER)""")
 
 
-#: The rebuilt `results` key: two access revisions of one address are two rows, and a
-#: repeat measurement in a new job is a new row (F04, §6.3).
+#: The `results` columns, in the order the rebuild statements use them.
 RESULTS_NEW_COLUMNS = (
     "profile", "proxy", "payload", "observation_id", "endpoint_id", "access_id",
     "access_revision", "profile_id", "profile_revision", "checked_at", "valid_until",
     "error_code", "error_stage", "job_id",
 )
+#: The key migration 13 built.  Kept verbatim: it is the key an existing 13/14
+#: database carries, and migration 15 reads it to decide whether it still has to work.
 RESULTS_NEW_KEY = ("profile_id", "profile_revision", "access_id", "access_revision",
                    "endpoint_id", "job_id")
+#: The key of one measurement of record.  A row is the address, not the run: two
+#: access revisions of one address are two rows (F04), a repeat check in a new job is
+#: the *same* row -- `job_id` stays a column naming the last job that measured the
+#: address, and the per-job item lives in `job_item(job_id, item_id)` (F28, F09).
+RESULTS_KEY = ("profile_id", "profile_revision", "access_id", "access_revision", "endpoint_id")
 RESULTS_NEW_SQL = """CREATE TABLE results_new(
     profile TEXT NOT NULL,
     proxy TEXT NOT NULL,
@@ -816,15 +826,31 @@ RESULTS_NEW_SQL = """CREATE TABLE results_new(
     error_stage TEXT,
     job_id TEXT NOT NULL DEFAULT '',
     PRIMARY KEY(profile_id, profile_revision, access_id, access_revision, endpoint_id, job_id))"""
+#: The rebuilt table of migration 15: one row per address per profile and access.
+RESULTS_KEY_SQL = RESULTS_NEW_SQL.replace(
+    "PRIMARY KEY(profile_id, profile_revision, access_id, access_revision, endpoint_id, job_id)",
+    "PRIMARY KEY(profile_id, profile_revision, access_id, access_revision, endpoint_id)")
 
 
 def _m13(conn, context):
-    """The one non-additive migration: SQLite cannot change a PRIMARY KEY otherwise.
+    """The rebuild SQLite cannot avoid: a PRIMARY KEY cannot be altered otherwise.
 
     Legacy rows are backfilled from their own `profile`/`proxy` values, so a past
-    measurement stays readable and gets a real endpoint row. The key columns are NOT
-    NULL, so two access revisions of one address cannot collapse into one row, which
-    is what F04 requires. Re-running on an already rebuilt table is a no-op (§3.3).
+    measurement keeps a real endpoint row. The key columns are NOT NULL, so two
+    access revisions of one address cannot collapse into one row, which is what F04
+    requires. Migration 15 narrows the key further, to one row per address.
+    Re-running on an already rebuilt table is a no-op (§3.3).
+
+    The backfill has to reach the layer that is actually checked.  `export()` and the
+    GUI table read `results.payload` and never the identity columns, so a payload left
+    untouched made every historic row fail admission on a scope it was never measured
+    in -- the migration claimed the rows stayed "readable" while nothing could read
+    them (F02, F24).  The identity is therefore written into the payload too, and only
+    where it is recoverable from the legacy file itself: `proxy`, `profile` and the
+    legacy collection the candidates were imported into.  What a 2.x file simply does
+    not record -- the network the check ran on, a lifetime -- is left absent on
+    purpose; admission then refuses the row with that true reason instead of a scope
+    mismatch, and the user's remedy is a recheck.
     """
     if tuple(primary_key(conn, "results")) == RESULTS_NEW_KEY:
         return
@@ -842,11 +868,74 @@ def _m13(conn, context):
     conn.execute("UPDATE results SET job_id = '' WHERE job_id IS NULL")
     conn.execute("UPDATE results SET access_revision = 0 WHERE access_revision IS NULL")
     conn.execute("UPDATE results SET profile_revision = 0 WHERE profile_revision IS NULL")
+    # A pre-`profiles`-revisions file has exactly one revision of a profile -- its
+    # config digest -- so revision 1 is a fact about the file, not a guess.  A 2.x
+    # measurement had no access identity at all, so the credential-free public one is
+    # the only identity the file can attest to.  A file that *does* carry access rows
+    # keeps its empty access columns: which credential measured that address was
+    # never recorded, and admission has to say exactly that.
+    conn.execute("UPDATE results SET profile_revision = 1 WHERE profile_revision = 0")
+    if not _has_accesses(conn):
+        conn.execute("UPDATE results SET access_id = ? WHERE access_id = ''", (PUBLIC_ACCESS_ID,))
+        conn.execute("UPDATE results SET access_revision = 1 WHERE access_revision = 0")
     column_list = ", ".join(_ident(name) for name in RESULTS_NEW_COLUMNS)
     conn.execute(RESULTS_NEW_SQL)
     conn.execute(f"INSERT INTO results_new ({column_list}) SELECT {column_list} FROM results")
     conn.execute("DROP TABLE results")
     conn.execute("ALTER TABLE results_new RENAME TO results")
+    _backfill_payload_identity(conn)
+
+
+def _backfill_payload_identity(conn):
+    """Copy the recovered identity of a legacy row into its payload.
+
+    Only keys that are absent are filled, so a row a later version already wrote is
+    left exactly as it is.  ``network_id`` and ``valid_until`` are deliberately not
+    in the list: inventing either would be a measurement this program never made.
+    """
+    rows = conn.execute(
+        "SELECT rowid, proxy, payload, profile_id, profile_revision, access_id,"
+        " access_revision, endpoint_id FROM results").fetchall()
+    legacy = _legacy_members(conn)
+    updates = []
+    for row in rows:
+        try:
+            payload = json.loads(row["payload"])
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        recovered = {"proxy": row["proxy"], "profile_id": row["profile_id"],
+                     "profile_revision": row["profile_revision"],
+                     "access_id": row["access_id"],
+                     "access_revision": row["access_revision"]}
+        if row["endpoint_id"] in legacy:
+            # The address was in the legacy candidate list, so the collection those
+            # candidates were imported into is the one it was collected for.
+            recovered["collection_id"] = LEGACY_COLLECTION_ID
+        filled = {name: value for name, value in recovered.items()
+                  if payload.get(name) in (None, "")}
+        if not filled:
+            continue
+        payload.update(filled)
+        updates.append((json.dumps(payload, ensure_ascii=False), row["rowid"]))
+    if updates:
+        conn.executemany("UPDATE results SET payload=? WHERE rowid=?", updates)
+
+
+def _legacy_members(conn):
+    """Endpoint ids the legacy `collect` run put into the legacy collection."""
+    if not _table_exists(conn, "membership"):
+        return frozenset()
+    return frozenset(row[0] for row in conn.execute(
+        "SELECT endpoint_id FROM membership WHERE collection_id=?", (LEGACY_COLLECTION_ID,)))
+
+
+def _has_accesses(conn):
+    """Whether the file records access identities at all."""
+    if not _table_exists(conn, "accesses"):
+        return False
+    return conn.execute("SELECT 1 FROM accesses LIMIT 1").fetchone() is not None
 
 
 def _m14(conn, context):
@@ -861,6 +950,100 @@ def _m14(conn, context):
         "CREATE INDEX IF NOT EXISTS job_item_state ON job_item(job_id, state)",
         "CREATE INDEX IF NOT EXISTS endpoints_canonical ON endpoints(canonical)",
         "CREATE INDEX IF NOT EXISTS api_keys_prefix ON api_keys(prefix)",
+    ):
+        conn.execute(statement)
+
+
+def _collapse_payload(newest, group):
+    """The newest payload plus the summed history of the rows it replaces.
+
+    Collapsing must not forget what was measured: `checks`/`passes` are the counters
+    ranked.csv and the GUI publish, so they are added over the whole group while the
+    verdict itself stays the newest one (F28, F12).
+    """
+    if len(group) < 2:
+        return newest["payload"]
+    try:
+        row = json.loads(newest["payload"])
+    except (TypeError, ValueError):
+        return newest["payload"]
+    if not isinstance(row, dict):
+        return newest["payload"]
+    checks = passes = 0
+    bounds = {"first_checked": None, "last_ok": None}
+    for item in group:
+        try:
+            body = json.loads(item["payload"])
+        except (TypeError, ValueError):
+            continue
+        history = body.get("history") if isinstance(body, dict) else None
+        if not isinstance(history, dict):
+            continue
+        try:
+            checks += int(history.get("checks") or 0)
+            passes += int(history.get("passes") or 0)
+        except (TypeError, ValueError):
+            continue
+        for field, better in (("first_checked", min), ("last_ok", max)):
+            value = history.get(field)
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                continue
+            current = bounds[field]
+            if current is None or better(value, current):
+                bounds[field] = value
+    if not checks and not passes:
+        return newest["payload"]
+    first_checked, last_ok = bounds["first_checked"], bounds["last_ok"]
+    row["history"] = {"checks": checks, "passes": passes, "first_checked": first_checked,
+                      "last_ok": last_ok}
+    return json.dumps(row, ensure_ascii=False)
+
+
+def _m15(conn, context):
+    """One row per address: a generation is a set of addresses, not of measurements.
+
+    With `job_id` still in the key a repeat check left a second row of the same
+    address standing beside the first, every consumer judged the rows independently,
+    and the endpoint appeared twice in every artifact (F28, §7.10). It also meant a
+    fresh failure could not cancel the older success: the failed row was rejected
+    while the stale one kept its own, unexpired `valid_until` (F09, defect 2).
+
+    The newest measurement of an address therefore *replaces* the row -- the
+    per-check history it carried is summed in, so nothing measured is lost -- and
+    `job_id` remains a column naming the last job that touched the address. The
+    per-job item is not here: it is `job_item(job_id, item_id)`, and a repeat check
+    in a new job still creates a new item there.
+    """
+    if tuple(primary_key(conn, "results")) == RESULTS_KEY:
+        return
+    column_list = ", ".join(_ident(name) for name in RESULTS_NEW_COLUMNS)
+    keep = {}
+    for raw in conn.execute(f"SELECT rowid, {column_list} FROM results").fetchall():
+        values = dict(zip(RESULTS_NEW_COLUMNS, raw[1:]))
+        key = tuple(values.get(name) for name in RESULTS_KEY)
+        rank = (values.get("checked_at") if isinstance(values.get("checked_at"), (int, float))
+                else float("-inf"), raw[0])
+        current = keep.get(key)
+        if current is None or rank > current[0]:
+            keep[key] = (rank, values, [values])
+        else:
+            current[2].append(values)
+    conn.execute(RESULTS_KEY_SQL)
+    placeholders = ", ".join("?" * len(RESULTS_NEW_COLUMNS))
+    for _key, (_rank, newest, group) in keep.items():
+        values = dict(newest)
+        values["payload"] = _collapse_payload(newest, group)
+        conn.execute(f"INSERT OR REPLACE INTO results_new ({column_list})"
+                     f" VALUES ({placeholders})",
+                     tuple(values.get(name) for name in RESULTS_NEW_COLUMNS))
+    conn.execute("DROP TABLE results")
+    conn.execute("ALTER TABLE results_new RENAME TO results")
+    # Renaming rebuilds the table, so migration 14's indexes over `results` went with
+    # the old one.  Re-create exactly those three; the rest are on other tables.
+    for statement in (
+        "CREATE INDEX IF NOT EXISTS results_profile_valid_until ON results(profile_id, valid_until)",
+        "CREATE INDEX IF NOT EXISTS results_access ON results(access_id, access_revision)",
+        "CREATE INDEX IF NOT EXISTS results_endpoint_checked ON results(endpoint_id, checked_at DESC)",
     ):
         conn.execute(statement)
 
@@ -881,7 +1064,15 @@ MIGRATIONS = (
     Migration(12, "import_batches", _m12),
     Migration(13, "results_rebuild", _m13),
     Migration(14, "indexes", _m14),
+    Migration(15, "results_one_row_per_address", _m15),
 )
+
+#: Migrations that rewrite data they did not create: a `DROP TABLE` plus a copy, so
+#: the old rows are gone for good and a mistake is not reversible from the file
+#: itself.  Any update that runs one of these takes a technical backup with a
+#: manifest *first* -- whatever `user_version` the file happens to carry, not only a
+#: legacy file at version 0 (F24, defect "backup only for user_version == 0").
+DESTRUCTIVE_MIGRATIONS = frozenset({13, 15})
 
 assert tuple(migration.version for migration in MIGRATIONS) == tuple(range(SCHEMA_VERSION + 1))
 
@@ -985,7 +1176,12 @@ def migrate(path, *, backup_dir=None, app_version=None, now=None, create=True):
     1. read ``user_version`` / ``application_id`` and refuse before any write;
     2. a legacy file (pre-versioning tables at ``user_version = 0``) gets a technical
        backup with a manifest *before* the first migration touches it;
-    3. each remaining migration runs in its own transaction together with the
+    3. a file that is about to run a destructive migration (see
+       :data:`DESTRUCTIVE_MIGRATIONS`) gets that same backup even when it is not a
+       version-0 legacy file -- an intermediate build of this branch leaves a
+       ``user_version`` of 1..15, and those rebuilds drop a table the user cannot
+       get back from the file alone;
+    4. each remaining migration runs in its own transaction together with the
        ``user_version`` write and its ``schema_migrations`` row, so an interrupted
        migration leaves the file at the previous version rather than in between.
 
@@ -1019,7 +1215,14 @@ def migrate(path, *, backup_dir=None, app_version=None, now=None, create=True):
                                    application_id, (), None, 0)
 
         backup = None
-        if user_version == 0 and _is_legacy_file(conn):
+        # A destructive migration is irreversible from the file itself, so the backup
+        # is taken on the strength of the *migration* that is about to run, not on the
+        # shape of the file.  Backing up only a version-0 legacy file left every
+        # intermediate build of this branch (`user_version` 1..15) rewriting `results`
+        # with nothing to check the result against: `list_backups()` showed nothing.
+        pending = {item.version for item in MIGRATIONS if item.version >= user_version}
+        if existed and (pending & DESTRUCTIVE_MIGRATIONS or
+                        (user_version == 0 and _is_legacy_file(conn))):
             backup = create_backup(conn, backup_dir or path.parent / BACKUP_DIRNAME,
                                    reason="pre-migration", app_version=app_version, now=now)
 
@@ -1349,11 +1552,47 @@ def _retention_sql(table, policy, now):
     return (f"DELETE FROM {_ident(table)} WHERE {where}", where) if where else (None, None)
 
 
+def _referrers(conn, table):
+    """Names of the tables whose foreign keys point at ``table``, read from the file."""
+    found = set()
+    for other in tables(conn):
+        if other == table:
+            continue
+        for row in conn.execute("PRAGMA foreign_key_list(%s)" % _ident(other)):
+            if row[2] == table:
+                found.add(other)
+    return found
+
+
+def _retention_order(conn, tables):
+    """The tables in the only order SQLite accepts: a referrer before what it points at.
+
+    `results.observation_id REFERENCES observations(id)` and the pragma
+    ``foreign_keys=ON`` (:func:`connect`) mean a `DELETE FROM observations` is refused
+    while a result still points at the row.  The default policy names both tables and
+    listed them in the wrong order, so the stock cleanup deleted nothing and then
+    raised -- while the preview had already reported both tables (F24).  The order
+    comes from the live foreign keys, not from a hand-written list.
+    """
+    remaining = list(dict.fromkeys(tables))
+    ordered = []
+    while remaining:
+        progressed = False
+        for table in list(remaining):
+            if not _referrers(conn, table) & set(remaining):
+                ordered.append(table)
+                remaining.remove(table)
+                progressed = True
+        if not progressed:          # a cycle: keep the caller's order for the rest
+            ordered.extend(remaining)
+            break
+    return tuple(ordered)
+
+
 def _retention_targets(conn, policy, now):
     targets, total = [], 0
-    for table in policy.include:
-        if not _table_exists(conn, table):
-            continue
+    present = [name for name in policy.include if _table_exists(conn, name)]
+    for table in _retention_order(conn, present):
         _delete, where = _retention_sql(table, policy, now)
         column = RETENTION_TIME_COLUMN[table]
         if where is None:
@@ -1398,6 +1637,16 @@ def apply_retention(conn, policy=None, *, now=None, vacuum=False):
         delete, where = _retention_sql(table, policy, now)
         if where is None or not rows:
             continue
+        # A policy that names a parent table but not the child pointing at it cannot be
+        # executed: SQLite refuses the delete, rolls back and removes nothing.  Name
+        # the blocking table and the remedy instead of surfacing a bare "FOREIGN KEY
+        # constraint failed" (F24).
+        blocked = sorted(_referrers(conn, table) - {item[0] for item in deleted})
+        if blocked:
+            raise RetentionError(
+                E_MIGRATION_FAILED,
+                f"cannot delete from {table}: {', '.join(blocked)} still point at it;"
+                f" add {' or '.join(blocked)} to include")
         freed += table_bytes(conn, table) or 0
         conn.execute("BEGIN IMMEDIATE")
         try:

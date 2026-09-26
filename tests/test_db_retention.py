@@ -34,25 +34,35 @@ class RetentionTests(unittest.TestCase):
         results: three past `valid_until` (checked 10-12 h ago), two still valid
         (1 h and 3 h ago), one without `valid_until` at all (the defect-1 row).
         observations: finished 1-4 h ago.
+
+        Every row names the endpoint of its own `proxy`: a result row is one
+        address, so a row whose `proxy` and `endpoint_id` disagree would be six
+        measurements of one address and would be refused by the key (F28).
         """
-        endpoint = db.upsert_endpoint(self.conn, "http://1.2.3.4:8080")
-        self.conn.execute("INSERT INTO accesses(id, endpoint_id, mode, access_revision, created_at)"
-                          " VALUES (?,?,?,?,?)", ("acc-1", endpoint, "public", 1, 0.0))
         self.expires_in = [(0.5, None), (1, self.now + HOUR), (3, self.now + HOUR),
                            (10, self.now - HOUR), (11, self.now - HOUR), (12, self.now - HOUR)]
         for index, (age, valid_until) in enumerate(self.expires_in):
+            proxy = f"http://1.2.3.4:{8000 + index}"
+            endpoint = db.upsert_endpoint(self.conn, proxy)
+            self.conn.execute("INSERT INTO accesses(id, endpoint_id, mode, access_revision,"
+                              " created_at) VALUES (?,?,?,?,?)",
+                              (f"acc-{index}", endpoint, "public", 1, 0.0))
             self.conn.execute(
                 "INSERT INTO results(profile, proxy, payload, endpoint_id, access_id,"
                 " access_revision, profile_id, profile_revision, job_id, checked_at, valid_until)"
                 " VALUES (?,?,?,?,?,?,?,?,?,?,?)",
-                ("p", f"http://1.2.3.4:{8000 + index}", '{"score": 1}', endpoint, "acc-1", 1,
+                ("p", proxy, '{"score": 1}', endpoint, f"acc-{index}", 1,
                  "p", 1, f"job-{index}", self.now - age * HOUR, valid_until))
+        endpoint = db.upsert_endpoint(self.conn, "http://1.2.3.4:8080")
+        self.conn.execute("INSERT INTO accesses(id, endpoint_id, mode, access_revision,"
+                          " created_at) VALUES (?,?,?,?,?)",
+                          ("acc-obs", endpoint, "public", 1, 0.0))
         for index in range(4):
             self.conn.execute(
                 "INSERT INTO observations(id, job_id, endpoint_id, access_id, access_revision,"
                 " profile_id, profile_revision, started_at, finished_at, verdict)"
                 " VALUES (?,?,?,?,?,?,?,?,?,?)",
-                (f"obs-{index}", "job-1", endpoint, "acc-1", 1, "p", 1,
+                (f"obs-{index}", "job-1", endpoint, "acc-obs", 1, "p", 1,
                  self.now - (index + 1) * HOUR, self.now - (index + 1) * HOUR,
                  '{"reliability": 1}'))
 
