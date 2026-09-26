@@ -45,11 +45,34 @@ from . import db as schema
 from . import servicecatalog
 
 def _source_id_flag(payload, flag):
+    """A source id and an explicit boolean beside it.
+
+    The flag has to be stated and has to be a boolean.  A pause request that
+    omits it used to be read as "pause", and one that sent the string ``"yes"``
+    was read as "pause" too: a typo silently switched a source off and the
+    answer said it had been asked to.  Both are now refused, and refusal is the
+    only honest answer to a request that does not say which way it means.
+    """
     payload = payload or {}
     source_id = payload.get('id')
     if not isinstance(source_id, str) or not source_id:
         raise ValueError('Укажите источник.')
-    return source_id, bool(payload.get(flag))
+    value = payload.get(flag, _MISSING)
+    if value is _MISSING:
+        raise ValueError(f'Укажите, что делать с источником: {flag}=true или {flag}=false.')
+    if not isinstance(value, bool):
+        raise ValueError(f'{flag}: ожидается true или false.')
+    return source_id, value
+
+
+class _Missing:
+    __slots__ = ()
+
+    def __repr__(self):
+        return '<missing>'
+
+
+_MISSING = _Missing()
 
 
 def _source_id(payload):
@@ -921,9 +944,16 @@ class App:
         finally:
             db.close()
 
+    #: A check is a question, not a collection.  Eight seconds is long enough
+    #: for a list on a slow link and short enough that a page waiting on it
+    #: stays a page; the collector's own default is four times that.
+    PREVIEW_TIMEOUT = 8
+
     def _run_preview(self, plan, db):
         from . import proxytool
-        return proxytool.run_preview(db, [plan], allow_private_sources=True,
+        return proxytool.run_preview(db, [plan], timeout=self.PREVIEW_TIMEOUT,
+                                     max_source_candidates=proxytool.PREVIEW_CHECK_CANDIDATES,
+                                     allow_private_sources=True,
                                      allow_private_endpoints=True)
 
     # --- source recovery and scope exclusions -----------------------------
@@ -943,17 +973,19 @@ class App:
     def source_scope_keys(self, source_id):
         """The ``candidate_seen`` keys of one source, resolved from the catalog.
 
-        ``candidate_seen.source`` holds the short digest of the *configured
-        entry*, so a catalog id is resolved through its own endpoints and a raw
-        key is accepted as is.  A source that resolves to nothing is reported
-        as unknown rather than silently excluding zero addresses.
+        A catalog source is stored under its own id -- that is what makes the
+        same list one source whether it was reached from the flat URL file or
+        from the catalog screen -- so the id is a key in its own right.  The
+        short digest of each configured entry is kept alongside it, because a
+        collection made before the catalog existed has its membership under
+        that digest and this must still be able to exclude, recover or count
+        it.  A source that resolves to nothing is reported as unknown rather
+        than silently excluding zero addresses.
         """
         source_id = str(source_id or '').strip()
         if not source_id:
             raise ValueError('Укажите источник.')
-        keys = set()
-        if re.fullmatch(r'[0-9a-f]{8,64}', source_id):
-            keys.add(source_id)
+        keys = {source_id}
         try:
             catalog = self.source_document()
         except (OSError, ValueError):
@@ -964,6 +996,9 @@ class App:
                 url = endpoint.get('url') if isinstance(endpoint, dict) else None
                 if url:
                     keys.add(core.source_key(url))
+            for spec in (item.get('legacy_specs') or []):
+                if isinstance(spec, str) and spec.strip():
+                    keys.add(core.source_key(spec.strip()))
             if item.get('url'):
                 keys.add(core.source_key(item['url']))
         settings = self.settings()
@@ -987,11 +1022,20 @@ class App:
         known = item is not None and bool(item.get('endpoints') or item.get('url'))
         cleared = 0
         if known and keys:
+            placeholders = ','.join('?' * len(keys))
             try:
                 with self.collection_write() as conn:
+                    # What "cleared" counts is the pause itself: the backoff,
+                    # the quarantine and the failure counter of this source.
+                    # The metadata the source wrote is cleaned with it, but it
+                    # is not what recovery is about, and counting it made the
+                    # answer say "0 cleared" for a source whose quarantine had
+                    # just been lifted.
                     cleared = conn.execute(
-                        'DELETE FROM candidate_meta WHERE source IN (%s)'
-                        % ','.join('?' * len(keys)), keys).rowcount or 0
+                        'DELETE FROM source_state WHERE source_id IN (%s)' % placeholders,
+                        keys).rowcount or 0
+                    conn.execute('DELETE FROM candidate_meta WHERE source IN (%s)' % placeholders,
+                                 keys)
                     conn.commit()
             except (schema.DbError, sqlite3.Error, ValueError):
                 cleared = 0
@@ -1000,11 +1044,15 @@ class App:
                         error='Такого источника нет в каталоге; восстанавливать нечего.',
                         check=None)
         try:
-            outcome = ((self.preview_source({'id': source_id}) or {}).get('sources') or [{}])[0]
+            # ``preview_source`` answers with the flat preview view, so the
+            # re-check read a key that view never had and reported nothing
+            # after every request it had just made.
+            outcome = self.preview_source({'id': source_id}) or {}
             report = {'http_state': outcome.get('http_state'),
                       'parse_state': outcome.get('parse_state'),
                       'status': outcome.get('status'),
                       'recognized': outcome.get('recognized'),
+                      'accepted': outcome.get('accepted'),
                       'complete': outcome.get('complete'),
                       'error': outcome.get('error')}
         except ValueError as exc:
@@ -1181,9 +1229,9 @@ class App:
                 # this the one route in the app that could be pointed wherever.
                 current = self.source_document()
                 state = self.read_source_catalog_cache()
-                answer = proxytool.fetch_catalog(
+                answer = asyncio.run(proxytool.fetch_catalog(
                     url, current=current, allow_private_sources=False,
-                    etag=state.get('etag'), last_modified=state.get('last_modified'))
+                    etag=state.get('etag'), last_modified=state.get('last_modified')))
                 if answer.get('state') == 'not_modified':
                     job.update(running=False, stage='done', not_modified=True, error=None)
                     return
@@ -4656,6 +4704,15 @@ class Handler(BaseHTTPRequestHandler):
             self.respond(400, dict(error='Не удалось прочитать данные. Повторите после завершения операции.'))
         except (apikeys.ApiKeyError, schema.DbError) as exc:
             self.respond(400, dict(error=str(exc) or 'Операция отклонена.'))
+        except (KeyError, TypeError, AttributeError, IndexError, RecursionError,
+                OverflowError) as exc:
+            # A row the reader could not build is a reported error, not a
+            # dropped connection.  The GET handler named only ValueError, so a
+            # stored NULL or a malformed field raised past every handler, the
+            # thread died mid-response and the client saw a protocol error
+            # instead of a sentence it could show.
+            self.respond(400, dict(error='Не удалось прочитать данные: %s'
+                                   % (type(exc).__name__,)))
 
     def query_body(self, query):
         """Query parameters as a payload, for the reads that take options.
@@ -4787,7 +4844,8 @@ class Handler(BaseHTTPRequestHandler):
             if path == '/api/maintenance/data-path':
                 return self.respond(200, self.app.data_path_migrate(payload))
             self.respond(404, dict(error='Не найдено.'))
-        except (ValueError, KeyError, TypeError, AttributeError) as exc:
+        except (ValueError, KeyError, TypeError, AttributeError, IndexError,
+                RecursionError, OverflowError) as exc:
             message = str(exc) if isinstance(exc, ValueError) and not isinstance(exc, json.JSONDecodeError) else 'Проверьте поля настроек.'
             self.respond(400, dict(error=message))
         except (importer.ImportProblem, apikeys.ApiKeyError, schema.DbError) as exc:
