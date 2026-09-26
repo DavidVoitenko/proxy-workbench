@@ -9751,6 +9751,7 @@ try { setupDiagnosticsListeners(); } catch (e) { console.error(e); }
 try { setupDesktopListeners(); } catch (e) { console.error(e); }
 try { setupGatewayBindingListeners(); } catch (e) { console.error(e); }
 try { setupKeyListeners(); } catch (e) { console.error(e); }
+try { setupCatalogListeners(); } catch (e) { console.error(e); }
 try { setupScopeDialog(); } catch (e) { console.error(e); }
 // ---------------------------------------------------------------------------
 // Diagnostics (F10): the funnel, the one reason, and the local bundle

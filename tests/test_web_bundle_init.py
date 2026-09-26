@@ -130,6 +130,23 @@ class BundleInitialisationTests(unittest.TestCase):
         )
         self.assertIn("EVALUATED_OK", run.stdout)
 
+    def test_every_setup_helper_is_actually_called(self):
+        # A `setup…Listeners()` function that is defined but never invoked leaves
+        # its whole page silently dead — which is how the source catalog lost
+        # every control, and how the whole app lost every control once before.
+        definitions = set(
+            re.findall(r"function\s+(setup[A-Za-z0-9_]*Listeners)\s*\(", self.source)
+        )
+        never_called = sorted(
+            name for name in definitions
+            if len(re.findall(r"\b%s\s*\(" % re.escape(name), self.source)) < 2
+        )
+        self.assertEqual(
+            never_called, [],
+            "функции установки обработчиков определены, но никогда не вызываются, "
+            "поэтому их страницы молча мертвы: " + ", ".join(never_called),
+        )
+
     def test_the_detail_dialog_close_button_is_declared_before_use(self):
         # The concrete instance that broke the product, kept as a named guard.
         self.assertIn('id="close-details"', INDEX_HTML.read_text(encoding="utf-8"))
