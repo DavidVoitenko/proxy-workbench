@@ -9310,6 +9310,35 @@
             "bearerKey": []
           }
         ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "watch": {
+                    "type": "boolean"
+                  },
+                  "budget": {
+                    "type": "object",
+                    "properties": {
+                      "max_requests": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "max_seconds": {
+                        "type": "integer",
+                        "minimum": 1
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
         "description": "mutation: Idempotency-Key is required, If-Match or body revision guards concurrent changes"
       }
     },

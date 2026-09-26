@@ -4495,8 +4495,17 @@ def filter_by_country(rows, criterion, resolver=None, now=None):
     call.  It is a pure function of the rows and the criterion: nothing is
     started, no address is dialled, and a row whose country is unknown is
     reported as unknown rather than quietly counted as a country.
+
+    Without a ``resolver`` a bare :meth:`geo.Resolver` is used, which reads the
+    country the row itself carries as the claim it is -- the same claim
+    ``geo_country_verdict`` reads for the export.  An empty resolver is not
+    "no knowledge": it refuses to *add* knowledge, and refusing to add any
+    would have made every row unknown, which is why the three surfaces each
+    wrote their own copy of the test instead.
     """
     from . import geo
+    if resolver is None:
+        resolver = geo.Resolver(now=now)
     return geo.filter_rows(rows, criterion, resolver=resolver, now=now)
 
 
@@ -4546,17 +4555,23 @@ def geo_country_verdict(criterion, row, country_of=None, now=None):
     ``CountryFact`` with their own source, so the verdict can say which one it
     compared and whether the fact was stale -- a country is never silently
     accepted.
+
+    The facts are read by ``geo.Resolver.from_row``, the same reader the GUI
+    list and the read-only API use.  It used to build the endpoint fact here
+    and nothing else, so a criterion that compares the *exit* country read
+    nothing here and answered "unknown" for a row the list and the export
+    agreed about -- one row, two answers, which is exactly what F08 forbids.
     """
     from . import geo
     moment = time.time() if now is None else now
     declared = row.get('country')
-    resolved = country_of(row.get('proxy', '')) if country_of else None
-    fact = None
-    if declared or resolved:
-        fact = geo.CountryFact(code=(declared or resolved),
-                               source=geo.SOURCE_SOURCE if declared else geo.SOURCE_RESOLVED,
-                               at=moment, address=row.get('proxy', '').partition('://')[2])
-    return geo.evaluate(criterion, endpoint=fact, now=moment)
+    if not declared and country_of is not None:
+        # A caller that only has a resolver function and no databases still
+        # gets the row's own claim; the resolver below adds nothing else.
+        declared = country_of(row.get('proxy', '')) or None
+        row = dict(row, country=declared)
+    endpoint, exit_fact, _provider = geo.Resolver(now=moment).from_row(row or {})
+    return geo.evaluate(criterion, endpoint=endpoint, exit=exit_fact, now=moment)
 
 
 def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, denylist=None, local_override=None, min_anonymity='any',
@@ -6546,6 +6561,32 @@ def _cohorts_text(body):
 
 
 
+def _pool_budget(args):
+    """``--max-requests`` as the number ``pools.refill`` counts.
+
+    It used to be wrapped in ``{'max_requests': n}``, which is the shape the
+    ``/v1`` route body carries, and handed to a function whose ``budget`` is an
+    ``int``: ``pool refill --max-requests 2`` died with a ``TypeError`` and a
+    traceback instead of doing a smaller refill.  The limit is applied or the
+    command is refused -- there is no third outcome in which the flag is
+    accepted, silently ignored, and the whole budget is spent.
+    """
+    value = getattr(args, 'max_requests', 0)
+    if not value:
+        return None          # the flag was not given: the pool's own budget applies
+    try:
+        limit = int(value)
+    except (TypeError, ValueError):
+        raise WorkbenchError(tr(f'--max-requests должен быть целым: {value!r}',
+                                f'--max-requests must be a whole number: {value!r}'),
+                             'E_VALIDATION_FIELD') from None
+    if limit <= 0:
+        raise WorkbenchError(tr('--max-requests должен быть больше нуля',
+                                '--max-requests must be greater than zero'),
+                             'E_VALIDATION_FIELD')
+    return limit
+
+
 def _pool_watch_text(status):
     """Which pools are being kept filled right now, and for how long."""
     watching = status.get('watching') or {}
@@ -6751,6 +6792,11 @@ def _cmd_pool(workbench, args, action):
         return emit(args, {'id': spec.id, 'desired': spec.desired},
                     tr(f'Пул {spec.id}: держать {spec.desired}, резерв {spec.reserve}',
                        f'pool {spec.id}: keep {spec.desired}, reserve {spec.reserve}'))
+    if action == 'watch':
+        # A report about every watched pool, so it needs no pool of its own and
+        # changes nothing: it is how a person asks "is it still maintained?".
+        return emit(args, pools.watch_registry(workbench.data).status(),
+                    _pool_watch_text(pools.watch_registry(workbench.data).status()))
     if not pool_id:
         raise WorkbenchError(tr('Укажите пул: --name ИД', 'name the pool: --name ID'))
     if action == 'status':
@@ -6778,9 +6824,8 @@ def _cmd_pool(workbench, args, action):
         # semantics: a spent budget is an honest "nothing was admitted", not a
         # second implementation with its own rules.
         from . import api as apisvc
-        budget = {'max_requests': int(args.max_requests or 0)} if args.max_requests else None
         report = pools.refill(store, pool_id, apisvc.pool_candidate_source(workbench.conn),
-                              budget=budget, now=workbench.clock())
+                              budget=_pool_budget(args), now=workbench.clock())
         return emit(args, _as_json(report),
                     tr(f'Пул {pool_id}: обслуживает {report.served}'
                        f' из {report.desired} ({report.state})'
@@ -6796,15 +6841,13 @@ def _cmd_pool(workbench, args, action):
         # changing anything.
         from . import api as apisvc
         registry = pools.watch_registry(workbench.data)
-        if action == 'watch':
-            return emit(args, registry.status(), _pool_watch_text(registry.status()))
-        budget = {'max_requests': int(args.max_requests or 0)} if args.max_requests else None
+        budget = _pool_budget(args)
         if action == 'pause':
             moved = apisvc.pools_state_for('pause', store.status(pool_id))
             store.save_status(pool_id, moved.state, deficit_reason=moved.deficit_reason,
                               next_attempt_at=moved.next_attempt_at)
             watch = registry.stop(pool_id)
-            return emit(args, dict(_as_json(store.status(pool_id)), watch=watch),
+            return emit(args, dict(apisvc._status_dict(store.status(pool_id)), watch=watch),
                         tr(f'Пул {pool_id}: на паузе, наблюдение остановлено '
                            f'({watch["ticks"]} тактов)',
                            f'pool {pool_id}: paused, the watch is stopped '
@@ -6824,7 +6867,7 @@ def _cmd_pool(workbench, args, action):
         watch = registry.start(pool_id, source_factory=apisvc.pool_candidate_source,
                                budget=budget)
         registry.stop(pool_id)
-        return emit(args, dict(_as_json(report), watch=watch),
+        return emit(args, dict(apisvc._status_dict(report), watch=watch),
                     tr(f'Пул {pool_id}: обслуживает {report.served} из {report.desired} '
                        f'({report.state}); наблюдение включается вместе с пулом в постоянном '
                        f'процессе (интерфейс или API) и выключается вместе с ним',
