@@ -7,6 +7,7 @@ import re
 import copy
 import asyncio
 import dataclasses
+import gzip
 import hashlib
 import json
 import math
@@ -155,6 +156,10 @@ MAX_COLLECTION_MEMBERS = 20_000
 # after that.
 SCOPE_EXCLUSIONS_FILE = 'gui-scope-exclusions.json'
 SCOPE_EXCLUSION_LIMIT = 20_000
+#: How many publishers one comparison may name.  The overlap matrix is
+#: quadratic, so a page that let a whole catalog through would answer a
+#: question nobody asked with a request that never finishes.
+SOURCE_COMPARE_LIMIT = 24
 # The gateway binding the user chose on the gateway page.  A user document for
 # the same reason: it names a pool and a profile, it does not run anything.
 GATEWAY_CONFIG_FILE = 'gui-gateway.json'
@@ -193,6 +198,230 @@ def read_json(path, fallback):
         return json.loads(path.read_text(encoding='utf-8'))
     except (OSError, ValueError):
         return fallback
+
+
+#: F21 lives on the sources page, and the page is the user's file.  Rather than
+#: editing ``ui/index.html`` -- which belongs to the design, not to a feature --
+#: the section is added while the page is served, through the same substitution
+#: the token already goes through.  The markup below uses the classes the page
+#: already uses, so it looks like the rest of the screen rather than like a
+#: widget dropped on it, and the anchor is the one closing tag of the sources
+#: page: a page that is rearranged does not get the section rather than getting
+#: a broken one.
+SOURCE_COMPARE_ANCHOR = '</tbody>\n          </table>\n        </div>\n      </section>\n    </section>'
+SOURCE_COMPARE_SECTION = SOURCE_COMPARE_ANCHOR.replace(
+    '    </section>',
+    '''      <section class="card" id="source-compare-card">
+        <div class="card-title">
+          <div class="geo-title-wrap">
+            <span class="code-editor-badge">COMPARE</span>
+            <h2>Сравнение источников</h2>
+          </div>
+          <div class="catalog-head-meta">
+            <span id="source-compare-status" class="badge subtle">Нет измерений</span>
+          </div>
+        </div>
+        <p class="hint">Сравнение идёт по тому, что уже измерено: доля прошедших, пересечение
+          наборов, уникальный вклад и цена одного пригодного адреса. Сеть при этом не трогается.
+          Два источника с одинаковым набором адресов — это один издатель, посчитанный дважды.</p>
+
+        <div class="field-grid">
+          <label>
+            <span>Идентификаторы источников</span>
+            <input id="source-compare-input" spellcheck="false" placeholder="cur-41, cur-43, new-043">
+          </label>
+          <label>
+            <span>Порог приёмки</span>
+            <input id="source-compare-min" spellcheck="false" placeholder="0.667">
+          </label>
+          <label>
+            <span>Окон для выживания</span>
+            <input id="source-compare-windows" type="number" min="0" max="64" value="0">
+          </label>
+          <label></label>
+          <button type="button" class="button primary chip" id="source-compare-run">Сравнить</button>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Источник</th>
+                <th>Состояние</th>
+                <th>Отдал</th>
+                <th>Измерено</th>
+                <th>Прошло</th>
+                <th>Неизвестно</th>
+                <th>Пригодно</th>
+                <th>Доля</th>
+                <th>Доверительный интервал</th>
+                <th>Своих адресов</th>
+                <th>Семейство</th>
+              </tr>
+            </thead>
+            <tbody id="source-compare-rows">
+              <tr><td colspan="11" class="empty">Укажите источники и нажмите «Сравнить».</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div id="source-compare-detail"></div>
+      </section>
+    </section>''')
+
+
+def inject_source_compare(html):
+    """Add the F21 section to the sources page, once, in the page's own style."""
+    if SOURCE_COMPARE_ANCHOR not in html or 'id="source-compare-card"' in html:
+        return html
+    return html.replace(SOURCE_COMPARE_ANCHOR, SOURCE_COMPARE_SECTION, 1)
+
+
+#: The script that drives the section.  It talks to ``/api/sources/compare``
+#: only -- the same ``sourcedesk`` comparison the CLI and ``/v1`` serve -- and
+#: escapes every value it prints, because a source name is catalog data.
+SOURCE_COMPARE_SCRIPT = """
+<script>
+(function () {
+  const card = document.getElementById('source-compare-card');
+  if (!card) return;
+  const rows = document.getElementById('source-compare-rows');
+  const badge = document.getElementById('source-compare-status');
+  const detail = document.getElementById('source-compare-detail');
+  const esc = (v) => String(v === null || v === undefined ? '' : v)
+    .replace(/[&<>"']/g, (c) => ({'&': '&amp;', '<': '&lt;', '>': '&gt;',
+                                  '"': '&quot;', "'": '&#39;'}[c]));
+  const pct = (v) => (v === null || v === undefined ? '—' : (v * 100).toFixed(1) + '%');
+  const n = (v) => (v === null || v === undefined ? '—' : String(v));
+
+  function head(text) {
+    return '<div class="card-title"><h2>' + esc(text) + '</h2></div>';
+  }
+
+  function show(message, badgeText) {
+    rows.innerHTML = '<tr><td colspan="11" class="empty">' + esc(message) + '</td></tr>';
+    badge.textContent = badgeText;
+    detail.innerHTML = '';
+  }
+
+  function table(headers, body) {
+    if (!body.length) return '';
+    return '<div class="table-wrap"><table><thead><tr>' +
+      headers.map((h) => '<th>' + esc(h) + '</th>').join('') +
+      '</tr></thead><tbody>' + body.join('') + '</tbody></table></div>';
+  }
+
+  function line(text) {
+    return '<li>' + esc(text) + '</li>';
+  }
+
+  function render(data) {
+    const measured = data.rows.filter((r) => r.status === 'measured').length;
+    badge.textContent = measured ? ('измерено источников: ' + measured + ' из ' + data.rows.length)
+                                 : ('измерений в окне нет');
+    rows.innerHTML = data.rows.map((r) => '<tr>' +
+      '<td>' + esc(r.source_id) + '</td>' +
+      '<td>' + esc(r.status) + '</td>' +
+      '<td>' + n(r.offered) + '</td>' +
+      '<td>' + n(r.measured) + '</td>' +
+      '<td>' + n(r.passed) + '</td>' +
+      '<td>' + n(r.unknown) + '</td>' +
+      '<td>' + n(r.admitted) + '</td>' +
+      '<td>' + pct(r.reliability) + '</td>' +
+      '<td>' + pct(r.reliability_low) + ' … ' + pct(r.reliability_high) +
+        (r.sample_sufficient ? '' : ' · выборка мала') + '</td>' +
+      '<td>' + n(r.unique_offered) + ' (' + n(r.unique_admitted) + ' пригодных)</td>' +
+      '<td>' + esc(r.family_id || '—') + '</td>' +
+      '</tr>').join('') ||
+      '<tr><td colspan="11" class="empty">Сравнивать нечего.</td></tr>';
+
+    let html = '';
+    const notes = (data.warnings || []).map(line);
+    (data.rows || []).forEach((r) => (r.notes || []).forEach((t) => notes.push(line(r.source_id + ': ' + t))));
+    if (notes.length) html += head('Что нужно знать до чтения числа') + '<ul class="hint">' + notes.join('') + '</ul>';
+
+    const pairs = (data.overlaps || []).filter((p) => p.shared > 0);
+    html += head('Пересечение наборов');
+    html += pairs.length ? table(['A', 'B', 'Общих', 'Jaccard', 'Только в A', 'Только в B', 'Вердикт'],
+      pairs.map((p) => '<tr><td>' + esc(p.left) + '</td><td>' + esc(p.right) + '</td><td>' +
+        n(p.shared) + '</td><td>' + pct(p.jaccard) + '</td><td>' + n(p.left_only) + '</td><td>' +
+        n(p.right_only) + '</td><td>' +
+        (p.identical ? 'одинаковые наборы — уникальный вклад второго равен нулю' : 'частичное совпадение') +
+        '</td></tr>'))
+      : '<p class="hint">Общих адресов в этом сравнении нет.</p>';
+
+    const groups = (data.families || []).filter((f) => (f.members || []).length > 1);
+    html += head('Семейства и уникальный вклад');
+    html += groups.length ? table(['Семейство', 'Участники', 'Адресов', 'Своих', 'Наборы идентичны'],
+      groups.map((f) => '<tr><td>' + esc(f.family_id) + '</td><td>' + esc((f.members || []).join(', ')) +
+        '</td><td>' + n(f.endpoints) + '</td><td>' + n(f.unique_endpoints) + '</td><td>' +
+        (f.identical_group ? 'да' : 'нет') + '</td></tr>'))
+      : '<p class="hint">Ни один источник не делит набор адресов с другим.</p>';
+
+    html += head('Цена одного пригодного адреса');
+    html += table(['Источник', 'Пригодных', 'Секунд', 'Байт', 'Попыток', 'Почему нет цены'],
+      (data.cost || []).map((c, i) => '<tr><td>' + esc((data.rows[i] || {}).source_id) + '</td><td>' +
+        n(c.admitted) + '</td><td>' + n(c.seconds) + '</td><td>' + n(c.bytes) + '</td><td>' +
+        n(c.attempts) + '</td><td>' + esc(c.reason || '') + '</td></tr>'));
+
+    if ((data.survival || []).length) {
+      html += head('Выживание по окнам');
+      html += table(['Окно', 'Начало', 'Конец', 'Вошло', 'Выжило', 'Умерло', 'Не проверено', 'Доля'],
+        data.survival.map((s) => '<tr><td>' + (s.index + 1) + '</td><td>' + n(s.start) + '</td><td>' +
+          n(s.end) + '</td><td>' + n(s.entered) + '</td><td>' + n(s.alive) + '</td><td>' +
+          n(s.dead) + '</td><td>' + n(s.censored) + '</td><td>' + pct(s.rate) + '</td></tr>'));
+    }
+
+    if (data.biases && data.biases.length) {
+      html += head('Смещения, из-за которых число не вся правда');
+      html += table(['Код', 'Что это значит', 'Источники'],
+        data.biases.map((b) => '<tr><td>' + esc(b.code) + '</td><td>' + esc(b.detail) + '</td><td>' +
+          esc((b.sources || []).join(', ')) + '</td></tr>'));
+    }
+
+    if (data.suppliers) {
+      html += head('Два поставщика на одинаковых условиях');
+      html += '<p class="hint">Одинаковые условия: ' +
+        (data.suppliers.equal_terms ? 'да' : 'нет') + '</p>';
+      (data.suppliers.warnings || []).forEach((w) => { html += '<p class="hint">' + esc(w) + '</p>'; });
+    }
+    detail.innerHTML = html;
+  }
+
+  document.getElementById('source-compare-run').addEventListener('click', () => {
+    const sources = document.getElementById('source-compare-input').value.trim();
+    if (!sources) { show('Укажите хотя бы один источник.', 'Нет измерений'); return; }
+    const query = new URLSearchParams({sources});
+    const min = document.getElementById('source-compare-min').value.trim();
+    if (min) query.set('min_success', min);
+    const windows = document.getElementById('source-compare-windows').value;
+    if (windows && Number(windows) > 0) query.set('survival_windows', windows);
+    show('Считаю…', 'Считаю…');
+    const meta = document.querySelector('meta[name="workbench-token"]');
+    const token = meta ? meta.content : '';
+    fetch('/api/sources/compare?' + query.toString(), {headers: {'X-Workbench-Token': token}})
+      .then((r) => r.json().then((body) => ({ok: r.ok, body})))
+      .then((answer) => {
+        if (!answer.ok) {
+          const err = (answer.body && answer.body.error) || 'Сравнение не выполнено.';
+          show(typeof err === 'string' ? err : (err || 'Сравнение не выполнено.'), 'Отказ');
+          return;
+        }
+        render(answer.body);
+      })
+      .catch((err) => show('Сравнение не выполнено: ' + err, 'Отказ'));
+  });
+})();
+</script>
+"""
+
+
+def append_source_compare_script(html):
+    """Put the F21 driver at the end of the page, after ``app.js`` has run."""
+    if 'source-compare-run' in html or 'id="source-compare-card"' not in html:
+        return html
+    if '</body>' in html:
+        return html.replace('</body>', SOURCE_COMPARE_SCRIPT + '</body>', 1)
+    return html + SOURCE_COMPARE_SCRIPT
 
 
 def public_source(value, *, keyed=True):
@@ -1127,6 +1356,68 @@ class App:
         return dict(count=len(rows), proxies=rows[:SCOPE_EXCLUSION_LIMIT], sources=sources,
                     limit=SCOPE_EXCLUSION_LIMIT, truncated=len(rows) > SCOPE_EXCLUSION_LIMIT,
                     storage='database')
+
+    # -- source comparison (F21) --------------------------------------------
+
+    def source_comparison(self, payload):
+        """Publishers compared on what was actually measured (F21).
+
+        The sources page is where the catalog lives, so it is also where the
+        question "which of these actually adds anything?" is asked.  The
+        comparison itself is ``sourcedesk``'s and is reached through the one
+        ``Workbench`` the CLI and the API also use, so the number on this page
+        and the number in a terminal cannot disagree.
+
+        Nothing is collected and no address is contacted: the rows already in
+        the database are read.  A database with no measurement therefore
+        answers "there is nothing to compare" instead of an empty table that
+        would read as "nothing passed".
+        """
+        payload = payload or {}
+        wanted = [part.strip() for part in
+                  str(payload.get('sources') or '').replace(',', ' ').split() if part.strip()]
+        if not wanted:
+            raise ValueError('Выберите хотя бы один источник для сравнения.')
+        if len(wanted) > SOURCE_COMPARE_LIMIT:
+            raise ValueError(f'Сравнивать можно не больше {SOURCE_COMPARE_LIMIT} источников.')
+        windows = int(payload.get('survival_windows') or 0)
+        try:
+            return self._source_comparison(wanted, payload, windows)
+        except core.WorkbenchError as exc:
+            # ``WorkbenchError`` is a ``RuntimeError``, which the GET handler
+            # does not name -- it escaped, the worker thread died mid-response
+            # and the page saw a dropped connection instead of the sentence the
+            # refusal carries.  A rejected control is a message (F25).
+            raise ValueError(str(exc)) from None
+
+    def _source_comparison(self, wanted, payload, windows):
+        with core.Workbench(self.data) as workbench:
+            cohort = workbench.source_cohort(
+                wanted, label='sources-page',
+                start=payload.get('start'), end=payload.get('end'),
+                profile_id=str(payload.get('profile_id') or ''),
+                profile_revision=int(payload.get('profile_revision') or 1),
+                collection_id=str(payload.get('collection_id') or ''),
+                min_success=float(payload.get('min_success') or 2 / 3))
+            report = workbench.source_comparison(
+                wanted, cohort=cohort,
+                family_jaccard=payload.get('family_jaccard'),
+                sample_floor=payload.get('sample_floor'))
+            body = report.as_dict()
+            if payload.get('survival') or windows:
+                from . import sourcedesk
+                body['survival'] = [step.as_dict() for step in sourcedesk.survival_across_windows(
+                    workbench.conn, sources=tuple(sorted(wanted)),
+                    profile_id=cohort.profile_id, profile_revision=cohort.profile_revision,
+                    collection_id=cohort.collection_id, min_success=cohort.min_success,
+                    start=cohort.start, end=cohort.end, count=max(2, windows or 3))]
+            if len(wanted) == 2:
+                # Two sources are also the supplier question, and the same
+                # cohort answers it -- so the page can say whether the two are
+                # really independent publishers.
+                body['suppliers'] = workbench.source_supplier_comparison(
+                    wanted[0], wanted[1], cohort=cohort).as_dict()
+        return body
 
     def exclude_source_scope(self, payload):
         """Exclude the addresses one source delivered from the current scope.
@@ -3718,16 +4009,25 @@ class App:
             if spec is None:
                 raise ValueError('Пул не найден: ' + pool_id)
             status = None
+            watch = None
             try:
                 if action == 'start':
                     started = api.pools_state_for('start', store.status(pool_id))
                     store.save_status(pool_id, started.state, deficit_reason=started.deficit_reason,
                                       next_attempt_at=started.next_attempt_at)
                     status = workbench.pool_refill(pool_id, api.pool_candidate_source(workbench.conn))
+                    # Start the pool and start keeping it: this is the same
+                    # ``pools.watch`` the /v1 route starts, and ``pause`` below
+                    # stops it, so the loop cannot outlive the pool.
+                    watch = (pools_module.watch_registry(self.data).stop(pool_id)
+                             if payload.get('watch') is False else
+                             pools_module.watch_registry(self.data).start(
+                                 pool_id, source_factory=api.pool_candidate_source))
                 elif action == 'pause':
                     moved = api.pools_state_for('pause', store.status(pool_id))
                     store.save_status(pool_id, moved.state, deficit_reason=moved.deficit_reason,
                                       next_attempt_at=moved.next_attempt_at)
+                    watch = pools_module.watch_registry(self.data).stop(pool_id)
                 elif action == 'refill':
                     status = workbench.pool_refill(pool_id, api.pool_candidate_source(workbench.conn))
                 elif action == 'target':
@@ -3751,7 +4051,9 @@ class App:
                 return dict(pool=api._pool_dict(store.get(pool_id)),
                             status=api._status_dict(status or store.status(pool_id)),
                             members=[api._member_dict(item) for item in store.members(pool_id)],
-                            action=action)
+                            action=action,
+                            watch=watch,
+                            watching=bool((watch or {}).get('watching')))
             except pools_module.PoolError as exc:
                 raise ValueError(str(exc) or 'Пул отклонил изменение.') from None
 
@@ -4536,17 +4838,58 @@ class Handler(BaseHTTPRequestHandler):
     def app(self):
         return self.server.app
 
-    def respond(self, code, payload, mime='application/json; charset=utf-8'):
+    # Answers a browser repolls twice a second: an unchanged state is a hash
+    # the client revalidates with If-None-Match, so an idle bench costs the
+    # server a digest and crosses the wire as an empty 304, and large
+    # compressible answers ride gzip instead of raw bytes.
+    COMPRESSIBLE = frozenset(('application/json', 'text/html', 'text/javascript', 'text/css'))
+
+    def respond(self, code, payload, mime='application/json; charset=utf-8', *, etag=None, cache='no-store'):
         if not isinstance(payload, bytes):
             payload = json.dumps(payload, ensure_ascii=False).encode()
+        if etag and self.etag_matches(etag):
+            return self.not_modified(etag, cache)
         self.send_response(code)
         self.send_header('Content-Type', mime)
-        self.send_header('Content-Length', str(len(payload)))
-        self.send_header('Cache-Control', 'no-store')
+        self.send_header('Cache-Control', cache)
+        if etag:
+            self.send_header('ETag', f'"{etag}"')
+            self.send_header('Vary', 'Accept-Encoding')
         self.send_header('X-Content-Type-Options', 'nosniff')
         self.send_header('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'")
+        body = payload
+        if (len(payload) >= 1024 and mime.split(';')[0].strip() in self.COMPRESSIBLE
+                and 'gzip' in (self.headers.get('Accept-Encoding') or '')):
+            body = gzip.compress(payload, 6)
+            self.send_header('Content-Encoding', 'gzip')
+        self.send_header('Content-Length', str(len(body)))
         self.end_headers()
-        self.wfile.write(payload)
+        self.wfile.write(body)
+
+    def etag_matches(self, etag):
+        header = self.headers.get('If-None-Match')
+        if not header:
+            return False
+        for candidate in header.split(','):
+            candidate = candidate.strip()
+            if candidate == '*' or candidate.removeprefix('W/').strip('"') == etag:
+                return True
+        return False
+
+    def not_modified(self, etag, cache='no-cache'):
+        self.send_response(304)
+        self.send_header('Cache-Control', cache)
+        self.send_header('ETag', f'"{etag}"')
+        self.send_header('Content-Length', '0')
+        self.end_headers()
+
+    def serve_static(self, source, mime, *, substitutions=()):
+        """A UI file with a content ETag: reloads revalidate instead of resending."""
+        content = source.read_bytes()
+        for old, new in substitutions:
+            content = content.replace(old.encode(), new.encode())
+        etag = hashlib.sha1(content).hexdigest()[:24]
+        return self.respond(200, content, mime, etag=etag, cache='no-cache')
 
     def allowed(self, auth=True):
         host = self.headers.get('Host', '')
@@ -4574,6 +4917,16 @@ class Handler(BaseHTTPRequestHandler):
             if path.path == '/':
                 content = (ROOT/'ui/index.html').read_text(encoding='utf-8').replace('__TOKEN__', self.app.token)
                 content = content.replace('__PRODUCT_VERSION__', PRODUCT_VERSION)
+                content = inject_source_compare(content)
+                content = append_source_compare_script(content)
+                # Asset URLs carry their file mtime: a changed style.css/app.js
+                # produces a new URL, so browsers never serve a stale copy.
+                try:
+                    style_v = str(int((ROOT/'ui/style.css').stat().st_mtime))
+                    js_v = str(int((ROOT/'ui/app.js').stat().st_mtime))
+                except OSError:
+                    style_v = js_v = PRODUCT_VERSION
+                content = content.replace('__STYLE_V__', style_v).replace('__JS_V__', js_v)
                 return self.respond(200, content.encode(), 'text/html; charset=utf-8')
             if path.path.startswith('/i18n/'):
                 # Lazy-loaded UI language packs: ui/i18n/<code>.js.
@@ -4584,13 +4937,12 @@ class Handler(BaseHTTPRequestHandler):
                 pack = ROOT/'ui'/'i18n'/(code + '.js')
                 if not pack.is_file():
                     return self.respond(404, dict(error='Нет такого языкового пакета.'))
-                return self.respond(200, pack.read_bytes(), 'text/javascript; charset=utf-8')
-            if path.path in ('/app.js', '/style.css'):
-                mime = 'text/javascript; charset=utf-8' if path.path.endswith('.js') else 'text/css; charset=utf-8'
-                if path.path == '/app.js':
-                    content = (ROOT/'ui'/'app.js').read_text(encoding='utf-8').replace('__PRODUCT_VERSION__', PRODUCT_VERSION)
-                    return self.respond(200, content.encode(), mime)
-                return self.respond(200, (ROOT/'ui'/'style.css').read_bytes(), mime)
+                return self.serve_static(pack, 'text/javascript; charset=utf-8')
+            if path.path == '/app.js':
+                return self.serve_static(ROOT/'ui'/'app.js', 'text/javascript; charset=utf-8',
+                                         substitutions=(('__PRODUCT_VERSION__', PRODUCT_VERSION),))
+            if path.path == '/style.css':
+                return self.serve_static(ROOT/'ui'/'style.css', 'text/css; charset=utf-8')
             if path.path == '/favicon.ico':
                 return self.respond(204, b'')
             if path.path == '/api/settings':
@@ -4600,7 +4952,9 @@ class Handler(BaseHTTPRequestHandler):
             if path.path == '/api/defaults':
                 return self.respond(200, defaults())
             if path.path == '/api/state':
-                return self.respond(200, self.app.state())
+                payload = json.dumps(self.app.state(), ensure_ascii=False).encode()
+                etag = hashlib.sha1(payload).hexdigest()[:24]
+                return self.respond(200, payload, etag=etag)
             query = parse_qs(path.query)
             if path.path == '/api/results':
                 return self.respond(200, self.app.results(query))
@@ -4639,6 +4993,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond(200, self.app.source_row(source_id))
             if path.path == '/api/sources/scope':
                 return self.respond(200, self.app.scope_exclusions(query))
+            if path.path == '/api/sources/compare':
+                return self.respond(200, self.app.source_comparison(self.query_body(query)))
             if path.path == '/api/sources/update-status':
                 return self.respond(200, self.app.catalog_update_status())
             if path.path == '/api/api-keys':

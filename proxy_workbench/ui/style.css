@@ -24036,3 +24036,14 @@ pre#log,
     overflow: hidden !important;
   }
 }
+
+/* Live ticker: sans text for every font fallback (mono fallbacks on some
+   systems render wide spaces and visually stretch the rows) */
+.ticker-text, .ticker-badge, .ticker-code {
+  font-family: var(--font, system-ui) !important;
+  word-spacing: normal !important;
+  letter-spacing: normal !important;
+  text-align: left !important;
+}
+.ticker-badge { font-weight: 700 !important; }
+.ticker-code { font-variant-numeric: tabular-nums !important; }
