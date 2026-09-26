@@ -2054,9 +2054,12 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
     values = list(urls or [])
     rich_values = []
     legacy_values = []
+    # Built once: rebuilding the catalog's id set for every selected source
+    # turned one collect into len(selection) x len(catalog) work.
+    catalog_ids = {item['id'] for item in _catalog_cached()['sources']}
     for value in values:
         kind = _rich_kind(value)
-        if isinstance(value, dict) or kind in source_adapters.ADAPTER_KINDS or (isinstance(value, str) and value.strip() in {item['id'] for item in _catalog_cached()['sources']}):
+        if isinstance(value, dict) or kind in source_adapters.ADAPTER_KINDS or (isinstance(value, str) and value.strip() in catalog_ids):
             rich_values.append(value)
         else:
             legacy_values.append(value)

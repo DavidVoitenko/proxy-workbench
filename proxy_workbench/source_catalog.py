@@ -838,10 +838,14 @@ def migrate_settings(settings, catalog=None, *, data_dir=None):
         "custom_sources": [normalize_custom(item) for item in selection.get("custom_sources", custom)],
     }
     records = list(result["source_selection"]["custom_sources"])
+    # Membership is tracked by id: comparing whole records made this quadratic in
+    # the size of the selection, and the selection is what every click touches.
+    seen = {entry.get("id") for entry in records if isinstance(entry, dict)}
     for source_id in result["source_selection"]["selected_ids"] + result["source_selection"]["download_disabled_ids"]:
         item = source_by_id(catalog, source_id, records)
-        if item is not None:
-            records.append(item) if item not in records else None
+        if item is not None and item.get("id") not in seen:
+            seen.add(item.get("id"))
+            records.append(item)
     specs = result["source_selection"]["specs"]
     materialized = []
     for source_id in result["source_selection"]["selected_ids"]:

@@ -791,12 +791,21 @@ def source_addresses(db, source_id, *, exclusive=False, limit=200_000):
             return set(own) if not exclusive else set()
         families = dict(db.execute('SELECT source_id,family_id FROM source_identity WHERE family_id IS NOT NULL'))
         mine = families.get(source_id, source_id)
-        others = set()
-        for proxy, source in db.execute('SELECT proxy,source FROM candidate_seen'):
-            if source != source_id and families.get(source, source) != mine:
-                others.add(proxy)
-                if own <= others:
-                    break
+        # The comparison is a set question, so it is asked of the index instead
+        # of by reading every membership row into Python: this runs under the
+        # workbench lock, and a full scan there blocks the whole application.
+        db.execute('CREATE TEMP TABLE IF NOT EXISTS own_source_address (proxy TEXT PRIMARY KEY)')
+        db.execute('DELETE FROM own_source_address')
+        db.executemany('INSERT OR IGNORE INTO own_source_address VALUES (?)', ((proxy,) for proxy in own))
+        # Same rule as before, asked of the index: another source, in another
+        # publisher family, also offers the address. A source with no family
+        # row counts as its own family.
+        others = {row[0] for row in db.execute(
+            'SELECT DISTINCT c.proxy FROM candidate_seen c'
+            ' JOIN own_source_address o ON o.proxy = c.proxy'
+            ' LEFT JOIN source_identity i ON i.source_id = c.source'
+            ' WHERE c.source <> ? AND COALESCE(i.family_id, c.source) <> ?',
+            (source_id, mine))}
     except sqlite3.Error:
         return set()
     result = own - others
