@@ -169,8 +169,11 @@ def js_slice(start_marker, end_marker, source=None):
     return text[start:end]
 
 
-def run_node(script, *, timeout=30):
-    return subprocess.run(['node', '-e', script], capture_output=True, text=True, timeout=timeout)
+def run_node(script, *, timeout=30, cwd=None, executable='node'):
+    """Run CommonJS over stdin, without OS command-line size or locale limits."""
+    return subprocess.run([executable, '--input-type=commonjs', '-'], input=script,
+                          capture_output=True, text=True, encoding='utf-8',
+                          timeout=timeout, cwd=cwd)
 
 
 def node_ok(script, *, timeout=30):

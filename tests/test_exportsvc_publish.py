@@ -2,6 +2,7 @@
 
 Defect 7 / R04: writing an artifact and moving the active pool are two acts.
 """
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -63,6 +64,22 @@ class PublishTests(unittest.TestCase):
         self.assertEqual(stored.manifest['proxies.txt']['bytes'],
                          (artifact.directory / 'proxies.txt').stat().st_size)
         self.assertEqual(stored.expires_at, artifact.status.expires_at)
+
+    def test_manifest_matches_disk_bytes_under_windows_newline_translation(self):
+        # Reproduce Windows TextIO's default LF -> CRLF translation on every
+        # host. A checksum of the original string is not a checksum of that file.
+        original = Path.write_text
+        def windows_text(path, data, encoding=None, errors=None, newline=None):
+            return original(path, data, encoding=encoding, errors=errors,
+                            newline='\r\n' if newline is None else newline)
+        with mock.patch.object(Path, 'write_text', windows_text):
+            artifact = self.write()
+            es.publish(artifact, self.home, confirm=True)
+        for name, entry in artifact.manifest.items():
+            raw = (artifact.directory / name).read_bytes()
+            self.assertEqual(entry['bytes'], len(raw), name)
+            self.assertEqual(entry['sha256'], hashlib.sha256(raw).hexdigest(), name)
+        self.assertEqual(len(es.load_snapshot(self.home, verify=True).rows), 3)
 
     def test_publish_needs_an_explicit_confirmation(self):
         artifact = self.write()
@@ -126,7 +143,7 @@ class PublishTests(unittest.TestCase):
                 (artifact.directory / 'proxies.txt').write_text('tampered', encoding='utf-8')
 
     def test_a_failed_write_removes_the_half_written_generation(self):
-        with mock.patch.object(Path, 'write_text', side_effect=OSError('disk full')):
+        with mock.patch.object(Path, 'write_bytes', side_effect=OSError('disk full')):
             with self.assertRaises(OSError):
                 self.write()
         self.assertEqual(list((self.home / 'generations').iterdir()), [])

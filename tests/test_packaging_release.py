@@ -193,6 +193,22 @@ class VerifyReleaseTests(unittest.TestCase):
 
 
 class BuildScriptTests(unittest.TestCase):
+    def test_windows_installer_receives_absolute_source_and_output_paths(self):
+        import build_windows
+        with tempfile.TemporaryDirectory(prefix='pw-installer-') as temporary:
+            root = Path(temporary).resolve()
+            relative = Path('dist with spaces')
+            expected = relative.resolve() / 'proxy-workbench-2.3.0-windows-x64-setup.exe'
+            def compile_installer(command):
+                values = dict(value[2:].split('=', 1) for value in command if str(value).startswith('/D'))
+                self.assertEqual(Path(values['SourceDir']), relative.resolve())
+                self.assertEqual(Path(values['OutDir']), relative.resolve())
+            with mock.patch.object(build_windows, 'run', side_effect=compile_installer), \
+                    mock.patch.object(Path, 'is_file', return_value=True):
+                result, reason = build_windows.build_installer(root, relative, '2.3.0', compiler='iscc-fixture')
+            self.assertEqual(result, expected)
+            self.assertIsNone(reason)
+
     def test_the_macos_build_refuses_to_claim_an_unavailable_signature(self):
         import build_macos
         with mock.patch.object(desktop, 'signing_status',

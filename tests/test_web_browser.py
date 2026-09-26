@@ -44,7 +44,7 @@ const setTimeout = (fn) => { };
 
 
 def run(source, body, prelude=PRELUDE):
-    # node -e runs as CommonJS, so an async body needs its own function.
+    # The harness runs CommonJS, so an async body needs its own function.
     wrapped = '(async () => {\n' + body + '\n})().catch(error => { console.error(error); process.exitCode = 1; });'
     return ws.node_ok(prelude + '\n' + source + '\n' + wrapped)
 

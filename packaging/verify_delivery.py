@@ -114,7 +114,18 @@ def _wait_for(path, process, timeout):
 def stop(process, timeout=20):
     if process.poll() is not None:
         return
-    process.terminate()
+    if os.name == 'nt':
+        # A PyInstaller onefile program has a bootloader parent and an app
+        # child. TerminateProcess on only the parent leaves the app running.
+        try:
+            result = subprocess.run(['taskkill', '/PID', str(process.pid), '/T', '/F'],
+                                    capture_output=True, timeout=timeout)
+            if result.returncode != 0 and process.poll() is None:
+                process.terminate()
+        except (OSError, subprocess.TimeoutExpired):
+            process.terminate()
+    else:
+        process.terminate()
     try:
         process.wait(timeout)
     except subprocess.TimeoutExpired:

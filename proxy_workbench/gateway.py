@@ -131,25 +131,15 @@ def resolve_token(bind, token=None):
 
 
 def local_interface_addresses():
-    """Return addresses assigned to this host, without contacting a network."""
-    addresses = set()
-    try:
-        _name, _aliases, candidates = socket.gethostbyname_ex(socket.gethostname())
-        addresses.update(candidates)
-    except OSError:
-        pass
-    try:
-        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET, socket.SOCK_DGRAM):
-            addresses.add(info[4][0])
-    except OSError:
-        pass
-    return addresses
+    """Return routed IPv4 addresses without resolving this machine's hostname."""
+    from .local_network import route_addresses
+    return {address for address in route_addresses() if ipaddress.ip_address(address).version == 4}
 
 
 def lan_interfaces():
     """Concrete addresses a phone on the same LAN could dial, best first.
 
-    Local hostname metadata only: no probe, no scan, no third-party service.
+    Local route metadata only: no DNS, packets, scan or third-party service.
     """
     found = []
     for candidate in sorted(local_interface_addresses()):

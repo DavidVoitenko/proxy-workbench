@@ -350,7 +350,7 @@ def live_report():
                     outcome = await pr.run_speed_test(target, options, transport, limits=pr.SPEED_LIMITS)
                     print(f'  {label:22} state={outcome.state:12} mbps={str(outcome.mbps):8} bytes={outcome.bytes:8} '
                           f'chunks={outcome.chunks:4} ttfb={outcome.ttfb_ms}ms transfer={outcome.transfer_ms}ms')
-                    print(f'  {'':22} {outcome.detail}')
+                    print(f"  {'':22} {outcome.detail}")
                 trace = pr.TransferTrace(url='x'); trace.begin(0.0); trace.add(2_000_000, 1.0); trace.finish(1.0)
                 one = pr.measure_speed(trace)
                 print(f'  {"один чанк":22} state={one.state} mbps={one.mbps} :: {one.detail}')

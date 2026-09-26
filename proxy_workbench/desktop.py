@@ -1791,16 +1791,8 @@ def network_fingerprint():
     a route table: parsing one is a portability bug waiting to happen, and the
     native observer reports the real path where one exists.
     """
-    found = set()
-    try:
-        host = socket.gethostname()
-        for info in socket.getaddrinfo(host, None):
-            address = info[4][0]
-            if not address.startswith('127.') and address != '::1':
-                found.add(address)
-    except (OSError, UnicodeError):
-        pass
-    return tuple(sorted(found))
+    from .local_network import route_addresses
+    return route_addresses()
 
 
 class PlatformObserver:

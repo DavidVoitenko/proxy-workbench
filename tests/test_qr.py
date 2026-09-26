@@ -1,7 +1,8 @@
 import re
-import subprocess
 import unittest
 from pathlib import Path
+
+from tests.web_support import run_node
 
 
 class QREncoderTests(unittest.TestCase):
@@ -15,7 +16,7 @@ class QREncoderTests(unittest.TestCase):
         self.assertNotIn('((right + 1) / 2) % 2', function)
         payload = 'tg://socks?server=192.168.0.41&port=8899&username=workbench&password=fixture-token'
         script = function + "\nprocess.stdout.write(makeQR(" + repr(payload) + "));"
-        result = subprocess.run(['node', '-e', script], capture_output=True, text=True, timeout=10)
+        result = run_node(script, timeout=10)
         self.assertEqual(result.returncode, 0, result.stderr)
         svg = result.stdout
         self.assertRegex(svg, r'<svg[^>]+class="qr-svg"')

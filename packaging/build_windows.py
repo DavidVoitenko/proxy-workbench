@@ -36,7 +36,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from proxy_workbench import desktop
 from release_manifest import build_manifest, write_manifest
-from verify_delivery import child_environment
+from verify_delivery import child_environment, stop as stop_process
 
 GUI_EXE = 'proxy-workbench-gui.exe'
 CLI_EXE = 'proxy-workbench-cli.exe'
@@ -201,6 +201,7 @@ def build_installer(root, dist, version, *, compiler=None):
     if not compiler:
         return None, ('Inno Setup (iscc) was not found on PATH; the per-user installer was not built. '
                       'Install Inno Setup 6 and run this script again.')
+    root, dist = Path(root).resolve(), Path(dist).resolve()
     run([compiler, f'/DProductVersion={version}', f'/DOutDir={dist}', f'/DSourceDir={dist}',
          str(root / 'packaging' / 'windows-installer.iss')])
     setup = Path(dist) / f'proxy-workbench-{version}-windows-x64-setup.exe'
@@ -272,14 +273,7 @@ def _instances(gui):
 
 
 def _stop(process):
-    if process.poll() is not None:
-        return
-    process.terminate()
-    try:
-        process.wait(15)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        process.wait(15)
+    stop_process(process, timeout=15)
 
 
 def _wait_for(path, process, timeout):

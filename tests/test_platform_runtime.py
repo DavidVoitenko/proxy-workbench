@@ -167,6 +167,60 @@ lock.release()
         for key in ('data', 'cache', 'logs'):
             self.assertEqual(expected[key], getattr(resolved, key))
 
+    def test_network_status_uses_local_routes_without_dns_or_sending_packets(self):
+        from proxy_workbench import gateway, local_network
+        sockets = []
+        def local_socket(family, kind):
+            self.assertEqual(kind, local_network.socket.SOCK_DGRAM)
+            connection = mock.MagicMock()
+            connection.__enter__.return_value = connection
+            address = '192.168.40.2' if family == local_network.socket.AF_INET else '2001:db8::2'
+            connection.getsockname.return_value = (address, 12345)
+            sockets.append(connection)
+            return connection
+        with mock.patch.object(local_network.socket, 'socket', side_effect=local_socket), \
+                mock.patch.object(local_network.socket, 'getaddrinfo', side_effect=AssertionError('DNS must not run')), \
+                mock.patch.object(local_network.socket, 'gethostbyname_ex', side_effect=AssertionError('DNS must not run')):
+            self.assertEqual(desktop.network_fingerprint(), ('192.168.40.2', '2001:db8::2'))
+            self.assertEqual(gateway.lan_interfaces(), ['192.168.40.2'])
+        for connection in sockets:
+            connection.connect.assert_called_once()
+            connection.settimeout.assert_called_once_with(.2)
+            connection.send.assert_not_called()
+            connection.sendto.assert_not_called()
+
+    def test_network_status_is_empty_when_no_local_route_is_available(self):
+        from proxy_workbench import local_network
+        with mock.patch.object(local_network.socket, 'socket', side_effect=OSError('offline')):
+            self.assertEqual(local_network.route_addresses(), ())
+
+    def test_windows_packaging_cleanup_stops_the_owned_process_tree(self):
+        process = mock.Mock(pid=12345)
+        process.poll.return_value = None
+        with mock.patch.object(verify_delivery.os, 'name', 'nt'), \
+                mock.patch.object(verify_delivery.subprocess, 'run', return_value=mock.Mock(returncode=0)) as terminate:
+            verify_delivery.stop(process)
+        self.assertEqual(terminate.call_args.args[0], ['taskkill', '/PID', '12345', '/T', '/F'])
+        process.terminate.assert_not_called()
+        process.wait.assert_called_once()
+
+    def test_smoke_timeout_reports_the_child_output_and_stops_it(self):
+        import smoke
+        script = self.root / 'startup_fixture.py'
+        script.write_text("import sys, time\n"
+                          "if '--version' in sys.argv: print('Proxy Workbench fixture')\n"
+                          "elif 'collect' not in sys.argv:\n"
+                          "    print('fixture waiting before GUI', flush=True)\n"
+                          "    time.sleep(30)\n", encoding='utf-8')
+        wait = smoke.wait_for
+        error = io.StringIO()
+        with mock.patch.object(smoke, 'wait_for', side_effect=lambda check, timeout=60: wait(check, .5, .01)), \
+                contextlib.redirect_stderr(error), contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaises(TimeoutError):
+                smoke.main([sys.executable, str(script)])
+        self.assertIn('fixture waiting before GUI', error.getvalue())
+        self.assertIn('Desktop journal:', error.getvalue())
+
     @unittest.skipIf(os.name == 'nt', 'POSIX source launchers')
     def test_shell_launchers_preserve_arguments_and_skip_installed_dependencies(self):
         # No pip or system Python is invoked. The existing venv stand-in records
