@@ -67,9 +67,30 @@ def clash(rows, limit=CLASH_LIMIT):
 
 SINGBOX_TYPES = {'http': ('http', None), 'socks4': ('socks', '4'), 'socks5': ('socks', '5'), 'socks5h': ('socks', '5')}
 
+#: How a set with no usable outbound refuses traffic.  ``rule_action`` is the
+#: documented current form - a route rule with ``"action": "reject"`` - and is
+#: the default, because ``block`` has been deprecated since sing-box 1.11.0
+#: (https://sing-box.sagernet.org/migration/ , "Migrate legacy special outbounds
+#: to rule actions").  ``block`` stays reachable for a client pinned below
+#: 1.11.0, and only for one: a caller that cannot name the target client gets
+#: the form the current documentation describes rather than the form it
+#: deprecated, and ``exportsvc`` refuses the file outright instead of choosing
+#: when it can record the choice.
+FAIL_CLOSED_RULE_ACTION = 'rule_action'
+FAIL_CLOSED_BLOCK = 'block'
+FAIL_CLOSED_FORMS = (FAIL_CLOSED_RULE_ACTION, FAIL_CLOSED_BLOCK)
 
-def singbox(rows, limit=CLASH_LIMIT):
-    """A sing-box config with a local mixed inbound and no implicit DIRECT fallback."""
+
+def singbox(rows, limit=CLASH_LIMIT, fail_closed=FAIL_CLOSED_RULE_ACTION):
+    """A sing-box config with a local mixed inbound and no implicit DIRECT fallback.
+
+    Neither form of the reject is a ``direct`` outbound, so an empty or
+    unsupported-only set fails closed instead of routing everything straight
+    out.  ``fail_closed`` only chooses which reject the target client reads;
+    a set with usable outbounds is identical either way.
+    """
+    if fail_closed not in FAIL_CLOSED_FORMS:
+        raise ValueError('fail_closed must be one of %s' % (FAIL_CLOSED_FORMS,))
     outbounds = []
     for row in rows:
         scheme, host, port = split(row['proxy'])
@@ -84,17 +105,23 @@ def singbox(rows, limit=CLASH_LIMIT):
         if len(outbounds) >= limit:
             break
     tags = [outbound['tag'] for outbound in outbounds]
-    if tags:
-        auto = {'type': 'urltest', 'tag': 'auto', 'outbounds': tags,
-                'url': 'http://www.gstatic.com/generate_204', 'interval': '5m'}
-        route_final = 'auto'
-    else:
-        # ``block`` is a real sing-box outbound and makes an empty/expired
-        # export fail closed instead of routing all traffic directly.
-        auto = {'type': 'block', 'tag': 'blocked'}
-        route_final = 'blocked'
     config = {'log': {'level': 'warn'},
-              'inbounds': [{'type': 'mixed', 'tag': 'in', 'listen': '127.0.0.1', 'listen_port': 2080}],
-              'outbounds': [auto, *outbounds],
-              'route': {'final': route_final}}
+              'inbounds': [{'type': 'mixed', 'tag': 'in', 'listen': '127.0.0.1', 'listen_port': 2080}]}
+    if tags:
+        config['outbounds'] = [{'type': 'urltest', 'tag': 'auto', 'outbounds': tags,
+                                'url': 'http://www.gstatic.com/generate_204', 'interval': '5m'},
+                               *outbounds]
+        config['route'] = {'final': 'auto'}
+    elif fail_closed == FAIL_CLOSED_BLOCK:
+        # ``block`` is a real sing-box outbound and is what a client below
+        # 1.11.0 reads.  From 1.11.0 on it is deprecated.
+        config['outbounds'] = [{'type': 'block', 'tag': 'blocked'}]
+        config['route'] = {'final': 'blocked'}
+    else:
+        # The documented replacement: a route rule with a reject action, no
+        # outbound to route through.  The configuration docs do not say whether
+        # an empty ``outbounds`` list is accepted, so ``exportsvc`` marks this
+        # shape unverified and the pinned client decides.
+        config['outbounds'] = []
+        config['route'] = {'rules': [{'action': 'reject'}]}
     return json.dumps(config, ensure_ascii=False, indent=2) + '\n'

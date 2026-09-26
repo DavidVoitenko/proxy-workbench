@@ -441,12 +441,23 @@ class SelectionExportTests(AcceptanceCase):
     def test_an_empty_export_never_selects_a_direct_route(self):
         self.export()
         directory = p.current_generation_name(self.home / 'exports')
-        clash = (self.home / 'exports' / 'generations' / directory / 'clash.yaml').read_text()
-        singbox = json.loads((self.home / 'exports' / 'generations' / directory / 'singbox.json')
-                             .read_text())
+        generation = self.home / 'exports' / 'generations' / directory
+        clash = (generation / 'clash.yaml').read_text()
+        pac = (generation / 'proxy.pac').read_text()
         self.assertNotIn('DIRECT', clash)
         self.assertIn('REJECT', clash)
-        self.assertNotEqual(singbox['outbounds'][0]['type'], 'direct')
+        self.assertNotIn('DIRECT', pac)
+        # No client version is pinned here, so the sing-box file - whose reject
+        # is the one construct whose form depends on the version - is not
+        # written at all.  What must never happen is a DIRECT, in any file.
+        self.assertFalse((generation / 'singbox.json').exists())
+        status = json.loads((generation / 'status.json').read_text())
+        singbox = status['compat']['files']['singbox.json']
+        self.assertFalse(singbox['written'])
+        self.assertEqual(singbox['reasons'], ['E_EXPORT_TARGET_UNPINNED'])
+        self.assertNotIn('DIRECT', (generation / 'proxies.txt').read_text())
+        # and nothing anywhere in the artifact names a direct outbound
+        self.assertNotIn('"direct"', json.dumps(status['compat']))
 
 
 # ---------------------------------------------------------------------------

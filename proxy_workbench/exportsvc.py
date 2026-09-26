@@ -40,7 +40,7 @@ import stat
 import subprocess
 import tempfile
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 from urllib.parse import urlsplit
@@ -51,15 +51,16 @@ from .proxytool import (PROTOCOL_ALIASES, PROTOCOL_EXPORTS, PROTOCOLS, PROXYCHAI
                         proxy_protocol, reputation_status)
 
 __all__ = [
-    'ARTIFACT_KINDS', 'DIAGNOSTIC_POINTER_NAME', 'EXPORT_CODES', 'GENERATION_PREFIX',
-    'MERGE_MODES', 'POINTER_NAME', 'ROW_FIELDS', 'SUPPORTED_SCHEMA_VERSIONS',
-    'SNAPSHOT_SCHEMA_VERSION', 'Artifact', 'CompatReport', 'ExportError', 'ExportOptions',
-    'ExportScope', 'LoadedSnapshot', 'Pointer', 'SecretGrant', 'SingBoxTarget', 'SnapshotStatus',
-    'Unsupported', 'attach_admission', 'build_status', 'client_check', 'compat_report',
-    'generation_name', 'load_snapshot', 'prune_generations', 'publish', 'read_pointer',
-    'record_artifact', 'redact_row', 'render_clash', 'render_csv', 'render_hostport', 'render_json',
-    'render_pac', 'render_protocol_files', 'render_proxychains', 'render_singbox',
-    'render_snapshot_txt', 'render_txt', 'singbox_target', 'status_from_dict', 'write_snapshot',
+    'ARTIFACT_KINDS', 'CLIENT_BINARY_ENV', 'CLIENT_SIDECAR_NAME', 'CLIENT_TARGET_ENV', 'DIAGNOSTIC_POINTER_NAME',
+    'EXPORT_CODES', 'GENERATION_PREFIX', 'MERGE_MODES', 'POINTER_NAME', 'ROW_FIELDS',
+    'SUPPORTED_SCHEMA_VERSIONS', 'SNAPSHOT_SCHEMA_VERSION', 'Artifact', 'CompatReport', 'ExportError',
+    'ExportOptions', 'ExportScope', 'LoadedSnapshot', 'Pointer', 'ResolvedClientTarget', 'SecretGrant',
+    'SingBoxTarget', 'SnapshotStatus', 'Unsupported', 'attach_admission', 'build_status', 'client_check',
+    'compat_report', 'generation_name', 'load_snapshot', 'prune_generations', 'publish', 'read_client_sidecar',
+    'read_pointer', 'record_artifact', 'redact_row', 'render_clash', 'render_csv', 'render_hostport',
+    'render_json', 'render_pac', 'render_protocol_files', 'render_proxychains', 'render_singbox',
+    'render_snapshot_txt', 'render_txt', 'resolve_client_target', 'singbox_target', 'status_from_dict',
+    'write_snapshot',
 ]
 
 # 1 is what ``proxytool.SNAPSHOT_SCHEMA_VERSION`` writes today; it stays
@@ -132,6 +133,15 @@ EXPORT_CODES = {
     'E_EXPORT_TARGET_UNKNOWN': (
         'Версия клиента {target!r} не разобрана; совместимость не подтверждена.',
         'Client version {target!r} could not be parsed; compatibility is unverified.'),
+    'E_EXPORT_TARGET_UNPINNED': (
+        'Версия клиента не задана, поэтому файл не проверён целевым клиентом. Задайте client_target '
+        '(например 1.14.0), переменную PROXY_WORKBENCH_SINGBOX_TARGET или client.json рядом со снимками.',
+        'No client version is pinned, so the file was not checked by a target client. Set client_target '
+        '(e.g. 1.14.0), PROXY_WORKBENCH_SINGBOX_TARGET, or client.json next to the snapshots.'),
+    'E_EXPORT_TARGET_LEGACY_OPTIN': (
+        'Отказ через outbound block устарел с sing-box 1.11.0 и записан только по явному запросу legacy-block.',
+        'The block-outbound reject is deprecated since sing-box 1.11.0 and is written only on an '
+        'explicit legacy-block request.'),
     'E_EXPORT_TARGET_UNVERIFIED': (
         'Версия клиента {target} новее проверенной ({verified}); файл не публикуется без проверки.',
         'Client version {target} is newer than the verified one ({verified}); the file is not published unchecked.'),
@@ -170,14 +180,46 @@ EXPORT_CODES = {
         'Table export_artifact does not match the contract (migration 11): {detail}'),
 }
 
-# 1.11.0 deprecated the special ``block``/``dns`` outbounds and moved them to
-# route-rule actions (https://sing-box.sagernet.org/migration/, "Migrate legacy
-# special outbounds to rule actions").  ``route.final`` and the ``urltest``
-# ``outbounds`` list carry no deprecation notice in the configuration docs read
-# for this module, so the reject is the only version-dependent construct here.
+# Version rules, and the pages they were read from (read 2026-09-26, official
+# documentation only, four pages):
+#
+# * https://sing-box.sagernet.org/migration/ — "Legacy special outbounds are
+#   deprecated and can be replaced by rule actions"; the documented migration
+#   is ``{"outbound": "block"}`` → ``{"action": "reject"}``.  The same page is
+#   the one that names 1.15.0, the newest release line the docs describe.
+# * https://sing-box.sagernet.org/configuration/route/rule/ — the rule ``action``
+#   field appears under "Changes in sing-box 1.11.0" next to ``outbound``, so
+#   rule actions exist from 1.11.0 and not from some later release.  (The
+#   dedicated rule-action page carries "Since sing-box 1.13.0" for the *fields
+#   of an action*, which is a later extension and not the field's origin.)
+# * https://sing-box.sagernet.org/configuration/route/ — "Default outbound tag.
+#   the first outbound will be used if empty."  That is why an empty
+#   ``outbounds`` list with no ``final`` is marked unverified rather than
+#   assumed to fail closed, and why a ``direct`` outbound is forbidden outright.
+# * https://sing-box.sagernet.org/configuration/outbound/urltest/ — the member
+#   list is ``outbounds`` and ``interval`` takes a duration such as ``"5m"``.
+#
+# The single version-dependent construct this module writes is the *reject* for
+# a set with no usable outbound.  ``route.final`` and the ``urltest`` member
+# list carry no deprecation notice in any of these pages, so a set that has
+# usable outbounds produces the same file at every version.
 SINGBOX_RULE_ACTIONS_FROM = (1, 11, 0)
 SINGBOX_MIN_VERIFIED = (1, 0, 0)
-SINGBOX_MAX_VERIFIED = (1, 14, 0)
+SINGBOX_MAX_VERIFIED = (1, 15, 0)
+
+#: A named request for the pre-1.11 reject.  It exists so the deprecated form
+#: is reachable on purpose instead of by accident: shipping it because nobody
+#: said which client the file is for is what defect 20 is about.
+SINGBOX_LEGACY_OPTIN = 'legacy-block'
+
+#: Where a pinned target may come from, in the order the resolver reads it.
+#: None of these need a change in ``proxytool.py`` or ``api.py``: the snapshot
+#: root and the environment are read here, so a CLI flag, a GUI field or an API
+#: parameter only has to hand its value to ``ExportOptions``.
+CLIENT_TARGET_ENV = 'PROXY_WORKBENCH_SINGBOX_TARGET'
+CLIENT_BINARY_ENV = 'PROXY_WORKBENCH_SINGBOX_BIN'
+CLIENT_SIDECAR_NAME = 'client.json'
+CLIENT_TARGET_SOURCES = ('options', CLIENT_TARGET_ENV, CLIENT_SIDECAR_NAME, 'unconfigured')
 
 
 class ExportError(Exception):
@@ -197,6 +239,11 @@ def _reason_text(code: str, **context: Any) -> str:
     ru, en = template
     text = tr(ru, en)
     for name, value in context.items():
+        # ``str.format`` conversions belong to the template (``{target!r}``).
+        # Substituting only the bare name left the placeholder in the message
+        # the user is shown, which is the opposite of actionable.
+        text = text.replace('{' + name + '!r}', repr(value))
+        text = text.replace('{' + name + '!s}', str(value))
         text = text.replace('{' + name + '}', str(value))
     return text
 
@@ -544,8 +591,8 @@ class SingBoxTarget:
     """A parsed client version and the one construct that depends on it.
 
     ``state`` says how much is actually known: ``configured`` (a version the
-    user pinned), ``unconfigured`` (none pinned, so the historically shipped
-    shape is produced and labelled as unverified), ``unknown`` (unparsable),
+    user pinned), ``unconfigured`` (none pinned), ``legacy_optin`` (somebody
+    asked by name for the pre-1.11 reject), ``unknown`` (unparsable),
     ``unsupported`` (older than anything checkable) and ``unverified`` (newer
     than the newest version whose rules were read).
     """
@@ -564,6 +611,23 @@ class SingBoxTarget:
     def configured(self) -> bool:
         return self.state == 'configured'
 
+    @property
+    def legacy_optin(self) -> bool:
+        """Somebody asked for the deprecated reject by name."""
+        return self.state == 'legacy_optin'
+
+    @property
+    def version_dependent_reject_available(self) -> bool:
+        """Whether the version says which reject form this client reads.
+
+        A pinned version always does: below 1.11.0 that is the ``block``
+        outbound, from 1.11.0 on it is the rule action.  Only a target that was
+        never established leaves the choice open, and then the only shapes left
+        are a construct deprecated since 1.11.0 and one whose acceptance the
+        docs do not state - so the generator refuses instead of choosing.
+        """
+        return self.configured or self.legacy_optin
+
     def require(self) -> 'SingBoxTarget':
         if not self.supported:
             raise ExportError(self.reason or 'E_EXPORT_TARGET_UNVERIFIED', target=self.version,
@@ -577,18 +641,22 @@ def _version_text(numeric: Sequence[int]) -> str:
 
 
 def singbox_target(version: str | None) -> SingBoxTarget:
-    """Parse ``1.11.0`` / ``v1.11`` / ``latest`` into the shape the renderer needs.
+    """Parse ``1.11.0`` / ``v1.11`` / ``latest`` / ``legacy-block`` for the renderer.
 
-    No pinned version produces the shape the product has always written, and the
-    artifact says the target was unconfigured and no client check ran.  An
-    unparsable or unverified version is refused: falling back silently would mean
-    shipping a config for a client nobody checked (R14).
+    A pinned version produces the reject the pinned client reads.  No pinned
+    version produces the version-independent shape, and the artifact says the
+    target was unconfigured and that no client check ran.  An unparsable or
+    unverified version is refused: falling back silently would mean shipping a
+    config for a client nobody checked (R14).  ``legacy-block`` is the one
+    named exception, and it is only a named exception.
     """
     raw = (version or '').strip()
     if not raw:
         return SingBoxTarget('legacy', None, False, 'unconfigured')
     if raw.lower() in ('latest', 'current'):
         return SingBoxTarget(_version_text(SINGBOX_MAX_VERIFIED), SINGBOX_MAX_VERIFIED, True, 'configured')
+    if raw.lower() == SINGBOX_LEGACY_OPTIN:
+        return SingBoxTarget(SINGBOX_LEGACY_OPTIN, None, False, 'legacy_optin')
     match = re.fullmatch(r'v?(\d+)(?:\.(\d+))?(?:\.(\d+))?', raw)
     if not match:
         return SingBoxTarget(raw, None, False, 'unknown', 'E_EXPORT_TARGET_UNKNOWN')
@@ -600,16 +668,89 @@ def singbox_target(version: str | None) -> SingBoxTarget:
     return SingBoxTarget(raw, numeric, numeric >= SINGBOX_RULE_ACTIONS_FROM, 'configured')
 
 
+@dataclass(frozen=True)
+class ResolvedClientTarget:
+    """Where a target version and a client binary came from, and their values.
+
+    The value is what :func:`singbox_target` parses; ``source`` is which of
+    ``options`` / the environment / the snapshot sidecar supplied it, so an
+    artifact can record that its compatibility was pinned by a setting rather
+    than by the user typing it into this run.
+    """
+
+    target: SingBoxTarget
+    binary: str | None = None
+    source: str = 'unconfigured'
+    binary_source: str | None = None
+
+    def as_dict(self) -> dict[str, Any]:
+        return {'client_target': self.target.version, 'client_target_state': self.target.state,
+                'client_target_source': self.source,
+                'client_binary': self.binary, 'client_binary_source': self.binary_source}
+
+    @property
+    def verified_by(self) -> bool:
+        """Whether a client binary was configured and the file was sent to it."""
+        return bool(self.binary)
+
+
+def read_client_sidecar(directory: Any) -> dict[str, Any]:
+    """``client.json`` next to the snapshots: a pinned target for every run.
+
+    A file, not a setting, so a portable data directory carries its own
+    compatibility contract; a missing or unreadable file is "nothing pinned",
+    never an error that stops an export.
+    """
+    try:
+        data = json.loads((Path(directory) / CLIENT_SIDECAR_NAME).read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, Mapping) else {}
+
+
+def resolve_client_target(options: 'ExportOptions | None' = None, *, directory: Any = None,
+                          environ: Mapping[str, str] | None = None) -> ResolvedClientTarget:
+    """Find the target version and the client binary, in one documented order.
+
+    ``options`` (a CLI flag, a GUI field or an API parameter) wins, then
+    ``PROXY_WORKBENCH_SINGBOX_TARGET`` / ``PROXY_WORKBENCH_SINGBOX_BIN``, then
+    ``client.json`` in the snapshot root, then nothing at all - which is a
+    state, not a failure.  The same value flows into the status of every
+    artifact, so "was this file compatibility-checked" is answerable from the
+    file itself.
+    """
+    options = options or ExportOptions()
+    environ = os.environ if environ is None else environ
+    sidecar = read_client_sidecar(directory) if directory is not None else {}
+    version, source = options.client_target, 'options'
+    if not version:
+        version, source = environ.get(CLIENT_TARGET_ENV) or '', CLIENT_TARGET_ENV
+    if not version:
+        version, source = str(sidecar.get('target') or sidecar.get('client_target') or ''), CLIENT_SIDECAR_NAME
+    if not version:
+        source = 'unconfigured'
+    binary, binary_source = options.client_binary, 'options'
+    if not binary:
+        binary, binary_source = environ.get(CLIENT_BINARY_ENV) or '', CLIENT_BINARY_ENV
+    if not binary:
+        binary, binary_source = str(sidecar.get('binary') or sidecar.get('client_binary') or ''), CLIENT_SIDECAR_NAME
+    return ResolvedClientTarget(singbox_target(version), binary or None,
+                                source if version else 'unconfigured',
+                                binary_source if binary else None)
+
+
 def render_singbox(rows: Sequence[Mapping[str, Any]], *, options: ExportOptions | None = None,
                    target: str | SingBoxTarget | None = None) -> str:
     """A sing-box config that fails closed for this exact client version.
 
     For a version that predates rule actions the fail-closed reject is the
-    ``block`` outbound, which is exactly what the shipped format module writes
-    today.  From 1.11.0 on that outbound is deprecated, and the same refusal is
-    a route rule with ``action: reject``.  Nothing here ever emits a ``direct``
-    outbound, so an empty or unsupported-only set cannot turn into an
-    unproxied connection (defect 20).
+    ``block`` outbound, reachable only for a pinned ``<1.11`` client or for an
+    explicit ``legacy-block`` request.  From 1.11.0 on that outbound is
+    deprecated and the same refusal is a route rule with ``action: reject``.
+    Nothing here ever emits a ``direct`` outbound, so an empty or
+    unsupported-only set cannot turn into an unproxied connection (defect 20),
+    and a set with usable outbounds is version-independent, so it is written
+    even when no target was pinned - marked unverified, never marked checked.
     """
     options = options or ExportOptions()
     resolved = target if isinstance(target, SingBoxTarget) else singbox_target(
@@ -621,9 +762,16 @@ def render_singbox(rows: Sequence[Mapping[str, Any]], *, options: ExportOptions 
     cap = options.limit('singbox') or formats.CLASH_LIMIT
     report = compat_report(rows, 'singbox', options=options, target=resolved.version)
     usable = _limit_rows(rows, report.supported, cap)
+    if not usable and not resolved.version_dependent_reject_available:
+        # The reject is the only construct here whose form depends on the
+        # version, and nothing established the version.  Writing either form
+        # would be a guess; refusing is the fail-closed answer, and
+        # ``_singbox_with_report`` records the reason next to the file that is
+        # missing.
+        raise ExportError('E_EXPORT_TARGET_UNPINNED', target=resolved.version)
     if resolved.uses_rule_actions:
         return _singbox_rule_actions(usable)
-    return formats.singbox(usable, cap)
+    return formats.singbox(usable, cap, fail_closed='block')
 
 
 def _singbox_rule_actions(rows: Sequence[Mapping[str, Any]]) -> str:
@@ -984,7 +1132,12 @@ class SnapshotStatus:
             'sort': self.options.sort,
             'top': self.options.top,
             'credentials': self.options.credentials,
-            'client_target': self.options.client_target,
+            'client_target': (self.compat.get('client_target')
+                              if self.compat.get('client_target') is not None else self.options.client_target),
+            'client_target_state': self.compat.get('client_target_state', 'unconfigured'),
+            'client_target_source': self.compat.get('client_target_source', 'unconfigured'),
+            'client_binary': self.compat.get('client_binary'),
+            'client_target_required': self.compat.get('client_target_required', False),
             'min_anonymity': self.policy.min_anonymity,
             'protocol': self.scope.protocol,
             'countries': list(self.scope.countries),
@@ -1140,6 +1293,7 @@ def status_from_dict(data: Mapping[str, Any]) -> SnapshotStatus:
              'collection_id', 'generation', 'state', 'state_detail', 'stop_reason', 'scope',
              'scope_digest', 'artifact_digest', 'merge_mode', 'source_binding', 'max_age_seconds',
              'min_success', 'min_anonymity', 'sort', 'top', 'credentials', 'client_target',
+             'client_target_state', 'client_target_source', 'client_binary', 'client_target_required',
              'protocol', 'countries', 'exclude_hosting', 'max_latency', 'query', 'quick',
              'watch_minutes', 'generated_at', 'published_at', 'valid_until', 'expires_at',
              'stale', 'empty_export', 'complete', 'exported', 'admitted', 'rejected',
@@ -1332,12 +1486,18 @@ def write_snapshot(directory: Any, rows: Sequence[Mapping[str, Any]], *, scope: 
                    policy: core.Policy | None = None, grant: SecretGrant | None = None,
                    selection: core.Selection | None = None, now: float | None = None,
                    run_state: Mapping[str, Any] | None = None,
-                   extra: Mapping[str, Any] | None = None) -> Artifact:
+                   extra: Mapping[str, Any] | None = None,
+                   client: ResolvedClientTarget | None = None) -> Artifact:
     """Write one immutable generation and return it.  The pointer is not touched.
 
     Nothing here can change the active pool: that is :func:`publish`'s job, and
     only for ``kind='published'``.  A selection, a top-N slice and a search
     result all land here (defect 7).
+
+    ``client`` is the resolved target version and client binary.  Left out, it
+    is resolved from the options, the environment and ``client.json`` beside
+    the snapshots, so a caller that never mentions a client still gets the
+    compatibility decision recorded honestly instead of an unverified file.
     """
     if kind not in ARTIFACT_KINDS:
         raise ExportError('E_VALIDATION_FIELD', f'kind must be one of {ARTIFACT_KINDS}')
@@ -1346,6 +1506,7 @@ def write_snapshot(directory: Any, rows: Sequence[Mapping[str, Any]], *, scope: 
     if options.wants_credentials:
         (grant or SecretGrant()).check(scope)
     root = Path(directory)
+    resolved_client = client or resolve_client_target(options, directory=root)
     generations = root / 'generations'
     generations.mkdir(parents=True, exist_ok=True)
     published_at = float(now if now is not None
@@ -1369,9 +1530,10 @@ def write_snapshot(directory: Any, rows: Sequence[Mapping[str, Any]], *, scope: 
                              'proxy.pac': render_pac(granted_rows, options),
                              'clash.yaml': render_clash(granted_rows, options)}
     files.update(render_protocol_files(granted_rows))
-    singbox, singbox_report = _singbox_with_report(granted_rows, options)
-    files['singbox.json'] = singbox
-    compat = _compatibility(granted_rows, options, singbox_report)
+    singbox, singbox_report = _singbox_with_report(granted_rows, options, resolved_client.target)
+    if singbox is not None:
+        files['singbox.json'] = singbox
+    compat = _compatibility(granted_rows, options, singbox_report, resolved_client, written=tuple(files))
 
     name = generation_name()
     generation = generations / name
@@ -1421,25 +1583,44 @@ def _with_access_reference(row: Mapping[str, Any]) -> dict[str, Any]:
     return item
 
 
-def _singbox_with_report(rows: Sequence[Mapping[str, Any]], options: ExportOptions) -> tuple[str, CompatReport]:
-    target = singbox_target(options.client_target)
+def _singbox_with_report(rows: Sequence[Mapping[str, Any]], options: ExportOptions,
+                         target: SingBoxTarget) -> tuple[str | None, CompatReport]:
+    """Render the file and say, in the report, how far it was checked.
+
+    Returns ``(None, report)`` when the only thing left to write is the
+    version-dependent reject and no version was established: the artifact then
+    carries every other file, the sing-box entry is marked as not written, and
+    the reason plus the action are in ``status.json`` where a GUI or an API can
+    show them.  That is a fail-closed generation error, not a silent choice of
+    a deprecated shape (defect 20).
+    """
     if not target.supported:
         raise ExportError(target.reason or 'E_EXPORT_TARGET_UNVERIFIED', target=target.version,
                           verified=_version_text(SINGBOX_MAX_VERIFIED),
                           minimum=_version_text(SINGBOX_MIN_VERIFIED))
     report = compat_report(rows, 'singbox', options=options, target=target.version,
                            target_state=target.state)
+    if not report.supported and not target.version_dependent_reject_available:
+        return None, replace(report,
+                             reasons=('E_EXPORT_TARGET_UNPINNED',),
+                             warnings=tuple(report.warnings) + (_reason_text('E_EXPORT_TARGET_UNPINNED'),),
+                             state_detail=core.DETAIL_NO_MATCH)
+    text = render_singbox(rows, options=options, target=target)
     if options.client_binary:
-        text = render_singbox(rows, options=options, target=target)
         result, detail = client_check(text, target, binary=options.client_binary)
-        report = CompatReport(**{**report.__dict__, 'client_check': result, 'client_detail': detail})
+        report = replace(report, client_check=result, client_detail=detail)
         if result == 'failed':
             raise ExportError('E_EXPORT_CLIENT_REJECTED', target=target.version, detail=detail)
-    return render_singbox(rows, options=options, target=target), report
+    elif not target.configured:
+        report = replace(report, warnings=tuple(report.warnings)
+                         + (_reason_text('E_EXPORT_TARGET_LEGACY_OPTIN' if target.legacy_optin
+                                         else 'E_EXPORT_TARGET_UNPINNED'),))
+    return text, report
 
 
 def _compatibility(rows: Sequence[Mapping[str, Any]], options: ExportOptions,
-                   singbox_report: CompatReport) -> dict[str, Any]:
+                   singbox_report: CompatReport, client: ResolvedClientTarget,
+                   written: Sequence[str] = ()) -> dict[str, Any]:
     """Per-file preview plus the rows no file could carry, with reasons."""
     files: dict[str, Any] = {}
     unsupported: list[dict[str, Any]] = []
@@ -1455,6 +1636,7 @@ def _compatibility(rows: Sequence[Mapping[str, Any]], options: ExportOptions,
         fail_closed = not report.supported and bool(rows)
         summary = report.as_dict(unsupported_limit=options.unsupported_limit)
         summary['fail_closed'] = fail_closed or summary['fail_closed']
+        summary['written'] = bool(written) is False or name in written
         summary['state_detail'] = core.DETAIL_NO_MATCH if fail_closed else summary['state_detail']
         files[name] = summary
         warnings.extend(report.warnings)
@@ -1469,7 +1651,12 @@ def _compatibility(rows: Sequence[Mapping[str, Any]], options: ExportOptions,
             'unsupported_total': len(unsupported),
             'warnings': sorted(set(warnings)),
             'credentials': options.credentials,
-            'client_target': options.client_target}
+            'client_target': client.target.version,
+            'client_target_state': client.target.state,
+            'client_target_source': client.source,
+            'client_binary': client.binary,
+            'client_check': singbox_report.client_check,
+            'client_target_required': options.client_target is None and client.source == 'unconfigured'}
 
 
 def publish(artifact: Artifact, directory: Any, *, confirm: bool = False,

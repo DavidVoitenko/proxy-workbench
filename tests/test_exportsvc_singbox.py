@@ -37,14 +37,29 @@ def scope():
 
 class TargetTests(unittest.TestCase):
     def test_versions_are_parsed_and_gated(self):
+        # 1.15.0 is the newest release the current official docs describe
+        # (https://sing-box.sagernet.org/migration/ names it), so it is inside
+        # the verified window; 1.99.0 is past what the docs were read for.
         cases = {'1.8.0': (True, False), '1.10.2': (True, False), '1.11.0': (True, True),
-                 'v1.12': (True, True), '1.14.0': (True, True), 'latest': (True, True),
-                 '1.15.0': (False, True), '0.9.0': (False, False)}
+                 'v1.12': (True, True), '1.14.0': (True, True), '1.15.0': (True, True),
+                 'latest': (True, True), '1.99.0': (False, True), '0.9.0': (False, False)}
         for version, (supported, rule_actions) in cases.items():
             with self.subTest(version=version):
                 target = es.singbox_target(version)
                 self.assertEqual(target.supported, supported)
                 self.assertEqual(target.uses_rule_actions, rule_actions)
+
+    def test_the_legacy_reject_is_a_named_opt_in_and_nothing_else(self):
+        target = es.singbox_target(es.SINGBOX_LEGACY_OPTIN)
+        self.assertTrue(target.supported)
+        self.assertTrue(target.legacy_optin)
+        self.assertFalse(target.configured)
+        self.assertFalse(target.uses_rule_actions)
+        self.assertEqual([item['type'] for item in json.loads(
+            es.render_singbox([], target=target))['outbounds']], ['block'])
+        for version in (None, '', 'unconfigured'):
+            with self.subTest(version=version):
+                self.assertFalse(es.singbox_target(version).version_dependent_reject_available)
 
     def test_an_unparsable_version_is_reported_not_guessed(self):
         for version in ('nightly', 'x.y.z', '1.x', '1.11.0-rc1'):
@@ -80,23 +95,55 @@ class TargetTests(unittest.TestCase):
 
 
 class LegacyTargetTests(unittest.TestCase):
-    def test_before_1_11_the_output_is_exactly_what_the_shipped_format_writes(self):
+    def test_before_1_11_the_output_is_the_block_outbound(self):
+        # ``formats.singbox`` no longer defaults to the form deprecated in
+        # 1.11.0, so a pre-1.11 client is asked for it by name.
         self.assertEqual(es.render_singbox(ROWS, target='1.10.2'), formats.singbox(ROWS))
         empty = es.render_singbox([], target='1.10.2')
-        self.assertEqual(empty, formats.singbox([]))
+        self.assertEqual(empty, formats.singbox([], fail_closed='block'))
         self.assertEqual([item['type'] for item in json.loads(empty)['outbounds']], ['block'])
         self.assertNotIn('action', json.loads(empty)['route'])
 
-    def test_switching_the_engine_over_keeps_the_file_it_produces_today(self):
+    def test_a_set_with_outbounds_carries_no_version_dependent_construct(self):
+        # The reject is the only construct whose form depends on the version, so
+        # a usable set never needs one: at every target it keeps its outbounds,
+        # and no target ever produces the deprecated special outbound.
+        for version in (None, '1.10.2', '1.11.0', '1.14.0', 'latest', es.SINGBOX_LEGACY_OPTIN):
+            with self.subTest(version=version):
+                config = json.loads(es.render_singbox(ROWS, target=version))
+                types = [item.get('type') for item in config['outbounds']]
+                self.assertEqual(types[0], 'urltest')
+                self.assertNotIn('block', types)
+                self.assertNotIn('dns', types)
+                self.assertNotIn('direct', types)
+                self.assertEqual(sorted(types[1:]), ['http', 'socks'])
+                self.assertEqual(config['route']['final'], 'auto')
+
+    def test_an_unpinned_target_writes_no_reject_at_all(self):
+        # Without a target there is no version, and the two reject forms are
+        # both guesses: one deprecated since 1.11.0, one whose acceptance the
+        # docs do not state.  The file is refused and the reason is the code.
+        with self.assertRaises(es.ExportError) as caught:
+            es.render_singbox([], target=None)
+        self.assertEqual(caught.exception.code, 'E_EXPORT_TARGET_UNPINNED')
+
+    def test_switching_the_engine_over_keeps_the_file_a_usable_set_produces(self):
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as home:
             artifact = es.write_snapshot(home, ROWS, scope=scope(),
                                          options=es.ExportOptions(published_at=NOW), now=NOW)
             self.assertEqual((artifact.directory / 'singbox.json').read_text(encoding='utf-8'),
                              formats.singbox(ROWS))
             empty = es.write_snapshot(home, [], scope=scope(),
-                                     options=es.ExportOptions(published_at=NOW), now=NOW)
-            self.assertEqual((empty.directory / 'singbox.json').read_text(encoding='utf-8'),
-                             formats.singbox([]))
+                                      options=es.ExportOptions(published_at=NOW), now=NOW)
+            self.assertFalse((empty.directory / 'singbox.json').exists())
+            status = json.loads((empty.directory / 'status.json').read_text(encoding='utf-8'))
+            singbox = status['compat']['files']['singbox.json']
+            self.assertFalse(singbox['written'])
+            self.assertEqual(singbox['reasons'], ['E_EXPORT_TARGET_UNPINNED'])
+            self.assertTrue(status['client_target_required'])
+            # every other file of the fail-closed artifact is still there
+            for name in ('proxies.txt', 'clash.yaml', 'proxy.pac', 'ranked.json'):
+                self.assertTrue((empty.directory / name).is_file(), name)
 
 
 class RuleActionTargetTests(unittest.TestCase):
