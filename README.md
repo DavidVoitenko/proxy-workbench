@@ -4,7 +4,7 @@
 
 # Proxy Workbench
 
-**Collect free public proxies from a catalog of 150 entries with 98 collectable feeds, test every one against _your_ services, and keep only the fast, stable, clean and anonymous ones.**
+**Collect free public proxies from a catalog of 150 entries with 106 collectable feeds, test every one against _your_ services, and keep only the fast, stable, clean and anonymous ones.**
 
 Local browser GUI (English / Russian) + CLI · HTTP / HTTPS (CONNECT) / SOCKS5 · anonymity levels · resumable · no accounts, no telemetry
 
@@ -59,7 +59,7 @@ Everything runs on your machine. The GUI binds to `127.0.0.1` only.
 
 | | |
 | --- | --- |
-| **150 catalog entries / 98 collectable feeds** | Popular GitHub-hosted lists, ProxyScrape, paginated Geonode API and free-proxy web pages. Any web page, CSV or HTML table works as a source: every `ip:port` is pulled out of it. **Remove dead sources** and **Get new sources** keep the list healthy in one click. |
+| **150 catalog entries / 106 collectable feeds** | The catalog includes **117 public-free entries**; the remaining entries describe other access conditions. Supported lists have source-specific text, JSON, CSV or HTML adapters. Unsupported formats, unavailable snapshots and restricted sources remain visible with their reasons. |
 | **Unknown protocol? No problem** | Addresses without a protocol can be tried as HTTP, SOCKS4 and SOCKS5 at once; the checks keep whichever works. |
 | **Protocols** | HTTP, HTTPS/CONNECT, explicit `https://` proxies, SOCKS4, SOCKS5 / SOCKS5h, IPv4 and IPv6. |
 | **Test against your services** | Several targets per profile (up to 20 in the GUI). A proxy passes only if it works for **all** of them. |
@@ -235,6 +235,8 @@ cp service.example.json data/service.json
 <summary><b>Source list format</b> (<code>proxy_workbench/sources.json</code>)</summary>
 
 A JSON array of strings, one per source:
+
+Fresh installations select the **all-supported** set (106 feeds), including the new catalog sources. The unchanged old 55-source default is upgraded while preserving pauses. Custom selections stay unchanged. In the Sources catalog choose **all-supported**, or run `./run.sh source set all-supported`; **quick** selects 8 feeds for a shorter collection. Catalog visibility (117 public-free entries) is separate from readable HTTP/SOCKS feeds: documentation, Tor/MTProto data and unsupported or restricted formats are not downloaded as proxy lists.
 
 - `https://…/list.txt` — plain HTTP/CONNECT list (`IP:port` or `scheme://IP:port`);
 - `socks4 https://…/list.txt` / `socks5 https://…/list.txt` — SOCKS lists without a scheme;

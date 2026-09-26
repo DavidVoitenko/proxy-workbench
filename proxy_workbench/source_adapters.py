@@ -15,6 +15,8 @@ import math
 import re
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
+from . import source_literals
+
 ADAPTER_KINDS = ("line", "json-records", "fields", "page-json", "html-table")
 DEFAULT_MAX_RECORDS = 500_000
 DEFAULT_MAX_DEPTH = 64
@@ -360,6 +362,12 @@ def _json_records(body, profile, page_context, limits):
             if _has_credentials(raw.get("proxy")) or _has_credentials(raw.get("url")) or raw.get("username") or raw.get("password"):
                 reject("credentials_present")
                 continue
+            if cfg.get('decode_ip_literals'):
+                decoded = source_literals.decode_address_expression(raw.get('ip'))
+                if decoded is None:
+                    reject('invalid_address')
+                    continue
+                raw = dict(raw, ip=decoded)
             value, origin = _address(raw, host_fields=tuple(cfg.get("host_fields", ("host", "ip", "address"))),
                                       port_fields=tuple(cfg.get("port_fields", ("port",))),
                                       address_fields=tuple(cfg.get("address_fields", ("proxy", "url", "endpoint", "address"))))
@@ -624,6 +632,10 @@ def _html_table(body, profile, page_context, limits):
     config = _profile(profile)
     cfg = config["config"]
     text = _decode(body, limits)
+    if cfg.get('decode_address_literals'):
+        text = _decode(source_literals.decode_html_literals(text), limits)
+    if cfg.get('address_list') == 'proxy-list-v1':
+        return _html_address_list(text, limits)
     fragment = cfg.get("json_html_field")
     if fragment:
         text = _json_fragment(text, fragment, limits)
@@ -704,6 +716,66 @@ def _html_table(body, profile, page_context, limits):
     if truncated:
         result["truncated"] = True
         result["reason"] = "SOURCE_RECORD_LIMIT"
+    return result
+
+
+def _html_address_list(text, limits):
+    """Read Proxy-List.org's address/protocol list cells after literal decoding."""
+    class ListParser(HTMLParser):
+        def __init__(self):
+            super().__init__(convert_charrefs=True)
+            self.cell = None
+            self.parts = []
+            self.address = None
+            self.records = []
+            self.nodes = self.scripts = 0
+            self.truncated = False
+
+        def handle_starttag(self, tag, attrs):
+            self.nodes += 1
+            if self.nodes > limits['max_nodes']:
+                raise AdapterError('SOURCE_HTML_NODE_LIMIT')
+            if tag == 'script':
+                self.scripts += 1
+            if tag == 'li':
+                classes = set(dict(attrs).get('class', '').split())
+                self.cell = 'proxy' if 'proxy' in classes else 'https' if 'https' in classes else None
+                self.parts = []
+
+        def handle_data(self, data):
+            if self.cell and not self.scripts:
+                if sum(map(len, self.parts)) + len(data) > 256:
+                    raise AdapterError('SOURCE_STRING_TOO_LARGE')
+                self.parts.append(data)
+
+        def handle_endtag(self, tag):
+            if tag == 'script':
+                self.scripts = max(0, self.scripts - 1)
+            if tag != 'li':
+                return
+            value = ''.join(self.parts).strip()
+            if self.cell == 'proxy':
+                self.address = value if re.fullmatch(r'\d{1,3}(?:\.\d{1,3}){3}:\d{1,5}', value) else None
+            elif self.cell == 'https' and self.address:
+                protocols = _protocol(value)
+                if protocols:
+                    if len(self.records) >= limits['max_records']:
+                        self.truncated = True
+                    else:
+                        self.records.append({'value': self.address,
+                            'values': [f'{protocol}://{self.address}' for protocol in protocols],
+                            'protocol_origin': 'record', 'declared': {}})
+                self.address = None
+            self.cell = None
+            self.parts = []
+
+    parser = ListParser()
+    parser.feed(text)
+    parser.close()
+    result = dict(state='partial' if parser.truncated else 'complete' if parser.records else 'empty',
+                  records=parser.records, rejects={}, pages=1, metadata={})
+    if parser.truncated:
+        result.update(truncated=True, reason='SOURCE_RECORD_LIMIT')
     return result
 
 
@@ -922,6 +994,8 @@ def _page_profile(profile):
 def page_info(data, profile):
     """Read fixed pagination paths without evaluating response expressions."""
     config = _page_profile(profile).get("config", {})
+    if config.get('pagination') is False:
+        return {'records': [], 'page': 1, 'total': None, 'has_more': False, 'next': None}
     def value(name, default=None):
         path = config.get(name + "_path", name)
         result = _path(data, path)

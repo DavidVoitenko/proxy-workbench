@@ -277,7 +277,7 @@ class SupportStatusTest(unittest.TestCase):
                                  sc.ADAPTERS - {'unsupported'})
 
     def test_the_row_carries_the_status_and_the_reason_together(self):
-        row = sm.public_row(self.by_id['new-011'])
+        row = sm.public_row(self.by_id['new-012'])
         self.assertEqual(row['support'], 'needs_adapter')
         self.assertEqual(row['not_proxy_source'], 'no_adapter')
         self.assertTrue(row['not_proxy_source_reason'])

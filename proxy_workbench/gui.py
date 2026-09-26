@@ -599,20 +599,10 @@ def read_snapshot(data, *, now=None):
 
 
 def defaults():
-    # A fresh install already answers in the version-3 shape: the flat list of
-    # 55 pre-catalog URLs, each mapped onto its catalog record so the selection
-    # exists from the first start and nothing has to be guessed later.  The
-    # alias map walks the whole catalog, so it is built once per call rather
-    # than once per spec.
-    sources = json.loads((ROOT/'sources.json').read_text(encoding='utf-8'))
-    catalog = source_catalog.load_bundled()
-    aliases = source_catalog.legacy_aliases(catalog)
+    selection = source_catalog.default_settings()
     return dict(settings_version=3, targets=[dict(name='example.com', url='https://example.com/', statuses=[200],
                              contains='Example Domain', headers={}, method='GET')],
-                sources=sources,
-                source_selection=dict(schema_version=1, catalog_revision=catalog['revision'],
-                                      selected_ids=[aliases[spec] for spec in sources if spec in aliases],
-                                      download_disabled_ids=[], sets=[], custom_sources=[]),
+                sources=selection['sources'], source_selection=selection['source_selection'],
                 use_sources=True,
                 proxies='', attempts=3, timeout=8, workers=128, rate=100,
                 max_bytes=1048576, source_timeout=60, min_success=2/3, top=0, sort='recommended',
@@ -634,7 +624,8 @@ def validate(settings):
     # first time anything reads its settings and never loses a URL or a pause
     # doing it.  ``migrate_settings`` is idempotent, so a document that is
     # already v3 is returned untouched.
-    if settings.get('settings_version') in (1, 2) or 'source_selection' not in settings:
+    if settings.get('settings_version') in (1, 2) or 'source_selection' not in settings \
+            or source_catalog.is_legacy_default_selection(settings):
         settings = source_catalog.migrate_settings(settings)
     clean = defaults()
     clean.update({k: settings[k] for k in clean if k in settings})
@@ -765,6 +756,8 @@ def save_settings(data, payload):
     terminal is validated exactly like one changed in the browser and a crash
     cannot leave a half-written selection behind.
     """
+    if isinstance(payload, dict) and payload.get('sources_edited') is True:
+        payload = source_catalog.reconcile_source_text(payload, core.sources_catalog(data))
     settings = validate(payload)
     core.atomic(Path(data)/'gui-settings.json',
                 json.dumps(settings, ensure_ascii=False, indent=2) + '\n')
@@ -875,7 +868,8 @@ class App:
                 stored['denylist'] = ''
             except (OSError, UnicodeError):
                 raise ValueError('Не удалось прочитать data/denylist.txt. Исправьте файл перед сохранением.') from None
-        legacy = isinstance(stored, dict) and stored.get('settings_version') in (1, 2)
+        legacy = isinstance(stored, dict) and (stored.get('settings_version') in (1, 2)
+                  or source_catalog.is_legacy_default_selection(stored))
         result = validate(stored)
         if legacy:
             # The migration to the source-catalog selection is one atomic
@@ -890,6 +884,8 @@ class App:
         if isinstance(payload, dict) and 'denylist' not in payload:
             payload = dict(payload)
             payload['denylist'] = self.settings().get('denylist', '')
+        if isinstance(payload, dict) and payload.get('sources_edited') is True:
+            payload = source_catalog.reconcile_source_text(payload, self.source_document())
         settings = validate(payload)
         with self.mutex:
             core.atomic(self.data/'gui-settings.json', json.dumps(settings, ensure_ascii=False, indent=2))
@@ -924,6 +920,9 @@ class App:
         if path.is_file():
             try:
                 self._catalog_cache = source_catalog.load_catalog(path, allow_research=False, allow_unsafe=True)
+                bundled = source_catalog.load_bundled()
+                if self._catalog_cache['revision'] < bundled['revision']:
+                    self._catalog_cache = bundled
                 return self._catalog_cache
             except (OSError, ValueError, source_catalog.CatalogError):
                 pass
@@ -1812,6 +1811,7 @@ class App:
         known = set(settings['sources'])
         added = [source for source in latest if source not in bundled and source not in known]
         settings['sources'] = settings['sources'] + added
+        settings['sources_edited'] = True
         saved = self.save(settings)
         return dict(settings=saved, added=[public_source(source) for source in added])
 

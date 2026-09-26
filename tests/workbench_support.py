@@ -47,7 +47,7 @@ def add_candidate(conn, values, *, collection_id=None, origin='public'):
 def add_candidates(conn, rows, *, collection_id=None, origin='public'):
     """Add a streaming fixture in bounded transactions, keeping a caller's transaction."""
     rows = iter(rows)
-    while batch := tuple(islice(rows, 500)):
+    while batch := tuple(islice(rows, 5000)):
         # The engine connection uses autocommit. Without a transaction, a large
         # fixture flushes three separate writes per address and spends minutes
         # preparing the test on Windows before the first probe can run.

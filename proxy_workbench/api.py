@@ -1041,7 +1041,7 @@ class WorkbenchService(apiv1.Service):
                              'profile_id': profile_id},
                     action=tr('перечитайте профиль и повторите',
                               'read the profile again and retry'))
-            ref = store.update(profile_id, profiles_module.create_spec(**spec_of(body)),
+            ref = store.update(profile_id, profiles_module.create_spec(**spec_of(body, current.spec)),
                                base_revision=current.revision, name=body.get('name'))
         except profiles_module.ProfileError as exc:
             raise apiv1.ApiError('E_VALIDATION_FIELD', action=str(exc),
@@ -1049,7 +1049,7 @@ class WorkbenchService(apiv1.Service):
         finally:
             _close(conn)
         return {'id': ref.profile_id, 'revision': ref.revision,
-                'name': body.get('name') or ref.profile_id,
+                'name': body.get('name') or current.name,
                 'profile_id': ref.profile_id, 'profile_revision': ref.revision}
 
     def _op_exports_create(self, call):
@@ -2761,33 +2761,46 @@ class WorkbenchService(apiv1.Service):
 
     def _op_profiles_validate(self, call):
         from . import profiles as profiles_module
+        def action(workbench):
+            store = workbench.profiles()
+            record = self._selected_profile(store, call)
+            record.spec.validate()
+            return {'valid': True, 'profile': profiles_module.export_profile(
+                store, record.profile_id, revision=record.revision)}
+        return self._with_workbench(action)
+
+    @staticmethod
+    def _selected_profile(store, call):
+        """Resolve the named profile or explicit revision addressed by a route."""
+        from . import profiles as profiles_module
+        wanted = str(call.params.get('id') or '')
+        profile_id, _, revision = wanted.partition('@')
         try:
-            profiles_module.run_request(call.body or {}, store=None)
+            return store.get(profile_id, int(revision) if revision else None)
         except profiles_module.ProfileError as exc:
-            raise apiv1.ApiError(getattr(exc, 'code', 'E_VALIDATION_SCHEMA') or 'E_VALIDATION_SCHEMA',
-                                 status=422, message=str(exc)) from None
-        return {'valid': True, 'profile': profiles_module.export_profile(call.body or {})}
+            if exc.code == profiles_module.E_STATE_PROFILE_UNKNOWN:
+                raise apiv1.ApiError('E_STATE_NOT_FOUND', status=404,
+                                     details={'id': wanted}) from None
+            raise
+        except ValueError:
+            raise apiv1.field_error('id', 'profile revision must be an integer') from None
 
     def _op_profiles_clone(self, call):
         def action(workbench):
             store = workbench.profiles()
-            source = store.get(str(call.params.get('id') or ''))
-            if source is None:
-                raise apiv1.ApiError('E_STATE_NOT_FOUND', status=404,
-                                     details={'id': call.params.get('id')})
+            source = self._selected_profile(store, call)
             name = str((call.body or {}).get('name') or f'{source.name} copy')
-            return _profile_dict(store.create(name, store.spec(source.id)))
+            ref = store.copy(source.profile_id, new_name=name, revision=source.revision)
+            return {'id': ref.profile_id, 'revision': ref.revision, 'name': name,
+                    'profile_id': ref.profile_id, 'profile_revision': ref.revision}
         return self._with_workbench(action)
 
     def _op_profiles_archive(self, call):
         def action(workbench):
             store = workbench.profiles()
-            record = store.get(str(call.params.get('id') or ''))
-            if record is None:
-                raise apiv1.ApiError('E_STATE_NOT_FOUND', status=404,
-                                     details={'id': call.params.get('id')})
-            store.archive(record.id)
-            return {'id': record.id, 'archived': True}
+            record = self._selected_profile(store, call)
+            store.archive(record.profile_id)
+            return {'id': record.profile_id, 'archived': True}
         return self._with_workbench(action)
 
     # -- reservations -------------------------------------------------------
@@ -3311,31 +3324,41 @@ COLLECTION_KINDS = {'own': 'private', 'private': 'private',
                     'public': 'public', 'legacy': 'public'}
 
 
-def spec_of(body):
+def spec_of(body, base=None):
     """The profile document out of a request body.
 
     The route declares the fields of a profile in the flat shape the user edits
-    (targets, rule, k, timeouts, attempts, bytes); the store takes the
-    structured spec.  This is the one place that translation happens.
+    (targets, rule, k, attempts); the store takes the structured spec. Updates
+    retain fields that the caller did not change.
     """
     body = dict(body or {})
     body.pop('name', None)
-    body.pop('parent_id', None)
     body.pop('revision', None)
-    rule = str(body.pop('rule', '') or '')
-    k = int(body.pop('k', 1) or 1)
+    for field in ('max_age_seconds', 'connect_timeout_s', 'timeout_s', 'max_bytes', 'parent_id'):
+        if body.get(field) is not None:
+            raise apiv1.field_error(field, 'this option is not supported by named profiles')
+        body.pop(field, None)
+    rule = body.pop('rule', None)
+    k = body.pop('k', None)
+    spec = base.as_dict() if base is not None else {}
+    spec.pop('version', None)
+    spec.update({name: value for name, value in body.items() if value is not None})
+    if base is not None and rule is None and k is None:
+        return spec
     # The route speaks the service-set vocabulary (all/any/at_least_k) and the
     # store speaks the optional-target rule (none/all/any/at_least).  "all"
     # over an empty optional set is not a weaker rule, it is an impossible one,
     # so it is carried as "none" there; the required targets combine through
     # their own ``min_success``.
-    optional = [item for item in (body.get('targets') or [])
+    optional = [item for item in (spec.get('targets') or [])
                 if isinstance(item, dict) and item.get('kind') == 'optional']
-    mode = {'at_least_k': 'at_least'}.get(rule, rule) or 'all'
+    mode = {'at_least_k': 'at_least'}.get(rule, rule) or (
+        base.optional_rule.mode if base is not None else 'all')
     if mode != 'none' and not optional:
         mode = 'none'
-    body['optional_rule'] = {'mode': mode, 'k': max(1, k)}
-    return {name: value for name, value in body.items() if value is not None}
+    spec['optional_rule'] = {'mode': mode, 'k': int(k if k is not None else (
+        base.optional_rule.k if base is not None else 1))}
+    return spec
 
 
 def schema_public_collection():

@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "catalog_id": "proxy-workbench.sources",
-  "revision": 2026092502,
-  "published_at": "2026-09-26T09:12:00Z",
+  "revision": 2026092701,
+  "published_at": "2026-09-26T21:10:29Z",
   "minimum_app_version": "2.3.0",
   "sources": [
     {
@@ -59,6 +59,7 @@
       "license_status": "Not independently established for this URL in this pass; consult matching discovery/source terms before redistribution.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:http"
       ],
@@ -171,6 +172,7 @@
       "metadata_fields": [],
       "sets": [
         "quick",
+        "all-supported",
         "protocol:http"
       ],
       "enabled_by_default": true,
@@ -281,6 +283,7 @@
       "license_status": "Not independently established for this URL in this pass; consult matching discovery/source terms before redistribution.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:http"
       ],
@@ -388,7 +391,8 @@
       "license_status": "Not independently established for this URL in this pass; consult matching discovery/source terms before redistribution.",
       "metadata_fields": [],
       "sets": [
-        "quick"
+        "quick",
+        "all-supported"
       ],
       "enabled_by_default": true,
       "load_settings": {},
@@ -498,6 +502,7 @@
       "license_status": "Not independently established for this URL in this pass; consult matching discovery/source terms before redistribution.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:http"
       ],
@@ -611,6 +616,7 @@
       "license_status": "Not independently established for this URL in this pass; consult matching discovery/source terms before redistribution.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:http",
         "protocol:https"
@@ -723,6 +729,7 @@
       "license_status": "Not independently established for this URL in this pass; consult matching discovery/source terms before redistribution.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:http"
       ],
@@ -835,6 +842,7 @@
       "license_status": "Not independently established for this URL in this pass; consult matching discovery/source terms before redistribution.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:http",
         "protocol:https"
@@ -949,6 +957,7 @@
       "license_status": "Not independently established for this URL in this pass; consult matching discovery/source terms before redistribution.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:http",
         "protocol:https"
@@ -1063,6 +1072,7 @@
       "license_status": "Not independently established for this URL in this pass; consult matching discovery/source terms before redistribution.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:http",
         "protocol:https"
@@ -1176,6 +1186,7 @@
       "license_status": "Not independently established for this URL in this pass; consult matching discovery/source terms before redistribution.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:http"
       ],
@@ -1287,6 +1298,7 @@
       "license_status": "Not independently established for this URL in this pass; consult matching discovery/source terms before redistribution.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:http"
       ],
@@ -1398,6 +1410,7 @@
       "license_status": "Not independently established for this URL in this pass; consult matching discovery/source terms before redistribution.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:http"
       ],
@@ -1509,6 +1522,7 @@
       "license_status": "Not independently established for this URL in this pass; consult matching discovery/source terms before redistribution.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:http"
       ],
@@ -1620,6 +1634,7 @@
       "license_status": "Not independently established for this URL in this pass; consult matching discovery/source terms before redistribution.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:http"
       ],
@@ -1731,6 +1746,7 @@
       "license_status": "Not independently established for this URL in this pass; consult matching discovery/source terms before redistribution.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:http"
       ],
@@ -1838,6 +1854,7 @@
       "license_status": "Not independently established for this URL in this pass; consult matching discovery/source terms before redistribution.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "extended"
       ],
       "enabled_by_default": true,
@@ -1948,6 +1965,7 @@
       "license_status": "Not independently established for this URL in this pass; consult matching discovery/source terms before redistribution.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:http"
       ],
@@ -2061,6 +2079,7 @@
       "license_status": "Not independently established for this URL in this pass; consult matching discovery/source terms before redistribution.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:http",
         "protocol:https"
@@ -2173,6 +2192,7 @@
       "license_status": "Not independently established for this URL in this pass; consult matching discovery/source terms before redistribution.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:http"
       ],
@@ -2284,6 +2304,7 @@
       "license_status": "Not independently established for this URL in this pass; consult matching discovery/source terms before redistribution.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:http"
       ],
@@ -2395,6 +2416,7 @@
       "license_status": "Not independently established for this URL in this pass; consult matching discovery/source terms before redistribution.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:http"
       ],
@@ -2506,6 +2528,7 @@
       "license_status": "Not independently established for this URL in this pass; consult matching discovery/source terms before redistribution.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:http"
       ],
@@ -2617,6 +2640,7 @@
       "license_status": "Not independently established for this URL in this pass; consult matching discovery/source terms before redistribution.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:http"
       ],
@@ -2724,6 +2748,7 @@
       "license_status": "Not independently established for this URL in this pass; consult matching discovery/source terms before redistribution.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "extended"
       ],
       "enabled_by_default": true,
@@ -2834,6 +2859,7 @@
       "license_status": "Not independently established for this URL in this pass; consult matching discovery/source terms before redistribution.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:http"
       ],
@@ -2947,6 +2973,7 @@
       "license_status": "Not independently established for this URL in this pass; consult matching discovery/source terms before redistribution.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:http",
         "protocol:https"
@@ -3059,6 +3086,7 @@
       "license_status": "Not independently established for this URL in this pass; consult matching discovery/source terms before redistribution.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:http"
       ],
@@ -3170,6 +3198,7 @@
       "license_status": "Not independently established for this URL in this pass; consult matching discovery/source terms before redistribution.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:http"
       ],
@@ -3278,6 +3307,7 @@
       "license_status": "Not independently established for this URL in this pass; consult matching discovery/source terms before redistribution.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "extended"
       ],
       "enabled_by_default": true,
@@ -3384,6 +3414,7 @@
       "license_status": "Not independently established for this URL in this pass; consult matching discovery/source terms before redistribution.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "extended"
       ],
       "enabled_by_default": true,
@@ -3493,6 +3524,7 @@
       "license_status": "Not independently established for this URL in this pass; consult matching discovery/source terms before redistribution.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:http"
       ],
@@ -3606,6 +3638,7 @@
       "license_status": "Not independently established for this URL in this pass; consult matching discovery/source terms before redistribution.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:http",
         "protocol:https"
@@ -3715,6 +3748,7 @@
       "license_status": "Not independently established for this URL in this pass; consult matching discovery/source terms before redistribution.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "extended"
       ],
       "enabled_by_default": true,
@@ -3825,6 +3859,7 @@
       "license_status": "Not independently established for this URL in this pass; consult matching discovery/source terms before redistribution.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:http"
       ],
@@ -3936,6 +3971,7 @@
       "license_status": "Not independently established for this URL in this pass; consult matching discovery/source terms before redistribution.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:http"
       ],
@@ -4047,10 +4083,11 @@
       "license_status": "Not independently established for this URL in this pass; consult matching discovery/source terms before redistribution.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "experimental",
         "protocol:http"
       ],
-      "enabled_by_default": false,
+      "enabled_by_default": true,
       "load_settings": {},
       "priority": "low",
       "priority_reason": "Существующий URL сохранён без смены пользовательского выбора, но не включён для нового профиля: в 2026-09-25T12:23:58Z тело было пустым. Нужен повторный запрос; окончательная недоступность не доказана.",
@@ -4158,6 +4195,7 @@
       "license_status": "Not independently established for this URL in this pass; consult matching discovery/source terms before redistribution.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:http"
       ],
@@ -4269,6 +4307,7 @@
       "license_status": "Not independently established for this URL in this pass; consult matching discovery/source terms before redistribution.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:http"
       ],
@@ -4380,6 +4419,7 @@
       "license_status": "Not independently established for this URL in this pass; consult matching discovery/source terms before redistribution.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:http"
       ],
@@ -4492,6 +4532,7 @@
       "license_status": "Not independently established for this URL in this pass; consult matching discovery/source terms before redistribution.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:socks5"
       ],
@@ -4603,6 +4644,7 @@
       "license_status": "Not independently established for this URL in this pass; consult matching discovery/source terms before redistribution.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:socks5"
       ],
@@ -4715,6 +4757,7 @@
       "license_status": "Not independently established for this URL in this pass; consult matching discovery/source terms before redistribution.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:socks5"
       ],
@@ -4826,6 +4869,7 @@
       "license_status": "Not independently established for this URL in this pass; consult matching discovery/source terms before redistribution.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:socks5"
       ],
@@ -4937,6 +4981,7 @@
       "license_status": "Not independently established for this URL in this pass; consult matching discovery/source terms before redistribution.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:socks5"
       ],
@@ -5049,6 +5094,7 @@
       "metadata_fields": [],
       "sets": [
         "quick",
+        "all-supported",
         "protocol:socks5"
       ],
       "enabled_by_default": true,
@@ -5159,6 +5205,7 @@
       "license_status": "Not independently established for this URL in this pass; consult matching discovery/source terms before redistribution.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:socks4"
       ],
@@ -5270,6 +5317,7 @@
       "license_status": "Not independently established for this URL in this pass; consult matching discovery/source terms before redistribution.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:socks4"
       ],
@@ -5381,6 +5429,7 @@
       "license_status": "Not independently established for this URL in this pass; consult matching discovery/source terms before redistribution.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:socks4"
       ],
@@ -5492,6 +5541,7 @@
       "license_status": "Not independently established for this URL in this pass; consult matching discovery/source terms before redistribution.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:socks4"
       ],
@@ -5604,6 +5654,7 @@
       "metadata_fields": [],
       "sets": [
         "quick",
+        "all-supported",
         "protocol:socks4"
       ],
       "enabled_by_default": true,
@@ -5709,6 +5760,7 @@
       "license_status": "Not independently established for this URL in this pass; consult matching discovery/source terms before redistribution.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "extended"
       ],
       "enabled_by_default": true,
@@ -5814,6 +5866,7 @@
       "license_status": "Not independently established for this URL in this pass; consult matching discovery/source terms before redistribution.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "extended"
       ],
       "enabled_by_default": true,
@@ -5919,6 +5972,7 @@
       "license_status": "Not independently established for this URL in this pass; consult matching discovery/source terms before redistribution.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "extended"
       ],
       "enabled_by_default": true,
@@ -6040,6 +6094,7 @@
       ],
       "sets": [
         "quick",
+        "all-supported",
         "protocol:http",
         "protocol:https",
         "protocol:socks4",
@@ -6913,13 +6968,14 @@
         "classificationScope"
       ],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:http",
         "protocol:https",
         "protocol:socks4",
         "protocol:socks5"
       ],
-      "enabled_by_default": false,
+      "enabled_by_default": true,
       "load_settings": {},
       "priority": "high",
       "priority_reason": "Не включать по умолчанию: проверка сохранённого тела подтвердила отдельный формат, но текущий collect не имеет вида json-records; нужен адаптер, budgets и отдельный тест. Liveness адресов не проверялась.",
@@ -7041,12 +7097,13 @@
       ],
       "sets": [
         "quick",
+        "all-supported",
         "protocol:http",
         "protocol:https",
         "protocol:socks4",
         "protocol:socks5"
       ],
-      "enabled_by_default": false,
+      "enabled_by_default": true,
       "load_settings": {},
       "priority": "high",
       "priority_reason": "Не включать по умолчанию: проверка сохранённого тела подтвердила отдельный формат, но текущий collect не имеет вида json-records; нужен адаптер, budgets и отдельный тест. Liveness адресов не проверялась.",
@@ -7168,13 +7225,14 @@
         "speed"
       ],
       "sets": [
+        "all-supported",
         "experimental",
         "protocol:http",
         "protocol:https",
         "protocol:socks4",
         "protocol:socks5"
       ],
-      "enabled_by_default": false,
+      "enabled_by_default": true,
       "load_settings": {},
       "priority": "low",
       "priority_reason": "Не включать по умолчанию: проверка сохранённого тела подтвердила отдельный формат, но текущий collect не имеет вида html-table; нужен адаптер, budgets и отдельный тест. Liveness адресов не проверялась.",
@@ -7260,9 +7318,17 @@
         "html"
       ],
       "adapter": {
-        "kind": "unsupported",
-        "profile": "line-v1",
-        "config": {}
+        "kind": "html-table",
+        "profile": "proxynova-html-v1",
+        "config": {
+          "table_id": "tbl_proxy_list",
+          "columns": {
+            "ip": 0,
+            "port": 1
+          },
+          "default_protocol": "http",
+          "decode_address_literals": true
+        }
       },
       "access": {
         "kind": "fully_public_free",
@@ -7281,11 +7347,15 @@
         "uptime",
         "speed"
       ],
-      "sets": [],
-      "enabled_by_default": false,
+      "sets": [
+        "all-supported",
+        "experimental",
+        "protocol:http"
+      ],
+      "enabled_by_default": true,
       "load_settings": {},
       "priority": "low",
-      "priority_reason": "Не включать по умолчанию: проверка сохранённого тела подтвердила отдельный формат, но текущий collect не имеет вида html-table; нужен адаптер, budgets и отдельный тест. Liveness адресов не проверялась.",
+      "priority_reason": "Подтверждён разбор сохранённого ответа: ограниченный декодер числовых адресов, без выполнения JavaScript. Работоспособность адресов проверяется отдельно.",
       "relation_to_current": "needs_adapter",
       "research_refs": [
         "new-011"
@@ -7314,8 +7384,8 @@
           "checked_at": "2026-09-25T12:24:14Z"
         },
         "format_confirmed": {
-          "state": "not_run",
-          "checked_at": "2026-09-25T12:24:14Z"
+          "state": "confirmed",
+          "checked_at": "2026-09-26T21:13:59Z"
         },
         "data_looks_refreshable": {
           "state": "unknown",
@@ -7330,7 +7400,7 @@
       "maturity": "unknown",
       "catalog_state": "listed",
       "tags": [],
-      "collection_allowed": false,
+      "collection_allowed": true,
       "checked_at": "2026-09-25T12:24:14Z",
       "verification_level": "documented"
     },
@@ -7596,11 +7666,16 @@
       "update_claim": "README и описание репозитория заявляют «Updates every hour» и проверку скрытия IP, неизменности HTML/JS и поддержки HTTPS. Последний видимый коммит датирован 2023-05-05; автоматический hourly-цикл не подтверждён.",
       "license_status": "Репозиторий помечен GPL-3.0; это подтверждено для кода/репозитория. Отдельная лицензия на собранные публичные IP и метаданные не заявлена.",
       "metadata_fields": [],
-      "sets": [],
-      "enabled_by_default": false,
+      "sets": [
+        "all-supported",
+        "experimental",
+        "protocol:http",
+        "protocol:https"
+      ],
+      "enabled_by_default": true,
       "load_settings": {},
-      "priority": "rejected",
-      "priority_reason": "Не включать по умолчанию: проверка сохранённого тела подтвердила отдельный формат, но текущий collect не имеет вида json-records; нужен адаптер, budgets и отдельный тест. Liveness адресов не проверялась.",
+      "priority": "low",
+      "priority_reason": "Формат подтверждён сохранённым публичным ответом через штатный адаптер. Заявления издателя о свежести и качестве не принимаются как результат проверки прокси.",
       "relation_to_current": "rejected",
       "research_refs": [
         "new-014"
@@ -7629,8 +7704,8 @@
           "checked_at": "2026-09-25T12:24:15Z"
         },
         "format_confirmed": {
-          "state": "not_run",
-          "checked_at": "2026-09-25T12:24:15Z"
+          "state": "confirmed",
+          "checked_at": "2026-09-26T21:10:29Z"
         },
         "data_looks_refreshable": {
           "state": "validator_present",
@@ -7645,7 +7720,7 @@
       "maturity": "unknown",
       "catalog_state": "listed",
       "tags": [],
-      "collection_allowed": false,
+      "collection_allowed": true,
       "checked_at": "2026-09-25T12:24:15Z",
       "verification_level": "documented"
     },
@@ -7817,11 +7892,14 @@
         "anonymity",
         "last_checked"
       ],
-      "sets": [],
-      "enabled_by_default": false,
+      "sets": [
+        "all-supported",
+        "experimental"
+      ],
+      "enabled_by_default": true,
       "load_settings": {},
-      "priority": "rejected",
-      "priority_reason": "Не включать по умолчанию: проверка сохранённого тела подтвердила отдельный формат, но текущий collect не имеет вида html-table; нужен адаптер, budgets и отдельный тест. Liveness адресов не проверялась.",
+      "priority": "low",
+      "priority_reason": "Формат подтверждён сохранённым публичным ответом через штатный адаптер. Заявления издателя о свежести и качестве не принимаются как результат проверки прокси.",
       "relation_to_current": "rejected",
       "research_refs": [
         "new-016"
@@ -7850,8 +7928,8 @@
           "checked_at": "2026-09-25T12:24:15Z"
         },
         "format_confirmed": {
-          "state": "not_run",
-          "checked_at": "2026-09-25T12:24:15Z"
+          "state": "confirmed",
+          "checked_at": "2026-09-26T21:10:29Z"
         },
         "data_looks_refreshable": {
           "state": "unknown",
@@ -7866,7 +7944,7 @@
       "maturity": "unknown",
       "catalog_state": "listed",
       "tags": [],
-      "collection_allowed": false,
+      "collection_allowed": true,
       "checked_at": "2026-09-25T12:24:15Z",
       "verification_level": "documented"
     },
@@ -8324,11 +8402,18 @@
       "update_claim": "README говорит `independently checked and continuously revalidated`, `protocol-specific connectivity`, exit behavior, latency, regular rechecks и отдельный real-TLS test для HTTPS, но фиксированного интервала не называет. Snapshot commit и видимый заголовок датированы 2026-09-25 12:00 UTC.",
       "license_status": "LICENSE на repository page не показан; лицензия кода и данные не определены.",
       "metadata_fields": [],
-      "sets": [],
-      "enabled_by_default": false,
+      "sets": [
+        "all-supported",
+        "experimental",
+        "protocol:http",
+        "protocol:https",
+        "protocol:socks4",
+        "protocol:socks5"
+      ],
+      "enabled_by_default": true,
       "load_settings": {},
-      "priority": "rejected",
-      "priority_reason": "Опциональный источник без авто включения: URL вернул непустое тело в зафиксированном срезе, подходящий формат распознан или требует явного выбора; liveness адресов не проверялась.",
+      "priority": "low",
+      "priority_reason": "Формат подтверждён сохранённым публичным ответом через штатный адаптер. Заявления издателя о свежести и качестве не принимаются как результат проверки прокси.",
       "relation_to_current": "rejected",
       "research_refs": [
         "new-021"
@@ -8357,8 +8442,8 @@
           "checked_at": "2026-09-25T12:24:16Z"
         },
         "format_confirmed": {
-          "state": "not_run",
-          "checked_at": "2026-09-25T12:24:16Z"
+          "state": "confirmed",
+          "checked_at": "2026-09-26T21:10:29Z"
         },
         "data_looks_refreshable": {
           "state": "validator_present",
@@ -8373,7 +8458,7 @@
       "maturity": "unknown",
       "catalog_state": "listed",
       "tags": [],
-      "collection_allowed": false,
+      "collection_allowed": true,
       "checked_at": "2026-09-25T12:24:16Z",
       "verification_level": "documented"
     },
@@ -8437,11 +8522,18 @@
       "metadata_fields": [
         "country"
       ],
-      "sets": [],
-      "enabled_by_default": false,
+      "sets": [
+        "all-supported",
+        "experimental",
+        "protocol:http",
+        "protocol:https",
+        "protocol:socks4",
+        "protocol:socks5"
+      ],
+      "enabled_by_default": true,
       "load_settings": {},
-      "priority": "rejected",
-      "priority_reason": "Опциональный источник без авто включения: URL вернул непустое тело в зафиксированном срезе, подходящий формат распознан или требует явного выбора; liveness адресов не проверялась.",
+      "priority": "low",
+      "priority_reason": "Формат подтверждён сохранённым публичным ответом через штатный адаптер. Заявления издателя о свежести и качестве не принимаются как результат проверки прокси.",
       "relation_to_current": "rejected",
       "research_refs": [
         "new-022"
@@ -8470,8 +8562,8 @@
           "checked_at": "2026-09-25T12:24:16Z"
         },
         "format_confirmed": {
-          "state": "not_run",
-          "checked_at": "2026-09-25T12:24:16Z"
+          "state": "confirmed",
+          "checked_at": "2026-09-26T21:10:29Z"
         },
         "data_looks_refreshable": {
           "state": "validator_present",
@@ -8486,7 +8578,7 @@
       "maturity": "unknown",
       "catalog_state": "listed",
       "tags": [],
-      "collection_allowed": false,
+      "collection_allowed": true,
       "checked_at": "2026-09-25T12:24:16Z",
       "verification_level": "documented"
     },
@@ -8549,11 +8641,12 @@
         "isp"
       ],
       "sets": [
+        "all-supported",
         "experimental",
         "protocol:http",
         "protocol:https"
       ],
-      "enabled_by_default": false,
+      "enabled_by_default": true,
       "load_settings": {},
       "priority": "low",
       "priority_reason": "Не включать по умолчанию: проверка сохранённого тела подтвердила отдельный формат, но текущий collect не имеет вида json-records; нужен адаптер, budgets и отдельный тест. Liveness адресов не проверялась.",
@@ -8692,12 +8785,13 @@
       ],
       "sets": [
         "quick",
+        "all-supported",
         "protocol:http",
         "protocol:https",
         "protocol:socks4",
         "protocol:socks5"
       ],
-      "enabled_by_default": false,
+      "enabled_by_default": true,
       "load_settings": {},
       "priority": "high",
       "priority_reason": "Не включать по умолчанию: проверка сохранённого тела подтвердила отдельный формат, но текущий collect не имеет вида json-records; нужен адаптер, budgets и отдельный тест. Liveness адресов не проверялась.",
@@ -8824,12 +8918,13 @@
         "last_checked"
       ],
       "sets": [
+        "all-supported",
         "experimental",
         "protocol:http",
         "protocol:socks4",
         "protocol:socks5"
       ],
-      "enabled_by_default": false,
+      "enabled_by_default": true,
       "load_settings": {},
       "priority": "low",
       "priority_reason": "Не включать по умолчанию: проверка сохранённого тела подтвердила отдельный формат, но текущий collect не имеет вида json-records; нужен адаптер, budgets и отдельный тест. Liveness адресов не проверялась.",
@@ -8961,13 +9056,14 @@
         "last_checked"
       ],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:http",
         "protocol:https",
         "protocol:socks4",
         "protocol:socks5"
       ],
-      "enabled_by_default": false,
+      "enabled_by_default": true,
       "load_settings": {},
       "priority": "high",
       "priority_reason": "Не включать по умолчанию: проверка сохранённого тела подтвердила отдельный формат, но текущий collect не имеет вида fields; нужен адаптер, budgets и отдельный тест. Liveness адресов не проверялась.",
@@ -9316,13 +9412,14 @@
         "country"
       ],
       "sets": [
+        "all-supported",
         "experimental",
         "protocol:http",
         "protocol:https",
         "protocol:socks4",
         "protocol:socks5"
       ],
-      "enabled_by_default": false,
+      "enabled_by_default": true,
       "load_settings": {},
       "priority": "low",
       "priority_reason": "Опциональный источник без авто включения: URL вернул непустое тело в зафиксированном срезе, подходящий формат распознан или требует явного выбора; liveness адресов не проверялась.",
@@ -9531,11 +9628,12 @@
         "country"
       ],
       "sets": [
+        "all-supported",
         "experimental",
         "protocol:http",
         "protocol:socks5"
       ],
-      "enabled_by_default": false,
+      "enabled_by_default": true,
       "load_settings": {},
       "priority": "low",
       "priority_reason": "Опциональный источник без авто включения: URL вернул непустое тело в зафиксированном срезе, подходящий формат распознан или требует явного выбора; liveness адресов не проверялась.",
@@ -9650,13 +9748,14 @@
         "latency"
       ],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:http",
         "protocol:https",
         "protocol:socks4",
         "protocol:socks5"
       ],
-      "enabled_by_default": false,
+      "enabled_by_default": true,
       "load_settings": {},
       "priority": "medium",
       "priority_reason": "Не включать по умолчанию: проверка сохранённого тела подтвердила отдельный формат, но текущий collect не имеет вида json-records; нужен адаптер, budgets и отдельный тест. Liveness адресов не проверялась.",
@@ -9770,13 +9869,14 @@
         "country"
       ],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:http",
         "protocol:https",
         "protocol:socks4",
         "protocol:socks5"
       ],
-      "enabled_by_default": false,
+      "enabled_by_default": true,
       "load_settings": {},
       "priority": "medium",
       "priority_reason": "Опциональный источник без авто включения: URL вернул непустое тело в зафиксированном срезе, подходящий формат распознан или требует явного выбора; liveness адресов не проверялась.",
@@ -9882,10 +9982,11 @@
       "license_status": "Repository LICENSE is MIT, copyright dbarker 2025. It refers to software and associated documentation, not specifically to proxy data; upstream ProxySniper data terms are unknown.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "experimental",
         "protocol:http"
       ],
-      "enabled_by_default": false,
+      "enabled_by_default": true,
       "load_settings": {},
       "priority": "low",
       "priority_reason": "Опциональный источник без авто включения: URL вернул непустое тело в зафиксированном срезе, подходящий формат распознан или требует явного выбора; liveness адресов не проверялась.",
@@ -9991,10 +10092,11 @@
       "license_status": "No LICENSE file, README license statement, or data terms were found. Reuse rights are unknown.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:socks5"
       ],
-      "enabled_by_default": false,
+      "enabled_by_default": true,
       "load_settings": {},
       "priority": "medium",
       "priority_reason": "Опциональный источник без авто включения: URL вернул непустое тело в зафиксированном срезе, подходящий формат распознан или требует явного выбора; liveness адресов не проверялась.",
@@ -10102,10 +10204,11 @@
         "country"
       ],
       "sets": [
+        "all-supported",
         "experimental",
         "protocol:https"
       ],
-      "enabled_by_default": false,
+      "enabled_by_default": true,
       "load_settings": {},
       "priority": "low",
       "priority_reason": "Опциональный источник без авто включения: URL вернул непустое тело в зафиксированном срезе, подходящий формат распознан или требует явного выбора; liveness адресов не проверялась.",
@@ -10324,12 +10427,13 @@
       "license_status": "No LICENSE file in this repository. The README also supplies no data license for the zevtyardt source; reuse rights remain unknown.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "experimental",
         "protocol:http",
         "protocol:socks4",
         "protocol:socks5"
       ],
-      "enabled_by_default": false,
+      "enabled_by_default": true,
       "load_settings": {},
       "priority": "low",
       "priority_reason": "Опциональный источник без авто включения: URL вернул непустое тело в зафиксированном срезе, подходящий формат распознан или требует явного выбора; liveness адресов не проверялась.",
@@ -10438,12 +10542,13 @@
       "license_status": "No LICENSE file. README asks users to give credits, stars and follow, but supplies no formal data license; upstream terms are unknown.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "experimental",
         "protocol:http",
         "protocol:socks4",
         "protocol:socks5"
       ],
-      "enabled_by_default": false,
+      "enabled_by_default": true,
       "load_settings": {},
       "priority": "low",
       "priority_reason": "Опциональный источник без авто включения: URL вернул непустое тело в зафиксированном срезе, подходящий формат распознан или требует явного выбора; liveness адресов не проверялась.",
@@ -10553,12 +10658,13 @@
       "license_status": "Gitea metadata reports license null and the repository has no LICENSE file. README gives no data license; reuse rights are unknown.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "experimental",
         "protocol:https",
         "protocol:socks4",
         "protocol:socks5"
       ],
-      "enabled_by_default": false,
+      "enabled_by_default": true,
       "load_settings": {},
       "priority": "low",
       "priority_reason": "Опциональный источник без авто включения: URL вернул непустое тело в зафиксированном срезе, подходящий формат распознан или требует явного выбора; liveness адресов не проверялась.",
@@ -10672,13 +10778,14 @@
         "country"
       ],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:http",
         "protocol:https",
         "protocol:socks4",
         "protocol:socks5"
       ],
-      "enabled_by_default": false,
+      "enabled_by_default": true,
       "load_settings": {},
       "priority": "medium",
       "priority_reason": "Опциональный источник без авто включения: URL вернул непустое тело в зафиксированном срезе, подходящий формат распознан или требует явного выбора; liveness адресов не проверялась.",
@@ -10789,13 +10896,14 @@
       "license_status": "No licence is visible in the repository listing, and no separate data-use terms were found in the README. Code and data licence are unknown.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:http",
         "protocol:https",
         "protocol:socks4",
         "protocol:socks5"
       ],
-      "enabled_by_default": false,
+      "enabled_by_default": true,
       "load_settings": {},
       "priority": "high",
       "priority_reason": "Опциональный источник без авто включения: URL вернул непустое тело в зафиксированном срезе, подходящий формат распознан или требует явного выбора; liveness адресов не проверялась.",
@@ -10907,13 +11015,14 @@
       "license_status": "The repository's LICENSE is MIT (Copyright (c) 2025 gfpcom) and covers software/documentation. CONTRIBUTING.md states no separate data licence or upstream-source terms. Treat MIT as a code licence only: collected third-party proxy data has not been shown to be MIT-licensed by its original publishers.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:http",
         "protocol:https",
         "protocol:socks4",
         "protocol:socks5"
       ],
-      "enabled_by_default": false,
+      "enabled_by_default": true,
       "load_settings": {},
       "priority": "medium",
       "priority_reason": "Только опционально после явных byte/line/candidate/time budgets, проверки лицензии и строгого пересчёта: 316 214 — верхняя оценка адресов, не встречавшихся у других в этом срезе, а не показатель liveness или качества.",
@@ -11027,13 +11136,14 @@
         "anonymity"
       ],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:http",
         "protocol:https",
         "protocol:socks4",
         "protocol:socks5"
       ],
-      "enabled_by_default": false,
+      "enabled_by_default": true,
       "load_settings": {},
       "priority": "medium",
       "priority_reason": "Опциональный источник без авто включения: URL вернул непустое тело в зафиксированном срезе, подходящий формат распознан или требует явного выбора; liveness адресов не проверялась.",
@@ -11162,12 +11272,13 @@
       ],
       "sets": [
         "quick",
+        "all-supported",
         "protocol:http",
         "protocol:https",
         "protocol:socks4",
         "protocol:socks5"
       ],
-      "enabled_by_default": false,
+      "enabled_by_default": true,
       "load_settings": {},
       "priority": "low",
       "priority_reason": "Не включать по умолчанию: проверка сохранённого тела подтвердила отдельный формат, но текущий collect не имеет вида page-json; нужен адаптер, budgets и отдельный тест. Liveness адресов не проверялась.",
@@ -11517,13 +11628,14 @@
         "updated_utc"
       ],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:http",
         "protocol:https",
         "protocol:socks4",
         "protocol:socks5"
       ],
-      "enabled_by_default": false,
+      "enabled_by_default": true,
       "load_settings": {},
       "priority": "medium",
       "priority_reason": "Не включать по умолчанию: проверка сохранённого тела подтвердила отдельный формат, но текущий collect не имеет вида json-records; нужен адаптер, budgets и отдельный тест. Liveness адресов не проверялась.",
@@ -11845,9 +11957,19 @@
         "html"
       ],
       "adapter": {
-        "kind": "unsupported",
-        "profile": "line-v1",
-        "config": {}
+        "kind": "html-table",
+        "profile": "proxylistplus-v1",
+        "config": {
+          "table_index": 3,
+          "table_classes": [
+            "bg"
+          ],
+          "columns": {
+            "ip": 1,
+            "port": 2
+          },
+          "default_protocol": "http"
+        }
       },
       "access": {
         "kind": "fully_public_free",
@@ -11866,11 +11988,17 @@
         "latency",
         "https_support"
       ],
-      "sets": [],
-      "enabled_by_default": false,
+      "sets": [
+        "all-supported",
+        "experimental",
+        "protocol:http",
+        "protocol:https",
+        "protocol:socks5"
+      ],
+      "enabled_by_default": true,
       "load_settings": {},
       "priority": "low",
-      "priority_reason": "Не включать по умолчанию: проверка сохранённого тела подтвердила отдельный формат, но текущий collect не имеет вида html-table; нужен адаптер, budgets и отдельный тест. Liveness адресов не проверялась.",
+      "priority_reason": "Формат подтверждён сохранённым публичным ответом через штатный адаптер. Заявления издателя о свежести и качестве не принимаются как результат проверки прокси.",
       "relation_to_current": "new_source",
       "research_refs": [
         "new-051"
@@ -11899,8 +12027,8 @@
           "checked_at": "2026-09-25T12:24:30Z"
         },
         "format_confirmed": {
-          "state": "not_run",
-          "checked_at": "2026-09-25T12:24:30Z"
+          "state": "confirmed",
+          "checked_at": "2026-09-26T21:10:29Z"
         },
         "data_looks_refreshable": {
           "state": "validator_present",
@@ -11915,7 +12043,7 @@
       "maturity": "unknown",
       "catalog_state": "listed",
       "tags": [],
-      "collection_allowed": false,
+      "collection_allowed": true,
       "checked_at": "2026-09-25T12:24:30Z",
       "verification_level": "documented"
     },
@@ -11955,9 +12083,12 @@
         "html"
       ],
       "adapter": {
-        "kind": "unsupported",
-        "profile": "line-v1",
-        "config": {}
+        "kind": "html-table",
+        "profile": "proxy-list-v1",
+        "config": {
+          "decode_address_literals": true,
+          "address_list": "proxy-list-v1"
+        }
       },
       "access": {
         "kind": "fully_public_free",
@@ -11974,11 +12105,16 @@
         "anonymity",
         "latency"
       ],
-      "sets": [],
-      "enabled_by_default": false,
+      "sets": [
+        "all-supported",
+        "experimental",
+        "protocol:http",
+        "protocol:https"
+      ],
+      "enabled_by_default": true,
       "load_settings": {},
       "priority": "low",
-      "priority_reason": "Не включать по умолчанию: проверка сохранённого тела подтвердила отдельный формат, но текущий collect не имеет вида html-table; нужен адаптер, budgets и отдельный тест. Liveness адресов не проверялась.",
+      "priority_reason": "Подтверждён разбор сохранённого ответа: ограниченный декодер числовых адресов, без выполнения JavaScript. Работоспособность адресов проверяется отдельно.",
       "relation_to_current": "needs_adapter",
       "research_refs": [
         "new-052"
@@ -12007,8 +12143,8 @@
           "checked_at": "2026-09-25T12:24:30Z"
         },
         "format_confirmed": {
-          "state": "not_run",
-          "checked_at": "2026-09-25T12:24:30Z"
+          "state": "confirmed",
+          "checked_at": "2026-09-26T21:13:59Z"
         },
         "data_looks_refreshable": {
           "state": "unknown",
@@ -12023,7 +12159,7 @@
       "maturity": "unknown",
       "catalog_state": "listed",
       "tags": [],
-      "collection_allowed": false,
+      "collection_allowed": true,
       "checked_at": "2026-09-25T12:24:30Z",
       "verification_level": "documented"
     },
@@ -12196,11 +12332,12 @@
       "license_status": "GitHub metadata reports NO_ASSERTED_LICENSE. No data license or terms statement was found.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:http",
         "protocol:https"
       ],
-      "enabled_by_default": false,
+      "enabled_by_default": true,
       "load_settings": {},
       "priority": "medium",
       "priority_reason": "Опциональный источник без авто включения: URL вернул непустое тело в зафиксированном срезе, подходящий формат распознан или требует явного выбора; liveness адресов не проверялась.",
@@ -12321,12 +12458,13 @@
         "latency"
       ],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:http",
         "protocol:socks4",
         "protocol:socks5"
       ],
-      "enabled_by_default": false,
+      "enabled_by_default": true,
       "load_settings": {},
       "priority": "medium",
       "priority_reason": "Не включать по умолчанию: проверка сохранённого тела подтвердила отдельный формат, но текущий collect не имеет вида json-records; нужен адаптер, budgets и отдельный тест. Liveness адресов не проверялась.",
@@ -12433,11 +12571,12 @@
       "license_status": "GitHub metadata reports NO_ASSERTED_LICENSE. No data reuse terms were found; the README also advertises customization services, but that is not a data license.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "experimental",
         "protocol:http",
         "protocol:https"
       ],
-      "enabled_by_default": false,
+      "enabled_by_default": true,
       "load_settings": {},
       "priority": "low",
       "priority_reason": "Опциональный источник без авто включения: URL вернул непустое тело в зафиксированном срезе, подходящий формат распознан или требует явного выбора; liveness адресов не проверялась.",
@@ -12524,9 +12663,17 @@
         "json"
       ],
       "adapter": {
-        "kind": "unsupported",
-        "profile": "line-v1",
-        "config": {}
+        "kind": "json-records",
+        "profile": "proxynova-v1",
+        "config": {
+          "records_path": "data",
+          "host_fields": [
+            "ip"
+          ],
+          "default_protocol": "http",
+          "decode_ip_literals": true,
+          "pagination": false
+        }
       },
       "access": {
         "kind": "fully_public_free",
@@ -12545,11 +12692,15 @@
         "last_checked",
         "latency"
       ],
-      "sets": [],
-      "enabled_by_default": false,
+      "sets": [
+        "all-supported",
+        "experimental",
+        "protocol:http"
+      ],
+      "enabled_by_default": true,
       "load_settings": {},
       "priority": "low",
-      "priority_reason": "Не включать по умолчанию: проверка сохранённого тела подтвердила отдельный формат, но текущий collect не имеет вида json-records; нужен адаптер, budgets и отдельный тест. Liveness адресов не проверялась.",
+      "priority_reason": "Подтверждён разбор сохранённого ответа: ограниченный декодер числовых адресов, без выполнения JavaScript. Работоспособность адресов проверяется отдельно.",
       "relation_to_current": "new_source",
       "research_refs": [
         "new-057"
@@ -12578,8 +12729,8 @@
           "checked_at": "2026-09-25T12:24:33Z"
         },
         "format_confirmed": {
-          "state": "not_run",
-          "checked_at": "2026-09-25T12:24:33Z"
+          "state": "confirmed",
+          "checked_at": "2026-09-26T21:13:59Z"
         },
         "data_looks_refreshable": {
           "state": "unknown",
@@ -12594,7 +12745,7 @@
       "maturity": "unknown",
       "catalog_state": "listed",
       "tags": [],
-      "collection_allowed": false,
+      "collection_allowed": true,
       "checked_at": "2026-09-25T12:24:33Z",
       "verification_level": "documented"
     },
@@ -12665,13 +12816,14 @@
         "last_updated"
       ],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:http",
         "protocol:https",
         "protocol:socks4",
         "protocol:socks5"
       ],
-      "enabled_by_default": false,
+      "enabled_by_default": true,
       "load_settings": {},
       "priority": "medium",
       "priority_reason": "Опциональный источник без авто включения: URL вернул непустое тело в зафиксированном срезе, подходящий формат распознан или требует явного выбора; liveness адресов не проверялась.",
@@ -12777,10 +12929,11 @@
       "license_status": "No license or reuse terms were visible on the text page.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "experimental",
         "protocol:http"
       ],
-      "enabled_by_default": false,
+      "enabled_by_default": true,
       "load_settings": {},
       "priority": "low",
       "priority_reason": "Опциональный источник без авто включения: URL вернул непустое тело в зафиксированном срезе, подходящий формат распознан или требует явного выбора; liveness адресов не проверялась.",
@@ -12892,13 +13045,14 @@
       "license_status": "No license or terms statement was found for the OpenProxyList data. Code licenses of the consuming collectors do not transfer to this feed.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:http",
         "protocol:https",
         "protocol:socks4",
         "protocol:socks5"
       ],
-      "enabled_by_default": false,
+      "enabled_by_default": true,
       "load_settings": {},
       "priority": "medium",
       "priority_reason": "Опциональный источник без авто включения: URL вернул непустое тело в зафиксированном срезе, подходящий формат распознан или требует явного выбора; liveness адресов не проверялась.",
@@ -13010,13 +13164,14 @@
       "license_status": "GitHub metadata reports NO_ASSERTED_LICENSE. No explicit data license was found.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:http",
         "protocol:https",
         "protocol:socks4",
         "protocol:socks5"
       ],
-      "enabled_by_default": false,
+      "enabled_by_default": true,
       "load_settings": {},
       "priority": "medium",
       "priority_reason": "Опциональный источник без авто включения: URL вернул непустое тело в зафиксированном срезе, подходящий формат распознан или требует явного выбора; liveness адресов не проверялась.",
@@ -13220,9 +13375,10 @@
       "license_status": "The consuming jhao104 code is MIT; no RoundProxies data license or terms were found.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "experimental"
       ],
-      "enabled_by_default": false,
+      "enabled_by_default": true,
       "load_settings": {},
       "priority": "low",
       "priority_reason": "Не включать по умолчанию: проверка сохранённого тела подтвердила отдельный формат, но текущий collect не имеет вида page-json; нужен адаптер, budgets и отдельный тест. Liveness адресов не проверялась.",
@@ -13529,10 +13685,11 @@
       "license_status": "The consuming jhao104 code is MIT; no Kuaidaili data license or terms were found.",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "experimental",
         "protocol:http"
       ],
-      "enabled_by_default": false,
+      "enabled_by_default": true,
       "load_settings": {},
       "priority": "low",
       "priority_reason": "Не включать по умолчанию: проверка сохранённого тела подтвердила отдельный формат, но текущий collect не имеет вида html-table; нужен адаптер, budgets и отдельный тест. Liveness адресов не проверялась.",
@@ -13648,13 +13805,14 @@
         "last_checked"
       ],
       "sets": [
+        "all-supported",
         "experimental",
         "protocol:http",
         "protocol:https",
         "protocol:socks4",
         "protocol:socks5"
       ],
-      "enabled_by_default": false,
+      "enabled_by_default": true,
       "load_settings": {},
       "priority": "low",
       "priority_reason": "Оставить только с учётом измеренного пересечения: набор из 328 адресов совпал с cur-54 в срезе 2026-09-25, поэтому это не независимое наблюдение. Общее владение и происхождение не установлены.",
@@ -14389,13 +14547,14 @@
         "score"
       ],
       "sets": [
+        "all-supported",
         "experimental",
         "protocol:http",
         "protocol:https",
         "protocol:socks4",
         "protocol:socks5"
       ],
-      "enabled_by_default": false,
+      "enabled_by_default": true,
       "load_settings": {},
       "priority": "low",
       "priority_reason": "Только опционально после явных бюджетов, проверки прав и строгого пересчёта пересечений; крупный размер сам по себе не повышает приоритет и не доказывает качество адресов.",
@@ -14516,13 +14675,14 @@
         "last_checked"
       ],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:http",
         "protocol:https",
         "protocol:socks4",
         "protocol:socks5"
       ],
-      "enabled_by_default": false,
+      "enabled_by_default": true,
       "load_settings": {},
       "priority": "medium",
       "priority_reason": "Не включать по умолчанию: проверка сохранённого тела подтвердила отдельный формат, но текущий collect не имеет вида json-records; нужен адаптер, budgets и отдельный тест. Liveness адресов не проверялась.",
@@ -14646,13 +14806,14 @@
         "last_alive"
       ],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:http",
         "protocol:https",
         "protocol:socks4",
         "protocol:socks5"
       ],
-      "enabled_by_default": false,
+      "enabled_by_default": true,
       "load_settings": {},
       "priority": "medium",
       "priority_reason": "Не включать по умолчанию: проверка сохранённого тела подтвердила отдельный формат, но текущий collect не имеет вида json-records; нужен адаптер, budgets и отдельный тест. Liveness адресов не проверялась.",
@@ -14772,13 +14933,14 @@
         "timeout"
       ],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:http",
         "protocol:https",
         "protocol:socks4",
         "protocol:socks5"
       ],
-      "enabled_by_default": false,
+      "enabled_by_default": true,
       "load_settings": {},
       "priority": "medium",
       "priority_reason": "Не включать по умолчанию: проверка сохранённого тела подтвердила отдельный формат, но текущий collect не имеет вида json-records; нужен адаптер, budgets и отдельный тест. Liveness адресов не проверялась.",
@@ -14894,13 +15056,14 @@
         "response_time_ms"
       ],
       "sets": [
+        "all-supported",
         "experimental",
         "protocol:http",
         "protocol:https",
         "protocol:socks4",
         "protocol:socks5"
       ],
-      "enabled_by_default": false,
+      "enabled_by_default": true,
       "load_settings": {},
       "priority": "low",
       "priority_reason": "Только опционально после явных бюджетов, проверки прав и строгого пересчёта пересечений; крупный размер сам по себе не повышает приоритет и не доказывает качество адресов.",
@@ -15018,12 +15181,13 @@
         "checked_at"
       ],
       "sets": [
+        "all-supported",
         "experimental",
         "protocol:http",
         "protocol:socks4",
         "protocol:socks5"
       ],
-      "enabled_by_default": false,
+      "enabled_by_default": true,
       "load_settings": {},
       "priority": "low",
       "priority_reason": "Оставить только с учётом измеренного пересечения: набор из 2037 адресов совпал с cur-11 в срезе 2026-09-25, поэтому это не независимое наблюдение. Общее владение и происхождение не установлены.",
@@ -15133,11 +15297,12 @@
         "country_name"
       ],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:http",
         "protocol:https"
       ],
-      "enabled_by_default": false,
+      "enabled_by_default": true,
       "load_settings": {},
       "priority": "medium",
       "priority_reason": "Не включать по умолчанию: проверка сохранённого тела подтвердила отдельный формат, но текущий collect не имеет вида json-records; нужен адаптер, budgets и отдельный тест. Liveness адресов не проверялась.",
@@ -15267,13 +15432,14 @@
         "provider"
       ],
       "sets": [
+        "all-supported",
         "extended",
         "protocol:http",
         "protocol:https",
         "protocol:socks4",
         "protocol:socks5"
       ],
-      "enabled_by_default": false,
+      "enabled_by_default": true,
       "load_settings": {},
       "priority": "medium",
       "priority_reason": "Не включать по умолчанию: проверка сохранённого тела подтвердила отдельный формат, но текущий collect не имеет вида json-records; нужен адаптер, budgets и отдельный тест. Liveness адресов не проверялась.",
@@ -15737,12 +15903,13 @@
       "license_status": "MIT (SPDX MIT).",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "experimental",
         "protocol:http",
         "protocol:socks4",
         "protocol:socks5"
       ],
-      "enabled_by_default": false,
+      "enabled_by_default": true,
       "load_settings": {},
       "priority": "low",
       "priority_reason": "Не включать по умолчанию: проверка сохранённого тела подтвердила отдельный формат, но текущий collect не имеет вида json-records; нужен адаптер, budgets и отдельный тест. Liveness адресов не проверялась.",
@@ -15849,12 +16016,13 @@
       "license_status": "Лицензия не указана (SPDX none).",
       "metadata_fields": [],
       "sets": [
+        "all-supported",
         "experimental",
         "protocol:http",
         "protocol:socks4",
         "protocol:socks5"
       ],
-      "enabled_by_default": false,
+      "enabled_by_default": true,
       "load_settings": {},
       "priority": "low",
       "priority_reason": "Опционально и не по умолчанию: в 2026-09-25T12:24:45Z JSON был пустым массивом. Схема и последующее наполнение не наблюдались; это не доказательство постоянной пустоты.",
@@ -16813,7 +16981,7 @@
       "id": "quick",
       "name": "Базовый быстрый",
       "kind": "system",
-      "catalog_revision": 2026092502,
+      "catalog_revision": 2026092701,
       "members": [
         "cur-02",
         "cur-04",
@@ -16827,10 +16995,125 @@
       "auto_add_new": false
     },
     {
+      "id": "all-supported",
+      "name": "Все поддерживаемые",
+      "kind": "system",
+      "catalog_revision": 2026092701,
+      "members": [
+        "cur-01",
+        "cur-02",
+        "cur-03",
+        "cur-04",
+        "cur-05",
+        "cur-06",
+        "cur-07",
+        "cur-08",
+        "cur-09",
+        "cur-10",
+        "cur-11",
+        "cur-12",
+        "cur-13",
+        "cur-14",
+        "cur-15",
+        "cur-16",
+        "cur-17",
+        "cur-18",
+        "cur-19",
+        "cur-20",
+        "cur-21",
+        "cur-22",
+        "cur-23",
+        "cur-24",
+        "cur-25",
+        "cur-26",
+        "cur-27",
+        "cur-28",
+        "cur-29",
+        "cur-30",
+        "cur-31",
+        "cur-32",
+        "cur-33",
+        "cur-34",
+        "cur-35",
+        "cur-36",
+        "cur-37",
+        "cur-38",
+        "cur-39",
+        "cur-40",
+        "cur-41",
+        "cur-42",
+        "cur-43",
+        "cur-44",
+        "cur-45",
+        "cur-46",
+        "cur-47",
+        "cur-48",
+        "cur-49",
+        "cur-50",
+        "cur-51",
+        "cur-52",
+        "cur-53",
+        "cur-54",
+        "cur-55",
+        "new-008",
+        "new-009",
+        "new-010",
+        "new-011",
+        "new-014",
+        "new-016",
+        "new-021",
+        "new-022",
+        "new-023",
+        "new-024",
+        "new-025",
+        "new-026",
+        "new-029",
+        "new-031",
+        "new-032",
+        "new-033",
+        "new-034",
+        "new-035",
+        "new-036",
+        "new-038",
+        "new-039",
+        "new-040",
+        "new-041",
+        "new-042",
+        "new-043",
+        "new-044",
+        "new-045",
+        "new-048",
+        "new-051",
+        "new-052",
+        "new-054",
+        "new-055",
+        "new-056",
+        "new-057",
+        "new-058",
+        "new-059",
+        "new-060",
+        "new-061",
+        "new-063",
+        "new-066",
+        "new-067",
+        "new-074",
+        "new-075",
+        "new-076",
+        "new-077",
+        "new-078",
+        "new-079",
+        "new-080",
+        "new-081",
+        "new-085",
+        "new-086"
+      ],
+      "auto_add_new": false
+    },
+    {
       "id": "extended",
       "name": "Расширенный",
       "kind": "system",
-      "catalog_revision": 2026092502,
+      "catalog_revision": 2026092701,
       "members": [
         "cur-01",
         "cur-03",
@@ -16908,7 +17191,7 @@
       "id": "experimental",
       "name": "Экспериментальные",
       "kind": "system",
-      "catalog_revision": 2026092502,
+      "catalog_revision": 2026092701,
       "members": [
         "cur-37",
         "new-010",
@@ -16930,7 +17213,15 @@
         "new-078",
         "new-079",
         "new-085",
-        "new-086"
+        "new-086",
+        "new-014",
+        "new-016",
+        "new-021",
+        "new-022",
+        "new-051",
+        "new-011",
+        "new-052",
+        "new-057"
       ],
       "auto_add_new": false
     },
@@ -16938,7 +17229,7 @@
       "id": "protocol:http",
       "name": "HTTP",
       "kind": "protocol",
-      "catalog_revision": 2026092502,
+      "catalog_revision": 2026092701,
       "members": [
         "cur-01",
         "cur-02",
@@ -16978,6 +17269,10 @@
         "new-008",
         "new-009",
         "new-010",
+        "new-011",
+        "new-014",
+        "new-021",
+        "new-022",
         "new-023",
         "new-024",
         "new-025",
@@ -16995,9 +17290,12 @@
         "new-044",
         "new-045",
         "new-048",
+        "new-051",
+        "new-052",
         "new-054",
         "new-055",
         "new-056",
+        "new-057",
         "new-058",
         "new-059",
         "new-060",
@@ -17021,7 +17319,7 @@
       "id": "protocol:https",
       "name": "HTTPS",
       "kind": "protocol",
-      "catalog_revision": 2026092502,
+      "catalog_revision": 2026092701,
       "members": [
         "cur-06",
         "cur-08",
@@ -17034,6 +17332,9 @@
         "new-008",
         "new-009",
         "new-010",
+        "new-014",
+        "new-021",
+        "new-022",
         "new-023",
         "new-024",
         "new-026",
@@ -17048,6 +17349,8 @@
         "new-044",
         "new-045",
         "new-048",
+        "new-051",
+        "new-052",
         "new-054",
         "new-056",
         "new-058",
@@ -17068,7 +17371,7 @@
       "id": "protocol:socks4",
       "name": "SOCKS4",
       "kind": "protocol",
-      "catalog_revision": 2026092502,
+      "catalog_revision": 2026092701,
       "members": [
         "cur-47",
         "cur-48",
@@ -17079,6 +17382,8 @@
         "new-008",
         "new-009",
         "new-010",
+        "new-021",
+        "new-022",
         "new-024",
         "new-025",
         "new-026",
@@ -17115,7 +17420,7 @@
       "id": "protocol:socks5",
       "name": "SOCKS5",
       "kind": "protocol",
-      "catalog_revision": 2026092502,
+      "catalog_revision": 2026092701,
       "members": [
         "cur-41",
         "cur-42",
@@ -17127,6 +17432,8 @@
         "new-008",
         "new-009",
         "new-010",
+        "new-021",
+        "new-022",
         "new-024",
         "new-025",
         "new-026",
@@ -17144,6 +17451,7 @@
         "new-044",
         "new-045",
         "new-048",
+        "new-051",
         "new-055",
         "new-058",
         "new-060",
@@ -17165,7 +17473,7 @@
       "id": "custom",
       "name": "Пользовательские",
       "kind": "custom",
-      "catalog_revision": 2026092502,
+      "catalog_revision": 2026092701,
       "members": [],
       "auto_add_new": false
     }

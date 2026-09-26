@@ -14,6 +14,7 @@ from proxy_workbench import proxytool as p
 from proxy_workbench import source_adapters
 from proxy_workbench import source_catalog
 from proxy_workbench import source_management
+from proxy_workbench import gui
 
 ROOT = Path(__file__).resolve().parents[1]
 BUNDLED = ROOT / 'proxy_workbench' / 'sources.json'
@@ -48,16 +49,100 @@ class SelectionDrivesCollectionTest(unittest.TestCase):
         settings = source_management.read_settings(self.data) or {'settings_version': 3}
         source_management.write_settings(self.data, source_management.apply_set(settings, 'quick'))
 
-    def test_a_fresh_install_keeps_the_previous_sources(self):
-        # Nobody has chosen anything yet, so the 55 sources the app used before
-        # are carried over — now as catalog entries, with their own adapters and
-        # provenance instead of bare strings.
+    def test_a_fresh_install_collects_all_supported_sources(self):
         values = p.resolve_collect_sources(args_for(self.data))
         self.assertEqual({value['id'] for value in values},
-                         {f'cur-{index:02d}' for index in range(1, 56)})
+                         {source['id'] for source in self.catalog['sources']
+                          if source_catalog.collectable_source(source)})
+        self.assertGreater(len(values), 100)
         for value in values:
             self.assertTrue(value['endpoints'])
             self.assertNotEqual(value['adapter']['kind'], 'unsupported')
+
+    def test_fresh_gui_and_cli_show_the_same_selected_catalog(self):
+        settings = gui.defaults()
+        cli = p.source_catalog_for(self.data)
+        self.assertEqual(cli['source_selection'], settings['source_selection'])
+        view = source_management.build_view(self.catalog, cli, {}, {'limit': 200})
+        self.assertEqual(len(view['sources']), 150)
+        self.assertEqual(next(group['count'] for group in view['access_groups']
+                              if group['id'] == 'public_free'), 117)
+        all_set = next(item for item in view['sets'] if item['id'] == 'all-supported')
+        self.assertEqual(all_set['members'], len(settings['source_selection']['selected_ids']))
+
+    def test_unchanged_legacy_default_upgrades_once_and_keeps_pauses(self):
+        settings = gui.defaults()
+        settings['sources'] = json.loads(BUNDLED.read_text(encoding='utf-8'))
+        settings['use_sources'] = False
+        settings['source_selection'] = {
+            'selected_ids': [f'cur-{index:02d}' for index in range(1, 56)],
+            'download_disabled_ids': ['cur-02'], 'custom_sources': [], 'sets': [],
+        }
+        saved = source_management.write_settings(self.data, settings)
+        self.assertIn('new-057', saved['source_selection']['selected_ids'])
+        self.assertEqual(saved['source_selection']['download_disabled_ids'], ['cur-02'])
+        self.assertFalse(saved['use_sources'])
+        self.assertEqual(saved, source_management.read_settings(self.data))
+        plans = p.resolve_collect_sources(args_for(self.data))
+        self.assertNotIn('cur-02', [item['id'] for item in plans])
+
+    def test_text_edits_reach_collection_without_losing_adapter_or_pauses(self):
+        settings = source_catalog.set_disabled(gui.defaults(), ['cur-01'])
+        removed = source_catalog.source_by_id(self.catalog, 'cur-02')['legacy_specs'][0]
+        settings['sources'].remove(removed)
+        settings['sources'].append('socks5 https://mine.example/list.txt')
+        settings['sources_edited'] = True
+        saved = source_management.write_settings(self.data, settings)
+        plans = p.resolve_collect_sources(args_for(self.data))
+        by_id = {item['id']: item for item in plans}
+        self.assertNotIn('cur-01', by_id)
+        self.assertNotIn('cur-02', by_id)
+        self.assertIn('cur-01', saved['source_selection']['selected_ids'])
+        self.assertEqual(saved['source_selection']['download_disabled_ids'], ['cur-01'])
+        self.assertEqual(by_id['new-051']['adapter'],
+                         source_catalog.source_by_id(self.catalog, 'new-051')['adapter'])
+        own = [item for item in plans if item['id'].startswith('custom-')]
+        self.assertEqual(len(own), 1)
+        self.assertEqual(own[0]['endpoints'][0]['url'], 'https://mine.example/list.txt')
+
+    def test_an_older_cached_catalog_does_not_hide_new_bundled_sources(self):
+        old = json.loads(source_catalog.bundled_path().read_text(encoding='utf-8'))
+        old['revision'] -= 1
+        old['sets'] = [item for item in old['sets'] if item['id'] != 'all-supported']
+        (self.data / 'source-catalog.json').write_text(json.dumps(old), encoding='utf-8')
+        self.assertEqual(p.sources_catalog(self.data)['revision'], self.catalog['revision'])
+        app = gui.App.__new__(gui.App)
+        app.data = self.data
+        app._catalog_cache = None
+        self.assertEqual(app.source_document()['revision'], self.catalog['revision'])
+
+    def test_literal_source_profiles_collect_without_executing_code_or_extra_pages(self):
+        bodies = {
+            'new-011': b'<table id="tbl_proxy_list"><tr><th>IP</th><th>Port</th></tr>'
+                       b'<tr><td><script>document.write("11.1.".concat("1.1"))</script></td>'
+                       b'<td>8080</td></tr></table>',
+            'new-052': b'<ul><li class="proxy"><script>Proxy(\'MTEuMi4yLjI6ODA=\')</script></li>'
+                       b'<li class="https">HTTP</li></ul>',
+            'new-057': json.dumps({'data': [{'ip': '"11.3.".concat("3.3")', 'port': 80}]}).encode(),
+        }
+        plans = [source_catalog.source_by_id(self.catalog, source_id) for source_id in bodies]
+        by_url = {plan['endpoints'][0]['url']: bodies[plan['id']] for plan in plans}
+
+        @asynccontextmanager
+        async def response(client, url, *args, **kwargs):
+            yield httpx.Response(200, content=by_url[url], request=httpx.Request('GET', url))
+
+        db = p.open_db(self.data / 'literal.sqlite3')
+        try:
+            with mock.patch.object(p, '_source_stream', response):
+                report = asyncio.run(p.collect(db, plans, [], quiet=True))
+            self.assertEqual(len(report['sources']), 3)
+            for row in report['sources']:
+                self.assertEqual(row['accepted'], 1, row)
+                self.assertFalse(row.get('error'), row)
+                self.assertEqual(row['pages'], 1)
+        finally:
+            db.close()
 
     def test_a_selection_resolves_to_the_chosen_catalog_sources(self):
         self._select_quick()

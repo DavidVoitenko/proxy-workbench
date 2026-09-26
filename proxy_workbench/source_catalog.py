@@ -16,8 +16,8 @@ from urllib.parse import urlsplit
 
 CATALOG_SCHEMA_VERSION = 1
 CATALOG_ID = "proxy-workbench.sources"
-DEFAULT_REVISION = 2026092502
-DEFAULT_PUBLISHED_AT = "2026-09-26T09:12:00Z"
+DEFAULT_REVISION = 2026092701
+DEFAULT_PUBLISHED_AT = "2026-09-27T00:00:00Z"
 DEFAULT_MINIMUM_APP_VERSION = "2.3.0"
 ID_RE = re.compile(r"[a-z0-9][a-z0-9._-]{2,63}\Z")
 HEX_RE = re.compile(r"[0-9a-f]{16,64}\Z")
@@ -54,6 +54,10 @@ DEFAULT_SETS = {
     "quick": {
         "id": "quick", "name": "Базовый быстрый", "kind": "system",
         "members": list(DEFAULT_QUICK), "auto_add_new": False,
+    },
+    "all-supported": {
+        "id": "all-supported", "name": "Все поддерживаемые", "kind": "system",
+        "members": [], "auto_add_new": False,
     },
     "extended": {
         "id": "extended", "name": "Расширенный", "kind": "system",
@@ -558,6 +562,8 @@ def validate_catalog(value, *, allow_research=False, allow_unsafe=False):
         normalized_sets = []
         for set_id, definition in DEFAULT_SETS.items():
             members = [item for item in definition["members"] if item in seen]
+            if set_id == "all-supported":
+                members = [source['id'] for source in sources if collectable_source(source)]
             if set_id.startswith("protocol:"):
                 protocol = set_id.split(":", 1)[1]
                 members = [source["id"] for source in sources if protocol in source["protocols"]]
@@ -728,6 +734,51 @@ def collectable_source(item):
     return bool(item.get("collection_allowed", True))
 
 
+def default_settings(catalog=None):
+    """A new installation selects every usable list with its own adapter."""
+    catalog = load_bundled() if catalog is None else catalog
+    members = [source['id'] for source in catalog['sources'] if collectable_source(source)]
+    return migrate_settings({'source_selection': {
+        'schema_version': 1, 'catalog_revision': catalog['revision'],
+        'selected_ids': members, 'download_disabled_ids': [], 'custom_sources': [],
+        'sets': [{'id': 'all-supported', 'members': list(members)}],
+    }}, catalog)
+
+
+def is_legacy_default_selection(settings, catalog=None):
+    """Only the unchanged built-in selection may receive the new defaults.
+
+    Custom lists, removed members, explicit sets and URL/format overrides are
+    user choices. Pauses are independent of membership and survive migration.
+    """
+    catalog = load_bundled() if catalog is None else catalog
+    selection = settings.get('source_selection') if isinstance(settings, dict) else None
+    if not isinstance(selection, dict) or selection.get('custom_sources'):
+        return False
+    expected = {f'cur-{index:02d}' for index in range(1, 56)}
+    if set(selection.get('selected_ids') or []) != expected:
+        return False
+    if any(not isinstance(item, dict) or item.get('id') != 'legacy-import'
+           for item in selection.get('sets') or []):
+        return False
+    by_id = {source['id']: source for source in catalog['sources']}
+    if not expected <= by_id.keys():
+        return False
+    canonical = {source_id: (by_id[source_id].get('legacy_specs') or [None])[0]
+                 for source_id in expected}
+    if any(canonical.get(source_id) != spec
+           for source_id, spec in _chosen_specs(selection.get('specs')).items()):
+        return False
+    sources = settings.get('sources')
+    if sources is not None:
+        disabled = set(selection.get('download_disabled_ids') or [])
+        allowed = {spec for spec in canonical.values() if spec}
+        active = {spec for source_id, spec in canonical.items() if source_id not in disabled and spec}
+        if set(sources) not in (allowed, active):
+            return False
+    return True
+
+
 def dataset_group_of(item):
     """The identity of the *bytes* a source is expected to serve.
 
@@ -867,6 +918,10 @@ def _plan_with_spec(source_id, item, spec):
         return None
     if not any(endpoint.get("url") == url for endpoint in item.get("endpoints") or []):
         return None
+    if spec.strip() in _materialization_spec(item):
+        # Editing a different line must not erase the table columns, field
+        # mappings or pagination of an unchanged catalog source.
+        return deepcopy(item)
     try:
         adapter = _adapter({"kind": kind}, {"id": source_id})
     except CatalogError:
@@ -889,7 +944,7 @@ chosen_specs = _chosen_specs
 
 
 
-def migrate_settings(settings, catalog=None, *, data_dir=None):
+def migrate_settings(settings, catalog=None, *, data_dir=None, upgrade_defaults=True):
     """Return settings v3 while retaining every exact legacy URL and disable.
 
     ``catalog`` is the catalog the caller validated against.  Falling back to
@@ -972,6 +1027,11 @@ def migrate_settings(settings, catalog=None, *, data_dir=None):
         "specs": _chosen_specs(selection.get("specs")),
         "custom_sources": [normalize_custom(item) for item in selection.get("custom_sources", custom)],
     }
+    if upgrade_defaults and is_legacy_default_selection(result, catalog):
+        members = [source['id'] for source in catalog['sources'] if collectable_source(source)]
+        result['source_selection']['selected_ids'] = members
+        result['source_selection']['catalog_revision'] = catalog['revision']
+        result['source_selection']['sets'] = [{'id': 'all-supported', 'members': list(members)}]
     records = list(result["source_selection"]["custom_sources"])
     # Membership is tracked by id: comparing whole records made this quadratic in
     # the size of the selection, and the selection is what every click touches.
@@ -1002,6 +1062,35 @@ def migrate_settings(settings, catalog=None, *, data_dir=None):
         materialized.extend(_materialization_spec(item))
     result["sources"] = list(dict.fromkeys(materialized))
     return result
+
+
+def reconcile_source_text(settings, catalog=None):
+    """Honor edits to the URL list without losing catalog profiles or pauses."""
+    catalog = load_bundled() if catalog is None else catalog
+    if not isinstance(settings, dict) or not isinstance(settings.get('sources'), list):
+        return settings
+    previous = settings.get('source_selection')
+    if not isinstance(previous, dict):
+        return settings
+    expected = migrate_settings(settings, catalog)
+    if settings['sources'] == expected['sources'] or is_legacy_default_selection(settings, catalog):
+        return expected
+    legacy = deepcopy(settings)
+    legacy.pop('source_selection', None)
+    legacy['download_disabled_ids'] = list(previous.get('download_disabled_ids') or [])
+    edited = migrate_settings(legacy, catalog, upgrade_defaults=False)
+    selection = edited['source_selection']
+    own = {item['id']: item for item in selection['custom_sources']}
+    own.update({item['id']: deepcopy(item) for item in previous.get('custom_sources') or []})
+    selection['custom_sources'] = list(own.values())
+    paused = [value for value in previous.get('selected_ids') or []
+              if value in selection['download_disabled_ids']]
+    selection['selected_ids'] = list(dict.fromkeys(selection['selected_ids'] + paused))
+    selection['sets'] = [{'id': 'manual', 'members': list(selection['selected_ids'])}]
+    for source_id in paused:
+        if source_id in previous.get('specs', {}):
+            selection['specs'][source_id] = previous['specs'][source_id]
+    return migrate_settings(edited, catalog, upgrade_defaults=False)
 
 
 def custom_spec(url, adapter):

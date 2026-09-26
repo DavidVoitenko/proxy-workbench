@@ -114,6 +114,12 @@ E_PATH_CONFLICT = "E_VALIDATION_FIELD"
 
 _BATCH = 500
 
+# Allocated lazily per connection. The default 2 MiB page cache churns the
+# endpoint/membership indexes during a public-list import; every 4 MiB WAL
+# checkpoint then rewrites those pages, stalling a Windows scan for seconds.
+_PAGE_CACHE_KIB = 32 * 1024
+_WAL_CHECKPOINT_BYTES = 32 * 1024 * 1024
+
 
 class DbError(Exception):
     """Base class for every refusal this module makes. Always carries a code."""
@@ -1453,8 +1459,14 @@ def connect(path, *, read_only=False):
         # foreign_keys is a no-op inside a transaction, so it is set before any BEGIN.
         conn.execute("PRAGMA foreign_keys=ON")
         if not read_only:
+            conn.execute(f"PRAGMA cache_size=-{_PAGE_CACHE_KIB}")
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA synchronous=NORMAL")
+            # Keep automatic checkpoints, but amortise their disk sync across
+            # 32 MiB of WAL rather than every small result batch.
+            page_size = int(conn.execute("PRAGMA page_size").fetchone()[0])
+            checkpoint_pages = max(1, _WAL_CHECKPOINT_BYTES // page_size)
+            conn.execute(f"PRAGMA wal_autocheckpoint={checkpoint_pages}")
     except sqlite3.Error:
         # A file that is not a database fails right here; the handle must not leak.
         conn.close()

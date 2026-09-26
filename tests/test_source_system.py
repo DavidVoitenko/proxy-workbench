@@ -19,7 +19,9 @@ from proxy_workbench import source_catalog
 from proxy_workbench import source_management
 
 
-RESEARCH = Path(__file__).resolve().parents[2] / 'proxy-sources-research-2026-09-25'
+RESEARCH = Path(__file__).resolve().parents[1] / 'data/research-archive/proxy-sources-research-2026-09-25'
+if not RESEARCH.is_dir():
+    RESEARCH = Path(__file__).resolve().parents[2] / 'proxy-sources-research-2026-09-25'
 SAMPLES = RESEARCH / 'samples'
 
 

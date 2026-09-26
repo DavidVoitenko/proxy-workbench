@@ -1013,7 +1013,9 @@ def sources_catalog(data_dir=None, path=None):
         candidate = Path(data_dir) / 'source-catalog.json'
         if candidate.is_file():
             try:
-                return source_catalog.load_catalog(candidate)
+                accepted = source_catalog.load_catalog(candidate)
+                bundled = source_catalog.load_bundled()
+                return accepted if accepted['revision'] >= bundled['revision'] else bundled
             except (ValueError, OSError):
                 pass
     return source_catalog.load_bundled()
@@ -1071,8 +1073,10 @@ def source_selection_view(data_dir=None, catalog=None, *, query='', db=None, now
 def source_catalog_for(data_dir):
     """The migrated settings document the catalog selection lives in."""
     from . import source_catalog
-    return source_catalog.migrate_settings(_source_settings(data_dir),
-                                           sources_catalog(data_dir))
+    catalog = sources_catalog(data_dir)
+    if not _source_settings_path(data_dir).exists():
+        return source_catalog.default_settings(catalog)
+    return source_catalog.migrate_settings(_source_settings(data_dir), catalog)
 
 
 def catalog_source_plans(settings, catalog=None, *, include_disabled=False):
@@ -1173,9 +1177,8 @@ def resolve_collect_sources(args, *, data=None, catalog=None):
        A user who names a list gets that list, never the catalog's opinion.
     3. Otherwise the user's *selection* is what is fetched, each source as a
        catalog record so it is read with its own adapter, limits and
-       provenance.  A user who has never chosen anything -- a stored document
-       with no ``source_selection`` at all -- keeps the pre-catalog flat list,
-       so the app never changes what it downloads behind someone's back.
+       provenance. A fresh installation selects all supported proxy lists;
+       saved custom selections and pauses are preserved.
 
     Rule 3 is the one that was missing.  ``--sources`` defaults to the bundled
     list of 55 URLs, so the flat list was never empty, so the selection was
@@ -1194,11 +1197,9 @@ def resolve_collect_sources(args, *, data=None, catalog=None):
     if explicit is not None and not bundled_default:
         return read_sources_file(explicit)
     # The effective settings document: the stored one, or the defaults for an
-    # install that has never saved any.  ``read_settings`` migrates on the way,
-    # so an old flat-URL tree reads as the 55 catalog records it always meant
-    # and a tree that never chose anything reads as the default selection --
-    # the same 55 sources, now with adapters and provenance.
-    settings = source_management.read_settings(data) if data is not None else None
+    # install that has never saved any. ``read_settings`` migrates on the way.
+    settings = (source_management.read_settings(data) if data is not None
+                else source_catalog.default_settings(catalog))
     selection = settings.get('source_selection') if isinstance(settings, dict) else None
     if not isinstance(selection, dict):
         if settings is None and data is not None and _source_settings_path(data).exists():
@@ -3572,7 +3573,7 @@ def measurement_bytes(row):
 #: with a single ``fetchall``: a half-million addresses is a list of a hundred
 #: megabytes the engine would hold for the whole run, and the front half of a
 #: scan is supposed to be bounded (F12).  Each page is a fresh statement, so the
-#: commit the store path makes every hundred rows cannot invalidate a half-read
+#: commit the store path makes every batch cannot invalidate a half-read
 #: cursor of the corpus.
 CANDIDATE_PAGE = 4096
 
@@ -4083,7 +4084,10 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
         country = country_of(proxy)
         if country:
             row['country'] = country
-        endpoint = upsert_endpoint(db, proxy)
+        # The collection stream contains existing endpoints. Re-inserting the
+        # same endpoint here adds an indexed write and a schema lookup to every
+        # measurement without changing the row.
+        endpoint = schema.endpoint_id(proxy)
         # One measurement folded into the row by the one admission contract:
         # ``valid_until`` is written here, once, from the measurement time and
         # the policy of this profile revision, and is never recomputed at export
@@ -4121,7 +4125,10 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
         if passed_ok:
             passed += 1
             counted(merged)
-        if completed % 100 == 0 or time.monotonic() - last_commit >= 1:
+        # Flush at least once a second while measurements arrive, or every
+        # thousand fast results. Tiny batches rewrite the same index pages and
+        # stall a large scan on Windows; cancellation still commits in finally.
+        if completed % 1000 == 0 or time.monotonic() - last_commit >= 1:
             db.commit()
             last_commit = time.monotonic()
         if observation_id[0] is not None:

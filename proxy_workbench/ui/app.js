@@ -565,7 +565,7 @@ const messages = {
     'cat.state.failed': 'Last attempt failed',
     'cat.state.quarantined': 'Paused after failures',
     'cat.state.not_proxy_source': 'Not a list of proxy addresses',
-    'cat.state.needs_access': 'Needs its own account or plan',
+    'cat.state.needs_access': 'Collection unavailable — see reason',
     'cat.state.rights_unresolved': 'Data license not established',
     'cat.state.custom': 'Your own list',
     'cat.state.retired': 'No longer in the catalog',
@@ -1866,7 +1866,7 @@ const messages = {
     'cat.state.failed': 'Последняя попытка не удалась',
     'cat.state.quarantined': 'Пауза после сбоев',
     'cat.state.not_proxy_source': 'Не список прокси-адресов',
-    'cat.state.needs_access': 'Нужен свой аккаунт или тариф',
+    'cat.state.needs_access': 'Сбор недоступен — см. причину',
     'cat.state.rights_unresolved': 'Лицензия данных не установлена',
     'cat.state.custom': 'Ваш собственный список',
     'cat.state.retired': 'Больше нет в каталоге',
@@ -4114,6 +4114,7 @@ function getSettings() {
   copy.detect_protocols = checked('detect_protocols');
   copy.exclude_hosting = checked('exclude_hosting');
   copy.sources = val('sources').split('\n').map(value => value.trim()).filter(Boolean);
+  copy.sources_edited = JSON.stringify(copy.sources) !== JSON.stringify(settings.sources || []);
   copy.proxies = val('proxies');
   copy.denylist = val('denylist');
   copy.request_profile = val('request-profile', 'workbench');

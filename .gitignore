@@ -21,6 +21,8 @@ htmlcov/
 dist/
 build/
 *.egg-info/
+# Test runs fall back to the working directory when the system temp dir is unwritable
+/tmp*/
 
 # Editor and workflow runtime state
 .zcode/
