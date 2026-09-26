@@ -4,9 +4,11 @@
 
 # Proxy Workbench
 
-**Collect free public proxies from a catalog of 150 entries with 106 collectable feeds, test every one against _your_ services, and keep only the fast, stable, clean and anonymous ones.**
+### Finds free proxies that actually work — on the sites you need
 
-Desktop app for macOS and Windows · browser GUI in 12 languages · CLI · HTTP / HTTPS (CONNECT) / SOCKS4 / SOCKS5 · pools, schedules and a rotating gateway · no accounts, no telemetry
+Proxy Workbench collects free proxies from **150 public sources**, tests every one against the sites and services **you** care about, and keeps only the ones that work. You get ready-made lists, one **rotating proxy** for your browser, Telegram and any app, or an **API** for your scripts.
+
+Runs on your own computer: macOS and Windows app, command line, Docker · HTTP, HTTPS, SOCKS4, SOCKS5 · 12 languages · no sign-up, no telemetry
 
 ![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)
 ![License: MIT](https://img.shields.io/badge/license-MIT-2ea44f)
@@ -22,21 +24,19 @@ Desktop app for macOS and Windows · browser GUI in 12 languages · CLI · HTTP 
 
 <img src="docs/assets/demo.gif" alt="Proxy Workbench demo: scan, rank, filter elite proxies" width="100%">
 
-<sub>15-second tour: start a scan → ranking → “Elite only” filter → per-attempt details (synthetic data).</sub>
+<sub>Quick tour: set up a check → ranking → “Elite only” filter → per-attempt details → sources → switching language (synthetic data).</sub>
 
 </div>
 
 ---
 
-## Why
+## What it does
 
-Free proxy lists are everywhere, but most of what they contain is dead, slow, or blocked by the site you actually care about. A proxy that answers `example.com` may still fail your API, return a captcha page with status `200`, or sit on a spam blacklist.
+Free proxy lists are everywhere, but most addresses in them are dead, slow or blocked by exactly the site you care about. Proxy Workbench does the tedious part for you:
 
-**Proxy Workbench answers one practical question: _which of these proxies really work for my service, right now, and how well?_**
-
-- It gathers candidates from dozens of public lists (or your own files) and de-duplicates them.
-- It sends **real HTTP(S) requests through each proxy** to every service you specify — several times — and checks status codes, body text, or even a SHA-256 of the response.
-- It ranks survivors by **median latency, jitter and success rate**, flags **blacklisted IPs** (local denylist + optional DNSBL), rates **anonymity** (transparent / anonymous / elite) and exports TXT / CSV / JSON plus ready-to-use `host:port` lists per protocol.
+1. **Collect.** Downloads addresses from 150 public sources (106 enabled out of the box) or your own files and removes duplicates.
+2. **Check.** Sends real requests through every proxy to your sites — several times — and checks the status code, required text on the page and speed. It also finds the country, the anonymity level (transparent / anonymous / elite) and whether the IP is blacklisted.
+3. **Deliver.** The best proxies land in TXT / CSV / JSON files, browser, Clash and sing-box configs, a rotating proxy at `127.0.0.1:8899`, and an API. Pools and schedules keep the list fresh on their own.
 
 Everything runs on your machine. The GUI binds to `127.0.0.1` only.
 
