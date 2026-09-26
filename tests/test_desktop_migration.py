@@ -1,6 +1,6 @@
 """Moving the folder an older build wrote into.
 
-F23 asks for a migration of the old folder; CONTRACTS §3.4 requires that a data
+F23 asks for a migration of the old folder; the shared contract requires that a data
 path change happen only after the user agrees and with a backup of the old
 folder.  So the default here is a preview that writes nothing.
 """

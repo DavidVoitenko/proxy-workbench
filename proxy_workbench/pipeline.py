@@ -6,7 +6,7 @@ addresses are canonicalised by the single normaliser of the project
 (``proxytool.normalize``, see :func:`normalize_default`), and every measurement
 goes through an injected runner whose contract is documented on
 :class:`Runners`.  The integration wires ``probes.run_plan`` and the existing
-HTTP transport to that contract (CONTRACTS.ru.md §1.2, HANDOFF §2.2).
+HTTP transport to that contract.
 
 The shape of the chain is the one F12 asks for::
 
@@ -116,7 +116,7 @@ EXPENSIVE_POLICIES = (EXPENSIVE_NONE, EXPENSIVE_ALL_PASSING, EXPENSIVE_UNTIL_N)
 
 RUN_STATES = ('complete', 'partial', 'want_reached', 'paused', 'cancelled', 'budget')
 
-#: A subset of ``jobs.ITEM_STATES`` (CONTRACTS §6.3).  The pipeline emits only
+#: A subset of ``jobs.ITEM_STATES``.  The pipeline emits only
 #: the three it can justify, so ``jobs`` maps a result onto its own state
 #: machine without a second table.  ``partial`` and ``blocked`` stay reserved.
 ITEM_STATES = ('unreachable', 'done', 'failed', 'partial', 'blocked')
@@ -128,7 +128,7 @@ EMITTED_ITEM_STATES = ('unreachable', 'done', 'failed')
 STOP_REASONS = ('items_exhausted', 'want_reached', 'paused', 'cancelled',
                 'budget_exhausted', 'deadline_exceeded', 'stopped')
 
-# Codes come from the LIMIT and VALIDATION domains of CONTRACTS §5.4; the
+# Codes come from the LIMIT and VALIDATION domains of the shared contract; the
 # pipeline introduces no new domain.  A deadline is a budget, so it carries the
 # bare measurement-style reason the run stopped rather than a TIME code that
 # belongs to a row.
@@ -222,7 +222,7 @@ class SystemClock(PipelineClock):
 
 @dataclass(frozen=True)
 class Budgets:
-    """Every ceiling and total of a run, in one place with its unit (CONTRACTS §5.5)."""
+    """Every ceiling and total of a run, in one place with its unit."""
 
     # ceilings — hitting them blocks, it never ends the run
     max_inflight: int = 64
@@ -280,7 +280,7 @@ class Budgets:
         return self.max_ram_bytes // self.ram_per_inflight_bytes
 
     def worker_ceiling(self) -> int:
-        """The worker count, derived — never configured directly (F12)."""
+        """The worker count, derived — never configured directly."""
         return max(1, min(self.max_inflight, self.fd_ceiling, self.ram_ceiling))
 
     def to_public(self) -> dict:
@@ -1160,7 +1160,7 @@ def parse_delimited(data: bytes, *, sep: str = ',') -> Iterator[str]:
 def normalize_default(value: str) -> str | None:
     """The project's single normaliser, imported lazily.
 
-    The pipeline deliberately has no second proxy normaliser (HANDOFF §2.2): it
+    The pipeline deliberately has no second proxy normaliser: it
     calls ``proxytool.normalize`` for public addresses.  A caller that needs a
     different scope passes its own callable as ``config.normalize`` — for
     instance ``proxytool.normalize_custom`` for a user's own hostnames.
@@ -1973,7 +1973,7 @@ class Pipeline:
 
     def _truncate(self) -> None:
         """A source hit its byte budget.  That is a budget stop, not an
-        interruption, and it carries the BODY code of CONTRACTS §5.4."""
+        interruption, and it carries the BODY code of the shared contract."""
         self._counters.sources_truncated += 1
         self._stop('budget_exhausted', E_LIMIT_BODY)
 
@@ -2149,7 +2149,7 @@ class Pipeline:
                           started_at=now, finished_at=now, requests=0, bytes=0)
 
     def _wants_expensive(self, item: Item, stages: Sequence[StageOutcome]) -> bool:
-        """Whether this item needs the expensive probe at all (F12).
+        """Whether this item needs the expensive probe at all.
 
         ``all_passing`` charges every passing item.  ``until_n`` charges only the
         ones that can still move the number the caller asked for: an item whose

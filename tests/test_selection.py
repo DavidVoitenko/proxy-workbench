@@ -154,7 +154,7 @@ class SelectionTests(unittest.TestCase):
         """Export and read the artifact the export itself produced.
 
         A selected slice is its own artifact and never republishes the active
-        pool (defect 7), so the rows are read from the artifact directory the
+        pool, so the rows are read from the artifact directory the
         report names rather than from the export root.
         """
         out = self.home / 'out'
@@ -196,7 +196,7 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(p.export_manifest(self.home / 'out'), None)
 
     def test_stale_selection_is_missing_instead_of_falling_back_to_full_export(self):
-        # A lifetime is written once, at measurement time (CONTRACTS §2.1), so
+        # A lifetime is written once, at measurement time, so
         # expiring a row means moving that recorded deadline, not the clock back.
         self.db.execute("UPDATE results SET payload=json_set(payload, '$.valid_until', 1) "
                         "WHERE proxy='http://11.0.0.1:80'")

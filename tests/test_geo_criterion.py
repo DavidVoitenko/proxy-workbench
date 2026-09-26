@@ -1,4 +1,4 @@
-"""One country criterion, applied the same way everywhere (F08).
+"""One country criterion, applied the same way everywhere.
 
 The cases below are the acceptance lines of F08: a German endpoint wanted for a
 Dutch exit, unknown never passing for "not in NL", names in RU and EN resolving

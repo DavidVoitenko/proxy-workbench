@@ -1,6 +1,6 @@
 ; Per-user installer for the Windows desktop build.
 ;
-;   iscc /DProductVersion=2.3.0 /DOutDir=C:\path\to\dist /DSourceDir=C:\path\to\dist packaging\windows-installer.iss
+;   iscc /DProductVersion=3.0.0 /DOutDir=C:\path\to\dist /DSourceDir=C:\path\to\dist packaging\windows-installer.iss
 ;
 ; PrivilegesRequired=lowest is the whole point: the app writes to per-user
 ; folders, so it never needs an administrator, and it never installs anything

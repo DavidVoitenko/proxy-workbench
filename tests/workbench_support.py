@@ -1,6 +1,6 @@
 """Shared fixtures for the engine tests: a measurement row needs its whole key.
 
-The schema is versioned (CONTRACTS §3.3).  ``results`` is keyed by
+The schema is versioned.  ``results`` is keyed by
 ``(profile_id, profile_revision, access_id, access_revision, endpoint_id, job_id)``
 and ``candidates``/``candidate_seen`` carry a mandatory ``endpoint_id``, so the
 old positional inserts this repository used everywhere no longer describe a row:
@@ -114,7 +114,7 @@ def store_result(conn, values, *, profile_id=None, profile_revision=1,
     collection_id = collection_id or db.PUBLIC_COLLECTION_ID
     body['collection_id'] = collection_id
     # The scope is part of the row, not of the read: a row without it cannot be
-    # admitted against any scope (CONTRACTS §1.2 rules 1-2).
+    # admitted against any scope.
     body['profile_id'] = profile_id or profile
     body['profile_revision'] = int(profile_revision)
     body['access_id'] = access_id

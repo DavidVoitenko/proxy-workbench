@@ -1,4 +1,4 @@
-"""Codes, help and classification of the diagnostics layer (F10, F25).
+"""Codes, help and classification of the diagnostics layer.
 
 The tests below check the behaviour a user and a consumer depend on: a code
 stays the same in every language, every code says what to do, and the engine's
@@ -42,7 +42,7 @@ class CodeCatalogueTests(unittest.TestCase):
     def test_no_error_code_outside_the_contract_canon(self):
         invented = {code for code in d.CODES if code.startswith('E_') and code not in d.CONTRACT_CODES}
         self.assertEqual(invented, set(),
-                         'E_* codes must come from CONTRACTS §5.4, not from this module')
+                         'E_* codes must come from the shared contract, not from this module')
 
     def test_codes_keep_their_documented_shape(self):
         for code in d.CODES:

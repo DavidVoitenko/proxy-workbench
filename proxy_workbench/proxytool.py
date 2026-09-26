@@ -241,7 +241,7 @@ async def _source_stream(client, url, allow_private=False, headers=None):
     _, hostname, _, address = await _validate_source_destination(url, allow_private)
     # ``If-None-Match``/``If-Modified-Since`` are how a 304 happens at all, so
     # the conditional headers travel with the very first request of a source
-    # whose validators were stored by the previous fetch (F13).
+    # whose validators were stored by the previous fetch.
     request_headers = dict(headers or {})
     if address is None:
         async with client.stream('GET', url, headers=request_headers) as response:
@@ -546,7 +546,7 @@ SNAPSHOT_SCHEMA_VERSION = 1
 MIN_FRESHNESS_SECONDS = 2 * 60 * 60
 #: An address with no credentials still has an access identity, and a named one:
 #: an empty id is indistinguishable from a row that never recorded who measured
-#: it, and admission refuses that (CONTRACTS §1.2 rule 1, §2.3).  The web
+#: it, and admission refuses that.  The web
 #: surface reads the same identity (``gui.App.snapshot_access``); the two have to
 #: name the same thing or the table and the engine disagree about which rows
 #: exist at all.
@@ -562,7 +562,7 @@ def as_access(value):
     raise `AttributeError: 'Access' object has no attribute 'access_id'` at the
     first row: a caller that had a real credential identity could not measure
     with it.  The credential value is never touched here -- only the identity and
-    its revision travel into a row (F04).
+    its revision travel into a row.
     """
     if value is None:
         return PUBLIC_ACCESS
@@ -578,7 +578,7 @@ def as_access(value):
 PROTOCOL_EXPORTS = {'http': 'http.txt', 'https': 'https.txt', 'socks4': 'socks4.txt', 'socks5': 'socks5.txt'}
 PROTOCOL_ALIASES = {'socks5h': 'socks5'}
 
-# The measurement row is written with every key column named (CONTRACTS §3.2):
+# The measurement row is written with every key column named:
 # a positional insert breaks the moment a migration adds a column, which is
 # exactly how a stale binary is stopped from writing into a newer schema.
 INSERT_RESULT = '''INSERT OR REPLACE INTO results(
@@ -631,10 +631,10 @@ def meta_columns(conn):
 def collection_candidates(conn, collection_id):
     """Canonical addresses that belong to one collection, in address order.
 
-    Membership is the scope (CONTRACTS §1.2 rule 2).  A collection with no
+    Membership is the scope.  A collection with no
     membership rows yields nothing rather than silently falling back to every
     address ever collected -- that fallback is how a private list turned into
-    the public base (defect 11).
+    the public base.
     """
     return conn.execute(
         'SELECT e.canonical FROM membership m JOIN endpoints e ON e.id = m.endpoint_id '
@@ -774,8 +774,8 @@ def open_db(path, **kwargs):
     This function used to own the schema.  It no longer writes DDL: the
     versioned migrator checks ``user_version``/``application_id`` before any
     write, takes a technical backup of a pre-versioning file and refuses a
-    database that belongs to another application or to a newer program
-    (CONTRACTS §3.2, §3.4, §3.5).  The old contract -- a bare connection -- is
+    database that belongs to another application or to a newer program.
+   The old contract -- a bare connection -- is
     kept so every existing caller keeps working; callers that want the migration
     report call :func:`open_db_with_report`.
     """
@@ -800,7 +800,7 @@ def ensure_public_collection(conn):
 
     Creating it here (and not in a migration) keeps a fresh database usable
     without a second code path: ``db.create_collection`` refuses a duplicate id,
-    so this is a no-op on every open after the first (defect 11, F02).
+    so this is a no-op on every open after the first.
     """
     row = conn.execute('SELECT 1 FROM collections WHERE id=?', (schema.PUBLIC_COLLECTION_ID,)).fetchone()
     if not row:
@@ -1060,7 +1060,7 @@ def source_selection_view(data_dir=None, catalog=None, *, query='', db=None, now
 
     The CLI, the GUI and ``/v1/sources`` all answer from this, so a source's
     support status, dataset group, access kind and runtime state are the same
-    numbers everywhere (F13, F21).
+    numbers everywhere.
     """
     from . import source_management
     catalog = catalog if catalog is not None else sources_catalog(data_dir)
@@ -1080,7 +1080,7 @@ def source_catalog_for(data_dir):
 
 
 def catalog_source_plans(settings, catalog=None, *, include_disabled=False):
-    """The user's selection, resolved into fetchable plans (F13).
+    """The user's selection, resolved into fetchable plans.
 
     ``source_catalog.migrate_settings`` first, so a tree that still holds the
     old flat URL list keeps every URL and every *pause* -- a source that was in
@@ -1550,7 +1550,7 @@ def record_source_generation(db, plan, observation_id, endpoints, *, state, now,
 def record_source_state(db, plan, endpoint_url, *, now, etag=None, last_modified=None,
                         final_url=None, success=False, error=None, retry_after=None,
                         previous=None, generation=None, not_modified=False):
-    """Cache validators, backoff and quarantine of one source (F13).
+    """Cache validators, backoff and quarantine of one source.
 
     A successful fetch clears the backoff and the quarantine; three failures in
     a row quarantine the source, so a provider that has gone away is asked
@@ -1617,7 +1617,7 @@ def record_source_identity(db, plan):
 
 
 def source_contributions(db, source_ids=()):
-    """What each source actually contributed, for the source views (F21).
+    """What each source actually contributed, for the source views.
 
     ``source_management.attach_contributions`` calls this by name and checks
     that it exists, so an exclusive set and a shared set are computed from the
@@ -1711,7 +1711,7 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
 
     What a source offered is recorded, not just consumed: an observation with
     its counters, a generation (an immutable answer), and the cache validators
-    plus backoff and quarantine of the next attempt (F13, F21).
+    plus backoff and quarantine of the next attempt.
 
     ``preview`` runs the identical fetch/adapter/limit path against a private
     temporary database, so a check of a source can answer every question a real
@@ -1826,7 +1826,7 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
             db.execute('BEGIN')
         # One endpoint entity per canonical address; the collection membership
         # is the scope, and the legacy ``candidates`` row keeps the old readers
-        # working (CONTRACTS §1.2 rule 2, §3.3 migrations 1-2).
+        # working.
         existed = db.execute('SELECT 1 FROM endpoints WHERE canonical=?', (proxy,)).fetchone() is not None
         endpoint = upsert_endpoint(db, proxy, country=country,
                                    country_at=time.time() if country else None,
@@ -2731,7 +2731,7 @@ def _ws_frames(buffer, max_frame_bytes=None):
 
 
 class Transport:
-    """The network seam ``probes.py`` measures through (F20, F01).
+    """The network seam ``probes.py`` measures through.
 
     ``probes`` never opens a socket: it builds a request, hands it to one of
     these four methods and interprets what comes back.  Everything the probe
@@ -3139,7 +3139,7 @@ async def request_once(proxy, target, config, rate):
         # Broken proxies raise more than httpx errors (socksio parses raw replies).
         # The stage and the stable code come from the one classifier, so the
         # funnel in a diagnostic packet can tell "the proxy died at the TCP
-        # stage" from "the target answered 503" (F10, F25).
+        # stage" from "the target answered 503".
         result['error'] = str(exc) if isinstance(exc, ValueError) and str(exc) == 'BODY_TOO_LARGE' else type(exc).__name__
         result['error_stage'], result['error_code'] = diagnostics.classification(exc)
     finally:
@@ -3238,7 +3238,7 @@ def allowed_failures(config):
 
 
 def probe_plan(config):
-    """The check mode and its limits, from the modes module (F01, F07).
+    """The check mode and its limits, from the modes module.
 
     One place decides what "recheck" or "monitor" means and how long a single
     probe may take; the engine asks it instead of re-deriving the numbers, so a
@@ -3260,7 +3260,7 @@ def probe_plan(config):
         # The whole-probe budget is what one endpoint may cost in this run:
         # every attempt of every target, worst case each.  It is not
         # ``attempts x targets`` implicit in the per-request timeouts -- it is
-        # one number, and it is the job's own (defect 23, F12).
+        # one number, and it is the job's own.
         'whole_probe_timeout_s': (connect + connect + read) * attempts * targets,
         'max_body_bytes': int(config.get('max_bytes') or 262144),
     })
@@ -3268,7 +3268,7 @@ def probe_plan(config):
 
 
 def capability_manifest():
-    """What is really measured, and what is declared unsupported (F20).
+    """What is really measured, and what is declared unsupported.
 
     A websocket, a long connection, a media segment, UDP or HTTP/3 is not
     measured here, so it is reported as unsupported rather than as a passing
@@ -3361,7 +3361,7 @@ def _stamp_evidence(row, outcome):
 
 
 async def check_capabilities(proxy, config, transport=None):
-    """Run the declared capability kinds and file one state per kind (F20).
+    """Run the declared capability kinds and file one state per kind.
 
     Each kind is measured by :mod:`probes` against the very same
     :class:`Transport` the basic ladder uses, so "websocket supported" means a
@@ -3389,7 +3389,7 @@ async def measure_speed(proxy, config, rate):
     :mod:`probes`' -- this function only supplies the bytes.  A transfer that is
     too small, too short or unfinished therefore comes back
     ``state='insufficient'`` **without a number**, instead of the old hand-made
-    arithmetic that divided a single chunk by an arbitrary window (defect 15).
+    arithmetic that divided a single chunk by an arbitrary window.
     """
     from . import probes
     await rate.wait()
@@ -3459,7 +3459,7 @@ async def judge_proxy(proxy, config, rate, own_ips):
         return anonymity.result('unknown', error=str(exc), started=started)
     except Exception as exc:
         # An anonymity check that failed is unknown, never a pass: the level the
-        # user asked for is not granted on a failed request (defect 13).
+        # user asked for is not granted on a failed request.
         return anonymity.result('unknown', error=diagnostics.classification(exc)[1], started=started)
     # ``judge_verified`` says the direct bootstrap really did show one of our
     # addresses.  Without that baseline an echo that leaks nothing proves
@@ -3572,7 +3572,7 @@ def measurement_bytes(row):
 #: One page of the candidate source.  The corpus is read page by page instead of
 #: with a single ``fetchall``: a half-million addresses is a list of a hundred
 #: megabytes the engine would hold for the whole run, and the front half of a
-#: scan is supposed to be bounded (F12).  Each page is a fresh statement, so the
+#: scan is supposed to be bounded.  Each page is a fresh statement, so the
 #: commit the store path makes every batch cannot invalidate a half-read
 #: cursor of the corpus.
 CANDIDATE_PAGE = 4096
@@ -3659,7 +3659,7 @@ def newest_measurements(conn, profile, *, scope=None, access=None, policy=None):
 def candidate_pages(conn, collection_id, *, page=CANDIDATE_PAGE):
     """The addresses of one collection, in address order, one page at a time.
 
-    Membership is the scope (CONTRACTS §1.2 rule 2) and the order is the address
+    Membership is the scope and the order is the address
     order, which is also the order that makes inserting the results cheapest.
     Pagination is by address, not by offset, so a page stays correct however many
     rows the sweep has written since.
@@ -3746,7 +3746,7 @@ def _already_canonical(value):
 
     ``collect`` already ran the project's one normaliser, and the collection
     stores what it returned; normalising a second time would be a second
-    grammar for the same address (CONTRACTS §1.2).  The chain still refuses
+    grammar for the same address.  The chain still refuses
     anything it cannot split into a scheme, a host and a port, so a corrupt
     candidate is rejected and counted rather than measured.
     """
@@ -3784,7 +3784,7 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
     RAM budgets rather than taken from ``--workers`` as a constant, the request
     and byte totals are reserved before a measurement and charged with what it
     really spent, per-host and per-target limits hold, and the three units of
-    ``--want`` are three different numbers (F12).
+    ``--want`` are three different numbers.
 
     The stages, from cheap to expensive:
 
@@ -3805,10 +3805,10 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
     ``job_store`` hands the run to the persistent lifecycle of ``jobs.py``: the
     queue, the per-item states and the events come from there, so a cancel, a
     crash or a restart keeps the last completed result and the queue of
-    unfinished items (defect 6).  ``deadline_s``, ``max_requests`` and
+    unfinished items.  ``deadline_s``, ``max_requests`` and
     ``max_bytes`` are the resource budgets of ``pipeline.py`` -- one global
     time and one request/byte ceiling instead of ``attempts x targets`` per
-    address (F12, defect 23).
+    address.
     """
     denylist = denylist or Denylist.empty()
     policy = config.get('reputation', {})
@@ -3824,13 +3824,12 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
     country_of = country_of or (lambda proxy: None)
     # The scope is fixed here and pinned into every row: the same collection, the
     # same profile revision and the same access revision must be visible to the
-    # GUI, the API and the gateway, or a consumer could mix two measurements
-    # (CONTRACTS §1.2 rules 1-2).
+    # GUI, the API and the gateway, or a consumer could mix two measurements.
     collection_id = ensure_collection(db, collection_id)
     access = as_access(access)
     network_id = snapshot_network(config)
     # The same criterion the export uses, so a row the check narrows and a row
-    # the export drops are the same row for the same reason (F08).
+    # the export drops are the same row for the same reason.
     criterion = country_criterion(countries, country_exclude, country_basis, country_unknown)
     admission_policy = core.Policy(
         max_age_seconds=float(max_age_seconds if max_age_seconds else MIN_FRESHNESS_SECONDS),
@@ -3884,7 +3883,7 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
 
     # ``--want`` counts endpoints unless the user asks for another unit: N
     # endpoints, N IPs and N confirmed exit IPs are different numbers, and the
-    # caller names the one it means (F12, CONTRACTS §1.1).  The chain owns the
+    # caller names the one it means.  The chain owns the
     # arithmetic of the three units; what this function does is fill the other
     # two so the report can show them beside the one that was asked for.
     find = chain.FindPolicy(n=want, what=count_what)
@@ -3946,7 +3945,7 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
         # trustworthy.  In particular, UNREACHABLE and expired rows are pending on
         # the next scan; treating every row as done made a dead proxy permanent.
         # "Trustworthy" is the one admission contract, not a local freshness test:
-        # a row with no recorded lifetime is never assumed fresh (defects 1, 2, 4).
+        # a row with no recorded lifetime is never assumed fresh.
         if (core.observation_state(row) != core.OBSERVATION_MISSING and not row.get('error')
                 and core.time_state_of(row, now, admission_policy)['state'] == core.TIME_OK):
             done.add(proxy)
@@ -4035,7 +4034,7 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
     # The budgets of the run.  ``--workers`` is the ceiling the user asks for, not
     # the number of workers: the chain derives its own from the descriptors the
     # process really has and from the RAM each in-flight measurement may hold,
-    # and moves that number with the observed success rate (F12).  ``--max-requests``
+    # and moves that number with the observed success rate.  ``--max-requests``
     # and ``--run-max-bytes`` are the totals a stage is charged against, and the
     # probes reserve every request and its body allowance before I/O.
     ram_per_inflight = max(int(config.get('max_bytes') or 0), DEFAULT_RAM_PER_INFLIGHT)
@@ -4091,7 +4090,7 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
         # One measurement folded into the row by the one admission contract:
         # ``valid_until`` is written here, once, from the measurement time and
         # the policy of this profile revision, and is never recomputed at export
-        # time (defects 1 and 2, CONTRACTS §2.1).
+        # time.
         measurement = core.Measurement(
             endpoint_id=endpoint, checked_at=row.get('checked_at'), verdict=row,
             error=row.get('error'), job_id=job_id, network_id=network_id,
@@ -4101,8 +4100,8 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
                                         profile=(profile, int(profile_revision or 1)))
         merged.setdefault('proxy', proxy)
         # The measurement of record is written first and the result row points
-        # at it, so no stop can leave a result without an observation behind it
-        # (CONTRACTS §2.1).  It exists only when the run is a tracked job.
+        # at it, so no stop can leave a result without an observation behind it.
+        # It exists only when the run is a tracked job.
         if job_store is not None and job_id:
             observation_id[0] = record_observation(
                 db, merged, job_id=job_id, endpoint_id=endpoint, access=access,
@@ -4274,8 +4273,7 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
             raise
         except Exception as exc:
             # One malformed proxy must never stop the whole scan, and the reason
-            # it died is recorded with a stage so the funnel can count it
-            # (F10, F25).
+            # it died is recorded with a stage so the funnel can count it.
             row = unreachable_result(proxy)
             row['error'] = type(exc).__name__
             row['error_stage'], row['error_code'] = diagnostics.classification(exc)
@@ -4494,7 +4492,7 @@ def anonymous_access(db, endpoint_id, scheme):
     says so: ``observations.access_id`` points at a real ``accesses`` row.  The
     identity is created through the secret store, so a credentialed endpoint and
     a public one differ only by the mode recorded there -- not by two parallel
-    notions of "who measured this" (CONTRACTS §1.2 rule 1).
+    notions of "who measured this".
     """
     from . import secrets as secretstore
     store = secretstore.AccessStore(db, secretstore.vault_for_database(db), commit=False)
@@ -4508,7 +4506,7 @@ def record_observation(db, row, *, job_id, endpoint_id, access, profile, profile
     """Write one finished measurement as an ``observations`` row and return its id.
 
     The observation is the measurement of record: the row the item refers to and
-    the payload the result keeps are the same instant (CONTRACTS §2.1).  It is
+    the payload the result keeps are the same instant.  It is
     written before the job item is finished so a stop between "measured" and
     "judged" still leaves the measurement recoverable.
 
@@ -4542,7 +4540,7 @@ def finish_job_item(store, job_id, endpoint_id, row, observation_id):
     The order is the contract: the item leaves the queue only when a measurement
     with an explicit time exists, so a cancelled re-check keeps the previous
     payload and the queue of unfinished items survives a crash (defect 6,
-    CONTRACTS §6.3).  A lifecycle that refuses the transition must never cost
+    the shared contract).  A lifecycle that refuses the transition must never cost
     the measurement itself -- it is already written -- so the refusal is
     contained here and the job state stays the honest record of what happened.
     """
@@ -4568,7 +4566,7 @@ def submit_scan_job(workbench, db, kind, *, profile, profile_revision, collectio
     """Register a scan in the persistent lifecycle and return its job id.
 
     ``idempotency_key`` makes a repeated request return the same job instead of
-    starting a second one (CONTRACTS §6.4).  Every queue item is created here, so
+    starting a second one.  Every queue item is created here, so
     a restart knows what was still unfinished.
     """
     from . import jobs
@@ -4582,7 +4580,7 @@ def submit_scan_job(workbench, db, kind, *, profile, profile_revision, collectio
     db.commit()
     job = store.submit(kind, scope, items, idempotency_key=idempotency_key)
     # ``queued`` -> ``running`` before the first claim; refused with
-    # E_CONFLICT_BUSY while another job is already measuring (CONTRACTS §6.4).
+    # E_CONFLICT_BUSY while another job is already measuring.
     store.start(job.id)
     return job.id
 
@@ -4780,7 +4778,7 @@ def proxy_protocol(proxy):
 
 
 def country_criterion(countries=(), exclude=(), basis='endpoint', unknown='exclude'):
-    """The one country criterion every surface filters with (F08).
+    """The one country criterion every surface filters with.
 
     The object is built by :mod:`proxy_workbench.geo` and nowhere else, so a
     country chosen by name, and the explicit "unknown" policy, mean the same
@@ -4895,12 +4893,12 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
     the scope, the policy and the rows the current filters select.  Three kinds
     of artifact exist and only one of them may switch the active pool -- an
     exported selection, a top-N slice and a search result all stay separate
-    files until the user publishes them explicitly (defects 3, 7, R04).
+    files until the user publishes them explicitly.
 
     ``diagnostic=True`` never touches the active pointer; ``allowed_proxies``
     makes the artifact a ``selection``.  A re-export with a different ``--watch``
     cannot change the lifetime of an already measured address, because
-    ``valid_until`` was written at measurement time (defects 1, 2).
+    ``valid_until`` was written at measurement time.
     """
     from . import exportsvc
 
@@ -5058,8 +5056,8 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
         published_row['checks'] = history['checks']
         published_row['passes'] = history['passes']
         published_row['mbps'] = (row.get('speed') or {}).get('mbps') if isinstance(row.get('speed'), dict) else None
-        # An access identity is published only when it points at a credential
-        # (CONTRACTS §4.4).  The credential-free public identity is how the row
+        # An access identity is published only when it points at a credential.
+        # The credential-free public identity is how the row
         # was *measured*; carrying it as an access reference would make every
         # plain proxy look password-protected and the compatibility report would
         # drop it from PAC, Clash and sing-box.  The stored row keeps it either
@@ -5089,7 +5087,7 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
         # The state describes the set, not the sweep: nothing matched is
         # "empty", everything expired is "stale", and a set that lost members
         # is "partial".  Calling all three "complete" is what made one dead
-        # address indistinguishable from a finished run (CONTRACTS §4.3, defect 3).
+        # address indistinguishable from a finished run.
         run_state['state'] = selection.state
         run_state.setdefault('state_detail', selection.state_detail)
         run_state.setdefault('stop_reason', 'complete')
@@ -5123,7 +5121,7 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
     # ``complete`` answers a different question from ``state``: it says the run
     # covered its whole scope.  A sweep that finished and rejected a few rows is
     # still complete -- conflating the two is what made "everything expired" and
-    # "every check finished" look alike (CONTRACTS §4.3, defect 3).
+    # "every check finished" look alike.
     report['complete'] = bool(
         run_state.get('state') in (core.SELECTION_COMPLETE, core.SELECTION_PARTIAL)
         and int(run_state.get('checked') or 0) >= int(run_state.get('scope_candidates') or 0)
@@ -5144,8 +5142,8 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
         db.rollback()
     # Only a published run may repoint an already connected client.  A selected
     # slice, a top-N cut and a search result are files the user downloads; they
-    # never move the active pool, and they never touch ``last-profile.txt``
-    # (defect 7, R04, CONTRACTS §4.5).  ``exportsvc.publish`` refuses a
+    # never move the active pool, and they never touch ``last-profile.txt``.
+    # ``exportsvc.publish`` refuses a
     # selection outright -- the branch below exists so a published run still
     # gets the legacy compatibility files and the pointer in one rollback-safe
     # step.
@@ -5197,7 +5195,7 @@ def uptime_of(row):
 
 
 class Workbench:
-    """The one service layer behind the CLI, the API and the GUI (F18).
+    """The one service layer behind the CLI, the API and the GUI.
 
     Every module built in this wave -- ``jobs``, ``importer``, ``profiles``,
     ``probes``, ``pools``, ``scheduler``, ``sourcedesk``, ``geo``, ``pipeline``,
@@ -5308,15 +5306,14 @@ class Workbench:
         from . import sourcedesk
         return self._store('sources', lambda: sourcedesk.SourceDesk(self.conn))
 
-    # -- source comparison (F21) -------------------------------------------
+    # -- source comparison -------------------------------------------
 
     def source_dataset_groups(self, source_ids):
         """``{source_id: dataset group}`` the catalog already records.
 
         The research pass compared full snapshots and found that some
         publishers serve byte-identical payloads under different ids
-        (``docs/requirements/sources-research/overlap.md``: ``hookzof`` and
-        ``proxifly``, 21 036 identical SOCKS5 endpoints).  That verdict is in
+        (``hookzof`` and ``proxifly``, 21 036 identical SOCKS5 endpoints).  That verdict is in
         the catalog, so the comparison does not have to rediscover it by
         downloading and comparing two lists again -- and an uncollected pair
         still reads as one dataset rather than as a second opinion.
@@ -5432,7 +5429,7 @@ class Workbench:
                                     max_age_seconds=max_age_seconds)
 
     def filter_by_country(self, rows, criterion, resolver=None, now=None):
-        """The GUI list, the read-only API and the export, one country rule (F08).
+        """The GUI list, the read-only API and the export, one country rule.
 
         This method had no caller: each of the three surfaces had written its
         own include-only ``row['country'] in wanted`` test, so none of them
@@ -5521,7 +5518,7 @@ class Workbench:
     # -- schedules ---------------------------------------------------------
 
     def schedule_plan(self, spec_id, now=None):
-        """Next run of one schedule, with its timezone and window (F15)."""
+        """Next run of one schedule, with its timezone and window."""
         from . import scheduler
         engine = scheduler.Scheduler(self.schedules(), clock=self.clock)
         spec = next((item for item in engine.list() if item.id == spec_id), None)
@@ -5557,7 +5554,7 @@ class Workbench:
         """Known-good rows of one scope as pipeline priors, ages kept intact.
 
         A carried-over prior keeps its own ``checked_at``: re-exporting or
-        changing ``--watch`` must not mint a new measurement time (defect 2).
+        changing ``--watch`` must not mint a new measurement time.
         """
         from . import pipeline
         now = self.clock()
@@ -5580,7 +5577,7 @@ class Workbench:
         """Issue the first administrative key through a local trusted bootstrap.
 
         This is the only way an administrator comes into existence, and it needs
-        a locally trusted caller, not a secret from the network (F29).
+        a locally trusted caller, not a secret from the network.
 
         The default permission set is *this machine's* administrator: key
         administration plus every write the control API offers.  Anything less
@@ -5649,7 +5646,7 @@ def local_admin_permissions():
 
     Key administration on its own is not administration: a key that may only
     read keys cannot create a collection, import a list, submit a check or
-    export, and the user would see 403 for every action they took it for (F29).
+    export, and the user would see 403 for every action they took it for.
     """
     from . import apikeys
     return tuple(sorted(set(apikeys.ADMIN_PERMISSIONS) | set(apikeys.WRITE_PERMISSIONS)
@@ -5661,7 +5658,7 @@ class WorkbenchError(RuntimeError):
 
     Module exceptions stay inside :class:`Workbench`; this is the single
     boundary both surfaces share, so a refusal reads the same in a terminal and
-    in a JSON body (CONTRACTS §5.4).
+    in a JSON body.
     """
 
     def __init__(self, message, code='E_STATE_SNAPSHOT_STATIC'):
@@ -5865,8 +5862,8 @@ def parser():
                    help=tr('serve: токен доступа к API (или переменная PROXY_WORKBENCH_API_TOKEN); '
                         'обязателен, если API слушает не loopback-адрес', 'serve: API access token (or PROXY_WORKBENCH_API_TOKEN); '
                         'required when the API listens on a non-loopback address'))
-    # The gateway password is a different identity from the API token (CONTRACTS
-    # §5.1, defect 18).  `gateway` used to read `--api-token`, so one value was
+    # The gateway password is a different identity from the API token.
+    # `gateway` used to read `--api-token`, so one value was
     # both the rotating-proxy password and the read-only bearer token: whoever
     # knew the password from a phone in the LAN could read the whole published
     # snapshot, and a leaked API token was a working proxy.
@@ -5988,7 +5985,7 @@ def parser():
     p.add_argument('--include-secret', action='store_true',
                    help=tr('source redact: показать искомую строку, если она утёкла; по умолчанию только факт',
                            'source redact: show the searched string if it leaked; by default only the fact'))
-    # source catalog (F13).  `--sources` stays the flat URL list and still wins;
+    # source catalog.  `--sources` stays the flat URL list and still wins;
     # these are for the catalog half, which addresses a source by its stable id.
     p.add_argument('--id', default='', dest='id',
                    help=tr('source: идентификатор источника в каталоге', 'source: catalog source id'))
@@ -6128,7 +6125,7 @@ def run_gateway(args, countries):
     filters = dict(protocol=args.protocol, countries=countries, anonymity=args.min_anonymity,
                    max_latency=args.max_latency)
     # `args.api_token` is deliberately not read for the gateway: the password is a
-    # separate identity (CONTRACTS §5.1, defect 18).  On a LAN bind the gateway makes
+    # separate identity.  On a LAN bind the gateway makes
     # its own and prints it, so a password a phone was given is never a control
     # secret and a leaked API token is never a working proxy.
     gateway_token = getattr(args, 'gateway_token', None)
@@ -6284,7 +6281,7 @@ def management_command(args):
         return 2
     except importer_error() as exc:
         # Every refusal of the importer is a subclass of ``ImportProblem``, and
-        # each one names its own ``E_*`` code (CONTRACTS §5.4).  Enumerating a
+        # each one names its own ``E_*`` code.  Enumerating a
         # few of them here is how a ``ImportPartialBlocked`` or a
         # ``ImportBusy`` escaped as a traceback instead of a message.
         print(tr(f'Ошибка импорта: {exc}', f'Import error: {exc}'), file=sys.stderr)
@@ -6374,8 +6371,8 @@ def _import_policy(args):
     The public base takes globally routable addresses only.  A private
     collection may name a hostname or a private address, but only because the
     user said so with ``--allow-private-endpoints`` -- an explicit, recorded
-    choice rather than a form that accepts what the collector later drops
-    (F04, defect 10).  Credentials are refused either way: the importer refuses
+    choice rather than a form that accepts what the collector later drops.
+   Credentials are refused either way: the importer refuses
     them structurally, and no flag turns that off.
     """
     from . import importer
@@ -6385,7 +6382,7 @@ def _import_policy(args):
 
 
 def _cmd_import(workbench, args, action):
-    """``import preview|commit|list`` -- the transactional importer (F03)."""
+    """``import preview|commit|list`` -- the transactional importer."""
     if action == 'list':
         rows = workbench.conn.execute(
             'SELECT id, collection_id, state, revision, created_at FROM import_batch '
@@ -6448,8 +6445,8 @@ def _busy_collection(workbench, collection_id):
     return f'collection {collection_id} is being checked by job {running[0].id}'
 
 
-#: Everything ``source`` can do.  The catalog half (F13), the redaction half
-#: (F27) and the comparison half (F21) answer different questions about the
+#: Everything ``source`` can do.  The catalog half, the redaction half
+#: and the comparison half answer different questions about the
 #: same objects, so they share one command instead of two that disagree about
 #: what a source is.
 SOURCE_SUBCOMMANDS = ('list', 'show', 'sets', 'set', 'enable', 'disable', 'add', 'remove',
@@ -6486,7 +6483,7 @@ def _cmd_source(workbench, args, action):
 
 
 def _source_command(workbench, args, action):
-    """``source <subcommand>`` -- the source catalog and the subscriptions (F13, F27).
+    """``source <subcommand>`` -- the source catalog and the subscriptions.
 
     The catalog half reads and writes the *selection* (``source_catalog``), the
     runtime half reports what the last collection actually did
@@ -7153,7 +7150,7 @@ POOL_SUBCOMMANDS = ('list', 'create', 'status', 'members', 'refill', 'recheck',
 
 
 def _cmd_pool(workbench, args, action):
-    """``pool list|create|status|members|refill|recheck`` -- a steady pool of proxies (F14).
+    """``pool list|create|status|members|refill|recheck`` -- a steady pool of proxies.
 
     ``refill`` and ``recheck`` are the two halves of keeping a pool up: the
     first re-admits from what is already measured, the second measures the
@@ -7187,7 +7184,7 @@ def _cmd_pool(workbench, args, action):
             raise WorkbenchError(tr('Укажите имя пула: --name ИМЯ', 'name the pool: --name NAME'))
         # A pool is bound to one scope: a collection *and* a profile revision.
         # Both are required, because a pool that could drift to another profile
-        # would serve rows the user never asked for (CONTRACTS §1.2).
+        # would serve rows the user never asked for.
         profile_id = args.profile_id or active_profile_id(workbench)
         if not profile_id:
             raise WorkbenchError(tr('Пул привязан к профилю проверки: укажите --profile-id '
@@ -7345,7 +7342,7 @@ def _cmd_schedule(workbench, args, action):
                 raise WorkbenchError(tr(f'Окно запуска неверно: {exc}',
                                         f'the run window is invalid: {exc}'), 'E_VALIDATION_FIELD') from None
         # The store owns the serialisation: the schedule is given as the plain
-        # mapping its schema defines, never as a runtime object (CONTRACTS §5.5).
+        # mapping its schema defines, never as a runtime object.
         payload = {'id': schedule_id, 'kind': 'interval', 'interval_minutes': args.interval,
                    'timezone': args.timezone,
                    'budgets': {'requests': args.budget_requests, 'bytes': args.budget_bytes}}
@@ -7395,7 +7392,7 @@ def _cmd_schedule(workbench, args, action):
 
 
 def _cmd_profile(workbench, args, action):
-    """``profile list|show`` -- named check profiles (F05)."""
+    """``profile list|show`` -- named check profiles."""
     store = workbench.profiles()
     if action in ('', 'list'):
         rows = [item.as_dict() if hasattr(item, 'as_dict') else str(item) for item in store.list()]
@@ -7408,7 +7405,7 @@ def _cmd_profile(workbench, args, action):
 
 
 def _cmd_preset(workbench, args, action):
-    """``preset [поиск]`` -- versioned service sets and their probes (F06).
+    """``preset [поиск]`` -- versioned service sets and their probes.
 
     The list is deliberately one line per preset with its verification state:
     a preset whose definition was never checked against a live response says so
@@ -7553,7 +7550,7 @@ def _cmd_backup_cleanup(workbench, args, action):
 
 
 def _cmd_backup_rebind(workbench, args):
-    """Re-point the vault after a restore into a new data path (F24, F18)."""
+    """Re-point the vault after a restore into a new data path."""
     from . import db as store
     mapping = json.loads(Path(args.mapping).read_text(encoding='utf-8')) \
         if getattr(args, 'mapping', None) else {}
@@ -7698,7 +7695,7 @@ def _cmd_diagnose(workbench, args, action):
 
 
 def _cmd_geo(workbench, args, action):
-    """``geo status`` -- the country and provider databases, honestly (F08)."""
+    """``geo status`` -- the country and provider databases, honestly."""
     from . import geo
     layout = workbench.layout()
     country = geo.database_status(geoip.default_path(workbench.data), 'country', now=workbench.clock())
@@ -7710,7 +7707,7 @@ def _cmd_geo(workbench, args, action):
 
 
 def _database_phrase(status):
-    """One honest sentence about a country/provider database (F08).
+    """One honest sentence about a country/provider database.
 
     A missing or stale database is never reported as a ready one: the age and
     the error, if any, travel with the state.
@@ -7900,8 +7897,8 @@ def main(argv=None):
     current_published = False
     scan_interrupted = False
     # The run is one job in the persistent lifecycle: a cancel, a crash or a
-    # restart keeps the last completed result and the queue of unfinished items
-    # (defect 6).  It is optional, so a read-only run still works.
+    # restart keeps the last completed result and the queue of unfinished items.
+    # It is optional, so a read-only run still works.
     scan_workbench = None
     current_job_id = ['']
     try:
@@ -7917,7 +7914,7 @@ def main(argv=None):
     update_progress(dict(phase='starting', checked=0, candidates=0))
 
     def export_now(*, run_state=None, diagnostic=False, selected=None):
-        # The published generation is a statement about one scope (F02): a row
+        # The published generation is a statement about one scope: a row
         # measured in another collection is not part of it.  Without
         # ``--collection`` the scope is the public base, exactly as before.
         from . import exportsvc  # imported here: it imports constants from this module
@@ -8069,7 +8066,7 @@ def main(argv=None):
             if scan_workbench is not None:
                 # One job per run, with its queue created up front: a stop in the
                 # middle leaves the unfinished items and the finished results
-                # both readable (defect 6, F11).
+                # both readable.
                 current_job_id[0] = submit_scan_job(
                     scan_workbench, db, 'check', profile=profile, profile_revision=1,
                     collection_id=ensure_collection(db, args.collection or None),
@@ -8109,7 +8106,7 @@ def main(argv=None):
         elif args.command == 'export':
             profile = (args.data / 'last-profile.txt').read_text(encoding='utf-8').strip()
             # A selected slice is its own artifact and leaves the published
-            # pointer alone (defect 7), so the report is the only place the GUI
+            # pointer alone, so the report is the only place the GUI
             # learns where that artifact is.
             last_report = export_now(selected=allowed_proxies)
             update_progress(last_report)

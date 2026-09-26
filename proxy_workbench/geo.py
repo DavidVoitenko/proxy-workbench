@@ -72,7 +72,7 @@ UNKNOWN_POLICIES = (UNKNOWN_EXCLUDE, UNKNOWN_INCLUDE, UNKNOWN_REQUIRE)
 DEFAULT_UNKNOWN_POLICY = UNKNOWN_EXCLUDE
 
 # --- Reason codes ----------------------------------------------------------------
-# Stable machine codes (CONTRACTS §5.4 style).  Text lives with i18n.tr, not here.
+# Stable machine codes (style).  Text lives with i18n.tr, not here.
 
 REASON_NO_CRITERION = 'geo_no_country_criterion'
 REASON_MATCHED = 'geo_country_matched'
@@ -1013,7 +1013,7 @@ class Resolver:
         return endpoint, exit_fact, self.provider_fact(proxy)
 
     def describe(self, row, criterion=None, now=None):
-        """One row as the fields of CONTRACTS §4.4 plus the provenance F08 adds."""
+        """One row as the fields of the shared contract plus the provenance F08 adds."""
         endpoint, exit_fact, provider = self.from_row(row)
         moment = self.now if now is None else float(now)
         verdict = evaluate(criterion, endpoint, exit_fact, moment) if criterion is not None else None

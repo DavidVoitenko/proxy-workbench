@@ -17,7 +17,7 @@ from proxy_workbench import formats, gui
 from proxy_workbench import proxytool as p
 
 #: A result fixture describes a measurement that just happened; the
-#: admission contract has no "fresh forever" state (CONTRACTS §2.4).
+#: admission contract has no "fresh forever" state.
 _NOW = time.time()
 
 

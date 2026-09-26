@@ -15,7 +15,7 @@ selection, the freshness decision and the error codes all come from
 The legacy token keeps exactly the rights it has always had (``read.*`` and
 nothing else).  It is not registered as a key and gains no admin or private
 permission when it meets the new API; it travels as an explicit *compatibility
-path* and says so in a ``Warning`` header (CONTRACTS §5.1, F29).
+path* and says so in a ``Warning`` header.
 """
 from __future__ import annotations
 
@@ -64,7 +64,7 @@ ENDPOINTS = {
 }
 
 #: Reasons a consumer may ask for, kept in one place so CLI, GUI and API answer
-#: with the same vocabulary (CONTRACTS §5.4).
+#: with the same vocabulary.
 FRESHNESS_MODES = ('fresh', 'expired', 'unknown', 'all')
 
 #: The file of a snapshot artifact that answers a requested ``format``.  The
@@ -96,8 +96,7 @@ def public_row(row, now=None):
     The age, the admission reason and the freshness view come from the one
     admission contract (:mod:`proxy_workbench.core`), not from a second
     calculation here: a consumer that recomputed freshness locally would
-    disagree with the engine as soon as the clock or the policy moved
-    (CONTRACTS §2.3, §4.4).
+    disagree with the engine as soon as the clock or the policy moved.
     """
     proxy = row['proxy']
     address = proxy.partition('://')[2]
@@ -148,7 +147,7 @@ def public_row(row, now=None):
         # A legacy row that carries no recorded lifetime is read with a one-time
         # backfill, and the fact that it was backfilled is visible here.  Without
         # these two the API showed a fresh row with no way to tell it apart from
-        # one whose lifetime was really measured (CONTRACTS §2.4).
+        # one whose lifetime was really measured.
         'max_age_seconds': row.get('max_age_seconds') or READ_POLICY.max_age_seconds,
         'ttl_backfilled': bool(time_state_of(row).get('ttl_backfilled')),
         'freshness': freshness_of(row),
@@ -192,7 +191,7 @@ def _flag(query, name):
     return bool(value)
 
 
-#: The stable code of each time state (CONTRACTS §5.4, domain TIME).  ``core``
+#: The stable code of each time state.  ``core``
 #: classifies the clock; this is the one place its names become codes, so the
 #: API, the CLI and the report never spell the same state two ways.
 TIME_STATE_CODES = {
@@ -204,7 +203,7 @@ TIME_STATE_CODES = {
     core.CLOCK_ROLLBACK: 'E_TIME_CLOCK_ROLLBACK',
 }
 
-#: The four explicit freshness views a mixed-age table needs (defect 3).
+#: The four explicit freshness views a mixed-age table needs.
 FRESHNESS_BY_STATE = {
     core.TIME_OK: 'fresh', core.TIME_EXPIRED: 'expired', core.TIME_TTL_MISSING: 'unknown',
 }
@@ -226,10 +225,10 @@ def freshness_of(row, now=None):
     """Which freshness view a row belongs to, decided by ``core`` alone.
 
     ``stale`` used to be one boolean meaning "no usable proxy anywhere"; a table
-    of mixed-age rows needs the four explicit views instead (defect 3).  The
+    of mixed-age rows needs the four explicit views instead.  The
     decision itself is :func:`core.time_state_of`, including the documented
     backfill of a legacy row that carries no recorded lifetime -- a reader must
-    not grow its own idea of how long a result is good (CONTRACTS §2.4, §4.3).
+    not grow its own idea of how long a result is good.
     """
     return FRESHNESS_BY_STATE.get(time_state_of(row, now)['state'], 'unknown')
 
@@ -238,10 +237,10 @@ class Exports:
     """One coherent current generation, reloaded when its pointer or files change.
 
     The pointer names a generation and nothing else: a consumer that pinned a
-    generation keeps reading that one, and a new publication does not move it
-    (CONTRACTS §1.2 rule 3, defect 8).  The re-read key is the generation plus
+    generation keeps reading that one, and a new publication does not move it.
+   The re-read key is the generation plus
     its manifest digest, not an mtime, and a generation whose manifest does not
-    verify is *refused* rather than served half-checked (CONTRACTS §4.2).
+    verify is *refused* rather than served half-checked.
     """
 
     def __init__(self, directory, generation=None):
@@ -276,8 +275,7 @@ class Exports:
         """Return the admitted rows of the pinned generation and its status.
 
         A single expired row no longer empties the answer: the set lives as long
-        as its newest member, and every row carries its own reason
-        (defect 3, R02).
+        as its newest member, and every row carries its own reason.
         """
         manifest = proxytool_export_manifest(self.directory)
         pointer_generation = manifest.get('generation') if manifest else None
@@ -291,7 +289,7 @@ class Exports:
                 return self._load_legacy_root(pointer_generation)
             # The re-read key is the generation plus the checksums the pointer
             # published, so a file edited behind the reader's back is a new key
-            # and is then refused by the manifest check (CONTRACTS §4.2).
+            # and is then refused by the manifest check.
             key = (generation, _manifest_digest(manifest),
                    _read_stamp(self.directory, generation))
             if key != self.key:
@@ -394,7 +392,7 @@ def _read_stamp(directory, generation):
     looking at the same bytes it verified last time.  Both are needed: a
     checksum alone would happily keep serving a cached answer after somebody
     edited the file behind the reader's back, and the contract's answer to that
-    is a refusal, not a stale cache hit (CONTRACTS §4.2, defect 9).
+    is a refusal, not a stale cache hit.
     """
     root = Path(directory)/'generations'/generation
     parts = []
@@ -487,7 +485,7 @@ def parse_query(query):
 
 
 def policy_of(query, *, min_success=2/3, strict=False, denylist=None, max_age_seconds=None):
-    """The one admission policy the read paths share (CONTRACTS §2.3, F18)."""
+    """The one admission policy the read paths share."""
     return core.Policy(
         max_age_seconds=float(max_age_seconds or core.DEFAULT_MAX_AGE_SECONDS),
         min_success=min_success, min_anonymity=query.get('anonymity', 'any'),
@@ -573,7 +571,7 @@ def country_matches(row, query, *, now=None, workbench=None):
 
 
 # ---------------------------------------------------------------------------
-# The service layer /v1 is built on (F18)
+# The service layer /v1 is built on
 # ---------------------------------------------------------------------------
 
 
@@ -650,8 +648,7 @@ class WorkbenchService(apiv1.Service):
 
         ``wanted`` is the set of freshness views the caller asked for; every row
         keeps its own ``freshness`` value and its own reason, so a mixed-age set
-        stays mixed instead of being sorted into "there is nothing here"
-        (CONTRACTS §4.3, defect 3).
+        stays mixed instead of being sorted into "there is nothing here".
         """
         if wanted is None or wanted == {'fresh'}:
             return self.exports.load()
@@ -718,11 +715,11 @@ class WorkbenchService(apiv1.Service):
                 'protocols': list(PROTOCOLS), 'formats': list(FORMATS),
                 'freshness': list(FRESHNESS_MODES),
                 'snapshot_schema_versions': list(exportsvc.SUPPORTED_SCHEMA_VERSIONS),
-                # What is really measured, and what is declared unsupported
-                # (F20): a websocket, a long connection, media, UDP or HTTP/3 is
+                # What is really measured, and what is declared unsupported:
+                # a websocket, a long connection, media, UDP or HTTP/3 is
                 # reported as unprobed rather than as a passing GET.
                 'probes': engine.capability_manifest(),
-                # The one country criterion every surface filters with (F08).
+                # The one country criterion every surface filters with.
                 'country': {'basis': 'endpoint', 'unknown': 'exclude',
                             'digest': engine.criterion_digest()},
                 'network': {'bind': 'loopback'}}
@@ -751,8 +748,7 @@ class WorkbenchService(apiv1.Service):
     def _freshness_view(self, query):
         """Which freshness views a request asked for, from the declared parameters.
 
-        The route declares ``include_stale`` and ``include_unknown`` (CONTRACTS
-        §5.7: "the unknown and stale modes are explicit parameters, not a silent
+        The route declares ``include_stale`` and ``include_unknown`` (the shared contract: "the unknown and stale modes are explicit parameters, not a silent
         exclusion of rows").  It never declared a ``freshness`` parameter, so
         reading one here used to read a value that could not arrive: expired and
         unknown rows were unreachable over ``/v1`` no matter what the caller
@@ -824,7 +820,7 @@ class WorkbenchService(apiv1.Service):
             raise apiv1.ApiError('E_STATE_NOT_FOUND', status=404, details={'id': wanted})
         if not self._guard_objects([row], call, 'collection_id', 'collections'):
             # Same code as a missing row: a key must not learn that an
-            # out-of-scope object exists (CONTRACTS §5.3).
+            # out-of-scope object exists.
             raise apiv1.ApiError('E_STATE_NOT_FOUND', status=404, details={'id': wanted})
         return row
 
@@ -1034,7 +1030,7 @@ class WorkbenchService(apiv1.Service):
             if call.expected_revision is not None and \
                     int(call.expected_revision) != int(current.revision):
                 # The caller edited an older version: refuse instead of
-                # overwriting what it never saw (F05, CONTRACTS §6.4).
+                # overwriting what it never saw.
                 raise apiv1.ApiError(
                     'E_CONFLICT_REVISION',
                     details={'expected': call.expected_revision, 'current': current.revision,
@@ -1063,7 +1059,7 @@ class WorkbenchService(apiv1.Service):
         Only ``proxytool.export`` builds a generation, and only it decides
         whether the active pointer moves: ``kind='published'`` publishes,
         ``kind='selection'`` and ``kind='diagnostic'`` are separate artifacts
-        that never touch the active pool (CONTRACTS §4.5, defect 7).
+        that never touch the active pool.
         """
         from . import proxytool as engine
 
@@ -1097,7 +1093,7 @@ class WorkbenchService(apiv1.Service):
             # mode name is `reference`, and it was `include` -- a value outside
             # `CREDENTIALS_MODES`, so `ExportOptions` refused the request after the
             # `export.secret` check had already passed and the caller saw a 500
-            # instead of an artifact (F29, F28).
+            # instead of an artifact.
             wants_secrets = bool(body.get('include_secrets'))
             report = engine.export(
                 conn, profile, workbench.data / 'exports',
@@ -1241,9 +1237,8 @@ class WorkbenchService(apiv1.Service):
             if row is None:
                 raise apiv1.ApiError('E_STATE_NOT_FOUND', status=404, details={'id': identifier})
             if expected is not None:
-                # ``collections`` carries no revision column (CONTRACTS §3.3,
-                # migration 2), so a supplied revision cannot be proven current
-                # and is refused rather than assumed.  See the handoff to db.py.
+                # ``collections`` carries no revision column (migration 2), so a supplied revision cannot be proven current
+                # and is refused rather than assumed.
                 raise apiv1.ApiError(
                     'E_CONFLICT_REVISION',
                     details={'expected': expected, 'stored': None,
@@ -1294,7 +1289,7 @@ class WorkbenchService(apiv1.Service):
     def _guard_objects(self, items, call, field, kind, collection_field='collection_id'):
         """Never reveal an object the caller's resource scope does not name.
 
-        A key's scope names collections and pools (CONTRACTS §5.3).  An object of
+        A key's scope names collections and pools.  An object of
         any other kind -- a job, a schedule -- is visible when the collection it
         belongs to is in the scope.  Before this rule the filter asked
         :func:`_scope_values` for a kind the principal does not carry, was told
@@ -1520,7 +1515,7 @@ class WorkbenchService(apiv1.Service):
 
         A module exception never reaches the client: it becomes the stable
         ``E_*`` code the CLI prints, so one refusal reads the same in a terminal
-        and in a JSON body (CONTRACTS §5.4).
+        and in a JSON body.
         """
         from . import proxytool as engine
         workbench = self.workbench()
@@ -1568,7 +1563,7 @@ class WorkbenchService(apiv1.Service):
         return wanted if wanted in importer.FORMATS else None
 
     def _import_policy(self, call):
-        """The endpoint policy of an import, from the request body (defect 10).
+        """The endpoint policy of an import, from the request body.
 
         ``importer.DEFAULT_POLICY`` refuses hostnames, private addresses and the
         RFC 5737 documentation ranges.  The CLI has ``--allow-private-endpoints``
@@ -1629,7 +1624,7 @@ class WorkbenchService(apiv1.Service):
                                      details={'needs_mapping': True})
             report = workbench.import_commit(plan, allow_partial=bool((call.body or {}).get('allow_partial')))
             # The route is an async job: a long operation answers with a job id
-            # and never holds the request open (R18).
+            # and never holds the request open.
             body = report.to_dict()
             body['allow_private_endpoints'] = not policy.public_only
             body['job_id'] = self._record_job(workbench, 'import', collection, len(report.added or ()))
@@ -1641,7 +1636,7 @@ class WorkbenchService(apiv1.Service):
 
         The work itself already happened; the job exists so the caller can ask
         after it with the same cursor schema as every other stream, and so a
-        repeated idempotency key returns the same id (CONTRACTS §5.7, §6.4).
+        repeated idempotency key returns the same id.
         """
         from . import jobs as jobs_module
         scope = jobs_module.Scope(collection_id=collection_id,
@@ -1798,7 +1793,7 @@ class WorkbenchService(apiv1.Service):
         return self._with_workbench(action)
 
     def _op_events_system(self, call):
-        """The system stream, read the same way as a job stream (CONTRACTS §5.7)."""
+        """The system stream, read the same way as a job stream."""
         from . import jobs as jobs_module
         def action(workbench):
             store = self._job_store_of(workbench)
@@ -2113,7 +2108,7 @@ class WorkbenchService(apiv1.Service):
 
     #: The API's schedule vocabulary mapped onto the module's own names.  A
     #: field the module does not know is dropped *here*, on purpose, and never
-    #: passed through as if it had been understood (CONTRACTS §5.4).
+    #: passed through as if it had been understood.
     SCHEDULE_KINDS = {'check': 'interval', 'refill': 'interval', 'recheck': 'interval',
                       'export': 'interval', 'source': 'interval'}
 
@@ -2231,7 +2226,7 @@ class WorkbenchService(apiv1.Service):
 
         It is a separate file from the bundled catalog on purpose: a catalog is
         read-only research, this file is the user's choice, and neither is
-        rewritten by an update (F13, F27).
+        rewritten by an update.
         """
         return read_source_settings(self.data)
 
@@ -2465,7 +2460,7 @@ class WorkbenchService(apiv1.Service):
                 'selected': list(result.get('selected_ids', ()))}
 
     def _op_sources_refresh_preview(self, call):
-        """What a refresh would decide, with its own reasons (F27).
+        """What a refresh would decide, with its own reasons.
 
         The decision comes from ``sourcedesk`` and the *state* comes from the
         ``source_feed`` row the last collection wrote.  The old handler
@@ -2586,7 +2581,7 @@ class WorkbenchService(apiv1.Service):
         except (OSError, UnicodeError, ValueError):
             return None
 
-    # -- source comparison (F21) --------------------------------------------
+    # -- source comparison --------------------------------------------
 
     def _op_sources_compare(self, call):
         return self._with_workbench(lambda workbench: self._compare_sources(workbench, call))
@@ -2857,8 +2852,7 @@ class WorkbenchService(apiv1.Service):
         puts it back in service, a negative one parks it in cooldown.  The
         per-target detail the route accepts has nowhere to live -- there is no
         feedback table -- so it is echoed back as ``stored: false`` with the
-        reason instead of being dropped in silence (F07).  See the handoff to
-        ``db.py`` for the table this is waiting on.
+        reason instead of being dropped in silence.
         """
         from . import pools as pools_module
         body = call.body or {}
@@ -2894,8 +2888,7 @@ class WorkbenchService(apiv1.Service):
                 'note': tr('отзыв применён к пулу, глобальная репутация не меняется',
                            'the feedback was applied to the pool; global reputation is unchanged'),
                 'not_stored': ({'fields': sorted(unstored),
-                                'reason': 'no feedback table in the schema; see docs/integration/'
-                                          'HANDOFF/fix-api.md'} if unstored else {})}
+                                'reason': 'no feedback table in the schema'} if unstored else {})}
 
     def _pool_candidates(self, call, pool_id):
         """The addresses *this* pool can serve right now, best first.
@@ -2904,7 +2897,7 @@ class WorkbenchService(apiv1.Service):
         the published snapshot and used ``pool_id`` for nothing but the scope
         check, so a lease over a pool of collection B handed out addresses of
         collection A.  The rows are the pool's own members and the admission is
-        the shared contract's, never a second calculation here (CONTRACTS §2.3).
+        the shared contract's, never a second calculation here.
         """
         from . import core
         from . import pools as pools_module
@@ -3092,7 +3085,7 @@ def _artifact_is_secret(directory, name):
 
 
 def _error_status(code):
-    """The HTTP status the code canonically carries (CONTRACTS §5.4).
+    """The HTTP status the code canonically carries.
 
     One table, so a refusal never answers 200 with an error body and never
     answers 500 for a plain validation problem.
@@ -3157,7 +3150,7 @@ def pool_candidate_source(conn, *, min_success=1.0):
     collection rows that already carry a measurement, and `sources` is the rest --
     offered with ``allowed=False``, which is what puts them in ``recheck_due``
     instead of pretending they work.  The admission verdict is the shared
-    contract's, never a second calculation here (CONTRACTS §2.3).
+    contract's, never a second calculation here.
 
     Nothing is dialled: a candidate is a stored row, and the measurement that
     turns `sources` into `known` is the `pool_recheck` job.
@@ -3435,7 +3428,7 @@ def _refuse_unsupported_allow_private(body):
 
     ``allow_private`` was declared on ``POST /v1/collections`` and
     ``PATCH /v1/collections/{id}`` while the ``collections`` table has no such
-    column (CONTRACTS section 3.3, migration 2).  The handlers read ``name``
+    column .  The handlers read ``name``
     and ``kind``, ignored the flag and answered 200, so a client that sent
     ``{"name": "priv", "kind": "own", "allow_private": true}`` was told the
     collection was created and then kept sending private addresses to an import
@@ -3471,7 +3464,7 @@ def _refuse_unsupported_allow_private(body):
                   f'`POST /v1/collections/{{id}}/imports/preview` instead'))
 
 
-#: The kinds a key's resource scope is expressed in (CONTRACTS §5.3: a key is
+#: The kinds a key's resource scope is expressed in (the shared contract: a key is
 #: limited to named `collection_id` and `pool_id`).  Every other kind is filtered
 #: by the collection the object belongs to, never by a scope list that cannot exist.
 SCOPE_KINDS = ('collections', 'pools')
@@ -3502,7 +3495,7 @@ def _scope_values(principal, kind):
     -- answers with the *collections*, because that is the only thing such an object
     can be inside.  Returning ``None`` there used to read as "this key is
     unrestricted": the principal carries no ``jobs`` attribute, so a key scoped to
-    one collection received every other collection's object list (F29).  The same
+    one collection received every other collection's object list.  The same
     rule withholds the shared configuration a scoped key has no claim to: a source
     row carries the provider URL verbatim, credential included.
     """
@@ -3563,7 +3556,7 @@ class Reservations:
 
     The registry lives in the service, which is the process that hands the
     addresses out.  A restart forgets it, so two servers on one database would
-    still both lease; see the handoff for the durable table in ``db.py``.
+    still both lease.
     """
 
     def __init__(self, clock=None):
@@ -3701,8 +3694,7 @@ class LegacyKeyStore(apiv1.KeyStore):
 
     It is deliberately *not* registered as an API key: it keeps exactly the
     permissions it had in 2.x (``read.*``), it is never upgraded to admin, and
-    the pipeline marks every use as a deprecated compatibility path
-    (CONTRACTS §5.1, F29).
+    the pipeline marks every use as a deprecated compatibility path.
     """
 
     REQUIRED = apiv1.KeyStore.REQUIRED
@@ -3769,7 +3761,7 @@ def key_manager(data, db_path=None):
 
     A database that does not exist yet is created through the one migrator, so a
     fresh installation can still be given its first administrator key: refusing
-    here would leave the user with no way into ``/v1`` at all (F29).
+    here would leave the user with no way into ``/v1`` at all.
     """
     from . import proxytool as engine
     path = Path(db_path) if db_path else Path(data) / 'proxies.sqlite3'

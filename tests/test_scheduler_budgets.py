@@ -1,4 +1,4 @@
-"""Budgets, traffic classes and the metered/battery policy (F15)."""
+"""Budgets, traffic classes and the metered/battery policy."""
 from datetime import datetime, timezone
 from pathlib import Path
 import sys

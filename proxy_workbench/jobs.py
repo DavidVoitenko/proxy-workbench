@@ -7,7 +7,7 @@ instead of a second one, and ``resume`` works on the items the job was created
 with: it never widens the scope and never re-uses membership that has since
 left the collection.
 
-State lives in the four tables of CONTRACTS.ru.md §3.3 migration 6 (``job``,
+State lives in the four tables of the shared contract (``job``,
 ``job_item``, ``job_event``, ``checkpoint``), which this module co-owns with
 ``db.py``: :func:`install_schema` is the single DDL statement set for them, so
 the migrator and the store cannot drift apart. Nothing outside those tables is
@@ -18,7 +18,7 @@ its queue.
 This module owns state only. Driving items (claiming, probing, publishing) is
 `pipeline.py`'s job; a second worker loop is deliberately not introduced here.
 
-Contract: CONTRACTS.ru.md §6 (job and item states), §3.3 (migration 6),
+Contract: the shared contract (job and item states), §3.3 (migration 6),
 §5.4 (error codes), §5.6 (structured events), §6.4 (one DB writer).
 """
 from __future__ import annotations
@@ -35,7 +35,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Iterable, Mapping, Sequence
 
-#: Migration number that owns the four tables below (CONTRACTS §3.3).
+#: Migration number that owns the four tables below.
 MIGRATION = 6
 
 SCHEMA = (
@@ -71,7 +71,7 @@ ITEM_STATES = ('pending', 'prefiltered', 'probing', 'done', 'unreachable', 'bloc
 TERMINAL_ITEM_STATES = frozenset({'done', 'unreachable', 'blocked', 'partial', 'failed'})
 UNFINISHED_ITEM_STATES = tuple(state for state in ITEM_STATES if state not in TERMINAL_ITEM_STATES)
 
-#: Job state machine of CONTRACTS §6.2.
+#: Job state machine of the shared contract.
 JOB_TRANSITIONS = {
     'created': frozenset({'queued', 'cancelled', 'failed'}),
     'queued': frozenset({'running', 'paused', 'cancelled', 'timed_out', 'failed'}),
@@ -84,7 +84,7 @@ JOB_TRANSITIONS = {
     'timed_out': frozenset(),
 }
 
-#: Item state machine of CONTRACTS §6.3.  Terminal states are absorbing here:
+#: Item state machine of the shared contract.  Terminal states are absorbing here:
 #: a repeated check is a new item of a new job, never a rewritten one.
 ITEM_TRANSITIONS = {
     'pending': frozenset({'prefiltered', 'probing', 'blocked'}),
@@ -97,7 +97,7 @@ ITEM_TRANSITIONS = {
     'failed': frozenset(),
 }
 
-#: `state_detail` values shared with the snapshot contract (CONTRACTS §4.3).
+#: `state_detail` values shared with the snapshot contract.
 DETAIL_COMPLETE = 'complete'
 DETAIL_EMPTY = 'empty_no_match'
 DETAIL_ALL_FAILED = 'all_failed'
@@ -119,8 +119,8 @@ DEFAULT_MAX_QUEUE_ITEMS = 1_000_000
 DEFAULT_HEARTBEAT_TIMEOUT_S = 300.0
 
 #: Payload keys refused in events and checkpoints: an event is persisted in
-#: cleartext and travels to every consumer, so credentials never enter it
-#: (CONTRACTS §5.6, F29).  `access_id` and `secret_ref` stay allowed.
+#: cleartext and travels to every consumer, so credentials never enter it.
+#: `access_id` and `secret_ref` stay allowed.
 FORBIDDEN_PAYLOAD_KEYS = frozenset({
     'password', 'passwd', 'secret', 'token', 'credentials', 'credential', 'api_key',
     'authorization', 'auth', 'userinfo', 'proxy_auth', 'bearer',
@@ -274,7 +274,7 @@ class Scope:
 
     @property
     def timeout_s(self) -> float | None:
-        """Whole-job deadline in seconds (CONTRACTS §6.2), not a per-request one."""
+        """Whole-job deadline in seconds, not a per-request one."""
         value = self.budgets.get('timeout_s') if 'timeout_s' in self.budgets else None
         if value is None:
             return None
@@ -476,7 +476,7 @@ def install_schema(conn: sqlite3.Connection) -> None:
 
 
 class WriterGate:
-    """At most one DB-writing executor at a time (CONTRACTS §6.4).
+    """At most one DB-writing executor at a time.
 
     In process this is a plain non-reentrant lock.  Across processes the
     integrator passes the existing `workbench.lock` callback as ``os_lock``, so
@@ -721,7 +721,7 @@ class JobStore:
                    idempotency_key: str | None = None, job_id: str | None = None) -> Job:
         """Create a ``created`` job with its scope and queue fixed.
 
-        With an ``idempotency_key`` the request is idempotent (F11): the same
+        With an ``idempotency_key`` the request is idempotent: the same
         key and the same input return the same job, the same key with a
         different input is ``E_CONFLICT_IDEMPOTENCY``.
         """
@@ -800,7 +800,7 @@ class JobStore:
         """``queued`` -> ``running``.  Refused while another job is running.
 
         The refusal is ``E_CONFLICT_BUSY`` rather than a second writer on the
-        same database (CONTRACTS §6.4).
+        same database.
         """
         with self._write() as conn:
             job = self._job(conn, job_id)
@@ -847,7 +847,7 @@ class JobStore:
         ``scope`` is accepted only to be checked: a different scope is
         ``E_CONFLICT_REVISION``, because a changed profile is a new job (§6.2),
         not a continuation.  ``member_ids`` marks queued items that have left
-        the collection as ``blocked`` (defect 6) instead of measuring them.
+        the collection as ``blocked`` instead of measuring them.
         """
         with self._write() as conn:
             job = self._job(conn, job_id)
@@ -893,7 +893,7 @@ class JobStore:
         """Start a new job from what a finished one did not complete (§6.2).
 
         The old job is never touched: its history, its last completed result and
-        its queue stay readable, and the new job gets new items (defect 6).
+        its queue stay readable, and the new job gets new items.
         """
         with self._write() as conn:
             job = self._job(conn, job_id)
@@ -1002,7 +1002,7 @@ class JobStore:
 
         Only removals are applied: ``resume`` never gains items it did not have
         (scope is fixed) and never measures an address that is no longer a
-        member (defect 6).  Returns the blocked items and the counts behind it.
+        member.  Returns the blocked items and the counts behind it.
         """
         with self._write() as conn:
             job = self._job(conn, job_id)

@@ -5,7 +5,7 @@ what it produced, and what does the user do next?*  It is a leaf module — it
 imports no engine, opens no socket on import, and writes nothing unless the
 caller explicitly saves a bundle.
 
-Contract notes (docs/integration/CONTRACTS.ru.md):
+Contract notes:
 
 * §5.4 — codes are machine-readable and the text is translated separately
   through ``i18n.tr``, so a translation change never renames a code.  Set-level
@@ -57,11 +57,11 @@ BUNDLE_SCHEMA_VERSION = 1
 
 #: A legacy row without a recorded lifetime is read with this synthetic max-age,
 #: mirroring ``proxytool.MIN_FRESHNESS_SECONDS``.  It is a parameter, not an
-#: optimum: CONTRACTS §2.4 only promises a visible, configurable max-age.
+#: optimum: the shared contract only promises a visible, configurable max-age.
 LEGACY_MAX_AGE_SECONDS = 2 * 60 * 60
 
 #: How far a ``checked_at`` may sit in the future before the row is suspicious
-#: rather than very fresh (CONTRACTS §2.4, ``time_future``).
+#: rather than very fresh (the shared contract, ``time_future``).
 CLOCK_SKEW_SECONDS = 60.0
 
 #: Time states of a row.  These are the same strings as ``core.TIME_STATES`` on
@@ -352,7 +352,7 @@ _register(
           action_en='A sample list (status and code per attempt) is required to reproduce a measurement honestly.'),
 )
 
-# The canonical `E_<DOMAIN>_<REASON>` codes of CONTRACTS §5.4 that the diagnostics
+# The canonical `E_<DOMAIN>_<REASON>` codes of the shared contract that the diagnostics
 # layer can itself produce.  Codes owned by other modules (keys, gateway, db
 # migrations) are documented in the contract and are not duplicated here.
 _register(
@@ -424,7 +424,7 @@ _register(
           action_en='The shortfall is shown with a number and a reason. A direct fallback is forbidden: refill from reserve and sources.'),
 )
 
-#: Every `E_<DOMAIN>_<REASON>` code the contract fixes (CONTRACTS §5.4).  The
+#: Every `E_<DOMAIN>_<REASON>` code the contract fixes.  The
 #: diagnostics layer may describe any of them, but it must not mint a new one:
 #: codes owned by keys, gateway or migrations stay where the contract puts them.
 CONTRACT_CODES = (
@@ -448,7 +448,7 @@ CONTRACT_CODES = (
 CODE_STAGES: dict[str, str] = {code: entry.stage for code, entry in CODES.items()}
 
 #: Exception class names produced by the engine today, mapped to the code that
-#: says what actually happened.  CONTRACTS §5.4 records that ``ConnectError``,
+#: says what actually happened.  the shared contract records that ``ConnectError``,
 #: ``ConnectTimeout``, ``ReadTimeout``, ``ProxyError`` and ``SSLError`` used to
 #: collapse into one value; this table is what separates them.
 EXCEPTION_CODES: dict[str, tuple[str, str]] = {
@@ -490,7 +490,7 @@ CONTROL_CONNECT_ADDRESS = ('1.1.1.1', 443)
 CONTROL_CONNECT_REASON = 'Устройство не может выйти в интернет: сеть или файрвол блокируют исходящие соединения.'
 
 #: Exception classes this module raises.  Useful errors carry an action, a code
-#: and the parameters of the code, not only a class name (F25).
+#: and the parameters of the code, not only a class name.
 class ActionableError(Exception):
     """An error that carries a documented code and a recovery action."""
 
@@ -898,7 +898,7 @@ class Funnel:
 def _time_state(row: Mapping[str, Any], now: float, last_seen: Mapping[str, Any] | None, *,
                 backfill_legacy_ttl: bool = True, future_tolerance_s: float = CLOCK_SKEW_SECONDS,
                 legacy_max_age_s: float = LEGACY_MAX_AGE_SECONDS) -> tuple[str, str | None]:
-    """The time state of one row (CONTRACTS §2.4), plus its code when not ok.
+    """The time state of one row, plus its code when not ok.
 
     The state names are the same strings as `core.TIME_STATES`, so the funnel
     and the admission contract cannot drift apart; `core` stays the authority
@@ -935,7 +935,7 @@ def data_state(row: Mapping[str, Any], now: float, *, last_seen: Mapping[str, An
 
 
 def _blocked(row: Mapping[str, Any]) -> tuple[str, str] | None:
-    """A policy block decided before any measurement (CONTRACTS §6.3)."""
+    """A policy block decided before any measurement."""
     verdict = row.get('reputation')
     if not isinstance(verdict, Mapping):
         return None
@@ -1009,7 +1009,7 @@ def build_funnel(rows: Iterable[Mapping[str, Any]] = (), *, status: Mapping[str,
     """Build the funnel from stored result rows.
 
     `rows` are the payloads the engine already stores (`results.payload` /
-    the observation of CONTRACTS §2.1): `error`, `samples`, `reputation`,
+    the observation of the shared contract): `error`, `samples`, `reputation`,
     `checked_at`, `valid_until`.  `status` is the export `status.json`, `sources`
     the `collect()` reports, `control` an optional device/target control verdict
     and `admitted` the result of the admission contract — `core.admit` bound to
@@ -1814,7 +1814,7 @@ def fixture_recipe(row: Mapping[str, Any], config: Mapping[str, Any] | None = No
     as the client sent it, and an engine error message repeats the target URL,
     so both are redacted again on the way into :meth:`FixtureRecipe.to_dict`:
     this is the shape a help page or an API serves, and a recipe must never be
-    the place where an upstream password reappears (F25).
+    the place where an upstream password reappears.
     """
     samples = tuple({'target': sample.get('target'), 'attempt': sample.get('attempt'),
                      'status': sample.get('status'), 'error': sample.get('error'), 'ok': bool(sample.get('ok')),

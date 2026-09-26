@@ -1,4 +1,4 @@
-"""Secret references and redaction for user sources (F27).
+"""Secret references and redaction for user sources.
 
 A canary value is used throughout: the point of these tests is that it can
 never reach the database, a serialized structure, a log line or a public view.

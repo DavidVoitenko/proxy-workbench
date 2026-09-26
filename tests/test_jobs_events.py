@@ -1,6 +1,6 @@
 """Structured events and progress, and the secrets that must never reach them.
 
-CONTRACTS.ru.md §5.6 (events), §3.3 (migration 6), F29 (canary secrets).
+the shared contract (events), §3.3 (migration 6), F29 (canary secrets).
 """
 from __future__ import annotations
 

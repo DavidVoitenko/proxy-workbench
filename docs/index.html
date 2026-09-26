@@ -4,11 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Proxy Workbench — free proxy checker for your own sites</title>
-<meta name="description" content="Open-source proxy checker: collects free HTTP, HTTPS, SOCKS4 and SOCKS5 proxies from 55 public lists, tests each one against your own sites, rates anonymity (elite, anonymous, transparent), filters blacklisted IPs. Local GUI + CLI + Docker.">
+<meta name="description" content="Open-source proxy checker: collects free HTTP, HTTPS, SOCKS4 and SOCKS5 proxies from a catalog of 150 sources, tests each one against your own sites, rates anonymity (elite, anonymous, transparent), filters blacklisted IPs. Local GUI + CLI + Docker.">
 <meta name="keywords" content="proxy checker, free proxy list, socks5 proxy checker, elite proxy, anonymous proxy, proxy scraper, proxy tester, dnsbl, open source">
 <meta property="og:type" content="website">
 <meta property="og:title" content="Proxy Workbench — find free proxies that actually work for your site">
-<meta property="og:description" content="Collect 55 public proxy lists, test every proxy against your services, keep only fast, clean and elite ones. Local GUI + CLI, MIT.">
+<meta property="og:description" content="A catalog of 150 proxy sources, checks against your own services, pools, schedules and a rotating gateway. Desktop app for macOS and Windows, 12 languages, MIT.">
 <meta property="og:image" content="https://davidvoitenko.github.io/proxy-workbench/assets/social-preview.png?v=2">
 <meta property="og:image:width" content="1280">
 <meta property="og:image:height" content="640">
@@ -67,12 +67,12 @@ footer{padding:56px 0 40px;color:var(--muted);font-size:14px;display:flex;flex-w
 
   <header class="hero">
     <h1>Find every free proxy.<br><em>Keep the ones that work.</em></h1>
-    <p>Proxy Workbench collects public HTTP, HTTPS, SOCKS4 and SOCKS5 proxies from 55 open lists and web pages, tests every one against <strong>your own sites</strong>, rates anonymity and drops blacklisted IPs, all on your own machine.</p>
+    <p>Proxy Workbench collects public HTTP, HTTPS, SOCKS4 and SOCKS5 proxies from a catalog of 150 sources (106 collected out of the box), tests every one against <strong>your own sites</strong>, rates anonymity and drops blacklisted IPs, all on your own machine.</p>
     <div class="cta">
       <a class="btn primary" data-repo data-path="/releases/latest" href="#">⬇ Download latest release</a>
       <a class="btn" data-repo href="#">★ Star on GitHub</a>
     </div>
-    <div class="meta">Free &amp; open source (MIT) · Windows · macOS · Linux · Docker · English / Russian</div>
+    <div class="meta">Free &amp; open source (MIT) · Windows · macOS · Linux · Docker · 12 languages</div>
     <div class="demo"><img src="assets/demo.gif" alt="Proxy Workbench demo: start a scan, see ranked proxies, filter elite ones" width="960" height="570" loading="lazy"></div>
   </header>
 
@@ -89,6 +89,10 @@ footer{padding:56px 0 40px;color:var(--muted);font-size:14px;display:flex;flex-w
       <div class="card"><h3>Real speed and provider</h3><p>Optional speed test in Mbit/s; every proxy shows its provider, and hosting or data-centre ranges can be skipped.</p></div>
       <div class="card"><h3>Built for scrapers</h3><p>Pick country, protocol and a sticky session in the proxy user name: <code>country-de-session-1</code>. Or script it: <code>proxy-workbench get --top 5</code>.</p></div>
       <div class="card"><h3>Rotating proxy gateway</h3><p>Point a browser, Telegram or any app at <code>127.0.0.1:8899</code>: every connection goes out through the next working proxy, dead ones are skipped.</p></div>
+      <div class="card"><h3>Desktop app</h3><p>A macOS menu-bar app and a Windows installer. One running instance, optional start at login, correct recovery after sleep.</p></div>
+      <div class="card"><h3>Pools and schedules</h3><p>Keep N working proxies per profile with a reserve and budgets, and re-check them on a schedule in your time zone with quiet hours.</p></div>
+      <div class="card"><h3>12 languages, new design</h3><p>English, Russian, Ukrainian, German, Spanish, French, Italian, Portuguese, Polish, Turkish, Japanese and Chinese. Dark and light themes for desktop, tablet and phone.</p></div>
+      <div class="card"><h3>Keys, diagnostics, backups</h3><p>API keys with permissions and audit, a funnel that explains an empty result, and backups you can preview before restoring.</p></div>
       <div class="card"><h3>Local API for your code</h3><p><code>GET /random?protocol=socks5&amp;country=DE</code> returns a fresh working proxy, so scripts and bots pick one with a single request.</p></div>
     </div>
   </section>
@@ -106,8 +110,8 @@ footer{padding:56px 0 40px;color:var(--muted);font-size:14px;display:flex;flex-w
   <section id="start">
     <h2>Get started in a minute</h2>
     <div class="steps">
-      <div class="card"><span>1</span><h3>Download</h3><p>Windows: the <code>.exe</code> from the latest release, nothing else needed. Anywhere else: <code>pipx install git+https://github.com/DavidVoitenko/proxy-workbench</code>, or Docker Compose.</p></div>
-      <div class="card"><span>2</span><h3>Start it</h3><p>Double-click the <code>.exe</code> or run <code>proxy-workbench</code>: the interface opens in your browser, together with the local API and the rotating proxy.</p></div>
+      <div class="card"><span>1</span><h3>Download</h3><p>macOS: the <code>.dmg</code>; Windows: the installer or portable <code>.zip</code> from the latest release, nothing else needed. Anywhere else: <code>pipx install git+https://github.com/DavidVoitenko/proxy-workbench</code>, or Docker Compose.</p></div>
+      <div class="card"><span>2</span><h3>Start it</h3><p>Open the app or run <code>proxy-workbench</code>: the interface opens in your browser, together with the local API and the rotating proxy.</p></div>
       <div class="card"><span>3</span><h3>Check &amp; export</h3><p>Add your site, press <em>Find and check</em>, then download the best proxies from the <em>Results</em> tab.</p></div>
     </div>
     <p style="margin:26px 0 10px">Prefer the terminal or a server?</p>
@@ -130,7 +134,7 @@ docker run --rm --user "$(id -u):$(id -g)" -v "$PWD/data:/app/data" proxy-workbe
 
   <footer>
     <span>Proxy Workbench · MIT License · <a data-repo data-path="/blob/main/README.ru.md" href="#">Документация на русском</a></span>
-    <span><a data-repo data-path="/issues" href="#">Issues</a> · <a data-repo data-path="/blob/main/CONTRIBUTING.md" href="#">Contribute</a> · <a data-repo data-path="/blob/main/SECURITY.md" href="#">Security</a></span>
+    <span><a data-repo data-path="/issues" href="#">Issues</a> · <a data-repo data-path="/releases" href="#">Releases</a></span>
   </footer>
 </div>
 <script>

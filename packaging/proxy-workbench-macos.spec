@@ -5,12 +5,12 @@
 #
 # The bundle is read-only for a normal user, so nothing may be written next to
 # the executable: proxy_workbench.desktop resolves per-user data/cache/logs and
-# the worker gets a writable working directory.  See docs/packaging/README.md.
+# the worker gets a writable working directory.
 #
 # Two things in here are not decoration, and a build that leaves either out
 # still produces a runnable application that does not do what it promises:
 #
-#   * the menu bar helper (F22).  The status item is a native Swift program
+#   * the menu bar helper.  The status item is a native Swift program
 #     whose source lives in proxy_workbench.desktop.  On a source checkout the
 #     application compiles it on first run, but an installed application has no
 #     swiftc and no writable cache to compile into, so the build compiles it

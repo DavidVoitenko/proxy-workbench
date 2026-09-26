@@ -205,7 +205,7 @@ class ExportFormatTests(unittest.TestCase):
         out = self.home / 'empty-out'
         report = p.export(self.db, 'empty', out, min_success=1)
         # "Nothing matched" and "everything expired" are different situations and
-        # now have different states (CONTRACTS §4.3, defect 3).
+        # now have different states.
         self.assertEqual((report['state'], report['state_detail'], report['exported'],
                           report['complete'], report['stale']),
                          ('empty', 'nothing_in_scope', 0, False, False))
@@ -271,14 +271,13 @@ class ExportFormatTests(unittest.TestCase):
         rows = json.loads(p.export_file(out, 'ranked.json').read_text(encoding='utf-8'))
         self.assertTrue(all(row['valid_until'] > row['checked_at'] for row in rows))
         # The lifetime was written at measurement time, so a re-export with
-        # another --watch cannot move it (defect 1, R01)...
+        # another --watch cannot move it...
         again = p.export(self.db, 'fresh', out, min_success=1, watch_minutes=5)
         self.assertEqual([row['valid_until'] for row in
                           json.loads(p.export_file(out, 'ranked.json').read_text(encoding='utf-8'))],
                          [row['valid_until'] for row in rows])
         self.assertEqual(again['expires_at'], report['expires_at'])
-        # ...and the set lives as long as its newest member, not its oldest
-        # (defect 3, R02).
+        # ...and the set lives as long as its newest member, not its oldest.
         self.assertAlmostEqual(report['expires_at'], max(row['valid_until'] for row in rows), places=3)
 
 
@@ -308,8 +307,7 @@ class SourceTrackingTests(unittest.IsolatedAsyncioTestCase):
                 # A base written before the 1.6 `source` column keeps its shape and
                 # stays collectable: the many-to-many `candidate_seen` carries the
                 # provenance, and the first-seen mirror is filled only where the
-                # column exists.  See the handoff to db.py: migration 0 could
-                # backfill it instead of the engine having to know about it.
+                # column exists.
                 seen = {proxy for (proxy,) in db.execute('SELECT proxy FROM candidate_seen')}
                 self.assertEqual(seen, {'http://11.0.0.9:80', 'http://11.0.0.10:80'})
                 self.assertEqual(p.source_key('socks5 https://example.org/list.txt'),

@@ -140,7 +140,7 @@ class ImportLineTests(AccessPathTestCase):
 
 
 class TwoCredentialsOneEndpointTests(AccessPathTestCase):
-    """CONTRACTS §1.2(1): an access is not an endpoint."""
+    """the shared contract: an access is not an endpoint."""
 
     def test_two_passwords_of_one_address_are_two_rows_and_two_refs(self):
         first = self.make_access('http://%s:8080' % HOSTNAME, username='alice',

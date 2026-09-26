@@ -8,10 +8,9 @@ domain logic.  Both dependencies are injected:
 
 * ``keys``    -- a key store (see :class:`KeyStore`), implemented by
   ``proxy_workbench.apikeys``; the secret is hashed there and never kept here.
-* ``service`` -- the shared service layer used by CLI and GUI as well (F18),
+* ``service`` -- the shared service layer used by CLI and GUI as well,
   reached through :class:`Service`; one ``invoke`` call is one operation.
 
-Integration contract: CONTRACTS.ru.md 5 (version 1).
 Requirements: F29 (API and key manager surface), F18 (one management layer),
 F07 (no silently ignored parameter), R03, R12, R17, R18.
 
@@ -61,7 +60,7 @@ LOOPBACK_HOSTS = ('localhost', '127.0.0.1', '::1')
 MAX_PAGE_LIMIT = 1000
 MAX_BODY_BYTES = 8 * 1024 * 1024
 
-# --- permissions: the canon of CONTRACTS.ru.md 5.2.  Nothing is allowed by default.
+# --- permissions: the canon of the shared contract.  Nothing is allowed by default.
 READ_PERMISSIONS = frozenset({
     'read.status', 'read.results', 'read.results.detail', 'read.export.artifact',
 })
@@ -89,7 +88,7 @@ REDACTED_FIELDS = frozenset({
     'gateway_password', 'verifier', 'verifier_salt', 'authorization',
 })
 
-# --- error codes: CONTRACTS.ru.md 5.4, plus the three this surface adds.
+# --- error codes: the shared contract, plus the three this surface adds.
 ERROR_DOMAIN_STATUS = {
     'AUTH': 401, 'VALIDATION': 400, 'CONFLICT': 409, 'STATE': 409, 'TIME': 409,
     'DATA': 409, 'IMPORT': 400, 'SECRET': 409, 'LIMIT': 413, 'GATEWAY': 502,
@@ -473,7 +472,7 @@ class KeyStore:
 
 
 class Service:
-    """The shared service layer (F18).  One ``invoke`` per API operation."""
+    """The shared service layer.  One ``invoke`` per API operation."""
 
     REQUIRED = ('invoke', 'queue_state')
 
@@ -574,7 +573,7 @@ class ApiKeyStore:
         window = spec.get('rate_limit_window_seconds')
         rate = ({'requests': requests, 'window_s': window}
                 if requests is not None and window is not None else None)
-        # ``apikeys`` speaks the structured quotas of CONTRACTS §5.2
+        # ``apikeys`` speaks the structured quotas of the shared contract
         # (``{"requests": N, "window_s": S}``, ``{"max_active": N}``), while the
         # route declares the flat shape a user edits.  The translation belongs
         # here: both quotas used to be passed through as bare values, so
@@ -848,7 +847,7 @@ class EventHistory:
 
 
 # --------------------------------------------------------------------------
-# cursors: one scheme for pagination and for events (CONTRACTS.ru.md 5.7)
+# cursors: one scheme for pagination and for events
 # --------------------------------------------------------------------------
 
 def digest_of(value):
@@ -1231,8 +1230,8 @@ ROUTES = (
     # ``allow_private_endpoints`` is the same explicit, recorded choice the CLI
     # has as ``--allow-private-endpoints``: without it ``importer.DEFAULT_POLICY``
     # refuses hostnames, private addresses and the RFC 5737 ranges, so a user's
-    # own gateway list was accepted by the form and dropped by the importer
-    # (defect 10).  The choice is written to the audit log.
+    # own gateway list was accepted by the form and dropped by the importer.
+    # The choice is written to the audit log.
     Route('POST', '/v1/collections/{id}/imports/preview', 'imports.preview', 'import.read',
           'validate an import without changing anything', scope=(('collection', 'id'),),
           body=(Field('format', 'string', choices=('txt', 'uri', 'csv', 'json'), default='txt'),
@@ -1609,7 +1608,7 @@ ROUTES = (
 )
 
 
-# Key management belongs to the key store, not to the service layer (CONTRACTS 5.2).
+# Key management belongs to the key store, not to the service layer.
 KEY_METHODS = {
     'keys.list': 'list_keys', 'keys.get': 'get_key', 'keys.create': 'create_key',
     'keys.update': 'update_key', 'keys.rotate': 'rotate_key', 'keys.revoke': 'revoke_key',
@@ -1699,7 +1698,7 @@ def _redact(value, principal):
 #: The envelopes a service answer may put the object in.  The guard looks inside
 #: them: the three artifact reads and every list answer `{"item": {...}}` or
 #: `{"items": [...]}`, so a guard that only inspected the top level saw no
-#: `collection_id` at all and let another collection's object through (F29).
+#: `collection_id` at all and let another collection's object through.
 #: The list is explicit -- the walk is one level deep on purpose, not a search.
 SCOPE_ENVELOPES = ('item', 'items')
 
@@ -1728,7 +1727,7 @@ def _redact_file(data, content_type, principal):
     identity -- a subscription or the legacy token -- received bytes the rest of
     the API would have scrubbed: ``GET /v1/exports/{id}/download/ranked.json``
     handed back a row carrying ``access_secret`` while the identical field of
-    ``GET /v1/results`` was stripped (F29).
+    ``GET /v1/results`` was stripped.
 
     Only a JSON payload can be rewritten field by field, and it is the only
     snapshot format that carries row fields at all: every other file of an
@@ -2110,7 +2109,7 @@ class ApiV1:
             # cache is the second and last place the value can be taken out.
             # Storing the untouched response here is what let a replay of the
             # same `POST /v1/keys` hand the full `pwk_...` secret out a second
-            # time, long after the one moment CONTRACTS §5.1 allows it.
+            # time, long after the one moment the shared contract allows it.
             self.idempotency.put(bucket, idem_key, digest,
                                  apikeys.without_one_shot_response(response))
         self._audit(route, request, params, principal, 'ok', None, body)
@@ -2250,7 +2249,7 @@ class ApiV1:
             # A raw file used to be returned straight out of `result`, so a
             # redacted identity (a subscription) got a file the rest of the API
             # would have scrubbed, and a body naming another collection was
-            # never noticed at all (F29).
+            # never noticed at all.
             result = _redact(result, principal)
             _guard_scope(principal, result)
             if result.get('secrets') and principal is not None and principal.redacted:

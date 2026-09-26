@@ -9,13 +9,13 @@ Three defects covered here:
 
 * `gate.acquire()`/`gate.release()` were called without `requests=`/`bytes=`, so
   `ResourceGate._requests`/`_bytes` stayed 0 and `--max-requests`/`--run-max-bytes`
-  were silent no-ops (F12, defect 23).
+  were silent no-ops.
 * `counted()` answered `1 if row.get('exit_ip')` for both `ip` and `exit`, and
   looked for the exit address at the top level while the judge writes
   `anonymity.exit_ip`: N unique IPs and N confirmed exit IPs were the same number,
   and both were always zero.
 * A sweep that finished short of `--want` reported `stop_reason='complete'`, so
-  an unreachable unit looked like an empty corpus (F12, F10).
+  an unreachable unit looked like an empty corpus.
 
 Everything runs on documentation addresses (RFC 5737) against a temporary
 database. No socket is opened.

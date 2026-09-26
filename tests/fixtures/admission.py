@@ -1,4 +1,4 @@
-"""Shared admission fixture for every module's tests (CONTRACTS §2.3, HANDOFF §2.1).
+"""Shared admission fixture for every module's tests.
 
 Seventeen modules work against one admission contract, so they must work against
 one fixture too. Import this instead of assembling an observation row by hand --
@@ -23,8 +23,7 @@ same states without the ``E_`` prefix; §5.4 is declared the single canon ("`E_*
 here are the `E_*` ones and :data:`REASON_ALIASES` translates the §2.4 spelling.
 Two literals are *not* error codes and are marked as such below: ``admitted`` for an
 included row (no positive code exists in §5.4) and ``blocked`` for a policy denial
-that happens before admission. Both are open questions for the integrator; see
-``docs/integration/HANDOFF/db.md``.
+that happens before admission.
 """
 from __future__ import annotations
 

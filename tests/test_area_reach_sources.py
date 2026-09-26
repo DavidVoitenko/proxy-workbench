@@ -8,8 +8,7 @@ function the user does not have.
 
 So every test here goes the way a person goes: through the argument parser,
 through a live HTTP request, and through the page the GUI serves.  The
-headline is the research fact from
-``docs/requirements/sources-research/overlap.md``: two publishers hand out the
+headline is a known fact about the catalog: two publishers hand out the
 same 21 036 addresses, the second's unique contribution is zero, and the report
 says so on every surface.
 

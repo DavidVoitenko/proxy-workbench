@@ -16,7 +16,7 @@ from proxy_workbench import servicecatalog as sc
 from proxy_workbench import proxytool as core
 
 # Девять работающих presets, которые каталог обязан сохранить с тем же уровнем
-# доказательства (MASTER-PROMPT.ru.md:180, F06).
+# доказательства.
 LEGACY_PRESETS = {
     'google-204': ('https://www.google.com/generate_204', (204,)),
     'youtube-204': ('https://www.youtube.com/generate_204', (204,)),
@@ -388,7 +388,7 @@ class ManifestValidationTest(unittest.TestCase):
         item['min_passes'] = 0
         with self.assertRaises(sc.ManifestError) as caught:
             sc.parse_catalog(data)
-        self.assertIn('F05', str(caught.exception))
+        self.assertIn('would pass without measurements', str(caught.exception))
 
     def test_at_least_above_the_optional_size_is_refused(self):
         data = manifest()

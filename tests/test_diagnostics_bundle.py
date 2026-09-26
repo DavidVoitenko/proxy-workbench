@@ -1,4 +1,4 @@
-"""Redaction, the local bundle, health and the reproduction recipe (F25).
+"""Redaction, the local bundle, health and the reproduction recipe.
 
 The canary below is a fake secret: it must not survive into the bundle payload,
 the preview, or the file on disk.  Every test here is local; the one subprocess

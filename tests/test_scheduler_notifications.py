@@ -1,4 +1,4 @@
-"""State-change notifications: dedup, hysteresis and who may receive them (F15)."""
+"""State-change notifications: dedup, hysteresis and who may receive them."""
 from pathlib import Path
 import json
 import sys

@@ -69,8 +69,8 @@ def measurement(proxy, *, latency=120.0, reliability=1.0, age=60.0, now=None, er
         ],
     }
     # A row the engine could actually have written carries its scope: the
-    # collection, the profile revision, the network and the access identity
-    # (CONTRACTS §1.2, §2.3).  A fixture without them describes a measurement no
+    # collection, the profile revision, the network and the access identity.
+    # A fixture without them describes a measurement no
     # reader would admit.
     body['collection_id'] = 'public-base'
     body['profile_id'] = profile_id()

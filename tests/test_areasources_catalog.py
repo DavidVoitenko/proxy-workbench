@@ -18,8 +18,7 @@ from proxy_workbench import source_catalog as sc
 from proxy_workbench import source_management as sm
 
 # Pairs the source research proved carry the same bytes.  The numbers and the
-# pairs are taken from docs/requirements/sources-research/overlap.md; they are
-# file comparisons made by that pass, not results of this application.
+# pairs are file comparisons made by the source research, not results of this application.
 # ``different_publishers`` says what the copy actually is: hookzof and proxifly
 # are two people serving one list, while dinoz0rg serves one list under two
 # formats of the same repository.

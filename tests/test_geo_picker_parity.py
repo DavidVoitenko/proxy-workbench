@@ -1,4 +1,4 @@
-"""The backend country list and the picker in ui/app.js are the same list (F08).
+"""The backend country list and the picker in ui/app.js are the same list.
 
 The country picker is the user's existing control and this module does not
 replace it.  What it does add is a second copy of the codes and names on the

@@ -63,7 +63,7 @@ class SecretBindingTests(unittest.TestCase):
         # A rebind is a credential change, not a rename: it must retire the
         # evidence measured with the old secret, so the revision moves on.
         # Leaving access_revision alone is what let a restored old password
-        # inherit a successful check (F04/F09).
+        # inherit a successful check.
         report = db.rebind_secrets(self.conn, {VAULT_REF: OTHER_VAULT_REF}, dry_run=False)
         self.assertFalse(report.dry_run)
         self.assertEqual(len(report.changed), 1)

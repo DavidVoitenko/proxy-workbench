@@ -1,7 +1,6 @@
 """Service catalog: versioned service presets and the sets that combine them.
 
-Closes F06 (docs/requirements/MASTER-PROMPT.ru.md:178) and defect 24
-(MASTER-PROMPT.ru.md:136).  A preset states exactly what one HTTP probe proves.
+A preset states exactly what one HTTP probe proves.
 Three rules are enforced by the parser, not left to the author:
 
 * ``not_proved`` is mandatory and never empty, so no set title can promise calls,
@@ -12,7 +11,7 @@ Three rules are enforced by the parser, not left to the author:
 * Every set declares the complete field inventory of a scenario.  Anything not
   declared is a user field and is never touched, so switching from an Elite
   scenario to a video one cannot leave a judge, a strict flag or an anonymity
-  requirement behind (defect 24).
+  requirement behind.
 
 The catalog is data only.  It opens no socket, reads no database and writes no
 file: measurement belongs to ``probes.py`` and persistence to ``profiles.py``.
@@ -677,9 +676,9 @@ def _parse_service_set(raw, where, presets, scenario_fields, derived_fields, use
     if combination == 'at_least':
         if not 1 <= min_passes <= len(optional):
             _fail(tr(f'{where}.min_passes: от 1 до {len(optional)} для at_least; '
-                     f'K=0 и K>размера дают проход без измерений (F05)',
+                     f'K=0 и K>размера дают проход без измерений',
                      f'{where}.min_passes: 1..{len(optional)} for at_least; '
-                     f'K=0 and K>size would pass without measurements (F05)'))
+                     f'K=0 and K>size would pass without measurements'))
     elif combination == 'any' and not optional:
         _fail(tr(f'{where}: any при пустом дополнительном наборе даёт проход без измерений',
                  f'{where}: any with an empty optional set would pass without measurements'))
@@ -696,7 +695,7 @@ def _parse_service_set(raw, where, presets, scenario_fields, derived_fields, use
         _fail(tr(f'{where}.scenario: не заданы поля {missing}; набор обязан объявлять полный состав '
                  f'(дефект 24), иначе условия прошлого сценария останутся',
                  f'{where}.scenario: fields {missing} are not declared; a set must declare the full '
-                 f'field inventory (defect 24), otherwise the previous scenario survives'))
+                 f'field inventory, otherwise the previous scenario survives'))
     extra = sorted(set(scenario_raw) - expected)
     if extra:
         _fail(f'{where}.scenario: поля {extra} либо производные, либо принадлежат пользователю')
@@ -1299,7 +1298,7 @@ def new_user_set(catalog: Catalog, set_id: str, title_ru: str, title_en: str, pr
     copies of the presets, so a later catalog update leaves it untouched.  The
     caller owns persistence of the returned snapshot.  When ``required_ids`` is
     omitted the first selected service becomes mandatory, because a set with no
-    mandatory probe could pass without any measurement (F05).
+    mandatory probe could pass without any measurement.
     """
     presets = select_presets(catalog, preset_ids)
     if combination not in COMBINATION_IDS:
@@ -1318,7 +1317,7 @@ def new_user_set(catalog: Catalog, set_id: str, title_ru: str, title_en: str, pr
             raise CatalogError(tr(f'у поля {field!r} нет значения сброса в SCENARIO_DEFAULTS',
                                  f'field {field!r} has no reset value in SCENARIO_DEFAULTS'))
     if required_ids is None:
-        # A set with no mandatory probe could pass without any measurement (F05).
+        # A set with no mandatory probe could pass without any measurement.
         required = (presets[0].preset_id,)
         optional = tuple(preset.preset_id for preset in presets[1:])
     else:

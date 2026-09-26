@@ -159,7 +159,7 @@ class ReaderTests(unittest.TestCase):
 class SharedFixtureTests(unittest.TestCase):
     """The snapshot contract on the rows every other module tests against.
 
-    The fixture is the agreed vocabulary (HANDOFF §2.1), so a divergence between
+    The fixture is the agreed vocabulary, so a divergence between
     this module and ``core`` shows up here rather than in an integration run.
     """
 

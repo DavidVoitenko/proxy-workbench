@@ -1,6 +1,6 @@
 """One snapshot contract for every export artifact and every reader.
 
-CONTRACTS.ru.md §4 and F28 ask for the same five things everywhere: ``rows``,
+the shared contract and F28 ask for the same five things everywhere: ``rows``,
 ``status``, ``scope``, ``profile``, ``policy``, plus an immutable publication
 behind an atomic pointer.  This module is the only place that writes them, so
 API, gateway, GUI and CLI stop keeping their own copies of the rule.
@@ -11,13 +11,13 @@ Three decisions are the contract, not implementation detail:
   selection, a top-N slice or a search result is written with
   :func:`write_snapshot` and never moves the active pool.  Only
   :func:`publish` moves it, only for ``kind='published'`` and only with an
-  explicit confirmation (defect 7, R04).
+  explicit confirmation.
 * **A published generation is immutable.**  It is written once, checksummed
   into a manifest, and read through a pointer swap that either happens or does
   not.  A failure leaves the previous generation as the only published one.
 * **A set has a lifetime of its own.**  ``expires_at`` is the newest admitted
   member's deadline, never ``min()`` over rows, so one expired member cannot
-  hide the rest (defect 3).
+  hide the rest.
 
 The admission decision itself is **not** here: thresholds, denylist, anonymity
 and the clock belong to :mod:`proxy_workbench.core`, and this module calls it
@@ -105,9 +105,8 @@ ROW_FIELDS = (
     'access_id', 'access_revision',
 )
 
-# Codes outside the §5.4 canon.  They are proposed here and listed for the
-# contract owner in docs/integration/HANDOFF/exportsvc.md; the ones already in
-# the canon are reused unchanged.
+# Codes outside the shared canon are defined here; the ones already in the
+# canon are reused unchanged.
 EXPORT_CODES = {
     'E_EXPORT_PROTOCOL_UNSUPPORTED': (
         'Формат {format} не поддерживает протокол {protocol}.',
@@ -414,7 +413,7 @@ class CompatReport:
 
     ``client_check`` is the result of running the pinned client against the
     generated file: ``passed``, ``failed`` or ``not_run``.  It is never reported
-    as ``passed`` on the strength of a JSON parse alone (R14, defect 20).
+    as ``passed`` on the strength of a JSON parse alone.
     """
 
     fmt: str
@@ -647,7 +646,7 @@ def singbox_target(version: str | None) -> SingBoxTarget:
     version produces the version-independent shape, and the artifact says the
     target was unconfigured and that no client check ran.  An unparsable or
     unverified version is refused: falling back silently would mean shipping a
-    config for a client nobody checked (R14).  ``legacy-block`` is the one
+    config for a client nobody checked.  ``legacy-block`` is the one
     named exception, and it is only a named exception.
     """
     raw = (version or '').strip()
@@ -748,7 +747,7 @@ def render_singbox(rows: Sequence[Mapping[str, Any]], *, options: ExportOptions 
     explicit ``legacy-block`` request.  From 1.11.0 on that outbound is
     deprecated and the same refusal is a route rule with ``action: reject``.
     Nothing here ever emits a ``direct`` outbound, so an empty or
-    unsupported-only set cannot turn into an unproxied connection (defect 20),
+    unsupported-only set cannot turn into an unproxied connection,
     and a set with usable outbounds is version-independent, so it is written
     even when no target was pinned - marked unverified, never marked checked.
     """
@@ -1406,7 +1405,7 @@ class LoadedSnapshot:
     """One coherent generation, read through a pinned name.
 
     ``rows`` keeps expired members and ``fresh_rows`` does not, so a consumer
-    chooses; the reader never empties a set because of one stale row (defect 3).
+    chooses; the reader never empties a set because of one stale row.
     """
 
     generation: str
@@ -1492,7 +1491,7 @@ def write_snapshot(directory: Any, rows: Sequence[Mapping[str, Any]], *, scope: 
 
     Nothing here can change the active pool: that is :func:`publish`'s job, and
     only for ``kind='published'``.  A selection, a top-N slice and a search
-    result all land here (defect 7).
+    result all land here.
 
     ``client`` is the resolved target version and client binary.  Left out, it
     is resolved from the options, the environment and ``client.json`` beside
@@ -1594,7 +1593,7 @@ def _singbox_with_report(rows: Sequence[Mapping[str, Any]], options: ExportOptio
     carries every other file, the sing-box entry is marked as not written, and
     the reason plus the action are in ``status.json`` where a GUI or an API can
     show them.  That is a fail-closed generation error, not a silent choice of
-    a deprecated shape (defect 20).
+    a deprecated shape.
     """
     if not target.supported:
         raise ExportError(target.reason or 'E_EXPORT_TARGET_UNVERIFIED', target=target.version,

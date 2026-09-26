@@ -29,7 +29,7 @@ storage      :class:`SourceDesk`
 comparison   :class:`Cohort`, :func:`compare_sources`, :func:`compare_suppliers`,
               :func:`compare_cohorts`, :func:`survival_across_windows`,
               :func:`provider_inventory`, :func:`wilson_interval`,
-              :func:`classify_measurement` (F21)
+              :func:`classify_measurement`
 """
 from __future__ import annotations
 
@@ -75,7 +75,7 @@ _SQL_BATCH = 400
 
 
 class SourceDeskError(ValueError):
-    """A refused operation with a stable ``E_*`` code from CONTRACTS.ru.md 5.4."""
+    """A refused operation with a stable ``E_*`` code from the shared contract."""
 
     def __init__(self, code, message):
         super().__init__(message)
@@ -351,7 +351,7 @@ def user_source(*, binding_id, url, name=None, source_format='text', headers=Non
 
 
 # --------------------------------------------------------------------------
-# Supported subscription imports (F27)
+# Supported subscription imports
 # --------------------------------------------------------------------------
 #
 # A Clash or sing-box document is data, never a program.  Only the endpoint
@@ -1140,7 +1140,7 @@ def plan_refresh(state, result, *, policy=None, now=None, foreign=()):
 
     1. a failure never removes a membership and never moves last-good;
     2. an empty body never removes a membership either -- a working collection
-       survives an empty update (F27 acceptance);
+       survives an empty update;
     3. a truncated (``partial``) fetch never removes a membership, because a
        truncated document cannot prove that an endpoint is gone;
     4. a removal only ever drops the rows *this* source owns, so an endpoint
@@ -1257,7 +1257,7 @@ def _code_for_outcome(outcome):
 @dataclass(frozen=True)
 class RotationPlan:
     """A credential change.  The new revision invalidates exactly the proofs
-    that were made with the old one (CONTRACTS 1.2(1), F04)."""
+    that were made with the old one."""
 
     source_id: str
     collection_id: str
@@ -1694,7 +1694,7 @@ class SourceDesk:
 
 
 # --------------------------------------------------------------------------
-# Comparison of sources and suppliers (F21)
+# Comparison of sources and suppliers
 # --------------------------------------------------------------------------
 #
 # Everything in this section is read back out of the rows this application

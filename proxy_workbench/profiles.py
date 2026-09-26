@@ -14,8 +14,7 @@ GUI, the CLI and the API decide pass/fail through the very same functions
     ref = store.create('API проекта', spec)
     payload = export_profile(store, ref)       # secret-free document
 
-Model taken from ``docs/requirements/product-research/01-product-model.ru.md``
-("Правила принятия результатов") and from F05 of MASTER-PROMPT:
+Acceptance model:
 
 * the mandatory set ``M`` is always mandatory - no rule can drop it;
 * the optional set ``O`` carries an explicit ``all``/``any``/``at_least(K)``/``none``
@@ -29,15 +28,15 @@ Three invariants the rest of the workbench may rely on:
 
 1. Evidence carries the thresholds it was measured under.  Evidence from another
    threshold set is not evidence for this revision, so lowering a threshold can
-   never buy a pass for measurements that were never run under it (F05).
+   never buy a pass for measurements that were never run under it.
 2. ``RunState.stop()`` only reports a stop when *no* completion of the remaining
-   probes could pass, so fail-fast can never disagree with the rule (F05).
+   probes could pass, so fail-fast can never disagree with the rule.
 3. A revision row is immutable.  ``update`` appends a row and links it with
    ``parent_id``; the previous revision and its results stay readable
-   (CONTRACTS §3.3, migration 9).
+   .
 
 Storage is the ``profiles`` table of the workbench database in the shape declared
-by CONTRACTS §3.3 (migration 9): one row per revision, ``name`` groups the
+by the shared contract (migration 9): one row per revision, ``name`` groups the
 revisions, ``parent_id`` chains them, ``digest`` fixes the content.  The row key
 is ``<profile_id>@<revision>`` because the declared primary key is the single
 column ``id``; ``ProfileRef`` is what the rest of the code should pass around.
@@ -96,8 +95,8 @@ _CONTROL_RE = re.compile(r'[\x00-\x1f\x7f]')
 # wildcard: ``_`` is literal in GLOB, ``*``, ``?`` and ``[`` are not.
 _PROFILE_ID_RE = re.compile(r'^[A-Za-z0-9_.:@-]{1,128}$')
 
-# Error codes.  The first five are shared with CONTRACTS §5.4 and core.py; the
-# rest are proposed there (docs/integration/HANDOFF/profiles.md).
+# Error codes.  The first five are shared with core.py; the rest are this
+# module's own.
 E_VALIDATION_SCHEMA = 'E_VALIDATION_SCHEMA'
 E_VALIDATION_FIELD = 'E_VALIDATION_FIELD'
 E_VALIDATION_UNKNOWN_FIELD = 'E_VALIDATION_UNKNOWN_FIELD'
@@ -202,7 +201,7 @@ def _mapping(value: Any, what: str) -> Mapping[str, Any]:
 
 
 def _reject_unknown(data: Mapping[str, Any], allowed: Iterable[str], what: str) -> None:
-    """An unrecognised field is a caller bug and is refused, not ignored (F07)."""
+    """An unrecognised field is a caller bug and is refused, not ignored."""
     unknown = sorted(set(data) - set(allowed))
     if unknown:
         raise _fail(E_VALIDATION_UNKNOWN_FIELD, f'{what}: неизвестные поля {unknown}')
@@ -285,7 +284,7 @@ class OptionalRule:
         # K is only an integer here.  ``K <= 0`` is refused where the decision is
         # made - ``ProfileSpec.validate`` on the way in, ``evaluate`` on a document
         # a foreign writer left behind - so the guarantee is visible as a verdict
-        # and not only as a parse error (F05).
+        # and not only as a parse error.
         object.__setattr__(self, 'k', _integer(self.k))
 
     @classmethod
@@ -910,10 +909,10 @@ def _as_spec(spec: Any) -> ProfileSpec:
 # Storage
 # --------------------------------------------------------------------------- #
 
-# CONTRACTS §3.3, migration 9, is the owner of this table.  ``id`` and ``config``
+# the shared contract is the owner of this table.  ``id`` and ``config``
 # are the columns proxytool.open_db() has always created; migration 9 adds the
 # rest.  The tuple below is a *verification* list, never a DDL statement set:
-# this module writes no DDL and calls ``db.migrate()`` instead (HANDOFF §2.2).
+# this module writes no DDL and calls ``db.migrate()`` instead.
 MIGRATION = 9
 CONTRACT_COLUMNS = ('id', 'config', 'name', 'revision', 'parent_id', 'digest',
                     'created_at', 'archived_at', 'is_default')
@@ -1113,7 +1112,7 @@ class ProfileStore:
         """Head revision of every named profile, ordered by name.
 
         Rows without a name are the legacy content-addressed ones; they stay out
-        of the library, because naming them would be inventing an origin (F02).
+        of the library, because naming them would be inventing an origin.
         """
         sql = f'{_SELECT} WHERE name IS NOT NULL'
         if not include_archived:

@@ -35,7 +35,7 @@ class PathTests(unittest.TestCase):
 
         This test used to expect an empty command line to open the interface.
         That was true before the background layer existed, and it stopped being
-        true the moment the shipped entry point became the desktop host (F22/F23):
+        true the moment the shipped entry point became the desktop host:
         the application a user double-clicks is the process that owns the menu
         bar, the single instance and the login item.  Routing it straight to the
         page is exactly what a shipped product must not do -- the window would

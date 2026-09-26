@@ -1,4 +1,4 @@
-"""The source tables of db.py against the contract sourcedesk declares (F13, F27).
+"""The source tables of db.py against the contract sourcedesk declares.
 
 `sourcedesk.REQUESTED_DDL` is a string constant the module never executes: it is
 the request the migrator has to answer.  Every test here is a comparison between
@@ -46,7 +46,7 @@ IDENTITY_COLUMNS = ("source_id", "family_id", "publisher_id", "metadata_json")
 #: below fails on a *new* one instead of quietly accepting a growing list.
 #: `apikeys.ensure_schema()` re-declares migrations 8/10/14 so the module can be
 #: exercised before the migrator lands; it is idempotent and belongs to the
-#: apikeys owner -- see docs/integration/HANDOFF/area-ddl.md.
+#: apikeys module.
 KNOWN_SCHEMA_WRITERS = {"apikeys.py"}
 
 
@@ -106,8 +106,7 @@ class SourceTableContractTests(unittest.TestCase):
         self.assertEqual(db.columns(self.conn, "source_identity"), list(IDENTITY_COLUMNS))
 
     def test_source_generation_entry_is_keyed_by_endpoint_id_not_by_a_second_address_model(self):
-        # CONTRACTS 1.1 plus HANDOFF/sources-handoff.ru.md 1.2 p.6: one address
-        # entity.  The sources branch keyed it by the address string (`proxy`).
+        # One address entity.  The sources branch keyed it by the address string (`proxy`).
         columns, key = shape(self.conn, "source_generation_entry")
         self.assertIn("endpoint_id", columns)
         self.assertNotIn("proxy", columns)
@@ -225,7 +224,7 @@ class RequestedDdlIsNotExecutedTests(unittest.TestCase):
                 self.fail(f"sourcedesk.py must not execute DDL, found: {stripped[:60]}")
 
     def test_nothing_outside_db_py_executes_a_create_statement(self):
-        # HANDOFF/sources-handoff.ru.md 3.1 p.2.  A string constant is fine; a
+        # A string constant is fine; a
         # call that runs one is not.  A `TEMP` table is excluded: it lives on
         # the connection and is gone when it closes, so it is scratch space and
         # not this package's schema.  The exceptions below are recorded findings

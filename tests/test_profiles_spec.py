@@ -87,7 +87,7 @@ class SelectionTests(unittest.TestCase):
 
 
 class NonEmptyGuaranteeTests(unittest.TestCase):
-    """MASTER-PROMPT F05: all(empty), K=0 and all-disabled probes never pass."""
+    """all(empty), K=0 and all-disabled probes never pass."""
 
     def assert_refused(self, code, build):
         with self.assertRaises(profiles.ProfileError) as raised:
@@ -297,7 +297,7 @@ class PublicApiTests(unittest.TestCase):
             original.copy_of(targets=[])
 
     def test_every_emitted_reason_code_is_documented(self):
-        """i18n needs one closed list, so no verdict may invent a code (CONTRACTS §5.4)."""
+        """i18n needs one closed list, so no verdict may invent a code."""
         emitted = set()
         cases = [
             (support.spec(), [support.ok(support.spec(), support.BASIC)]),

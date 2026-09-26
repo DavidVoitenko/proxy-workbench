@@ -58,7 +58,7 @@ class CodeTranslationTests(unittest.TestCase):
 
 
 class StateDetailTranslationTests(unittest.TestCase):
-    """CONTRACTS §5.4: ``state_detail`` is a machine value with a text next to it."""
+    """the shared contract: ``state_detail`` is a machine value with a text next to it."""
 
     def test_every_reason_the_engine_can_report_has_text(self):
         from proxy_workbench import core

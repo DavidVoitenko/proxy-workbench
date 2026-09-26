@@ -80,7 +80,7 @@ class Server:
         if payload:
             req.add_header("Content-Type", "application/json")
         if method in ("POST", "PATCH", "DELETE"):
-            # Любая мутация требует идемпотентности (CONTRACTS §6.4); приёмка
+            # Любая мутация требует идемпотентности; приёмка
             # повторяет один и тот же сценарий, поэтому ключ детерминирован.
             Server._idem += 1
             req.add_header("Idempotency-Key", f"functional-acceptance-{Server._idem}")

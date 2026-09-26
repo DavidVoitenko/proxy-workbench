@@ -1,6 +1,6 @@
 name: Windows desktop artifact
 
-# The Windows half of F23.  A .exe can only be built and started on Windows,
+# The Windows delivery.  A .exe can only be built and started on Windows,
 # so a macOS or Linux build never proves anything about this one: the job below
 # is what makes the claim checkable by whoever has a Windows machine, and by
 # everyone else through the run log.

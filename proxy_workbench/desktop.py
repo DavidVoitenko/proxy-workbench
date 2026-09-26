@@ -347,7 +347,7 @@ def child_environment(layout, base=None):
 
     The language variable is deliberately absent: ``gui.CHILD_ENV`` owns it and
     the integration contract makes that binding part of the interface
-    contract (CONTRACTS §5.4).
+    contract.
     """
     env = dict(os.environ if base is None else base)
     env[DATA_ENV] = str(layout.data)
@@ -1150,7 +1150,7 @@ def publish_label(status, notarized=False):
 
 
 # --------------------------------------------------------------------------
-# platform layer (F22): the process that owns the instance
+# platform layer: the process that owns the instance
 # --------------------------------------------------------------------------
 #
 # Everything below is a host around the same interface the browser already uses.
@@ -2365,8 +2365,8 @@ def ensure_tray_helper(layout, *, platform=None, finder=None, runner=None):
         packaged = resource_path('tray', TRAY_HELPER_NAME)
         if packaged.is_file() and os.access(packaged, os.X_OK):
             return packaged, tr('меню-бар взят из сборки', 'the menu bar helper came from the bundle')
-        return None, tr('в сборке нет helper меню-бара; см. docs/integration/HANDOFF/fix-desktop.md',
-                        'the bundle has no menu bar helper; see docs/integration/HANDOFF/fix-desktop.md')
+        return None, tr('в сборке нет helper меню-бара',
+                        'the bundle has no menu bar helper')
     target = tray_helper_target(layout)
     if target.is_file() and os.access(target, os.X_OK):
         return target, tr('меню-бар уже собран', 'the menu bar helper is already built')

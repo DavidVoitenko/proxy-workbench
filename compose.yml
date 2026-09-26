@@ -10,8 +10,8 @@
 # the read-only API; `PROXY_WORKBENCH_GATEWAY_TOKEN` is the password a proxy client
 # gives the gateway.  They are deliberately never the same value: whoever knows the
 # gateway password (a phone on the LAN, a QR code) must not be able to read the
-# published snapshot, and a leaked API token must not be a working proxy
-# (CONTRACTS §5.1, defect 18).  Leave the gateway variable unset and the gateway
+# published snapshot, and a leaked API token must not be a working proxy.
+# Leave the gateway variable unset and the gateway
 # makes its own password and prints it in its log.
 #
 # Edit the check command to test your own service: --url https://example.org/health

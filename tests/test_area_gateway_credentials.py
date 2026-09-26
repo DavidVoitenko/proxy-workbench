@@ -422,10 +422,9 @@ class IdentityTests(CredentialCase):
         self.assertEqual(up.auth_headers, [up.expected.encode()])
 
     async def test_a_row_of_a_superseded_revision_sends_nothing(self):
-        # CONTRACTS §1.2(1): the old revision's evidence is not the new
+        # the shared contract: the old revision's evidence is not the new
         # credential's evidence, and the old secret must not go back on the wire.
-        # The row the listener reads today carries no revision - see the
-        # `public_row` item in the handoff - so the rule is pinned where the
+        # The row the listener reads today carries no revision, so the rule is pinned where the
         # field exists, on the resolver itself, and the end-to-end effect is
         # pinned through an ambiguous row in the test above.
         store = self.store()

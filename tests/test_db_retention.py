@@ -38,7 +38,7 @@ class RetentionTests(unittest.TestCase):
 
         Every row names the endpoint of its own `proxy`: a result row is one
         address, so a row whose `proxy` and `endpoint_id` disagree would be six
-        measurements of one address and would be refused by the key (F28).
+        measurements of one address and would be refused by the key.
         """
         self.expires_in = [(0.5, None), (1, self.now + HOUR), (3, self.now + HOUR),
                            (10, self.now - HOUR), (11, self.now - HOUR), (12, self.now - HOUR)]

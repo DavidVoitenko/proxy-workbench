@@ -1,4 +1,4 @@
-"""The new criterion does not change what the existing picker selects (F08).
+"""The new criterion does not change what the existing picker selects.
 
 F08 adds semantics on top of the country picker, it does not replace it.  The
 only way to claim that is to run both decisions over the same rows and compare:

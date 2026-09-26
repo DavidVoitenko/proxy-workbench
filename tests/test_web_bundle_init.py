@@ -173,6 +173,22 @@ class BundleInitialisationTests(unittest.TestCase):
             "кнопка закрытия карточки должна быть объявлена до того, как к ней обращаются",
         )
 
+    def test_a_saved_lazy_language_is_loaded_at_start(self):
+        # Ten of the twelve languages live in lazy packs.  Loading one only from
+        # the language menu left a restarted page in English under `lang="de"`.
+        self.assertRegex(self.source, r"\n\s*try\s*\{\s*loadStartLanguage\(\);",
+                         "сохранённый язык из пакета должен подгружаться при запуске страницы")
+        body = re.search(r"function loadStartLanguage\(\)\s*\{(.*?)\n\}", self.source, re.S)
+        self.assertTrue(body and "ensureLangPack(lang)" in body.group(1))
+
+    def test_rebuilt_result_rows_get_the_hidden_columns(self):
+        # Rows are rebuilt on every render; without re-applying the column choice
+        # the new cells stay visible under hidden headers and slide out of place.
+        body = re.search(r"function renderResults\(data\)\s*\{(.*?)\n\}", self.source, re.S)
+        self.assertTrue(body, "renderResults должна существовать")
+        self.assertIn("applyColumns(resultState.columns)", body.group(1),
+                      "после перерисовки строк скрытые колонки должны скрываться и в новых ячейках")
+
     def test_every_id_the_script_reaches_for_is_built_somewhere(self):
         html = INDEX_HTML.read_text(encoding="utf-8")
         present = set(re.findall(r'id="([^"]+)"', html))

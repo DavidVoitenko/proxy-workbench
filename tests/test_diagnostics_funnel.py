@@ -1,4 +1,4 @@
-"""The zero-result funnel, its stages and the device/target control (F10).
+"""The zero-result funnel, its stages and the device/target control.
 
 Every scenario here is local: rows are plain dicts in the shape the engine
 stores, sources are the reports `collect()` already returns, and the control

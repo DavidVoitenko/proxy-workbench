@@ -130,7 +130,7 @@ MAX_BULK_COPY = 50_000
 PAGE_SIZE = 50
 PAGE_SIZE_MAX = 200
 # A quick row test is diagnostic.  It gets its own whole-call deadline so one
-# click cannot run for minutes (defect 23).
+# click cannot run for minutes.
 QUICK_TEST_DEADLINE_S = 45.0
 QUICK_TEST_TIMEOUT_CAP_S = 10.0
 QUICK_TEST_MAX_BYTES = 1024 * 1024
@@ -141,7 +141,7 @@ HISTORY_FILE = 'gui-history.json'
 HISTORY_LIMIT = 50
 EVENTS_FILE = 'gui-events.jsonl'
 EVENT_RETENTION = 2000
-# The user's own service sets (F06).  A pinned set is a snapshot of definitions
+# The user's own service sets.  A pinned set is a snapshot of definitions
 # the catalog published once: later catalog updates must not change it silently,
 # so the pin lives beside the user's other documents, not in the worker runtime.
 SERVICE_SETS_FILE = 'gui-service-sets.json'
@@ -156,7 +156,7 @@ MAX_COLLECTION_MEMBERS = 20_000
 # after that.
 SCOPE_EXCLUSIONS_FILE = 'gui-scope-exclusions.json'
 SCOPE_EXCLUSION_LIMIT = 20_000
-#: The country criterion the table applies (F08).  These are the values the
+#: The country criterion the table applies.  These are the values the
 #: CLI already accepts in ``--country-basis`` / ``--country-unknown``; the page
 #: takes them in the query so a link to a scoped table can be shared.
 COUNTRY_BASES = ('endpoint', 'exit', 'either')
@@ -571,7 +571,7 @@ def read_snapshot(data, *, now=None):
         except (OSError, UnicodeError, ValueError):
             # A published generation never changes; a generation that cannot be
             # read is a broken publication, not a licence to serve database
-            # rows the reader itself would reject (defect 9, R05).
+            # rows the reader itself would reject.
             return Snapshot(SNAPSHOT_BROKEN, generation=generation, directory=exports,
                             detail='generation_unreadable')
         if not isinstance(rows, list) or not isinstance(status, dict):
@@ -796,7 +796,7 @@ class App:
             raise OSError('GUI already running') from None
         self.token = secrets.token_urlsafe(32)
         # The gateway password is a separate secret: the GUI session token must
-        # never travel into a QR code or a phone profile (defect 18, R12).
+        # never travel into a QR code or a phone profile.
         self.gateway_token = secrets.token_urlsafe(24)
         self.geo_cache = (None, None)
         self.asn_cache = (None, None)
@@ -909,7 +909,7 @@ class App:
         """Last accepted remote catalog, or the bundled one when there is none.
 
         Named apart from :meth:`catalog` on purpose: that one is the *service*
-        catalog (F06), this one is the *source* catalog (F13).  Both were
+        catalog, this one is the *source* catalog.  Both were
         called `catalog`, and the later definition silently won, so every
         source page and every source preview was handed the service manifest
         and `source_catalog.source_by_id` raised `KeyError: 'sources'`.
@@ -1354,10 +1354,10 @@ class App:
                     limit=SCOPE_EXCLUSION_LIMIT, truncated=len(rows) > SCOPE_EXCLUSION_LIMIT,
                     storage='database')
 
-    # -- source comparison (F21) --------------------------------------------
+    # -- source comparison --------------------------------------------
 
     def source_comparison(self, payload):
-        """Publishers compared on what was actually measured (F21).
+        """Publishers compared on what was actually measured.
 
         The sources page is where the catalog lives, so it is also where the
         question "which of these actually adds anything?" is asked.  The
@@ -1384,7 +1384,7 @@ class App:
             # ``WorkbenchError`` is a ``RuntimeError``, which the GET handler
             # does not name -- it escaped, the worker thread died mid-response
             # and the page saw a dropped connection instead of the sentence the
-            # refusal carries.  A rejected control is a message (F25).
+            # refusal carries.  A rejected control is a message.
             raise ValueError(str(exc)) from None
 
     def _source_comparison(self, wanted, payload, windows):
@@ -1559,7 +1559,7 @@ class App:
         return read_snapshot(self.data, now=now)
 
     def export_status(self, snapshot=None, now=None):
-        """Coherent status for the published generation, per-row (defect 3).
+        """Coherent status for the published generation, per-row.
 
         The published ``status.json`` carries one set-wide ``valid_until``.  Using
         it as "the snapshot expired" is exactly the defect that empties a
@@ -1572,7 +1572,7 @@ class App:
         if not status:
             if snapshot.state in (SNAPSHOT_BROKEN, SNAPSHOT_MISSING):
                 # An unreadable publication is named as such.  Silently serving
-                # database rows the reader itself rejects is defect 9 (R05).
+                # database rows the reader itself rejects is defect 9.
                 return dict(state='error', state_detail=snapshot.detail or 'no_snapshot',
                             published=False, reader_state=snapshot.state, available=0,
                             expired_count=0, stale=False, empty_export=False)
@@ -1928,12 +1928,12 @@ class App:
                 command.extend(['--selection-file', str(selection_path)])
             if scope_collection and action in ('run', 'scan', 'recheck', 'recheck_passing'):
                 # A check is a measurement of one collection; the worker reads
-                # membership as the candidate set (F02, CONTRACTS §1.2).
+                # membership as the candidate set.
                 command.extend(['--collection', scope_collection])
             if action == 'export':
                 if scope_collection:
                     # The published generation is a statement about the same
-                    # collection the check measured (F02).
+                    # collection the check measured.
                     command.extend(['--collection', scope_collection])
                 if 'q' in payload:
                     command.extend(['--export-query', export_query])
@@ -2107,13 +2107,13 @@ class App:
                 state['log'] = ''
             return state
 
-    # -- collections (F02) -------------------------------------------------
+    # -- collections -------------------------------------------------
     #
     # A collection is the scope of a check: the public base, the migrated
     # legacy list and a personal list are different rows of the same table, so
     # choosing one cannot show the others.  Membership is the scope, and a
     # collection with no members yields nothing rather than falling back to
-    # every address ever collected (defect 11).
+    # every address ever collected.
 
     def collection_items(self, conn):
         """Every collection with the number of its own members.
@@ -2145,7 +2145,7 @@ class App:
                             (collection_id,)).fetchone()
 
     def collections(self, query=None):
-        """The list the interface needs to offer an explicit scope (F02)."""
+        """The list the interface needs to offer an explicit scope."""
         selected = str((query or {}).get('selected', [''])[0] or '').strip()
         conn = self.read_connection()
         if conn is None:
@@ -2188,7 +2188,7 @@ class App:
         return dict(collection=wanted, members=rows, total=len(rows))
 
     def create_collection(self, payload):
-        """Create a personal list. It starts empty and stays separate (defect 11)."""
+        """Create a personal list. It starts empty and stays separate."""
         payload = payload or {}
         name = payload.get('name')
         if not isinstance(name, str) or not name.strip() or len(name) > 160:
@@ -2248,7 +2248,7 @@ class App:
                     members=self.collection_members({'collection': wanted}))
 
     def remove_collection_member(self, payload):
-        """Drop one address from one collection; every other list keeps it (F02)."""
+        """Drop one address from one collection; every other list keeps it."""
         payload = payload or {}
         value = payload.get('proxy')
         if not isinstance(value, str) or not value.strip():
@@ -2304,12 +2304,12 @@ class App:
         finally:
             conn.close()
 
-    # -- service catalog (F06) ---------------------------------------------
+    # -- service catalog ---------------------------------------------
     #
     # The catalog is a shipped manifest with an id, a version, a maintainer and
     # a real pass condition per service.  A set is a combination of services
     # with a rule, and applying one writes a complete field inventory, so no
-    # judge or threshold of the previous set survives the switch (defect 24).
+    # judge or threshold of the previous set survives the switch.
 
     def catalog(self, query=None):
         """Categories, services and sets, with search and multi-selection."""
@@ -2473,7 +2473,7 @@ class App:
             required_ids=payload.get('required_ids'))
 
     def save_service_set(self, payload):
-        """Save the current selection as the user's own set (F06)."""
+        """Save the current selection as the user's own set."""
         payload = payload or {}
         set_id = str(payload.get('id') or '').strip()
         title = str(payload.get('title') or '').strip()
@@ -2683,7 +2683,7 @@ class App:
         return core.provider_resolver(self.asn())
 
     def result_policy(self, plan, cfg, *, denylist):
-        """The admission policy of this read, assembled in one place (F18)."""
+        """The admission policy of this read, assembled in one place."""
         reputation = cfg.get('reputation', {}) if isinstance(cfg, dict) else {}
         strict = bool(reputation.get('strict', False))
         if not (cfg or {}).get('anonymity'):
@@ -3364,7 +3364,7 @@ class App:
                                     count=changed)
         return dict(common, changed=changed, history=entry)
 
-    # -- real measurement events (defect 25, R17) -------------------------
+    # -- real measurement events -------------------------
 
     def _event_seq(self, stream):
         return self.event_seq.get(stream, 0)
@@ -3520,7 +3520,7 @@ class App:
         return 'E_STATE_NO_OBSERVATION'
 
     def events(self, query):
-        """New events after a cursor, in cursor order (CONTRACTS §5.7)."""
+        """New events after a cursor, in cursor order."""
         self._load_events()
         stream = query.get('stream', [''])[0]
         cursor = str(query.get('after', ['0'])[0] or '0')
@@ -3568,7 +3568,7 @@ class App:
                     cursor=(f'{last["stream"]}:{last["seq"]}' if last else cursor),
                     oldest_seq=oldest, source='measurements', truncated=len(found) > limit)
 
-    # --- API keys (F29) -----------------------------------------------------
+    # --- API keys -----------------------------------------------------
     #
     # `apikeys` was fully written and reachable only from the CLI: `grep` for
     # "key" in this file found nothing, so a user who launched the application
@@ -3592,7 +3592,7 @@ class App:
         a secret scrolls away, and the page is the place where a secret is shown
         once on purpose.  The banner only counts the keys, so a user who starts
         the application with no arguments is told that the door exists and where
-        the key is (F29).
+        the key is.
         """
         try:
             admins = self.key_admins()
@@ -3782,7 +3782,7 @@ class App:
             raise ValueError(self.key_error(exc)) from None
         return info.as_dict(manager.now())
 
-    # --- import (F03) -------------------------------------------------------
+    # --- import -------------------------------------------------------
     #
     # `importer.py` is 1162 lines of a transactionally committing, previewing,
     # mapping-aware importer and the interface could not reach any of it: the
@@ -3932,7 +3932,7 @@ class App:
         return dict(batches=rows, report=None, limits=dict(
             modes=list(importer.MODES), formats=list(importer.FORMATS)))
 
-    # --- pools and schedules (F14, F15) ------------------------------------
+    # --- pools and schedules ------------------------------------
     #
     # `pools.py` and `scheduler.py` are complete and were reachable only from
     # the CLI and `/v1`.  The routes below are the same calls the API makes
@@ -4093,7 +4093,7 @@ class App:
                 raise ValueError(str(exc) or 'Пул отклонил изменение.') from None
 
     def pool_recheck(self, pool_id, payload):
-        """Queue a measurement of the pool's own collection (F14)."""
+        """Queue a measurement of the pool's own collection."""
         from . import jobs as jobs_module
         with core.Workbench(self.data) as workbench:
             spec = workbench.pools().require(pool_id)
@@ -4352,7 +4352,7 @@ class App:
                     empty=bool(applied) and not applied.get('rows'),
                     gateway=self.gateway_state())
 
-    # --- storage maintenance (F24) -----------------------------------------
+    # --- storage maintenance -----------------------------------------
     #
     # `db.cleanup_preview`, `db.retention_preview`, `db.restore_preview` and
     # `db.migrate_data_path` were called from tests only.  The page therefore
@@ -4495,7 +4495,7 @@ class App:
             body['backup_path'] = str(getattr(backup, 'path', '') or '')
         return body
 
-    # --- diagnostics (F10) -------------------------------------------------
+    # --- diagnostics -------------------------------------------------
     #
     # `diagnostics.py` knows how to read a run as a funnel -- what entered
     # each stage, what was lost and whose fault it was -- and how to explain an
@@ -4676,7 +4676,7 @@ class App:
                     truncated=bundle.truncated, describe=bundle.describe(),
                     canary_clean=True, canary_checked=len(self.diagnostic_needles()))
 
-    # --- jobs (F11) --------------------------------------------------------
+    # --- jobs --------------------------------------------------------
     #
     # `jobs.py` keeps a durable job, its items, structured progress and a
     # gapless event stream per job.  None of it had a route: the page showed
@@ -4759,7 +4759,7 @@ class App:
                     job=dict(id=job.id, kind=job.kind, state=job.state,
                              started_at=job.started_at, finished_at=job.finished_at))
 
-    # --- desktop layer (F22) -----------------------------------------------
+    # --- desktop layer -----------------------------------------------
     #
     # `desktop.py` runs the menu bar, the single instance, the login item and
     # sleep/wake, and it keeps a journal of what it did.  The interface had no
@@ -5090,7 +5090,7 @@ class Handler(BaseHTTPRequestHandler):
             self.respond(404, dict(error='Не найдено.'))
         except ValueError as exc:
             # A rejected control is a message with an action in it, not a
-            # generic "try again" (F25).
+            # generic "try again".
             message = str(exc) if str(exc) and not str(exc).startswith(('0x', 'not')) else \
                 'Неверные параметры запроса.'
             self.respond(400, dict(error=message))
@@ -5322,7 +5322,7 @@ def main(argv=None):
             threading.Thread(target=api_server.serve_forever, daemon=True).start()
             # The old line named the deprecated `/proxies` and said nothing about
             # `/v1` or about the key that door needs, so a user who launched the
-            # application without arguments was never told how to get in (F29).
+            # application without arguments was never told how to get in.
             print(tr(f'API для своих программ: {server.app.api_url}/v1 '
                      f'(ключ — на странице «Ключи» в интерфейсе, {url}#keys)',
                      f'API for your programs: {server.app.api_url}/v1 '
@@ -5350,7 +5350,7 @@ def main(argv=None):
             # never carry the secret that administers this interface.
             gateway_token = server.app.gateway_token
         if args.lan and api.is_loopback(args.gateway_host):
-            # LAN mode is an explicit opt-in with a visible state (defect 18).
+            # LAN mode is an explicit opt-in with a visible state.
             print(tr('Внимание: ротирующий прокси открыт в локальной сети; пароль доступа есть в QR.',
                      'Warning: the rotating proxy is open on the local network; its password is in the QR.'), flush=True)
         try:

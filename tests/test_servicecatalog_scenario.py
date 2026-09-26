@@ -99,7 +99,7 @@ class FieldInventoryTest(unittest.TestCase):
         with self.assertRaises(sc.ManifestError) as caught:
             sc.parse_catalog(data)
         self.assertIn('reputation.strict', str(caught.exception))
-        self.assertIn('24', str(caught.exception))
+        self.assertIn('full field inventory', str(caught.exception))
 
     def test_manifest_setting_a_user_field_is_rejected(self):
         data = sc.load_manifest()

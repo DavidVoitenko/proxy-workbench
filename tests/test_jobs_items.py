@@ -1,6 +1,6 @@
 """Queue, item states, and what pause, cancel and retry must never destroy.
 
-CONTRACTS.ru.md §6.3, F11 acceptance, defect 6.
+the shared contract, F11 acceptance, defect 6.
 """
 from __future__ import annotations
 

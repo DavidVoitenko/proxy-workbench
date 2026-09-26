@@ -457,7 +457,7 @@ const messages = {
     'cat.shown': 'Showing {shown} of {total}',
     'cat.empty': 'Nothing matches these filters.',
     'cat.loading': 'Loading the catalog…',
-    // Service catalog and sets (F06)
+    // Service catalog and sets
     'svc.title': 'Service catalog',
     'svc.lead': 'Every service names its id, version, maintainer, real probe and pass condition. A set is a rule over services: all, any, at least K, or only the required ones.',
     'svc.open': 'Open catalog',
@@ -522,7 +522,7 @@ const messages = {
     'svc.capability': 'Proves',
     'svc.ruleLabel': 'Rule: {rule}, minimum {min}',
     'svc.loadFailed': 'The service catalog could not be read',
-    // Collections: the scope of a check and of the results view (F02)
+    // Collections: the scope of a check and of the results view
     'col.title': 'Collections and the scope of the check',
     'col.lead': 'The public base, the migrated list and your own lists are separate lists. The scope decides which of them a check measures and which rows the results table shows; nothing is ever copied from one list into another.',
     'col.scope': 'Scope of the check',
@@ -937,7 +937,7 @@ const messages = {
     'help.pipelineBadge': 'WORKFLOW',
     'region.cis': '🌐 CIS',
 
-    // --- import with a preview (F03), pools, schedules, keys, storage ---
+    // --- import with a preview, pools, schedules, keys, storage ---
     'nav.pools': 'Pools & Schedules',
     'nav.keys': 'API Keys',
     'common.cancel': 'Cancel',
@@ -1758,7 +1758,7 @@ const messages = {
     'cat.shown': 'Показано {shown} из {total}',
     'cat.empty': 'По этим фильтрам ничего нет.',
     'cat.loading': 'Каталог загружается…',
-    // Каталог сервисов и наборы (F06)
+    // Каталог сервисов и наборы
     'svc.title': 'Каталог сервисов',
     'svc.lead': 'У каждого сервиса указаны идентификатор, версия, кто ведёт определение, реальная проба и условие прохождения. Набор — это правило над сервисами: все, любой, не менее K или только обязательные.',
     'svc.open': 'Открыть каталог',
@@ -1823,7 +1823,7 @@ const messages = {
     'svc.capability': 'Доказывает',
     'svc.ruleLabel': 'Правило: {rule}, минимум {min}',
     'svc.loadFailed': 'Каталог сервисов не прочитан',
-    // Коллекции: область проверки и таблицы результатов (F02)
+    // Коллекции: область проверки и таблицы результатов
     'col.title': 'Коллекции и область проверки',
     'col.lead': 'Публичная база, перенесённый список и ваши собственные списки — это разные списки. Область решает, какой из них измеряет проверка и какие строки показывает таблица результатов; ничего не копируется из одного списка в другой.',
     'col.scope': 'Область проверки',
@@ -2237,7 +2237,7 @@ const messages = {
     'help.pipelineBadge': 'ПРОЦЕСС',
     'region.cis': '🌐 СНГ',
 
-    // --- импорт с предпросмотром (F03), пулы, расписания, ключи, хранение ---
+    // --- импорт с предпросмотром, пулы, расписания, ключи, хранение ---
     'nav.pools': 'Пулы и расписания',
     'nav.keys': 'Ключи API',
     'common.cancel': 'Отмена',
@@ -2681,6 +2681,10 @@ async function setLang(code) {
   if (!ok) { toast(t('error.langPack'), true); return; }
   lang = code;
   try { localStorage.setItem(LANG_KEY, lang); } catch {}
+  repaintLanguage();
+}
+
+function repaintLanguage() {
   renderLang();
   // Re-render the dynamic areas that cache translated strings.
   try { renderState(state); } catch (e) { console.error(e); }
@@ -2689,6 +2693,17 @@ async function setLang(code) {
   try { renderLiveFeedItems(); } catch (e) { console.error(e); }
   if (resultData) { try { renderResults(resultData); } catch (e) { console.error(e); } }
   if (detailRow) { try { renderDetails(detailRow); } catch (e) { console.error(e); } }
+}
+
+// A saved or system language outside `messages` lives in a lazy pack.  It has
+// to be loaded at start too, or after a restart the page claims that language
+// while every string falls back to English.
+function loadStartLanguage() {
+  if (langDict(lang)) return;
+  ensureLangPack(lang).then(ok => {
+    if (!ok) lang = 'en';
+    repaintLanguage();
+  });
 }
 
 function buildLangMenu() {
@@ -4590,7 +4605,7 @@ function snapshotTime(value) {
 }
 
 // ---------------------------------------------------------------------------
-// Live feed: real measurement events (defect 25, R17)
+// Live feed: real measurement events
 // ---------------------------------------------------------------------------
 // The previous implementation searched the aggregated scan log for
 // OK/PASS/FAIL.  That text is a progress summary: it does not say which proxy
@@ -4837,7 +4852,7 @@ function renderState(value) {
 
   // Live ticker: real measurement events, never a regex over the log.
   // The log is an aggregate progress text; a line that happens to contain
-  // "OK" says nothing about which proxy was measured (defect 25, R17).
+  // "OK" says nothing about which proxy was measured.
   renderLiveFeed(value);
 
   const passedCount = progress.passed ?? exportReport.passed ?? 0;
@@ -5413,6 +5428,10 @@ function renderResults(data) {
       await bulkAction('recheck', {scope: 'selected', proxies: [btn.dataset.recheckProxy], button: btn});
     });
   }
+
+  // The rows were just rebuilt, so the hidden columns have to be hidden in the
+  // new cells too; otherwise the cells slide under the wrong headers.
+  applyColumns(resultState.columns);
 }
 
 let pendingLoadResults = false;
@@ -6470,7 +6489,7 @@ async function downloadFile(name, node) {
 document.querySelectorAll('[data-download]').forEach(node => node.onclick = () => downloadFile(node.dataset.download, node));
 
 // ---------------------------------------------------------------------------
-// Result list: views, scopes, bulk actions, tags, saved views, matrix (F19)
+// Result list: views, scopes, bulk actions, tags, saved views, matrix
 // ---------------------------------------------------------------------------
 const COLUMN_LABELS = {
   check: 'col.check', num: 'col.num', proxy: 'col.proxy', score: 'col.quality', latency: 'col.latency',
@@ -6762,7 +6781,7 @@ function renderSavedViews(views) {
 }
 
 // ---------------------------------------------------------------------------
-// Connection path (F17)
+// Connection path
 // ---------------------------------------------------------------------------
 function splitGatewayAddress(address) {
   // The listener may sit on an IPv6 literal, so the host is the part before the
@@ -6851,7 +6870,7 @@ function renderConnectPath(value) {
     if (binding.generation) shown.push(String(binding.generation).replace(/^\.generation-/, '').slice(0, 12));
     if (binding.state) shown.push(binding.state);
     // ``state_detail`` is a machine value; the page says the reason in words
-    // and keeps the code beside it (CONTRACTS §5.4).  Defect 3: "nothing
+    // and keeps the code beside it.  Defect 3: "nothing
     // matched" and "everything expired" must not read the same.
     if (binding.state_detail) {
       const label = binding.state_detail_label;
@@ -7062,7 +7081,7 @@ function renderLang() {
     renderCollections({collections: collectionsState.items, selected: collectionsState.selected});
   }
 }
-// Scenario presets with an explicit, complete field set (defect 24, R17).
+// Scenario presets with an explicit, complete field set.
 //
 // A scenario used to change only some fields, so the judge, the DNSBL zones,
 // the strict flag and the anonymity minimum of the previous scenario survived
@@ -7923,7 +7942,7 @@ function setupCatalogListeners() {
   }
 }
 
-// Collections (F02): the scope of a check and of the results view.
+// Collections: the scope of a check and of the results view.
 //
 // A collection is a named list of addresses in the local database.  The public
 // base, the migrated list and a personal list are different rows, so choosing
@@ -8157,7 +8176,7 @@ function setupCollectionListeners() {
   }
 }
 
-// Service catalog (F06): versioned definitions, sets, and the user's own set.
+// Service catalog: versioned definitions, sets, and the user's own set.
 //
 // A preset carries its probes and its pass condition, so the page never claims
 // a service works because a request merely answered.  A set is a rule over
@@ -8536,7 +8555,7 @@ function setupServiceCatalogListeners() {
 }
 
 // ---------------------------------------------------------------------------
-// Import with a preview (F03)
+// Import with a preview
 //
 // The own-list box writes membership straight through the collections route,
 // so a file never reached `importer.preview`/`importer.commit`: there was no
@@ -8829,7 +8848,7 @@ function setupImportListeners() {
 }
 
 // ---------------------------------------------------------------------------
-// Pools and schedules (F14, F15)
+// Pools and schedules
 // ---------------------------------------------------------------------------
 
 let poolsState = {pools: [], selected: null, collections: [], profiles: []};
@@ -9168,7 +9187,7 @@ function setupScheduleListeners() {
 }
 
 // ---------------------------------------------------------------------------
-// Jobs (F11): the durable record of a run
+// Jobs: the durable record of a run
 // ---------------------------------------------------------------------------
 //
 // A button is enabled only from a state the action is legal from, so the page
@@ -9415,7 +9434,7 @@ function setupGatewayBindingListeners() {
 }
 
 // ---------------------------------------------------------------------------
-// API keys (F29)
+// API keys
 // ---------------------------------------------------------------------------
 
 let keysState = {view: null, permissions: [], groups: {}};
@@ -9794,7 +9813,7 @@ try { setupKeyListeners(); } catch (e) { console.error(e); }
 try { setupCatalogListeners(); } catch (e) { console.error(e); }
 try { setupScopeDialog(); } catch (e) { console.error(e); }
 // ---------------------------------------------------------------------------
-// Diagnostics (F10): the funnel, the one reason, and the local bundle
+// Diagnostics: the funnel, the one reason, and the local bundle
 // ---------------------------------------------------------------------------
 
 let diagState = {view: null, bundleText: ''};
@@ -9951,7 +9970,7 @@ function setupDiagnosticsListeners() {
 }
 
 // ---------------------------------------------------------------------------
-// The background layer (F22)
+// The background layer
 // ---------------------------------------------------------------------------
 
 let deskState = {view: null};
@@ -10058,6 +10077,7 @@ function setupDesktopListeners() {
 
 
 try { renderLang(); } catch (e) { console.error(e); }
+try { loadStartLanguage(); } catch (e) { console.error(e); }
 try { renderSavedViews(resultState.views); } catch (e) { console.error(e); }
 requestAnimationFrame(updateSegmentedGlider);
 setTimeout(updateSegmentedGlider, 100);

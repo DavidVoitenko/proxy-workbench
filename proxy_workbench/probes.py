@@ -3,7 +3,7 @@
 This module is a leaf.  It owns no database, no source fetching and no network
 code of its own: every socket call goes through an injected ``Transport`` and
 every duration through an injected ``Clock``.  ``proxytool.py`` stays the single
-network entry point (CONTRACTS.ru.md §1.2, HANDOFF §2.2), and the integration
+network entry point, and the integration
 wires its own transport to :func:`run_plan` / :func:`run_speed_test`.
 
 Scope: F01 (check modes), F07 (advanced parameters), F20 (measurements) and
@@ -64,10 +64,10 @@ __all__ = [
     'reverse_host', 'reveal_signals', 'looks_like_challenge', 'labelled_exit_address', 'STAGES',
     # recheck
     'RecheckItem', 'plan_recheck',
-    # capability matrix and the self-hosted reference probe (F20)
+    # capability matrix and the self-hosted reference probe
     'CAPABILITIES', 'capability_matrix', 'serve_reference_probe',
     'REFERENCE_PROBE_MAX_BYTES', 'reference_probe_targets', 'time_budget',
-    # bounded capabilities (F20)
+    # bounded capabilities
     'CAPABILITY_KINDS', 'CAPABILITY_LIMITS', 'CAPABILITY_DEFAULTS', 'CAPABILITY_STATES',
     'CapabilitySpec', 'validate_capability', 'validate_capabilities', 'capabilities_manifest',
     'CapabilityOutcome', 'WsTrace', 'HoldTrace', 'parse_media_manifest',
@@ -81,7 +81,7 @@ __all__ = [
 # errors
 # --------------------------------------------------------------------------
 
-# Configuration errors carry the E_* form of CONTRACTS.ru.md §5.4: the
+# Configuration errors carry the E_* form of the shared contract: the
 # VALIDATION domain already exists, so no new domain is introduced here.
 E_VALIDATION_SCHEMA = 'E_VALIDATION_SCHEMA'
 E_VALIDATION_FIELD = 'E_VALIDATION_FIELD'
@@ -93,7 +93,7 @@ E_VALIDATION_RETRY_UNSAFE = 'E_VALIDATION_RETRY_UNSAFE'
 E_LIMIT_BUDGET = 'E_LIMIT_BUDGET'
 
 # Measurement codes stay bare, exactly like the ones already stored in
-# ``results.payload.error`` (CONTRACTS §5.4, row UPSTREAM).  This catalogue is
+# ``results.payload.error``.  This catalogue is
 # the reference the diagnostics surface needs for the probe half of it.
 UNREACHABLE = 'UNREACHABLE'
 CONNECT_TIMEOUT = 'CONNECT_TIMEOUT'
@@ -364,7 +364,7 @@ MAX_REDIRECTS = 5
 
 @dataclass(frozen=True)
 class Limit:
-    """One parameter's unit and range, in a single place (CONTRACTS §5.5)."""
+    """One parameter's unit and range, in a single place."""
 
     unit: str
     minimum: float
@@ -405,7 +405,7 @@ DEFAULT_OPTIONS = {
 
 # F07 presets: "быстро / баланс / тщательно / экономно".  A preset is a full
 # set of values, not a patch: switching from "тщательно" to "быстро" cannot
-# leave a previous scenario's backoff or redirect limit behind (defect 24).
+# leave a previous scenario's backoff or redirect limit behind.
 # Explicit keys always win over the preset and are reported in ``overrides``.
 PRESETS = {
     'fast': {
@@ -533,7 +533,7 @@ class ProbeOptions:
 
 
 def validate_options(data=None) -> ProbeOptions:
-    """The single validation GUI, CLI and API all go through (F07, F18)."""
+    """The single validation GUI, CLI and API all go through."""
     if data is None:
         data = {}
     if not isinstance(data, dict):
@@ -630,7 +630,7 @@ def build_ssl_context(ca_bundle=None):
 
     ``verify=False`` is not reachable from any option in this module: enabling
     a custom CA, a header, a redirect or an API key never disables TLS
-    verification (F07 acceptance).
+    verification.
     """
     context = ssl.create_default_context(cafile=ca_bundle) if ca_bundle else ssl.create_default_context()
     context.check_hostname = True
@@ -757,7 +757,7 @@ def validate_target(data, *, own_profile=False) -> TargetProfile:
                'dns_mode', 'scope', 'own', 'body', 'auth', 'kind', 'definition_version', 'verified_at',
                # Derived read-only view fields, so a stored or exported target
                # can be fed back in.  A value that contradicts the real profile
-               # is refused rather than quietly dropped (F07).
+               # is refused rather than quietly dropped.
                'body_bytes', 'auth_configured')
     _reject_unknown(data, allowed, 'Цель проверки')
     url = _validate_url(data.get('url'), 'Цель: url')
@@ -970,7 +970,7 @@ def fallback_chain(profiles, limit=2) -> tuple[TargetProfile, ...]:
 
 
 def probes_manifest() -> dict:
-    """What the built-in probes are and how well they are confirmed (F01, F06)."""
+    """What the built-in probes are and how well they are confirmed."""
     items = []
     for profile in basic_profiles():
         value = profile.to_public()
@@ -1454,11 +1454,11 @@ def plan_digest(plan: ProbePlan) -> str:
 
 
 def build_plan(settings) -> ProbePlan:
-    """The one validation entry for GUI, CLI and API (F07, F18).
+    """The one validation entry for GUI, CLI and API.
 
     Unknown keys are rejected, every number is range-checked against
     :data:`LIMITS`, and a required anonymity level without a judge raises
-    instead of being dropped to ``any`` (defect 13).
+    instead of being dropped to ``any``.
     """
     if not isinstance(settings, dict):
         raise ProbeError(E_VALIDATION_SCHEMA, 'Настройки проверки: ожидается объект.')
@@ -1489,7 +1489,7 @@ def build_plan(settings) -> ProbePlan:
         if options.attempts > 1 and any(target.method not in IDEMPOTENT_METHODS for target in targets):
             raise ProbeError(E_VALIDATION_RETRY_UNSAFE,
                              'Метод, меняющий состояние, нельзя повторять: attempts должен быть 1. '
-                             'Небезопасный повтор POST/PUT/PATCH/DELETE запрещён (F07).')
+                             'Небезопасный повтор POST/PUT/PATCH/DELETE запрещён.')
     elif raw_targets:
         raise ProbeError(E_VALIDATION_FIELD, f'Режим {mode.name} не измеряет цели: уберите targets.')
     else:
@@ -1531,7 +1531,7 @@ async def run_plan(plan: ProbePlan, transport, *, endpoint='', fail_fast=True, c
     stage = None if ok else (failed[0].stage if failed else None)
     # ``mode`` says what the user picked, ``base`` says which ladder produced
     # the evidence.  A ``recheck`` therefore never files a row it cannot back
-    # up, and ``monitor`` stays a job mode (F01).
+    # up, and ``monitor`` stays a job mode.
     outcome = PlanOutcome(endpoint=endpoint, mode=plan.mode.name, base=plan.mode.base or plan.mode.name,
                           evidence='none', ok=ok,
                           targets=tuple(outcomes), code=code, stage=stage, monitoring=plan.mode.monitoring,
@@ -1627,13 +1627,13 @@ def summarize_basic(outcomes, *, evidence='transfer_ok', target_check=()) -> Bas
 
 
 # --------------------------------------------------------------------------
-# speed measurement (defect 15)
+# speed measurement
 # --------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class SpeedLimits:
-    """Minimum sample for an honest number (CONTRACTS §5.5, defect 15)."""
+    """Minimum sample for an honest number."""
 
     min_bytes: int = 1 << 20
     min_seconds: float = 0.25
@@ -1657,7 +1657,7 @@ class TransferTrace:
     plausible-looking number out of a single chunk.  ``connection`` says whether
     the bytes travelled over a connection that was opened for this transfer or
     over a reused one: a reused connection has no connect or handshake in its
-    timings, so the two kinds are never averaged together (F20).
+    timings, so the two kinds are never averaged together.
     """
 
     url: str = ''
@@ -1742,7 +1742,7 @@ def measure_speed(trace: TransferTrace, limits: SpeedLimits = SPEED_LIMITS) -> S
 
     A failed or unfinished transfer is ``error``/``insufficient``; a finished
     but too small, too short or single-chunk transfer is ``insufficient``.  A
-    number appears only when all minimums hold (defect 15, R10).  The window
+    number appears only when all minimums hold.  The window
     is first byte to last byte, so the first chunk's arrival time never leaks
     into the divisor.
     """
@@ -1814,7 +1814,7 @@ async def run_speed_test(target: SpeedTarget, options: ProbeOptions, transport, 
     The transport provides ``download(target, options=options) -> TransferTrace``
     and owns the socket, mirroring how ``proxytool.measure_speed`` is wired.
     ``reuse=True`` asks for a kept-alive connection; the measurement then says
-    so, and must not be compared with cold ones (F20).
+    so, and must not be compared with cold ones.
     """
     if target is None:
         raise ProbeError(E_VALIDATION_FIELD, 'Нужна цель измерения скорости.')
@@ -1849,7 +1849,7 @@ async def run_speed_test(target: SpeedTarget, options: ProbeOptions, transport, 
 
 
 # --------------------------------------------------------------------------
-# anonymity (defect 13)
+# anonymity
 # --------------------------------------------------------------------------
 
 ANONYMITY_LEVELS = ('transparent', 'anonymous', 'elite', 'unknown')
@@ -1927,7 +1927,7 @@ def validate_min_level(value) -> str:
 
 
 def require_anonymity(minimum: str, judge: JudgeSpec | None) -> JudgeSpec | None:
-    """Return the judge a required level needs, or raise (defect 13).
+    """Return the judge a required level needs, or raise.
 
     A required anonymity level is never silently downgraded to ``any``: the user
     either configures a judge or gets an error that says what to do.
@@ -2058,7 +2058,7 @@ def anonymity_allows(value, minimum) -> bool:
 
 
 # --------------------------------------------------------------------------
-# DNSBL (defect 14)
+# DNSBL
 # --------------------------------------------------------------------------
 
 DNSBL_STATUSES = ('listed', 'clear', 'unknown')
@@ -2069,7 +2069,7 @@ def reverse_ip(address) -> str:
 
     IPv4 is reversed octet by octet.  IPv6 is reversed nibble by nibble as
     ``x.y.z....ip6.arpa``; the old code reversed the ``address.exploded`` string
-    with the colons still in it, which can never match a real zone (defect 14).
+    with the colons still in it, which can never match a real zone.
     """
     try:
         parsed = ipaddress.ip_address(str(address).strip())
@@ -2367,7 +2367,7 @@ def plan_recheck(rows, *, now, max_age_s, limit=0, remeasure_passing=False, pass
     A row with no usable measurement time is re-measured instead of being
     treated as fresh, and passing rows are only re-measured when the caller
     asked for it — which is what "повторно проверять истёкшие" means
-    (defect 2) without a second scan engine.
+   without a second scan engine.
     """
     items = []
     for row in rows or ():
@@ -2418,7 +2418,7 @@ def plan_recheck(rows, *, now, max_age_s, limit=0, remeasure_passing=False, pass
 
 
 # --------------------------------------------------------------------------
-# bounded capabilities (F20)
+# bounded capabilities
 # --------------------------------------------------------------------------
 #
 # Each of these has a controlled endpoint, an explicit budget, and its own
@@ -2546,7 +2546,7 @@ def validate_capabilities(data) -> tuple[CapabilitySpec, ...]:
 
 
 def capabilities_manifest() -> dict:
-    """Every kind with its units, defaults and distinct outcomes (F20)."""
+    """Every kind with its units, defaults and distinct outcomes."""
     items = []
     for kind in CAPABILITY_KINDS:
         items.append({
@@ -2886,7 +2886,7 @@ async def run_capabilities(specs, options: ProbeOptions, transport, *, fail_fast
 
 
 # --------------------------------------------------------------------------
-# capability matrix and the self-hosted reference probe (F20)
+# capability matrix and the self-hosted reference probe
 # --------------------------------------------------------------------------
 
 # Every measurement kind gets a row, whether or not this module implements it.
@@ -2940,7 +2940,7 @@ CAPABILITIES = (
     {'id': 'calls_video_any_service', 'supported': False, 'kind': 'target',
      'capability': 'claim',
      'endpoint': '—', 'budget': '—',
-     'outcome': 'нет: измерения выше — отдельные bounded-проверки; общее обещание запрещено (F20)'},
+     'outcome': 'нет: измерения выше — отдельные bounded-проверки; общее обещание запрещено'},
 )
 
 

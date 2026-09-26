@@ -43,7 +43,7 @@ def tr(ru, en):
     return ru if LANG == 'ru' else en
 
 
-# Canonical machine codes of the shared contract (CONTRACTS §5.4, §5.6).
+# Canonical machine codes of the shared contract.
 # The code never changes with the language; only the text next to it does.
 CODES = {
     'OK': ('измерение пройдено', 'measurement passed'),
@@ -94,9 +94,9 @@ def code_text(code, lang=None):
     return entry[0] if language == 'ru' else entry[1]
 
 
-# ``state_detail`` of a published set (CONTRACTS §4.3).  It answers the one
+# ``state_detail`` of a published set.  It answers the one
 # question a user actually has when a list is empty: "nothing matched" and
-# "everything expired" are different reasons (defect 3), so they get different
+# "everything expired" are different reasons, so they get different
 # words.  The values come from ``core.STATE_DETAILS`` plus the two reader
 # states the interface adds when the pointer cannot be read at all.
 STATE_DETAILS = {

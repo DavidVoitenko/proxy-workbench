@@ -1,4 +1,4 @@
-"""The geographical columns of migration 1 are the ones this module fills (F08).
+"""The geographical columns of migration 1 are the ones this module fills.
 
 ``geo.py`` owns no table and writes no DDL, so the contract it depends on is the
 one ``db.py`` creates.  These cases run the real migrator on a temporary
@@ -6,7 +6,7 @@ database and write a resolved endpoint through the names both sides use, which
 is the check that the two agree.
 
 The columns this module asks for and does not have yet are listed in
-``docs/integration/HANDOFF/geo.md`` §1.3.  While they are missing, the test that
+``REQUESTED`` below.  While they are missing, the test that
 looks for them skips and says so; it does not pretend they exist and it does not
 fail for a column the owner has not added yet.
 """
@@ -32,7 +32,7 @@ ENDPOINT_COLUMNS = {
     'hosting': 'hosting',
     'cidr': 'cidr',
 }
-# Requested in HANDOFF geo.md §1.3, not declared by the migrator yet.
+# Requested by the geo module, not declared by the migrator yet.
 REQUESTED = (
     ('endpoints', 'hosting_basis'),
     ('observations', 'exit_ip'),
@@ -100,7 +100,7 @@ class SchemaTests(unittest.TestCase):
         missing = ['%s.%s' % (table, column) for table, column in REQUESTED
                    if column not in self.columns(table)]
         if missing:
-            self.skipTest('not in the schema yet, requested in HANDOFF geo.md §1.3: %s'
+            self.skipTest('not in the schema yet: %s'
                           % ', '.join(missing))
         for table, column in REQUESTED:
             self.assertIn(column, self.columns(table))

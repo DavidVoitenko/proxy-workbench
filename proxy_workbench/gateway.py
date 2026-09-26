@@ -9,20 +9,19 @@ because the local relay has no authenticated UDP path.
 Rules this module keeps, because each of them was a defect or a requirement:
 
 * a concurrency slot is **reserved before** the first ``await`` that can block
-  and is released on success, on error and on cancellation (defect 16);
+  and is released on success, on error and on cancellation;
 * one absolute deadline covers the whole client handshake, not just the first
-  byte, and the number of accepted clients is bounded (defect 16, R11);
+  byte, and the number of accepted clients is bounded;
 * an open TCP stream is never moved to another upstream: the request that was
-  already written to one upstream is never written to another (F16, defect 17);
+  already written to one upstream is never written to another;
 * ``connected`` is not ``working``: only bytes from the target prove an HTTP
   upstream works, and a target that refused is not the proxy's fault
-  (defect 17);
 * the local denylist is applied **before** any network call, and a new rule
   revokes new admissions immediately; the fate of already open streams is a
-  separate, explicit ``on_deny`` policy (defect 19, R13);
+  separate, explicit ``on_deny`` policy;
 * the gateway password is a separate identity from the GUI session token and
   the API token, and the default bind stays on loopback (defect 18, R12,
-  CONTRACTS §5.1);
+  the shared contract);
 * an upstream credential is produced only by :mod:`proxy_workbench.secrets`
   and lives only for the handshake that needs it, and a rejected credential is
   **indistinguishable** from a missing one and from a dead proxy (F04, defect 1
@@ -93,8 +92,7 @@ MAX_CLIENTS = 512
 #: not be able to learn *why* one address is unusable, because "the proxy asked
 #: for a password we do not have" and "the proxy rejected the password we have"
 #: are the same kind of secret - whether the gateway holds a credential for a
-#: given address (see ``AccessCredentials``, and the ``407`` section of
-#: docs/integration/HANDOFF/area-gateway.md for the client-visible half).
+#: given address (see ``AccessCredentials``).
 UNUSABLE = 'unusable'
 #: The wildcard a LAN listener binds when no address was named.  It is never a
 #: published address: :func:`display_host` replaces it with a real interface.
@@ -110,7 +108,7 @@ def new_gateway_token():
     """A fresh password for gateway clients.
 
     The gateway password is a separate identity from the GUI session token and
-    from the API token (CONTRACTS §5.1, defect 18).  This function never reads
+    from the API token.  This function never reads
     either of them, so a LAN phone password can never become a control secret.
     """
     return secrets.token_urlsafe(24)
@@ -121,7 +119,7 @@ def resolve_token(bind, token=None):
 
     On a LAN bind a password is mandatory, and when the caller did not supply
     one the gateway makes its own.  It never reads the GUI session token and
-    never reads the API token: those are different identities (CONTRACTS §5.1,
+    never reads the API token: those are different identities (the shared contract,
     defect 18).  A loopback listener keeps the old behaviour, where a token is
     used when given and none is invented when not.
     """
@@ -247,7 +245,7 @@ class Binding:
     """Which pool, generation, profile and policy one listener or client serves.
 
     A binding pins the generation and profile so publishing another run does
-    not silently move an already connected client (defect 8).  ``policy`` holds
+    not silently move an already connected client.  ``policy`` holds
     per-binding knobs: ``max_per_proxy``, ``sticky``, ``strategy`` and the
     scoping filters ``protocol``/``countries``/``anonymity``/``max_latency``,
     which narrow the rows a client may ever be offered.
@@ -296,7 +294,7 @@ class AccessCredentials:
       a superseded revision is refused rather than sent;
     * an endpoint with *several* usable access identities is ambiguous, and an
       ambiguous row gets no credential at all.  Two credentials of one address
-      are two identities (CONTRACTS §1.2(1)); merging them would be worse than
+      are two identities; merging them would be worse than
       not authenticating.
 
     Nothing here raises into the relay path.  A locked vault, a missing secret,
@@ -372,7 +370,7 @@ class Lease:
     """A held concurrency slot for one proxy.
 
     Released exactly once, whether the connection succeeded, failed or was
-    cancelled (defect 16).  ``with lease:`` is the safe form.  ``credentials``
+    cancelled.  ``with lease:`` is the safe form.  ``credentials``
     rides along only until the request that needs it has been written.
     """
 
@@ -410,7 +408,7 @@ class ReplayGuard:
     A gateway may try several upstreams while nothing of the request has been
     sent.  The moment the first byte of the request goes out, the request
     belongs to that upstream: a non-idempotent request is never repeated on
-    another one (defect 17).  The guard makes that structural - there is no
+    another one.  The guard makes that structural - there is no
     code path that can write the same request twice.
     """
 
@@ -521,7 +519,7 @@ class Pool:
         and it is never dialled.  Removing a rule puts the proxy back, because
         the servable list is always *derived* from the export instead of being
         edited in place - a one-way ratchet that only a new publication could
-        undo would silently shrink the pool for good (defect 19).
+        undo would silently shrink the pool for good.
         Streams that are already open are a separate decision - see
         ``on_deny`` and :meth:`revoke_streams`.
         """
@@ -674,8 +672,8 @@ class Pool:
         """The published row behind one chosen proxy, or None.
 
         Selection deals in addresses, but a credential belongs to the *access
-        identity* a row was measured with, so the relay looks the row up here
-        (F04).  Pure in-memory and O(1); a row that is not servable is not
+        identity* a row was measured with, so the relay looks the row up here.
+       Pure in-memory and O(1); a row that is not servable is not
         served, so a denied proxy resolves to nothing.
         """
         with self.lock:
@@ -757,8 +755,8 @@ class Pool:
 
         Doing both together is what keeps parallel connects under
         ``max_per_proxy``: there is no await between the check and the
-        reservation, so two clients can never observe the same free slot
-        (defect 16).  The caller owns the returned :class:`Lease`.
+        reservation, so two clients can never observe the same free slot.
+       The caller owns the returned :class:`Lease`.
         """
         return self._pick(exclude, request, session, sticky, binding, reserve=True)
 
@@ -814,7 +812,7 @@ class Pool:
         """The upstream accepted a connection and finished its handshake.
 
         This is deliberately *not* a success and it does not clear a failure
-        streak: nothing of the target has been proved yet (defect 17).  Only an
+        streak: nothing of the target has been proved yet.  Only an
         outcome that carried traffic does that.
         """
         with self.lock:
@@ -1468,8 +1466,7 @@ class Gateway:
                     # difference a client can see is against a proxy that is
                     # simply not reachable, and that is a property of the
                     # upstream address itself, which any observer could establish
-                    # without asking this listener.  See the handoff note
-                    # ``407`` for the stronger variant and what it would cost.
+                    # without asking this listener.
                     score('upstream_refused')
                 elif status >= 500:
                     # The upstream answered and the target did not.  Resting the
@@ -1562,7 +1559,7 @@ class Gateway:
         loop = asyncio.get_running_loop()
         # One absolute deadline for the whole handshake: the first byte, the
         # request line, the SOCKS5 negotiation and the upstream tunnel all have
-        # to fit into it (defect 16, R11).  The relayed connection is not part
+        # to fit into it.  The relayed connection is not part
         # of the handshake and is governed by idle_timeout / max_session.
         deadline = loop.time() + self.handshake_timeout
         try:
@@ -1639,7 +1636,7 @@ class Gateway:
         # The slot is ours from here until the relay takes it.  Telling the
         # client "connection established" is still an await, and a shutdown, a
         # handshake deadline or a client that hangs up in exactly that window
-        # must not leave the slot taken (defect 16).
+        # must not leave the slot taken.
         try:
             if path is None:
                 writer.write(b'HTTP/1.1 200 Connection established\r\n\r\n')
@@ -1707,7 +1704,7 @@ class Gateway:
             return await writer.drain()
         # Same rule as the HTTP path: the grant is an await, so a cancellation
         # or a client that hangs up while it is written must give the slot back
-        # rather than leak it (defect 16).
+        # rather than leak it.
         try:
             writer.write(b'\x05\x00\x00\x01' + bytes(6))
             await writer.drain()

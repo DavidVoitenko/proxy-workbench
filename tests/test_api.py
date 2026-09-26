@@ -13,7 +13,7 @@ from proxy_workbench import api
 from proxy_workbench import proxytool as p
 
 #: A result fixture describes a measurement that just happened; the
-#: admission contract has no "fresh forever" state (CONTRACTS §2.4).
+#: admission contract has no "fresh forever" state.
 _NOW = time.time()
 
 
@@ -123,7 +123,7 @@ class ApiTests(unittest.TestCase):
             # A generation carries a manifest with a checksum per file.  Editing
             # one after publication is not "an expired snapshot", it is a
             # publication that no longer verifies, and the reader refuses it
-            # instead of serving what it finds (CONTRACTS §4.2, defect 9).
+            # instead of serving what it finds.
             ranked = json.loads(ranked_path.read_text(encoding='utf-8'))
             for row in ranked:
                 row['valid_until'] = time.time() - 1
@@ -153,7 +153,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         # A pre-generation installation has no scope counts of its own, so the
         # state says "partial" instead of claiming a completed export it cannot
-        # prove (CONTRACTS §4.3).
+        # prove.
         self.assertEqual(status['state'], 'partial')
         self.assertEqual(status['stop_reason'], 'legacy')
         self.assertIsNone(status['scope_candidates'])

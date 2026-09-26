@@ -3326,7 +3326,7 @@ tbody tr:hover td.td-num {
 }
 
 /* The full re-check is offered next to the quick test, not inside it: the
-   quick test is diagnostic and never refreshes the stored row (defect 23). */
+   quick test is diagnostic and never refreshes the stored row. */
 .recheck-btn {
   width: 26px;
   height: 26px;
@@ -8099,7 +8099,7 @@ td.empty {
 }
 
 /* ==========================================================================
-   Result list: views, scopes, bulk actions, columns, matrix, history (F19)
+   Result list: views, scopes, bulk actions, columns, matrix, history
    Same cards, chips and buttons as the rest of the interface; only the new
    controls are added here.
    ========================================================================== */
@@ -8401,7 +8401,7 @@ td.empty {
 }
 
 /* ==========================================================================
-   Connection path (F17)
+   Connection path
    ========================================================================== */
 
 .connect-card {
@@ -8804,7 +8804,7 @@ td.empty {
   }
 }
 
-/* Service catalog (F06) and collections (F02).
+/* Service catalog and collections.
    Same tokens, same density and the same catalog shapes as the source catalog
    above: a service row is a list row, and a definition diff is a table. */
 .service-catalog-card .catalog-filters {
@@ -16447,7 +16447,7 @@ tbody tr:nth-child(even) td,
   font-size: 12px;
   vertical-align: middle;
   border-bottom: 1px solid var(--pw-bold-hairline, rgba(255, 255, 255, 0.05)) !important;
-  color: #cbd5e1;
+  color: var(--ink-secondary, #cbd5e1);
 }
 
 .results-table tbody tr:last-child td {
@@ -22241,7 +22241,7 @@ summary {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   ALIGNMENT & TYPOGRAPHY HUNT — 2026-09-26 (round 8, Gemini)
+   ALIGNMENT & TYPOGRAPHY HUNT — 2026-09-26
    Button height tiers (28/34/40), baseline-locked captions and unit badges,
    gauge/stat-tile centering, hardened text blocks. Verified visually.
    ═══════════════════════════════════════════════════════════════════════════ */

@@ -2,8 +2,7 @@
 
 This module is the only place in the package that writes DDL. Every other module
 calls :func:`migrate` (or :func:`open_db`) in its own tests and works with the
-tables the migrations created -- nobody declares a schema in prose
-(``docs/integration/CONTRACTS.ru.md`` §3.2, §3.3).
+tables the migrations created -- nobody declares a schema in prose.
 
 Public API
 ----------
@@ -104,7 +103,7 @@ LEGACY_COLLECTION_NAME = "Ранее собранные"
 COLLECTION_KINDS = ("public", "private")
 COLLECTION_ORIGINS = ("legacy", "public", "manual", "import", "gateway")
 
-# Error codes from CONTRACTS §5.4 (domains DATA and VALIDATION).
+# Error codes from the shared contract (domains DATA and VALIDATION).
 E_VERSION_AHEAD = "E_DATA_DB_VERSION_AHEAD"
 E_FOREIGN_DB = "E_DATA_DB_FOREIGN"
 E_MIGRATION_FAILED = "E_DATA_MIGRATION_FAILED"
@@ -314,7 +313,7 @@ class RetentionPolicy:
             raise RetentionError(E_PATH_CONFLICT, "keep_newest must not be negative")
 
 
-#: Time column each retention target is aged by (CONTRACTS §3.6).
+#: Time column each retention target is aged by.
 #: `observations` has no `checked_at` column -- migration 4 defines `started_at`/`finished_at`.
 RETENTION_TIME_COLUMN = {"observations": "finished_at", "results": "checked_at"}
 
@@ -608,8 +607,8 @@ class Migration:
 def _m0(conn, context):
     """application_id, the migration journal, and the pre-versioning tables.
 
-    The five tables at the bottom are what the unversioned ``open_db`` created
-    (CONTRACTS §3.1). ``IF NOT EXISTS`` gives a fresh database the same starting
+    The five tables at the bottom are what the unversioned ``open_db`` created.
+   ``IF NOT EXISTS`` gives a fresh database the same starting
     point as a migrated legacy one, and migration 5 then breaks the positional
     writes into three of them (§3.5.2).
     """
@@ -861,9 +860,9 @@ RESULTS_NEW_COLUMNS = (
 RESULTS_NEW_KEY = ("profile_id", "profile_revision", "access_id", "access_revision",
                    "endpoint_id", "job_id")
 #: The key of one measurement of record.  A row is the address, not the run: two
-#: access revisions of one address are two rows (F04), a repeat check in a new job is
+#: access revisions of one address are two rows, a repeat check in a new job is
 #: the *same* row -- `job_id` stays a column naming the last job that measured the
-#: address, and the per-job item lives in `job_item(job_id, item_id)` (F28, F09).
+#: address, and the per-job item lives in `job_item(job_id, item_id)`.
 RESULTS_KEY = ("profile_id", "profile_revision", "access_id", "access_revision", "endpoint_id")
 RESULTS_NEW_SQL = """CREATE TABLE results_new(
     profile TEXT NOT NULL,
@@ -900,7 +899,7 @@ def _m13(conn, context):
     GUI table read `results.payload` and never the identity columns, so a payload left
     untouched made every historic row fail admission on a scope it was never measured
     in -- the migration claimed the rows stayed "readable" while nothing could read
-    them (F02, F24).  The identity is therefore written into the payload too, and only
+    them.  The identity is therefore written into the payload too, and only
     where it is recoverable from the legacy file itself: `proxy`, `profile` and the
     legacy collection the candidates were imported into.  What a 2.x file simply does
     not record -- the network the check ran on, a lifetime -- is left absent on
@@ -1014,7 +1013,7 @@ def _collapse_payload(newest, group):
 
     Collapsing must not forget what was measured: `checks`/`passes` are the counters
     ranked.csv and the GUI publish, so they are added over the whole group while the
-    verdict itself stays the newest one (F28, F12).
+    verdict itself stays the newest one.
     """
     if len(group) < 2:
         return newest["payload"]
@@ -1061,7 +1060,7 @@ def _m15(conn, context):
     address standing beside the first, every consumer judged the rows independently,
     and the endpoint appeared twice in every artifact (F28, §7.10). It also meant a
     fresh failure could not cancel the older success: the failed row was rejected
-    while the stale one kept its own, unexpired `valid_until` (F09, defect 2).
+    while the stale one kept its own, unexpired `valid_until`.
 
     The newest measurement of an address therefore *replaces* the row -- the
     per-check history it carried is summed in, so nothing measured is lost -- and
@@ -1111,17 +1110,17 @@ def _m15(conn, context):
 #:
 #: `source_feed` and `membership_source` are :data:`sourcedesk.REQUESTED_DDL`
 #: verbatim.  That constant is the contract between the module and the
-#: migrator, and HANDOFF/sources-handoff.ru.md §3.1.2 asks for it to stay a
+#: migrator, and it has to stay a
 #: string nobody outside this file executes -- so the shape is repeated here and
 #: `tests/test_area_ddl_sourcedesk.py` compares the migrated table against a
 #: database built from the constant itself, so the two cannot drift.
 #:
 #: The other five come from the generation DDL of the sources branch, moved
 #: here as migrations instead of an `executescript` in that branch's `open_db`
-#: (§3.1 п. 5).  One translation was applied: the branch keys its rows by the
+#: One translation was applied: the branch keys its rows by the
 #: address *string* (`source_generation_entry(generation_id, proxy)`), while
-#: CONTRACTS §1.1 makes `endpoints(id, canonical)` the one address entity, so
-#: that column is `endpoint_id` (§1.2 п. 6).
+#: the shared contract makes `endpoints(id, canonical)` the one address entity, so
+#: that column is `endpoint_id`.
 #:
 #: Foreign keys are declared only where the parent is unconditionally written
 #: first: a generation exists before its entries, an observation before the
@@ -1129,8 +1128,7 @@ def _m15(conn, context):
 #: declared DDL has none, and `SourceDesk.apply_plan` writes the *canonical
 #: address* it got from `ImportedEndpoint.endpoint` into `endpoint_id`, so a
 #: reference to `endpoints(id)` would reject the module's own writes.  That
-#: two-address-models conflict is `HANDOFF/sources-handoff.ru.md` §2 C7 and it
-#: belongs to `sourcedesk.py`, not to a constraint invented here.
+#: two-address-models conflict belongs to `sourcedesk.py`, not to a constraint invented here.
 SOURCE_TABLES_DDL = (
     """CREATE TABLE IF NOT EXISTS source_observation(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1274,12 +1272,12 @@ def _m16(conn, context):
 
 #: Columns `schedules` needs so that a pause and a period budget survive a
 #: restart, plus the spec columns `SqliteScheduleStore.save_spec` writes only
-#: when they exist (`HANDOFF/scheduler.md` §1.1; the same names are the
-#: scheduler's own `REQUESTED_COLUMNS`).
+#: when they exist (the same names are the scheduler's own
+#: `REQUESTED_COLUMNS`).
 #:
 #: `paused` and `counters_json` are the two the contract is really about: without
 #: them a restart hands the whole daily limit back, so the user reads a
-#: counter, trusts it, and gets more than the limit allows (F15).
+#: counter, trusts it, and gets more than the limit allows.
 SCHEDULE_RUNTIME_COLUMNS = (
     ("last_run_at", "REAL"),
     ("paused", "INTEGER NOT NULL DEFAULT 0"),
@@ -1878,7 +1876,7 @@ def _retention_where(table, policy, now):
         clauses.append(f"{_ident(column)} IS NOT NULL"
                        f" AND {_ident(column)} <= {_sql_literal(now - policy.max_age_seconds)}")
     if table == "results" and policy.expired_only:
-        # A row without valid_until is inconsistent (defect 1) and is never deleted by
+        # A row without valid_until is inconsistent and is never deleted by
         # age: retention removes old proof, it does not fix a missing TTL for a row.
         clauses.append(f"valid_until IS NOT NULL AND valid_until <= {_sql_literal(now)}")
     return " AND ".join(clauses) if clauses else None
@@ -1924,7 +1922,7 @@ def _retention_order(conn, tables):
     ``foreign_keys=ON`` (:func:`connect`) mean a `DELETE FROM observations` is refused
     while a result still points at the row.  The default policy names both tables and
     listed them in the wrong order, so the stock cleanup deleted nothing and then
-    raised -- while the preview had already reported both tables (F24).  The order
+    raised -- while the preview had already reported both tables.  The order
     comes from the live foreign keys, not from a hand-written list.
     """
     remaining = list(dict.fromkeys(tables))
@@ -1956,7 +1954,7 @@ def _retention_targets(conn, policy, now):
     deletion that :func:`apply_retention` then refuses to perform -- the exact
     disagreement between "what is reported" and "what is removed" this module
     promises never to have.  So the preview reports the block and the apply
-    refuses on the same computed fact (F24).
+    refuses on the same computed fact.
 
     The blockers are read against the tables the plan has already *scheduled*,
     not against the tables that happened to delete a row: a referrer that the
@@ -2028,7 +2026,7 @@ def apply_retention(conn, policy=None, *, now=None, vacuum=False):
         # A table the plan could not free is refused before anything is deleted, and
         # the refusal comes from the preview's own map -- the same computed fact the
         # caller already saw, so a cleanup never fails on something the preview did
-        # not warn about (F24).
+        # not warn about.
         blockers = blocked.get(table)
         if blockers and preview.blocked_rows(table):
             raise RetentionError(
@@ -2186,7 +2184,7 @@ def rebind_secrets(source, mapping, *, dry_run=True, now=None):
     A rebind is a rotation in meaning, and it moves the row the same way
     :meth:`secrets.Coordinator.rotate` does: ``access_revision`` goes up by one and
     ``rotated_at`` gets the moment.  Admission is keyed on the exact
-    ``(access_id, access_revision)`` pair (F09), so without the bump every result
+    ``(access_id, access_revision)`` pair, so without the bump every result
     measured with the credential the access used *before* the rebind stayed
     admissible afterwards -- the restored password inherited a successful check it
     had never earned.  A restore that pointed an access back at a different vault
@@ -2201,8 +2199,7 @@ def rebind_secrets(source, mapping, *, dry_run=True, now=None):
     resolved is visibly broken, while an access that resolves against a superseded
     revision silently keeps trusting measurements taken with a password the user
     has replaced.  Note that ``reconcile()`` does not fix it -- it finalises a
-    *staged* entry and leaves a ready one at its own revision alone; see
-    docs/integration/HANDOFF/fix-keys.md.
+    *staged* entry and leaves a ready one at its own revision alone.
     """
     mapping = dict(mapping)
     for old_ref, new_ref in mapping.items():
@@ -2339,7 +2336,7 @@ def add_member(conn, collection_id, endpoint_id, *, origin="manual", now=None):
 
 
 def remove_member(conn, collection_id, endpoint_id):
-    """Remove one membership. The address stays in every other list it belongs to (F02)."""
+    """Remove one membership. The address stays in every other list it belongs to."""
     return bool(conn.execute("DELETE FROM membership WHERE collection_id = ? AND endpoint_id = ?",
                              (collection_id, endpoint_id)).rowcount)
 

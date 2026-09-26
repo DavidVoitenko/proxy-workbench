@@ -1,4 +1,4 @@
-"""`diagnose` — the diagnostic layer the product could not reach (F10, F25).
+"""`diagnose` — the diagnostic layer the product could not reach.
 
 `diagnostics.build_funnel`, `explain_zero`, `check_control`, `build_bundle` and
 `health_report` had tests and no caller: `grep` over the product found only

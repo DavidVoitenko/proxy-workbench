@@ -1,4 +1,4 @@
-"""End-to-end probe scenarios against the local reference probe (F20).
+"""End-to-end probe scenarios against the local reference probe.
 
 Every byte here travels over loopback to the reference endpoint this module
 ships.  No public proxy, DNSBL or third-party service is contacted.

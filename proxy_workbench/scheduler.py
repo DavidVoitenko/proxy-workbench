@@ -172,7 +172,7 @@ MESSAGES: Mapping[str, tuple[str, str]] = {
 
 
 def message(code: str, *args: object) -> str:
-    """Localized text for a machine-readable code (CONTRACTS 5.4)."""
+    """Localized text for a machine-readable code."""
     ru, en = MESSAGES.get(code, (code, code))
     try:
         return i18n.tr(ru, en).format(*args)
@@ -186,7 +186,7 @@ def describe(code: str) -> tuple[str, str]:
 
 
 class ScheduleError(Exception):
-    """Configuration problem. `code` is a CONTRACTS 5.4 code, `field` names the offending key."""
+    """Configuration problem. `code` is a the shared contract code, `field` names the offending key."""
 
     def __init__(self, code: str, field_name: str, detail_ru: str, detail_en: str):
         self.code = code
@@ -1653,7 +1653,7 @@ class ScheduleState:
 
 @dataclass(frozen=True)
 class RunRequest:
-    """An instruction to run something. The job layer (F11) executes it.
+    """An instruction to run something. The job layer executes it.
 
     `run_id` is derived from the schedule and the planned instant, so a repeated
     tick produces the same id and the caller can treat it as idempotent.
@@ -1742,7 +1742,7 @@ class Plan:
 
 class ScheduleStore(Protocol):
     """Persistence seam. The module writes no DDL: an implementation stores what
-    `db.migrate()` already created (CONTRACTS 3.3, migration 7)."""
+    `db.migrate()` already created ."""
 
     def save_spec(self, spec: ScheduleSpec) -> None: ...
 
@@ -1797,8 +1797,8 @@ class InMemoryScheduleStore:
         return list(reversed(self.runs.get(schedule_id, [])))[:limit]
 
 
-#: Columns of migration 7 that this module needs but CONTRACTS 3.3 does not define yet.
-#: `db.py` owns the DDL; the request itself lives in docs/integration/HANDOFF/scheduler.md.
+#: Columns of migration 7 that this module needs but the shared contract does not define yet.
+#: `db.py` owns the DDL.
 REQUESTED_COLUMNS = {
     'schedules': ('last_run_at', 'paused', 'pause_reason', 'resume_at', 'dst_policy', 'catch_up',
                   'max_catch_up', 'wake_gap_s', 'power_json', 'notify_json', 'notifications_json',
@@ -1808,13 +1808,13 @@ REQUESTED_COLUMNS = {
 
 
 class SqliteScheduleStore:
-    """Adapter over the tables `db.migrate()` creates (CONTRACTS 3.3, migration 7).
+    """Adapter over the tables `db.migrate()` creates .
 
     It issues no DDL. Columns the contract does not define yet are used when
     present and ignored when absent, so the module works both before and after
     the migration gains them. `persists_runtime_state` and `persists_counters`
     say which case applies; until `counters_json` exists a restart restarts the
-    period counters, which is stated in the handoff rather than hidden here.
+    period counters.
     """
 
     def __init__(self, connection, table_prefix: str = ''):
@@ -2034,7 +2034,7 @@ class Scheduler:
     """Decides when a schedule may run and how much it may spend.
 
     The module never runs the work itself: a tick returns `RunRequest` objects
-    for the job layer (F11) to execute. A tick is a pure function of the current
+    for the job layer to execute. A tick is a pure function of the current
     time and the stored state, so the same instant always produces the same
     `run_id`.
     """
@@ -2193,7 +2193,7 @@ class Scheduler:
     def mark_wake(self, at: Optional[float] = None) -> float:
         """Tell the scheduler the machine just woke up. The next tick coalesces what is overdue.
 
-        The platform layer (F22) calls this when it sees a resume, so a wake is
+        The platform layer calls this when it sees a resume, so a wake is
         not guessed from a tick gap alone.
         """
         self._woke_pending = True
@@ -2481,7 +2481,7 @@ class Scheduler:
         rather than quietly defaulted, and the caller can say so instead of
         claiming a limit that is not being enforced across a restart.  The module
         writes no DDL, so the fix belongs to the migrator that owns `schedules`
-        (HANDOFF/scheduler.md §1.1; the columns are in :data:`REQUESTED_COLUMNS`).
+        (the columns are in :data:`REQUESTED_COLUMNS`).
         """
         runtime = bool(getattr(self.store, 'persists_runtime_state', False))
         counters = bool(getattr(self.store, 'persists_counters', False))
