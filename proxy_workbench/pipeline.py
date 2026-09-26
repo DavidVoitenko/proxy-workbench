@@ -60,7 +60,7 @@ __all__ = [
     # errors
     'PipelineError', 'ValidationError', 'BudgetExhausted',
     # budgets and governance
-    'Budgets', 'Limits', 'TargetPolicy', 'ResourceGate', 'ResourceSnapshot',
+    'Budgets', 'Limits', 'TargetPolicy', 'ResourceGate', 'ResourceSnapshot', 'Reservation',
     'AdaptiveConcurrency', 'ConcurrencySample', 'HostLimiter',
     # clock
     'PipelineClock', 'SystemClock',
@@ -365,6 +365,24 @@ class ResourceSnapshot:
                 'cpu_s': round(self.cpu_s, 3), 'blocked_waits': self.blocked_waits}
 
 
+@dataclass(frozen=True)
+class Reservation:
+    """What one in-flight measurement holds for as long as it runs.
+
+    A total is *reserved before* the work and the real cost is charged in its
+    place afterwards, which is what makes ``max_requests`` a bound instead of a
+    description: charging only what a finished stage reported let N concurrent
+    stages each pass the check and then overshoot a budget of N by a factor of
+    N.  A measurement that reports no request is charged no request, because
+    its reservation is given back first.
+    """
+
+    fds: int = 0
+    ram: int = 0
+    requests: int = 0
+    bytes: int = 0
+
+
 class ResourceGate:
     """Admission control for the measurement half, in resource units.
 
@@ -407,7 +425,12 @@ class ResourceGate:
         return self._bytes
 
     def check_totals(self) -> None:
-        """Raise :class:`BudgetExhausted` when a total budget is spent."""
+        """Raise :class:`BudgetExhausted` when a total budget is spent.
+
+        The totals include what is *reserved* by stages that are running, so a
+        caller that is refused here is refused against the whole run's spending
+        and not only against the part that has already finished.
+        """
         budgets = self.budgets
         if budgets.max_requests is not None and self._requests >= budgets.max_requests:
             raise BudgetExhausted(E_LIMIT_BUDGET,
@@ -420,6 +443,22 @@ class ResourceGate:
                                   f'Лимит CPU исчерпан: {self.cpu_s:.2f} с из {budgets.max_cpu_seconds:g} с.')
         if self.deadline is not None and self.clock.monotonic() >= self.deadline:
             raise BudgetExhausted(DEADLINE_EXCEEDED, 'Общий срок задания исчерпан.')
+
+    def _check_affordable(self, reservation: Reservation) -> None:
+        """Whether a *single* reservation still fits inside the totals.
+
+        A ceiling that does not fit is waited for, because a running stage will
+        give it back.  A total that does not fit is not waited for: waiting
+        would be waiting for money that will never arrive, so the caller is
+        refused now.
+        """
+        budgets = self.budgets
+        if budgets.max_requests is not None and self._requests + reservation.requests > budgets.max_requests:
+            raise BudgetExhausted(E_LIMIT_BUDGET,
+                                  f'Лимит запросов исчерпан: {self._requests} из {budgets.max_requests}.')
+        if budgets.max_bytes is not None and self._bytes + reservation.bytes > budgets.max_bytes:
+            raise BudgetExhausted(E_LIMIT_BUDGET,
+                                  f'Лимит байтов исчерпан: {self._bytes} из {budgets.max_bytes}.')
 
     def remaining_requests(self) -> int | None:
         if self.budgets.max_requests is None:
@@ -443,30 +482,52 @@ class ResourceGate:
         the budget's own."""
         return max(1, min(int(self._limit_provider()), self.budgets.max_inflight))
 
-    async def acquire(self, *, fds: int = 1, ram: int = 0) -> None:
-        """Reserve one in-flight slot plus its fds and RAM, waiting if needed."""
+    async def acquire(self, *, fds: int = 1, ram: int = 0, requests: int = 0,
+                      bytes: int = 0) -> Reservation:
+        """Reserve one in-flight slot plus its fds, RAM and request cost.
+
+        Blocks while a *ceiling* is full and refuses outright when a *total* no
+        longer has room for one more stage.  The returned :class:`Reservation` is
+        what :meth:`release` takes back, so the real cost replaces the estimate.
+        """
         self.check_totals()
+        reservation = Reservation(max(0, int(fds)), max(0, int(ram)),
+                                  max(0, int(requests)), max(0, int(bytes)))
+        self._check_affordable(reservation)
         waited = False
         async with self._cond:
             while True:
                 if (self._inflight < self._limit()
-                        and self._fds + fds <= self.budgets.max_open_fds
-                        and self._ram + ram <= self.budgets.max_ram_bytes):
+                        and self._fds + reservation.fds <= self.budgets.max_open_fds
+                        and self._ram + reservation.ram <= self.budgets.max_ram_bytes):
                     break
                 if not waited:
                     waited = True
                     self._blocked_waits += 1
                 await self._cond.wait()
             self._inflight += 1
-            self._fds += fds
-            self._ram += ram
+            self._fds += reservation.fds
+            self._ram += reservation.ram
+            self._requests += reservation.requests
+            self._bytes += reservation.bytes
             self._peak_inflight = max(self._peak_inflight, self._inflight)
             self._peak_fds = max(self._peak_fds, self._fds)
             self._peak_ram = max(self._peak_ram, self._ram)
+        return reservation
 
-    async def release(self, *, fds: int = 1, ram: int = 0, requests: int = 0, bytes: int = 0) -> None:
-        """Give the slot back and charge what the measurement actually spent."""
+    async def release(self, reservation: Reservation | None = None, *, fds: int = 1, ram: int = 0,
+                      requests: int = 0, bytes: int = 0) -> None:
+        """Give the slot back and charge what the measurement actually spent.
+
+        A reservation is settled first and the real cost charged in its place,
+        so a stage that reported nothing is charged nothing and a stage that
+        reported three requests is charged three and not four.
+        """
         async with self._cond:
+            if reservation is not None:
+                fds, ram = reservation.fds, reservation.ram
+                self._requests -= reservation.requests
+                self._bytes -= reservation.bytes
             self._inflight = max(0, self._inflight - 1)
             self._fds = max(0, self._fds - fds)
             self._ram = max(0, self._ram - ram)
@@ -1317,6 +1378,13 @@ class PipelineConfig:
     budgets: Budgets = Budgets()
     limits: Limits = Limits()
     find: FindPolicy = FindPolicy()
+    #: Units of the requested kind the caller has *already* confirmed — a store
+    #: of earlier results, for instance.  The chain starts counting from there,
+    #: so a run whose N is already satisfied does not sweep the corpus again to
+    #: rediscover a number the caller has in hand.  It is the caller's own count,
+    #: in the unit ``find.what`` names: a stored verdict nobody re-measured cannot
+    #: be recounted by the chain, so it cannot be double counted either.
+    initial_met: int = 0
     priors: PriorIndex | None = None
     runners: Runners = Runners()
     normalize: Callable[[str], str | None] = normalize_default
@@ -1336,6 +1404,9 @@ class PipelineConfig:
         if self.expensive_policy not in EXPENSIVE_POLICIES:
             raise ValidationError(E_VALIDATION_FIELD,
                                   f'expensive_policy={self.expensive_policy!r} не в {EXPENSIVE_POLICIES}.')
+        if not isinstance(self.initial_met, int) or isinstance(self.initial_met, bool) or self.initial_met < 0:
+            raise ValidationError(E_VALIDATION_FIELD,
+                                  f'config.initial_met: целое >= 0, получено {self.initial_met!r}.')
         if not callable(self.normalize):
             raise ValidationError(E_VALIDATION_FIELD, 'config.normalize: нужен вызываемый объект.')
         if not callable(self.parse):
@@ -1380,6 +1451,7 @@ class PipelineConfig:
     def to_public(self) -> dict:
         return {'sources': [item.source_id for item in self.sources], 'budgets': self.budgets.to_public(),
                 'limits': self.limits.to_public(), 'find': self.find.to_public(),
+                'initial_met': self.initial_met,
                 'run_cheap': self.cheap_required, 'run_basic': self.basic_required,
                 'run_expensive': self.expensive_required, 'expensive_policy': self.expensive_policy,
                 'carry_fresh_prior': self.carry_fresh_prior, 'parse_streaming': self.parse_streaming,
@@ -1425,6 +1497,9 @@ class Pipeline:
         self._queue = asyncio.Queue(maxsize=config.budgets.max_queue_items)
         self._closing = False
         self._drained = asyncio.Event()
+        #: Set when the consumer of :meth:`stream` has gone away, which is the
+        #: only case in which a hand-off may be abandoned.
+        self._abandoned = asyncio.Event()
         self._gate: ResourceGate | None = None
         self._hosts = HostLimiter(max_per_host=config.limits.max_per_host,
                                   min_interval_s=config.limits.min_host_interval_s, clock=self.clock)
@@ -1450,6 +1525,10 @@ class Pipeline:
         self._feed_complete = False
         self._admitted_at_start: set[str] = set()
         self._deadline: float | None = None
+        #: What the caller had already confirmed when the chain was built.  It
+        #: is spent by the first run and gone afterwards, so a resumed run of the
+        #: same chain cannot count the same stored verdicts a second time.
+        self._seed = config.initial_met
 
     # -- public API ---------------------------------------------------------
 
@@ -1473,15 +1552,66 @@ class Pipeline:
         """
         return self._stream()
 
+    # -- live view, for a caller that reports while the run goes on --------
+
+    @property
+    def counters(self) -> Counters:
+        """The counters as they stand right now, not at the end of the run."""
+        return self._counters
+
+    def progress(self) -> FindProgress:
+        """How the N is being satisfied *now*, with all three counts beside it.
+
+        A caller that prints progress has to answer "how many so far" without
+        waiting for the run to end, and it has to answer it in the unit the user
+        asked for.
+        """
+        counters = self._counters
+        return FindProgress(target=self.config.find.n, what=self.config.find.what,
+                            met=self._find_met_count(), unique_endpoints=counters.unique_endpoints,
+                            unique_ips=counters.unique_ips,
+                            confirmed_exit_ips=counters.confirmed_exit_ips,
+                            satisfied=self._find_satisfied, complete=self._feed_complete)
+
+    def resources(self) -> ResourceSnapshot:
+        """What the measurement half holds and has spent, right now."""
+        return self._gate.snapshot() if self._gate is not None else ResourceSnapshot()
+
+    def stopped(self) -> tuple[str | None, str | None, str | None]:
+        """Why the chain has stopped *right now*: ``(state, reason, detail)``.
+
+        ``None, None, None`` while the run is still going.  ``detail`` carries
+        the budget's own code (``E_LIMIT_BUDGET``, ``DEADLINE_EXCEEDED``) so a
+        caller reports why the run ended in the caller's words and not only that
+        it ended.
+        """
+        return self._state, self._reason, self._counters.stage_failures.get('stop')
+
+    def live_metrics(self) -> RunMetrics:
+        """Timing and resource facts of a run that has not finished yet."""
+        resources = self.resources()
+        return RunMetrics(
+            wall_s=self.clock.monotonic() - self._started, time_to_first_s=self._first_at,
+            time_to_first_pass_s=self._first_pass_at, time_to_n_s=self._time_to_n,
+            measured=self._measured, workers=self.config.budgets.worker_ceiling(),
+            peak_inflight=resources.peak_inflight, peak_fds=resources.peak_fds,
+            peak_ram_reserved_bytes=resources.peak_ram_bytes,
+            queue_high_water=self._queue_high_water, blocked_waits=resources.blocked_waits,
+            cpu_s=resources.cpu_s, host_waits=self._hosts.waits,
+            concurrency=self.concurrency.snapshot().to_public())
+
     async def _stream(self) -> AsyncIterator[ItemResult]:
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue = asyncio.Queue(maxsize=self.config.budgets.max_results_pending)
         holder: dict[str, RunResult] = {}
 
         async def emit(result: ItemResult) -> None:
-            while True:
-                if self._stopped.is_set():
-                    return
+            # A finished measurement is delivered even when the run has just
+            # decided to stop: it was paid for, and dropping it would make the
+            # address look unmeasured and charge the run twice for it next time.
+            # Only a consumer that has gone away abandons the hand-off, and that
+            # is the one case where nobody would read the result anyway.
+            while not self._abandoned.is_set():
                 try:
                     await asyncio.wait_for(queue.put(result), 0.05)
                     return
@@ -1511,6 +1641,7 @@ class Pipeline:
                     raise PipelineError(E_VALIDATION_SCHEMA, 'Выполнение не вернуло результат.')
                 return
         finally:
+            self._abandoned.set()
             if not task.done():
                 self._stop('stopped', 'consumer_gone')
                 task.cancel()
@@ -1564,8 +1695,15 @@ class Pipeline:
             self._time_to_n = 0.0
         else:
             self._find_satisfied = False
+        self._seed = 0
+        if self._find_satisfied:
+            # The caller already holds the N it asked for.  Nothing is read and
+            # nothing is measured: the chain stops before its first item instead
+            # of filling its queue with work whose result is already known.
+            self._stop('want_reached', 'want_reached')
         self._feed_complete = False
         self._closing = False
+        self._abandoned.clear()
         self._drained.clear()
         self._target_inflight.clear()
         self._target_used.clear()
@@ -1978,9 +2116,12 @@ class Pipeline:
         fds = self.config.budgets.fds_per_request
         ram = self.config.budgets.ram_per_inflight_bytes
         outcome: StageOutcome | None = None
-        requests = 0
         try:
-            await gate.acquire(fds=fds, ram=ram)
+            # One request is reserved up front, so ``max_requests`` bounds the
+            # run instead of describing what it has already done.  The real cost
+            # replaces the reservation on release, so a stage that reports
+            # nothing is charged nothing.
+            reservation = await gate.acquire(fds=fds, ram=ram, requests=1)
         except BudgetExhausted as exc:
             # A spent total ends the run; the item is reported as unmeasured
             # rather than as a measurement that failed.
@@ -1998,10 +2139,9 @@ class Pipeline:
                 # existing scan does with a transport exception.
                 code = exc.code if isinstance(exc, PipelineError) else type(exc).__name__
                 outcome = StageOutcome(stage, False, code=code, detail=str(exc)[:200])
-            requests = max(1, outcome.requests)
             self.concurrency.observe(outcome.ok, outcome.latency_s)
         finally:
-            await gate.release(fds=fds, ram=ram, requests=requests,
+            await gate.release(reservation, requests=max(0, outcome.requests) if outcome else 0,
                                bytes=0 if outcome is None else outcome.bytes)
         if outcome is None:  # pragma: no cover - only reachable via cancellation
             raise ValidationError(E_VALIDATION_FIELD, f'Этап {stage!r} не дал результата.')
@@ -2074,7 +2214,7 @@ class Pipeline:
             exit_ip=exit_ip, address=item.address, carried=False, age_seconds=None,
             checked_at=self.clock.time(), value=value, started_at=started_wall,
             finished_at=started_wall + (finished - started),
-            requests=sum(max(1, outcome.requests) for outcome in stages),
+            requests=sum(max(0, outcome.requests) for outcome in stages),
             bytes=sum(outcome.bytes for outcome in stages))
 
     async def _record(self, result: ItemResult, emit) -> None:
@@ -2091,13 +2231,15 @@ class Pipeline:
         if result.ok:
             if self._first_pass_at is None:
                 self._first_pass_at = now - self._started
-            counters.passed_endpoints += 1
             if result.address and result.address not in self._passed_addresses:
                 self._passed_addresses.add(result.address)
-            # The find-N check runs *before* this item joins the sets, so a unit
-            # is counted exactly once no matter which unit the caller asked for,
-            # and ``find.met`` can never disagree with the counter it advances.
+            # The find-N check runs *before* this item joins any set or counter,
+            # so a unit is counted exactly once no matter which unit the caller
+            # asked for, and ``find.met`` can never disagree with the counter it
+            # advances.  Advancing ``passed_endpoints`` first broke that for the
+            # endpoint unit only, and made N endpoints arrive one item early.
             self._advance_find(result)
+            counters.passed_endpoints += 1
             address_ip = _ip_of(result.address)
             if address_ip and address_ip not in self._passed_ips:
                 self._passed_ips.add(address_ip)
@@ -2144,16 +2286,18 @@ class Pipeline:
 
         It is a projection of the cumulative sets rather than an own counter, so
         a resumed run continues the same N instead of counting the same exit
-        addresses a second time.
+        addresses a second time.  What the caller already confirmed
+        (``config.initial_met``) is part of the same number: a stored verdict the
+        run does not measure again cannot be counted twice either.
         """
         policy = self.config.find
         if not policy.enabled:
             return 0
         if policy.what == 'endpoint':
-            return self._counters.passed_endpoints
+            return self._seed + self._counters.passed_endpoints
         if policy.what == 'ip':
-            return len(self._passed_ips)
-        return len(self._passed_exit_ips)
+            return self._seed + len(self._passed_ips)
+        return self._seed + len(self._passed_exit_ips)
 
     def _advance_find(self, result: ItemResult) -> None:
         """Count toward N in exactly one of the three units the caller asked

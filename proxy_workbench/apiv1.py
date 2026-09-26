@@ -569,13 +569,23 @@ class ApiKeyStore:
                 'next_seq': None}
 
     def create_key(self, principal, spec):
-        rate = None
-        if spec.get('rate_limit_requests'):
-            rate = (spec['rate_limit_requests'], spec['rate_limit_window_seconds'])
+        requests = spec.get('rate_limit_requests')
+        window = spec.get('rate_limit_window_seconds')
+        rate = ({'requests': requests, 'window_s': window}
+                if requests is not None and window is not None else None)
+        # ``apikeys`` speaks the structured quotas of CONTRACTS §5.2
+        # (``{"requests": N, "window_s": S}``, ``{"max_active": N}``), while the
+        # route declares the flat shape a user edits.  The translation belongs
+        # here: both quotas used to be passed through as bare values, so
+        # ``RateLimit.of`` and ``Concurrency.of`` refused them and
+        # ``POST /v1/keys`` answered 400 for a body its own table declares --
+        # a key's rate and concurrency quota could not be set over the API at all.
+        slots = spec.get('concurrency')
         issued = self._call('create', actor=principal.key_id, name=spec['name'],
                             purpose=spec.get('purpose'), permissions=spec['permissions'],
                             scope=self._scope_of(spec), expires_at=spec.get('expires_at'),
-                            rate_limit=rate, concurrency=spec.get('concurrency'))
+                            rate_limit=rate,
+                            concurrency=({'max_active': int(slots)} if slots else None))
         return issued.as_json()
 
     def rotate_key(self, principal, key_id, grace_s=0.0, **kwargs):
@@ -718,6 +728,54 @@ class ConcurrencyLimiter:
     def release(self):
         with self._lock:
             self._used = max(0, self._used - 1)
+
+
+class KeyQuota:
+    """How many operations *one key* may hold at once, from that key's quota.
+
+    :class:`ConcurrencyLimiter` bounds the whole server and has nothing to do
+    with a key's own ``concurrency``: before this class existed the field was
+    filled by the key store and read by nothing, so a key minted with
+    ``{"max_active": 1}`` was answered with HTTP 200 as often as the client
+    asked.  The limit is per key id, taken for the whole operation and given
+    back when the answer -- body, redirect or event stream -- is finished.
+
+    A key without a quota is never refused here: an empty quota is the
+    documented meaning of "whatever its rights allow", and the server-wide
+    limiter still bounds the process.
+    """
+
+    def __init__(self, clock):
+        self._clock = clock
+        self._held = {}
+        self._lock = threading.Lock()
+
+    def acquire(self, principal):
+        limit = getattr(principal, 'concurrency', None) if principal is not None else None
+        if principal is None or not limit:
+            return None
+        limit = int(limit)
+        key_id = principal.key_id
+        with self._lock:
+            held = self._held.get(key_id, 0)
+            if held >= limit:
+                raise ApiError('E_LIMIT_CONCURRENCY', status=429, retry_after=1,
+                               details={'max_active': limit, 'active': held},
+                               action=tr('дождитесь окончания текущей операции',
+                                         'wait for the running operation to finish'))
+            self._held[key_id] = held + 1
+        return key_id
+
+    def release(self, key_id):
+        if key_id is None:
+            return
+        with self._lock:
+            if self._held.get(key_id):
+                self._held[key_id] -= 1
+
+    def active(self, key_id):
+        with self._lock:
+            return self._held.get(key_id, 0)
 
 
 class IdempotencyStore:
@@ -1601,6 +1659,32 @@ def _names_out_of_scope(principal, body):
     return False
 
 
+def _redact_file(data, content_type, principal):
+    """The same private fields the JSON path strips, applied to a file body.
+
+    A raw file used to leave straight out of the service answer, so a redacted
+    identity -- a subscription or the legacy token -- received bytes the rest of
+    the API would have scrubbed: ``GET /v1/exports/{id}/download/ranked.json``
+    handed back a row carrying ``access_secret`` while the identical field of
+    ``GET /v1/results`` was stripped (F29).
+
+    Only a JSON payload can be rewritten field by field, and it is the only
+    snapshot format that carries row fields at all: every other file of an
+    artifact is ``scheme://host:port`` lines, a fixed column list or a header
+    comment (``exportsvc.render_*``), so there is no field to strip and the
+    exporter's own ``redact_row`` is the whole rule.
+    """
+    if principal is None or not principal.redacted:
+        return data
+    if 'json' not in str(content_type or '').lower():
+        return data
+    try:
+        value = json.loads(bytes(data).decode('utf-8'))
+    except (ValueError, UnicodeDecodeError):
+        return data
+    return json.dumps(_redact(value, principal), ensure_ascii=False, default=str).encode('utf-8')
+
+
 def _guard_scope(principal, body):
     """Backstop: a response naming an out-of-scope object is not returned.
 
@@ -1643,6 +1727,7 @@ class ApiV1:
         self.keys = keys
         self.rate = RateLimiter(self.clock)
         self.slots = ConcurrencyLimiter(self.config.max_concurrency)
+        self.key_quota = KeyQuota(self.clock)
         self.idempotency = IdempotencyStore(self.config.idempotency_ttl_s,
                                             self.config.idempotency_max_entries, self.clock)
         self.history = EventHistory(self.config.max_event_history)
@@ -1928,6 +2013,10 @@ class ApiV1:
                     expected_revision=expected, deadline_s=self.config.request_timeout_s,
                     path=request.path, method=request.method)
         self.slots.acquire()
+        # The key's own slot is taken after the server-wide one and released in
+        # the same `finally`, so a refusal by either limiter cannot leak the
+        # other: `key_slot` is only bound once both have answered.
+        key_slot = self.key_quota.acquire(principal)
         try:
             if route.async_job:
                 self._check_queue()
@@ -1948,6 +2037,7 @@ class ApiV1:
                            action=tr('операция не подключена к сервисному слою',
                                      'the operation is not wired to the service layer')) from exc
         finally:
+            self.key_quota.release(key_slot)
             self.slots.release()
         response = self._response(route, request, result, principal, extra_headers, query)
         if idem_key:
@@ -2085,14 +2175,26 @@ class ApiV1:
                                details={'operation': route.operation, 'reason': 'no file'},
                                action=tr('сервисный слой вернул не файл',
                                          'the service layer did not return a file'))
+            # Redaction and the object guard both run before the bytes are read.
+            # A raw file used to be returned straight out of `result`, so a
+            # redacted identity (a subscription) got a file the rest of the API
+            # would have scrubbed, and a body naming another collection was
+            # never noticed at all (F29).
+            result = _redact(result, principal)
+            _guard_scope(principal, result)
+            if result.get('secrets') and principal is not None and principal.redacted:
+                # The service says this artifact was cut with credential
+                # references in it.  A redacted identity has no business reading
+                # it whatever the file is, so the answer is a refusal, not a
+                # partially scrubbed download.
+                raise ApiError('E_AUTH_PERMISSION', status=403,
+                               details={'reason': 'the artifact carries credential references'},
+                               action=tr('используйте ключ с правом export.secret',
+                                         'use a key that holds export.secret'))
             data = result['data']
             if not isinstance(data, (bytes, bytearray)):
                 data = str(data).encode('utf-8')
-            # The object guard runs before the bytes leave.  A raw file used to be
-            # returned straight out of `result`, so a redacted identity (a
-            # subscription) got a file the rest of the API would have scrubbed, and
-            # a body naming another collection was never noticed at all (F29).
-            _guard_scope(principal, result if isinstance(result, dict) else {})
+            data = _redact_file(data, result.get('content_type'), principal)
             if result.get('filename'):
                 headers.append(('Content-Disposition',
                                 'attachment; filename='
@@ -2168,11 +2270,17 @@ class ApiV1:
         call = Call(operation=route.operation, principal=principal, params=params,
                     query=query, path=request.path, method=request.method,
                     deadline_s=self.config.sse_reverify_s)
+        # A subscription is held, not answered: the key's own slot belongs to
+        # the stream and is given back when the last event is written (or the
+        # client goes away), exactly as a lease is.
+        key_slot = self.key_quota.acquire(principal)
         try:
             source = self.service.invoke(route.operation, call)
         except ApiError:
+            self.key_quota.release(key_slot)
             raise
         except Exception as exc:
+            self.key_quota.release(key_slot)
             raise ApiError('E_SERVICE_UNAVAILABLE',
                            status=503 if isinstance(exc, NotImplementedError) else 500,
                            details={'reason': type(exc).__name__}) from exc
@@ -2180,36 +2288,45 @@ class ApiV1:
         declared, events = source if isinstance(source, tuple) else (stream_id, source)
         limit = int(query.get('limit') or self.config.max_limit)
         stream = EventStream(str(declared or stream_id),
-                             self._guarded(events, limit, request), self.clock,
+                             self._guarded(events, limit, request, key_slot), self.clock,
                              self.history, cursor_seq=seq)
         return Response(200, b'', 'text/event-stream; charset=utf-8',
                         (('Cache-Control', 'no-store'), ('X-Accel-Buffering', 'no'),
                          ('X-Workbench-Stream', stream.stream_id)), stream=stream)
 
-    def _guarded(self, events, limit, request):
-        """Bound the stream and re-check the key on a timer while it is open."""
+    def _guarded(self, events, limit, request, key_slot=None):
+        """Bound the stream and re-check the key on a timer while it is open.
+
+        The key's own concurrency slot belongs to the open stream: it is given
+        back in the ``finally``, whether the client read every event, stopped
+        half way or vanished, so a closed subscription never locks its key out.
+        """
         if not isinstance(events, Iterable):
+            self.key_quota.release(key_slot)
             raise ApiError('E_SERVICE_UNAVAILABLE', status=503,
                            details={'reason': 'events are not iterable'})
         last = 0
         checked_at = self.clock()
-        for index, event in enumerate(events):
-            if index >= limit:
-                yield {'seq': last + 1, 'type': 'stream.closed', 'code': 'E_LIMIT_BUDGET',
-                       'data': {'reason': 'limit reached'}}
-                return
-            now = self.clock()
-            if now - checked_at >= max(self.config.sse_reverify_s, 0.0):
-                try:
-                    self._recheck(request)
-                except ApiError as exc:
-                    yield {'seq': last + 1, 'type': 'session.closed', 'code': exc.code,
-                           'data': {'reason': exc.message}}
+        try:
+            for index, event in enumerate(events):
+                if index >= limit:
+                    yield {'seq': last + 1, 'type': 'stream.closed', 'code': 'E_LIMIT_BUDGET',
+                           'data': {'reason': 'limit reached'}}
                     return
-                checked_at = now
-            if isinstance(event, dict):
-                last = max(last, int(event.get('seq') or 0))
-            yield event
+                now = self.clock()
+                if now - checked_at >= max(self.config.sse_reverify_s, 0.0):
+                    try:
+                        self._recheck(request)
+                    except ApiError as exc:
+                        yield {'seq': last + 1, 'type': 'session.closed', 'code': exc.code,
+                               'data': {'reason': exc.message}}
+                        return
+                    checked_at = now
+                if isinstance(event, dict):
+                    last = max(last, int(event.get('seq') or 0))
+                yield event
+        finally:
+            self.key_quota.release(key_slot)
 
     def _recheck(self, request):
         """A key that expired or was revoked closes the open stream, per policy."""

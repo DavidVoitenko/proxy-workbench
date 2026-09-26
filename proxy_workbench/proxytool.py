@@ -1462,18 +1462,13 @@ async def judge_proxy(proxy, config, rate, own_ips):
 
 
 def fit_workers(requested):
+    """How many full checks this process can really run at once.
+
+    The same descriptor arithmetic the chain derives its own worker count from
+    (``open_fd_budget``), so the pre-check sizing and the run agree.
+    """
     try:
-        import resource
-        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
-        desired = requested * 3 + 128
-        if soft < desired:
-            try:
-                resource.setrlimit(resource.RLIMIT_NOFILE,
-                                   (min(desired, hard) if hard != resource.RLIM_INFINITY else desired, hard))
-                soft, _ = resource.getrlimit(resource.RLIMIT_NOFILE)
-            except (OSError, ValueError):
-                pass
-        return max(1, min(requested, (soft - 128) // 3))
+        return max(1, min(requested, (open_fd_budget(requested) - 32) // FDS_PER_REQUEST))
     except (ImportError, OSError, ValueError):
         return min(requested, 128)
 
@@ -1565,17 +1560,201 @@ def measurement_bytes(row):
     return total
 
 
+#: One page of the candidate source.  The corpus is read page by page instead of
+#: with a single ``fetchall``: a half-million addresses is a list of a hundred
+#: megabytes the engine would hold for the whole run, and the front half of a
+#: scan is supposed to be bounded (F12).  Each page is a fresh statement, so the
+#: commit the store path makes every hundred rows cannot invalidate a half-read
+#: cursor of the corpus.
+CANDIDATE_PAGE = 4096
+
+#: What one in-flight measurement really holds open: the socket, the TLS session
+#: and the connection a redirect chain may still open.
+FDS_PER_REQUEST = 3
+
+#: Descriptors the process keeps for everything that is not a probe: the
+#: database, the report file, the standard streams, the loop's own fd.
+RESERVED_FDS = 128
+
+#: The RAM one in-flight measurement may hold, and the ceiling over all of them.
+#: The share follows the body's own cap, so a profile that allows a bigger
+#: response reserves a bigger share instead of the ceiling being exceeded in
+#: silence.
+DEFAULT_RAM_PER_INFLIGHT = 256 * 1024
+DEFAULT_MAX_RAM_BYTES = 64 * 1024 * 1024
+
+
+def _number(value):
+    """A finite number, or 0.0 for anything else — for ordering, never for math."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    return number if math.isfinite(number) else 0.0
+
+
+def _recency(row):
+    """How recent a stored verdict is: its measurement time, then its lifetime.
+
+    Both are part of the order so that two rows stamped alike still have one
+    answer, and a row without a time is the oldest rather than a random one.
+    """
+    return (_number(row.get('checked_at')), _number(row.get('valid_until')))
+
+
+def newest_measurements(conn, profile):
+    """The most recent verdict of every address of one profile.
+
+    ``results`` is keyed by ``(profile_id, profile_revision, access_id,
+    access_revision, endpoint_id)``, so one address owns several rows of the same
+    profile as soon as the profile revision or the access revision moved.
+    Reading them in table order and letting the last row win made the base of the
+    next measurement an arbitrary one: the history counters were accumulated on
+    top of a verdict that was not the newest, and every field the new verdict did
+    not carry was inherited from it.  The newest measurement wins here, so
+    ``--recheck`` builds on the verdict the user would see in the list.
+    """
+    newest = {}
+    for proxy, payload in conn.execute('SELECT proxy, payload FROM results WHERE profile=?', (profile,)):
+        try:
+            row = json.loads(payload)
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(row, dict):
+            continue
+        known = newest.get(proxy)
+        if known is not None and _recency(known) >= _recency(row):
+            continue
+        newest[proxy] = row
+    return newest
+
+
+def candidate_pages(conn, collection_id, *, page=CANDIDATE_PAGE):
+    """The addresses of one collection, in address order, one page at a time.
+
+    Membership is the scope (CONTRACTS §1.2 rule 2) and the order is the address
+    order, which is also the order that makes inserting the results cheapest.
+    Pagination is by address, not by offset, so a page stays correct however many
+    rows the sweep has written since.
+    """
+    last = ''
+    while True:
+        rows = conn.execute(
+            'SELECT e.canonical FROM membership m JOIN endpoints e ON e.id = m.endpoint_id '
+            'WHERE m.collection_id = ? AND e.canonical > ? ORDER BY e.canonical LIMIT ?',
+            (collection_id, last, page)).fetchall()
+        if not rows:
+            return
+        last = rows[-1][0]
+        for (canonical,) in rows:
+            yield canonical
+
+
+def _raise_open_fds(requested):
+    """Ask the kernel for the descriptors ``requested`` probes need and report
+    what the process really has."""
+    try:
+        import resource
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        desired = requested * FDS_PER_REQUEST + RESERVED_FDS
+        if soft < desired:
+            try:
+                resource.setrlimit(resource.RLIMIT_NOFILE,
+                                   (min(desired, hard) if hard != resource.RLIM_INFINITY else desired, hard))
+                soft, _ = resource.getrlimit(resource.RLIMIT_NOFILE)
+            except (OSError, ValueError):
+                pass
+        return soft
+    except (ImportError, OSError, ValueError):
+        return 256
+
+
+def open_fd_budget(requested):
+    """The descriptors this run may spend on probes.
+
+    What the kernel grants, not what the user typed: a worker count nobody can
+    open the sockets for is a number the run only discovers at EMFILE.  The
+    chain derives its worker count from this (F12, resources not workers).
+    """
+    return max(FDS_PER_REQUEST * 4, _raise_open_fds(requested) - RESERVED_FDS)
+
+
+def _worked(row):
+    """Whether the measurement itself worked, before the run's own policy.
+
+    A proxy that answered is a different fact from a proxy this run is willing
+    to publish, and the expensive stage needs the first to decide the second.
+    """
+    if not isinstance(row, dict) or row.get('error'):
+        return False
+    return _number(row.get('min_target_reliability')) > 0
+
+
+#: The target the expensive stage spends on: somebody else's judge service and a
+#: body-sized download.  It has its own limits so one slow or rate-limited
+#: third party cannot eat the run (pipeline.TargetPolicy).
+EXPENSIVE_TARGET = 'judge'
+
+
+def _already_canonical(value):
+    """The normaliser the chain uses for a candidate from the collection.
+
+    ``collect`` already ran the project's one normaliser, and the collection
+    stores what it returned; normalising a second time would be a second
+    grammar for the same address (CONTRACTS §1.2).  The chain still refuses
+    anything it cannot split into a scheme, a host and a port, so a corrupt
+    candidate is rejected and counted rather than measured.
+    """
+    return value or None
+
+
+def exit_address_possible(config, probe, expensive_probe):
+    """Whether this run can produce a confirmed exit address at all.
+
+    Only the judge reports one.  Without it the unit "N confirmed exit IPs" is
+    not a small target, it is an impossible one, and a run that sweeps the whole
+    corpus to discover that is a run that spent everything to say nothing.  A
+    caller that injects its own probe may put the address there itself, so only
+    the product's own probe is asked.
+    """
+    return bool(config.get('anonymity')) or expensive_probe is not None or probe is not check_proxy
+
+
+
 async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_proxy, progress=True, on_progress=None, min_success=2/3, screen=None, denylist=None, min_anonymity='any', protocol='all', max_latency=None,
                countries=(), country_of=None, want=0, recheck_passing=False, prefilter=0, prefilter_timeout=3,
                exclude_hosting=False, provider_of=None, run_state=None,
                collection_id=None, profile_revision=1, max_age_seconds=None,
                access=None, job_id=None, job_store=None, deadline_s=None,
-               max_requests=None, max_bytes=None, count_what='endpoint'):
+               max_requests=None, max_bytes=None, count_what='endpoint',
+               max_per_host=1, min_host_interval_s=0.0, target_inflight=2, expensive_probe=None):
     """Check every pending candidate of the profile.
 
-    With ``prefilter`` connections a cheap TCP connect runs first: most public
-    addresses are dead, and dropping them there is far faster than a full
-    request with its connect timeout. Only reachable addresses reach the workers.
+    The run *is* the chain of ``pipeline.py`` — the same ``Pipeline``,
+    ``Budgets``, ``ResourceGate``, ``AdaptiveConcurrency``, ``HostLimiter``,
+    ``TargetPolicy``, ``Ledger`` and ``FindPolicy`` the module documents, driven
+    by ``run``'s own sources and runners.  Nothing here re-implements a rule that
+    already has one owner: the worker count is derived from the descriptor and
+    RAM budgets rather than taken from ``--workers`` as a constant, the request
+    and byte totals are reserved before a measurement and charged with what it
+    really spent, per-host and per-target limits hold, and the three units of
+    ``--want`` are three different numbers (F12).
+
+    The stages, from cheap to expensive:
+
+    * ``cheap`` — a TCP connect, when ``prefilter`` is on.  Most public
+      addresses are dead, and dropping them there is far faster than a full
+      request with its own connect timeout.  ``prefilter`` says *whether* the
+      stage runs; how many connects it makes at once is a consequence of the
+      budgets like everything else.
+    * ``basic`` — the reputation screen and then one request through every
+      target of the profile.  This is ``probe``, unchanged, so a caller that
+      injects its own probe still gets exactly the measurements it injected.
+    * ``expensive`` — ``expensive_probe``, when the caller supplies one: the
+      judge and the bandwidth download, the two things only a proxy that already
+      works may cost.  They are a separate stage so that somebody else's service
+      and a body-sized download are bounded by the per-target limits and by the
+      run's byte budget instead of sitting outside them.
 
     ``job_store`` hands the run to the persistent lifecycle of ``jobs.py``: the
     queue, the per-item states and the events come from there, so a cancel, a
@@ -1628,122 +1807,26 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
         return (result_allowed(row, min_success, denylist=active_denylist, strict=strict, min_anonymity=min_anonymity)
                 and matches_selection(row, protocol, max_latency))
 
-    # A re-check keeps each proxy's history and its last usable payload until a
-    # replacement is actually written.  A cancellation must never erase data.
-    previous = {}
-    stored_rows = {}
-    only = None
-    for proxy, payload in db.execute('SELECT proxy, payload FROM results WHERE profile=?', (profile,)).fetchall():
-        row = json.loads(payload)
-        stored_rows[proxy] = row
-        if recheck_passing and not (selected(proxy) and counts_as_passed(row)):
-            continue
-        previous[proxy] = row
-    if recheck_passing:
-        only = set(previous)
-    db.commit()
-
-    # A normal continuation may skip a result only while its verdict is still
-    # trustworthy.  In particular, UNREACHABLE and expired rows are pending on
-    # the next scan; treating every row as done made a dead proxy permanent.
-    # "Trustworthy" is the one admission contract, not a local freshness test:
-    # a row with no recorded lifetime is never assumed fresh (defects 1, 2, 4).
-    if recheck or recheck_passing:
-        done = set()
-    else:
-        now = time.time()
-        done = {proxy for proxy, row in stored_rows.items()
-                if core.observation_state(row) != core.OBSERVATION_MISSING
-                and not row.get('error')
-                and core.time_state_of(row, now, admission_policy)['state'] == core.TIME_OK}
-    pending, total, completed = [], 0, 0
-    for (proxy,) in collection_candidates(db, collection_id):
-        if (only is None or proxy in only) and selected(proxy):
-            total += 1
-            if proxy in done:
-                completed += 1
-            else:
-                pending.append(proxy)
-    # Addresses that already worked in another profile go first. In find-N mode
-    # the rest is shuffled so early results are not all from one subnet or
-    # source; a full sweep keeps key order, because random inserts into a large
-    # results index make SQLite commits much slower (worst on Windows).
-    proven = {proxy for (proxy,) in db.execute(
-        "SELECT DISTINCT proxy FROM results WHERE profile<>? AND json_extract(payload,'$.min_target_reliability')>0",
-        (profile,))}
-    if want:
-        random.shuffle(pending)
-    pending.sort(key=lambda proxy: proxy not in proven)
-    passed = 0
-    status_counts = {'clean': 0, 'listed': 0, 'unknown': 0, 'local_denied': 0}
-    if not (recheck or recheck_passing):
-        for proxy in done:
-            row = stored_rows[proxy]
-            if not selected(proxy):
-                continue
-            status = reputation_status(row)
-            status_counts[status] = status_counts.get(status, 0) + 1
-            passed += int(counts_as_passed(row))
-    initial = completed
-    limiter = Rate(rate)
-    queue = asyncio.Queue(maxsize=workers * 2)
-    incoming = asyncio.Queue(maxsize=max(prefilter, 1) * 2) if prefilter else None
-    unreachable = 0
-    started = last_commit = time.monotonic()
-
-    enough = asyncio.Event()
-    if want and passed >= want:
-        enough.set()
-
-    # The find-N policy, the ledger that refuses to check one address twice and
-    # the resource gate are the pipeline's own objects, not a local copy of
-    # their rules: one chain decides what "enough" means and what the whole run
-    # is allowed to spend (F12).
     from . import pipeline as chain
-    budgets = chain.Budgets(max_inflight=max(1, int(workers)), deadline_s=deadline_s,
-                            max_requests=max_requests, max_bytes=max_bytes)
-    gate = chain.ResourceGate(budgets, chain.SystemClock(), deadline=deadline_s)
-    ledger = chain.Ledger()
+
     # ``--want`` counts endpoints unless the user asks for another unit: N
     # endpoints, N IPs and N confirmed exit IPs are different numbers, and the
-    # caller names the one it means (F12, CONTRACTS §1.1).
+    # caller names the one it means (F12, CONTRACTS §1.1).  The chain owns the
+    # arithmetic of the three units; what this function does is fill the other
+    # two so the report can show them beside the one that was asked for.
     find = chain.FindPolicy(n=want, what=count_what)
-    # All three counts side by side, so a run that ends with `found=0` says which
-    # of the three units was unreachable instead of looking like an empty corpus
-    # (F12, F10 "why zero results").
     unique_ips: set = set()
     unique_exits: set = set()
-    budget_stop = {'reason': ''}
-
-    def over_budget():
-        """Whether a *total* budget is spent; the gate owns the decision.
-
-        Waiting for a free slot is not being out of budget, so only
-        :meth:`ResourceGate.check_totals` is consulted here -- the same call the
-        pipeline makes, so a CLI run and a pipeline run stop for the same reason.
-        """
-        if budget_stop['reason']:
-            return True
-        try:
-            gate.check_totals()
-        except chain.BudgetExhausted as exc:
-            budget_stop['reason'] = exc.code
-            return True
-        return False
+    passed = 0
+    status_counts = {'clean': 0, 'listed': 0, 'unknown': 0, 'local_denied': 0}
 
     def counted(row):
-        """What ``--want`` counts: endpoints, unique IPs or confirmed exit IPs.
+        """What the store has already confirmed of ``--want``'s unit.
 
-        Three different numbers, and the user names the one they mean (F12,
-        CONTRACTS §1.1).  ``ip`` counts the *host* of the proxy, so two ports on
-        one machine are one IP; ``exit`` counts the address the judge confirmed,
-        which is a different number again and is absent without a judge.  Reading
-        both from one expression (``1 if row.get('exit_ip')``) made them the same
-        number, and the key was in the wrong place: the judge writes
-        ``anonymity.exit_ip``, so even a confirmed exit was never seen.
-
-        All three sets are filled on every call, whatever the requested unit, so
-        the report can show the other two next to it.
+        Only used to *seed* the chain with what the database already holds; the
+        chain counts everything this run measures.  The two never overlap: a row
+        that is already confirmed is not measured again, and a row this run
+        measures is not in the store yet.
         """
         host = str(row.get('proxy') or '').partition('://')[2].rpartition(':')[0]
         host = host.strip('[]').lower()
@@ -1758,8 +1841,136 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
             return 1
         return int(fresh_ip) if find.what == 'ip' else int(fresh_exit)
 
-    found = {'items': passed}
+    # A re-check keeps each proxy's history and its last usable payload until a
+    # replacement is actually written.  A cancellation must never erase data.
+    # A verdict that is already trustworthy is not kept: the run will not measure
+    # it, so its payload is only needed for the counters below, and holding every
+    # stored row of a large profile for the whole sweep is what the front half of
+    # a scan must not do.
+    previous = {}
+    only = None
+    seeded = 0
+    done = set()
+    now = time.time()
+    for proxy, row in newest_measurements(db, profile).items():
+        if recheck_passing:
+            if not (selected(proxy) and counts_as_passed(row)):
+                continue
+            previous[proxy] = row
+            continue
+        if recheck:
+            previous[proxy] = row
+            continue
+        # A normal continuation may skip a result only while its verdict is still
+        # trustworthy.  In particular, UNREACHABLE and expired rows are pending on
+        # the next scan; treating every row as done made a dead proxy permanent.
+        # "Trustworthy" is the one admission contract, not a local freshness test:
+        # a row with no recorded lifetime is never assumed fresh (defects 1, 2, 4).
+        if (core.observation_state(row) != core.OBSERVATION_MISSING and not row.get('error')
+                and core.time_state_of(row, now, admission_policy)['state'] == core.TIME_OK):
+            done.add(proxy)
+            if not selected(proxy):
+                continue
+            status = reputation_status(row)
+            status_counts[status] = status_counts.get(status, 0) + 1
+            if counts_as_passed(row):
+                passed += 1
+                seeded += counted(row)
+            continue
+        previous[proxy] = row
+    if recheck_passing:
+        only = set(previous)
+    db.commit()
+
+    # The scope, counted without materialising it: the progress of a sweep of a
+    # half-million addresses has to have a denominator before the first probe.
+    total = 0
+    initial = 0
+    for proxy in candidate_pages(db, collection_id):
+        if (only is not None and proxy not in only) or not selected(proxy):
+            continue
+        total += 1
+        if proxy in done:
+            initial += 1
+
+    # Addresses that already worked in another profile go first. In find-N mode
+    # the rest is shuffled so early results are not all from one subnet or
+    # source; a full sweep keeps key order, because random inserts into a large
+    # results index make SQLite commits much slower (worst on Windows).  The
+    # known-good index is the one set this run still materialises: it is what
+    # makes the first results of a run the ones most likely to work.
+    proven = {proxy for (proxy,) in db.execute(
+        "SELECT DISTINCT proxy FROM results WHERE profile<>? AND json_extract(payload,'$.min_target_reliability')>0",
+        (profile,))}
+
+    if find.enabled and find.what == 'exit' and not exit_address_possible(config, probe, expensive_probe):
+        # Asked for a unit this profile cannot produce at all.  Saying so before
+        # the first probe is the difference between a run that costs a minute and
+        # a run that costs the whole budget to report `found=0`.
+        message = tr(
+            'Нельзя набрать подтверждённые выходные IP: в профиле нет judge. '
+            'Добавьте --judge-url (он же включает проверку анонимности) или считайте '
+            'адреса через --count-what ip.',
+            'Cannot reach the requested number of confirmed exit IPs: this profile has no judge. '
+            'Add --judge-url (it also turns the anonymity check on) or count addresses with '
+            '--count-what ip.')
+        if progress:
+            print(message, file=sys.stderr, flush=True)
+        counts = {'endpoints': passed, 'unique_ips': len(unique_ips), 'exit_ips': len(unique_exits)}
+        if run_state is not None:
+            run_state.update(profile=profile, state='partial', stop_reason='want_unreachable_exit',
+                             scope_candidates=total, checked=initial, pending=max(0, total - initial),
+                             passed=passed, found=seeded, count_what=find.what, workers=0,
+                             peak_inflight=0, requests=0, concurrency={}, **counts)
+        if on_progress:
+            on_progress(dict(phase='scanning', profile=profile, checked=initial, candidates=total,
+                             passed=passed, pending=max(0, total - initial), state='partial',
+                             stop_reason='want_unreachable_exit', scope_candidates=total, speed=0.0,
+                             found=seeded, eta_seconds=None, workers=0, peak_inflight=0,
+                             concurrency={}, reputation=status_counts, unreachable=0, **counts))
+        return profile
+
+    limiter = Rate(rate)
+    unreachable = 0
+    started = last_commit = time.monotonic()
+
+    # The budgets of the run.  ``--workers`` is the ceiling the user asks for, not
+    # the number of workers: the chain derives its own from the descriptors the
+    # process really has and from the RAM each in-flight measurement may hold,
+    # and moves that number with the observed success rate (F12).  ``--max-requests``
+    # and ``--run-max-bytes`` are the totals a stage is charged against, and the
+    # chain reserves one request before every stage instead of noticing the
+    # overshoot afterwards.
+    ram_per_inflight = max(int(config.get('max_bytes') or 0), DEFAULT_RAM_PER_INFLIGHT)
+    budgets = chain.Budgets(
+        max_inflight=max(1, int(workers)),
+        max_open_fds=open_fd_budget(workers),
+        fds_per_request=FDS_PER_REQUEST,
+        max_ram_bytes=max(DEFAULT_MAX_RAM_BYTES, ram_per_inflight * 8),
+        ram_per_inflight_bytes=ram_per_inflight,
+        max_queue_items=max(2 * max(1, int(workers)), 64),
+        max_results_pending=64,
+        # The source is the scope itself, so the byte cap follows the scope
+        # instead of a constant that a large collection would silently overrun.
+        max_source_bytes=(total + 16) * 80,
+        max_requests=max_requests, max_bytes=max_bytes, deadline_s=deadline_s)
+    # One target: the expensive stage's.  The judge is somebody else's service
+    # and the bandwidth test reads a body, so the share it may take is bounded
+    # separately from the run's own total.
+    targets = ()
+    if expensive_probe is not None:
+        judge_requests = max_requests if max_requests is None else max(1, max_requests // 2)
+        targets = (chain.TargetPolicy(EXPENSIVE_TARGET, max_inflight=max(1, int(target_inflight)),
+                                      max_requests=judge_requests),)
+    limits = chain.Limits(max_per_host=max(1, int(max_per_host)),
+                          min_host_interval_s=max(0.0, float(min_host_interval_s)),
+                          targets=targets)
     observation_id = [None]
+    # What the scope already holds when the run starts.  ``completed`` counts a
+    # row from the moment the scope is satisfied, so "how much of the scope is
+    # done" is one number throughout the run and not one that jumps when the
+    # first new verdict is written.
+    completed = initial
 
     def store(proxy, row):
         nonlocal completed, last_commit, passed
@@ -1795,120 +2006,239 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
             merged.get('error_code'), merged.get('error_stage'), job_id or '',
             observation_id[0]))
         completed += 1
+        previous.pop(proxy, None)
         status = reputation_status(merged)
         status_counts[status] = status_counts.get(status, 0) + 1
+        # The three units of the report beside the one the chain counts: the
+        # host of every address that passed and the exit address the judge
+        # confirmed.  A proxy nobody measured through a target has no exit IP,
+        # and "no exit IP" is not "the exit is the proxy's own address".
         if counts_as_passed(merged):
-            found['items'] = found['items'] + counted(merged)
             passed += 1
-        if find.enabled and found['items'] >= find.n:
-            enough.set()
-        if observation_id[0] is not None:
-            finish_job_item(job_store, job_id, endpoint, merged, observation_id[0])
+            counted(merged)
         if completed % 100 == 0 or time.monotonic() - last_commit >= 1:
             db.commit()
             last_commit = time.monotonic()
+        if observation_id[0] is not None:
+            finish_job_item(job_store, job_id, endpoint, merged, observation_id[0])
 
-    async def producer():
-        target = incoming if prefilter else queue
-        for proxy in pending:
-            if enough.is_set() or over_budget():
-                break
-            # The ledger is what makes "one address is never checked twice" a
-            # property of the run rather than of this loop (F12).
-            if not ledger.admit(proxy):
-                continue
-            await target.put(proxy)
-        for _ in range(prefilter if prefilter else workers):
-            await target.put(None)
+    # -- the chain's own source, stages and result stream --------------------
 
-    async def gatekeeper():
-        nonlocal unreachable
-        while True:
-            proxy = await incoming.get()
-            if proxy is None:
-                return
-            if enough.is_set() or over_budget():
-                continue
-            if await reachable(proxy, prefilter_timeout):
-                await queue.put(proxy)
-            else:
-                unreachable += 1
-                store(proxy, unreachable_result(proxy))
+    async def candidates():
+        """The scope as a bounded byte stream, one page at a time.
 
-    async def prefilter_stage():
-        await asyncio.gather(*(gatekeeper() for _ in range(prefilter)))
-        for _ in range(workers):
-            await queue.put(None)
-
-    async def worker():
-        while True:
-            proxy = await queue.get()
-            try:
-                if proxy is None:
-                    return
-                if enough.is_set() or over_budget():
-                    # Left unchecked; a later run of the same profile picks it up.
-                    # The address goes back to the ledger's pending list, so a
-                    # resumed run measures it instead of losing it.
-                    ledger.release(proxy)
-                    continue
-                verdict = None
-                if screen is not None:
-                    try:
-                        verdict = await screen(proxy, config)
-                    except Exception:
-                        verdict = {'status': 'unknown', 'checked_at': time.time(), 'error': 'SCREEN_ERROR',
-                                   'local_rule': None, 'dnsbl': []}
-                if verdict is not None and verdict_blocks(verdict, strict):
-                    row = blocked_result(proxy, verdict)
-                else:
-                    row = None
-                    try:
-                        # The resource gate is the single place that decides
-                        # whether the next request is still affordable, in RAM,
-                        # in open descriptors and against the global deadline.
-                        # It is also *charged* for what the measurement spent:
-                        # without `requests=`/`bytes=` the totals stayed 0 and
-                        # `--max-requests`/`--run-max-bytes` were silent no-ops
-                        # (F12, defect 23).
-                        await gate.acquire(fds=1)
-                        try:
-                            row = await probe(proxy, config, limiter)
-                        finally:
-                            await gate.release(fds=1, requests=measurement_requests(row),
-                                               bytes=measurement_bytes(row))
-                    except chain.BudgetExhausted as exc:
-                        # The budget ended the run; it did not fail this address.
-                        # Recording it as UNREACHABLE would turn "we stopped" into
-                        # "the proxy is dead" and publish that lie.
-                        budget_stop['reason'] = exc.code
-                        ledger.release(proxy)
+        This is the source half of the chain: the corpus is read a page at a
+        time and handed to the pipeline as a stream, so the first probes start
+        while the last addresses are still being read, and a run holds a page of
+        the collection instead of all of it.  ``collect`` still fills the
+        collection first — the addresses have to be in the database to be a
+        scope — but from here the bytes flow into the measurements directly.
+        """
+        # Proven addresses first, so the first results of a run are the ones
+        # most likely to work.  With an empty known-good index the order is the
+        # address order, which is also the cheapest order to insert into SQLite.
+        phases = (True, False) if proven else (None,)
+        for phase in phases:
+            last = ''
+            while True:
+                page = [proxy for (proxy,) in db.execute(
+                    'SELECT e.canonical FROM membership m JOIN endpoints e ON e.id = m.endpoint_id '
+                    'WHERE m.collection_id = ? AND e.canonical > ? ORDER BY e.canonical LIMIT ?',
+                    (collection_id, last, CANDIDATE_PAGE))]
+                if not page:
+                    break
+                last = page[-1]
+                if want:
+                    # find-N mode shuffles so early results are not all from one
+                    # subnet or source.  Per page, so the shuffle is still spread
+                    # over the corpus without materialising the corpus to do it.
+                    random.shuffle(page)
+                body = []
+                for proxy in page:
+                    if (only is not None and proxy not in only) or not selected(proxy):
                         continue
-                    except Exception as exc:
-                        # One malformed proxy must never stop the whole scan, and
-                        # the reason it died is recorded with a stage so the
-                        # funnel can count it (F10, F25).
-                        row = unreachable_result(proxy)
-                        row['error'] = type(exc).__name__
-                        row['error_stage'], row['error_code'] = diagnostics.classification(exc)
-                    if verdict is not None:
-                        row['reputation'] = verdict
-                store(proxy, row)
-            finally:
-                queue.task_done()
+                    if proxy in done:
+                        # Its verdict is still trustworthy, so this run does not
+                        # measure it again — the same rule the whole continuation
+                        # is built on, applied where the addresses are read.
+                        continue
+                    if phase is not None and (proxy in proven) is not phase:
+                        continue
+                    body.append(proxy)
+                if not body:
+                    continue
+                yield ''.join(f'{proxy}\n' for proxy in body).encode('utf-8')
+
+    rows: dict[str, dict] = {}
+    store_failures: list[str] = []
+
+    def finish(proxy):
+        """Write the verdict the chain has just decided, before the next item.
+
+        Durability belongs here, inside the chain, and not in the consumer of
+        the result stream: a run interrupted between the decision and the
+        hand-off would otherwise lose a measurement it had already paid for and
+        re-measure the address next time.  A write that fails is counted rather
+        than raised — one unwritable row must not take the run down — and the
+        count is reported with the rest of the run.
+        """
+        row = rows.pop(proxy, None)
+        if row is None:
+            return
+        try:
+            store(proxy, row)
+        except Exception as exc:  # noqa: BLE001 - one row must not end the run
+            store_failures.append(type(exc).__name__)
+
+    async def cheap_stage(item, *, stage, limit):
+        """The cheap stage: does anything accept a connection at this address?
+
+        A TCP connect is a fraction of a full request and no HTTP request at all,
+        so it is charged no request — only the descriptors it holds.  Most public
+        addresses are dead, and dropping them here is what keeps a sweep of a
+        large corpus affordable.
+        """
+        nonlocal unreachable
+        proxy = item.endpoint
+        if await reachable(proxy, prefilter_timeout):
+            return chain.StageOutcome(stage, True)
+        unreachable += 1
+        rows[proxy] = unreachable_result(proxy)
+        finish(proxy)
+        return chain.StageOutcome(stage, False, code='UNREACHABLE', failed_stage='tcp')
+
+    def _verdict(stage, row, *, final):
+        """One stage's own answer: what it measured, and what the run makes of it.
+
+        ``final`` is the stage that applies the run's own policy (denylist,
+        anonymity level, latency) and therefore the last word; earlier stages only
+        report whether the measurement itself worked.
+        """
+        ok = counts_as_passed(row) if final else _worked(row)
+        if ok:
+            return chain.StageOutcome(stage, True, exit_ip=exit_address_of(row) or None,
+                                      latency_ms=_number(row.get('latency_ms')) or None,
+                                      requests=measurement_requests(row), bytes=measurement_bytes(row))
+        if row.get('error'):
+            return chain.StageOutcome(stage, False, code=row.get('error') or 'PROBE_FAILED',
+                                      failed_stage=row.get('error_stage') or 'target',
+                                      latency_ms=_number(row.get('latency_ms')) or None,
+                                      requests=measurement_requests(row), bytes=measurement_bytes(row))
+        return chain.StageOutcome(stage, False, code='POLICY_REJECTED', failed_stage='policy',
+                                  exit_ip=exit_address_of(row) or None,
+                                  requests=measurement_requests(row), bytes=measurement_bytes(row))
+
+    async def basic_stage(item, *, stage, limit):
+        """The basic stage: the reputation screen, then one request per target.
+
+        ``probe`` is the caller's own seam and is called exactly as before, with
+        the profile and the rate limiter, so a caller that injects a probe gets
+        the measurements it injected and no more.
+        """
+        proxy = item.endpoint
+        if screen is not None:
+            try:
+                verdict = await screen(proxy, config)
+            except Exception:
+                verdict = {'status': 'unknown', 'checked_at': time.time(), 'error': 'SCREEN_ERROR',
+                           'local_rule': None, 'dnsbl': []}
+            if verdict_blocks(verdict, strict):
+                rows[proxy] = blocked_result(proxy, verdict)
+                return chain.StageOutcome(stage, False, code=str(verdict.get('status') or 'BLOCKED').upper(),
+                                          failed_stage='reputation')
+        try:
+            row = await probe(proxy, config, limiter)
+        except Exception as exc:
+            # One malformed proxy must never stop the whole scan, and the reason
+            # it died is recorded with a stage so the funnel can count it
+            # (F10, F25).
+            row = unreachable_result(proxy)
+            row['error'] = type(exc).__name__
+            row['error_stage'], row['error_code'] = diagnostics.classification(exc)
+        if not isinstance(row, dict):
+            row = unreachable_result(proxy)
+            row['error'] = 'BAD_PROBE_RESULT'
+        rows[proxy] = row
+        if expensive_probe is None:
+            finish(proxy)
+        return _verdict(stage, row, final=expensive_probe is None)
+
+    async def expensive_stage(item, *, stage, limit):
+        """The expensive stage: what only a proxy that already works may cost.
+
+        The judge is somebody else's service and the bandwidth test reads a body:
+        this is where the per-target limits and the run's byte budget apply, which
+        is exactly what did not happen while both were folded into one call.
+        """
+        proxy = item.endpoint
+        row = rows.get(proxy)
+        if row is None:  # pragma: no cover - the basic stage always stores a row
+            return chain.StageOutcome(stage, True)
+        try:
+            row = await expensive_probe(proxy, config, limiter, row)
+        except Exception as exc:
+            # A judge that failed is unknown, never a pass, and it must not throw
+            # away a working measurement: the basic verdict stays and the reason
+            # is recorded on the row.
+            row = dict(row)
+            row['expensive_error'] = type(exc).__name__
+        if not isinstance(row, dict):
+            row = dict(rows.get(proxy) or unreachable_result(proxy))
+        rows[proxy] = row
+        finish(proxy)
+        return _verdict(stage, row, final=True)
+
+    config_chain = chain.PipelineConfig(
+        sources=(chain.SourceSpec(source_id=f'collection:{collection_id}', fetch=candidates),),
+        budgets=budgets, limits=limits, find=find,
+        # What the store already proves in the requested unit.  Those verdicts are
+        # not measured again, so the chain cannot count them a second time.
+        initial_met=seeded,
+        runners=chain.Runners(cheap=cheap_stage if prefilter else None,
+                               basic=basic_stage,
+                               expensive=expensive_stage if expensive_probe is not None else None),
+        normalize=_already_canonical, parse=chain.parse_lines,
+        run_cheap=bool(prefilter), run_basic=True,
+        run_expensive=expensive_probe is not None,
+        # Every proxy this run is willing to publish pays for the expensive
+        # stage: its verdict is what the anonymity level and the latency filter
+        # are judged on, so a proxy that skipped it could not be published.
+        expensive_policy=chain.EXPENSIVE_ALL_PASSING,
+        carry_fresh_prior=False)
+    engine = chain.Pipeline(config_chain, clock=chain.SystemClock(),
+                            concurrency=chain.AdaptiveConcurrency(
+                                minimum=1, maximum=budgets.worker_ceiling(),
+                                target_success=0.8, window=16, increase=2, decrease_factor=0.5))
 
     def publish():
         elapsed = max(0.001, time.monotonic() - started)
         speed = (completed - initial) / elapsed
         eta = (total - completed) / speed if speed else 0
         incomplete = completed < total
-        if budget_stop['reason']:
+        live = engine.progress()
+        found_now = live.met
+        state, reason, detail = engine.stopped()
+        if reason in ('budget_exhausted', 'deadline_exceeded'):
+            # The budget ended the run, and the budget's own code is reported in
+            # place of the bare reason: "stopped" does not say which ceiling was
+            # reached or how much of it was spent.
             snapshot_state = 'partial'
-            stop_reason = budget_stop['reason']
+            stop_reason = detail or reason
         elif recheck_passing:
             snapshot_state = 'partial'
             stop_reason = 'recheck_passing'
-        elif incomplete and enough.is_set():
+        elif reason in ('cancelled', 'paused', 'stopped'):
+            # A run that did not finish is "stopped" to everything downstream —
+            # the job, the export, the report.  The chain's finer reason is kept
+            # beside it rather than replacing it.
+            snapshot_state = 'partial'
+            stop_reason = 'stopped'
+        elif reason == 'want_reached':
+            snapshot_state = 'partial'
+            stop_reason = 'want_reached'
+        elif reason == 'items_exhausted':
+            snapshot_state, stop_reason = 'complete', 'complete'
+        elif incomplete and want and found_now >= want:
             snapshot_state = 'partial'
             stop_reason = 'want_reached'
         elif incomplete:
@@ -1917,23 +2247,33 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
         else:
             snapshot_state = 'complete'
             stop_reason = 'complete'
-        if find.enabled and not incomplete and found['items'] < find.n:
+        if find.enabled and not incomplete and found_now < find.n:
             # The sweep finished and the requested unit is still short.  Saying
             # `complete` alone left "N unique IPs" indistinguishable from a
             # corpus of nothing; the reason names the unit that was unreachable.
-            stop_reason = ('want_unreachable_' + find.what if not found['items']
+            stop_reason = ('want_unreachable_' + find.what if not found_now
                            else 'want_short_' + find.what)
         counts = {'endpoints': passed, 'unique_ips': len(unique_ips),
                   'exit_ips': len(unique_exits)}
+        metrics = engine.live_metrics()
+        spent = engine.resources()
         if run_state is not None:
             run_state.update(profile=profile, state=snapshot_state, stop_reason=stop_reason,
+                             chain_stop=reason, chain_state=state,
                              scope_candidates=total, checked=completed, pending=max(0, total - completed),
-                             passed=passed, found=found['items'], count_what=find.what, **counts)
+                             passed=passed, found=found_now, count_what=find.what,
+                             workers=metrics.workers, peak_inflight=metrics.peak_inflight,
+                             requests=spent.requests, bytes=spent.bytes, peak_fds=metrics.peak_fds,
+                             concurrency=metrics.concurrency, **counts)
         if on_progress:
             on_progress(dict(phase='scanning', profile=profile, checked=completed, candidates=total, passed=passed,
                              pending=max(0, total - completed), state=snapshot_state, stop_reason=stop_reason,
-                             scope_candidates=total, speed=round(speed, 2), found=found['items'],
-                             eta_seconds=round(eta) if speed else None, workers=workers,
+                             chain_stop=reason,
+                             scope_candidates=total, speed=round(speed, 2), found=found_now,
+                             eta_seconds=round(eta) if speed else None, workers=metrics.workers,
+                             peak_inflight=metrics.peak_inflight, peak_fds=metrics.peak_fds,
+                             requests=spent.requests, bytes=spent.bytes,
+                             concurrency=metrics.concurrency,
                              reputation=status_counts, unreachable=unreachable, **counts))
         if progress:
             print(tr(f'Проверено {completed}/{total}; {speed:.1f} прокси/с; осталось ~{eta / 60:.1f} мин', f'Checked {completed}/{total}; {speed:.1f} proxies/s; ~{eta / 60:.1f} min left'), flush=True)
@@ -1943,19 +2283,45 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
             publish()
             await asyncio.sleep(2)
 
+    def unmeasured(result):
+        """Whether a result is a measurement the run must not record as one.
+
+        A spent budget ends the run; it does not make the addresses it did not
+        reach dead.  Such an item is never handed to a runner at all — the gate
+        refuses the stage before the socket is opened — so this only guards the
+        rare case where a stage failed for a budget reason after it started.
+        """
+        codes = {outcome.code for outcome in result.stages if not outcome.ok}
+        return bool(codes & {chain.E_LIMIT_BUDGET, chain.DEADLINE_EXCEEDED, chain.E_LIMIT_BODY})
+
+    reporter_task = None
+
     try:
+        async def consume():
+            """Drain the result stream; the verdicts are already written.
+
+            Each item is written the moment the chain decides it, inside the
+            stage that decided it, so an interrupted run keeps what it measured.
+            The stream is still read here, because a chain whose results nobody
+            takes blocks once its queue is full.
+            """
+            try:
+                async for result in engine.stream():
+                    if unmeasured(result) and result.endpoint in rows:
+                        rows.pop(result.endpoint, None)
+            finally:
+                # The chain is over, so the live report is over with it.  Left
+                # running it would keep the run alive after the last result.
+                if reporter_task is not None:
+                    reporter_task.cancel()
+
         async with asyncio.TaskGroup() as group:
             if progress or on_progress:
                 reporter_task = group.create_task(reporter())
-            group.create_task(producer())
-            if prefilter:
-                group.create_task(prefilter_stage())
-            tasks = [group.create_task(worker()) for _ in range(workers)]
-            await asyncio.gather(*tasks)
-            if progress or on_progress:
-                reporter_task.cancel()
+            group.create_task(consume())
     finally:
         db.commit()
+        rows.clear()
         publish()
     return profile
 
@@ -2953,11 +3319,11 @@ def parser():
     p.add_argument('--version', action='version', version=f'{PRODUCT_NAME} {PRODUCT_VERSION}')
     p.add_argument('command', choices=['collect', 'scan', 'run', 'export', 'get', 'test', 'serve', 'gateway', 'clear-data', 'update-geoip',
                                       'import', 'source', 'api-key', 'pool', 'schedule', 'profile',
-                                      'preset', 'backup', 'geo', 'diagnose'],
+                                      'preset', 'backup', 'geo', 'diagnose', 'bench'],
                    help=tr('run — собрать и проверить; collect — только собрать; scan — только проверить; '
                            'export — пересобрать файлы; get — вывести готовые прокси; test — проверить свои прокси; '
                            'serve — локальное API; gateway — ротирующий прокси; '
-                           'update-geoip — база стран; '
+                           'update-geoip — база стран; bench — замер конвейера на локальной фикстуре; '
                            'import/source — свои списки и подписки; api-key — ключи локального API; '
                            'pool/schedule — постоянные пулы и расписания; profile/preset — профили и наборы сервисов; '
                            'backup — резервные копии; geo — состояние базы стран; '
@@ -2965,7 +3331,7 @@ def parser():
                            'run: collect and check; collect: only collect; scan: only check; '
                            'export: rebuild the files; get: print working proxies; test: check given proxies; '
                            'serve: local API; gateway: rotating proxy; '
-                           'update-geoip: country database; '
+                           'update-geoip: country database; bench: pipeline benchmark on a local fixture; '
                            'import/source: your own lists and subscriptions; api-key: local API keys; '
                            'pool/schedule: steady pools and schedules; profile/preset: profiles and service sets; '
                            'backup: database backups; geo: country database state; '
@@ -3198,6 +3564,19 @@ def parser():
                    help=tr('бюджет запросов на задание; 0 — без потолка', 'request budget for the run; 0 = no ceiling'))
     p.add_argument('--run-max-bytes', dest='run_max_bytes', type=int, default=None,
                    help=tr('бюджет байтов на задание; 0 — без потолка', 'byte budget for the run; 0 = no ceiling'))
+    p.add_argument('--max-per-host', dest='max_per_host', type=int, default=1,
+                   help=tr('одновременных проверок одного адреса узла; 1 — не долбить одну машину',
+                           'simultaneous measurements of one host; 1 = do not hammer one machine'))
+    p.add_argument('--min-host-interval', dest='min_host_interval', type=float, default=0.0,
+                   help=tr('минимальная пауза между двумя проверками одного узла, секунд',
+                           'minimum pause between two measurements of one host, seconds'))
+    p.add_argument('--judge-concurrency', dest='judge_concurrency', type=int, default=2,
+                   help=tr('одновременных обращений к judge и замеров скорости; это чужая служба',
+                           'simultaneous judge requests and speed tests; it is somebody else’s service'))
+    p.add_argument('--bench-items', type=int, default=2000,
+                   help=tr('bench: адресов в синтетической фикстуре', 'bench: addresses in the synthetic fixture'))
+    p.add_argument('--bench-n', dest='bench_n', type=int, default=20,
+                   help=tr('bench: какого N достигать в замере', 'bench: which N to reach in the benchmark'))
     p.add_argument('--text', action='append', default=[],
                    help=tr('значение для проверки, например source redact URL; можно повторять',
                            'value to inspect, e.g. source redact URL; may be repeated'))
@@ -3377,6 +3756,35 @@ def test_proxies(args):
 #: driving a scan.  They run under the same data lock, on the same database.
 MANAGEMENT_COMMANDS = ('import', 'source', 'api-key', 'pool', 'schedule', 'profile',
                        'preset', 'backup', 'geo', 'diagnose')
+
+
+def bench_chain(args):
+    """Measure the chain on its own fixture and print what it measured.
+
+    This is the only place a user can see the chain's own numbers, and it is a
+    local synthetic run: documentation addresses, a stub measurement, no socket
+    and no DNS.  The notice travels with every number, because a throughput
+    figure without it reads as a claim about live public proxies.
+    """
+    from . import pipeline as chain
+    try:
+        report = chain.benchmark(items=max(1, int(args.bench_items)), find_n=max(0, int(args.bench_n)),
+                                 what=args.count_what).to_public()
+    except chain.PipelineError as exc:
+        print(tr(f'Ошибка замера: {exc}', f'Benchmark failed: {exc}'), file=sys.stderr)
+        return 2
+    emit(args, report)
+    if not args.json:
+        print(tr(f'Фикстура {report["fixture"]} (digest {report["digest"]}), адресов {report["items"]}, '
+                 f'состояние {report["state"]}, {report["measured"]} измерений, '
+                 f'{report["items_per_s"]:.1f} в секунду, первый результат {report["time_to_first_s"]:.3f} с, '
+                 f'до N {report["time_to_n_s"] if report["time_to_n_s"] is not None else "—"} с.',
+                 f'Fixture {report["fixture"]} (digest {report["digest"]}), {report["items"]} addresses, '
+                 f'state {report["state"]}, {report["measured"]} measured, {report["items_per_s"]:.1f}/s, '
+                 f'first result {report["time_to_first_s"]:.3f}s, '
+                 f'to N {report["time_to_n_s"] if report["time_to_n_s"] is not None else "—"}s.'), flush=True)
+        print(report['notice'], file=sys.stderr)
+    return 0
 
 
 def management_command(args):
@@ -4259,6 +4667,8 @@ def main(argv=None):
             or not 0 <= args.source_max_redirects <= MAX_SOURCE_REDIRECTS
             or not 0 <= args.min_success <= 1 or args.want < 0 or args.prefilter < 0
             or not math.isfinite(args.prefilter_timeout) or args.prefilter_timeout <= 0
+            or args.max_per_host < 1 or args.judge_concurrency < 1
+            or not math.isfinite(args.min_host_interval) or args.min_host_interval < 0
             or not math.isfinite(args.watch) or args.watch < 0):
         p.error(tr('Неверные числовые параметры', 'Invalid numeric options'))
     try:
@@ -4289,6 +4699,8 @@ def main(argv=None):
         return print_proxies(args, countries)
     if args.command == 'test':
         return test_proxies(args)
+    if args.command == 'bench':
+        return bench_chain(args)
     denylist_path = args.denylist_file or args.data / 'denylist.txt'
     denylist = Denylist.from_file(denylist_path, normalizer=normalize)
     collect_denylist = Denylist.empty() if args.local_denylist is False else denylist
@@ -4446,18 +4858,46 @@ def main(argv=None):
                         return await screen_proxy(proxy, policy, denylist)
                 return await screen_proxy(proxy, policy, denylist)
 
+            # The judge and the bandwidth download are the expensive half of one
+            # measurement, and they are the half that may only be paid for by a
+            # proxy that already works.  They are wired here as the chain's
+            # expensive stage instead of being folded into the request stage, so
+            # that somebody else's service and a body-sized download are bounded
+            # by the per-target limits and by the run's byte budget — which is
+            # exactly what did not happen while both were one call.
             probe = check_proxy
-            if config.get('anonymity'):
-                try:
-                    own_ips = asyncio.run(detect_own_ips(config))
-                except (httpx.HTTPError, TimeoutError, OSError, ValueError) as exc:
-                    reason = str(exc) if isinstance(exc, ValueError) else type(exc).__name__
-                    print(tr(f'Не удалось определить внешний IP через judge URL: {reason}', f'Could not detect the external IP through the judge URL: {reason}'), file=sys.stderr)
-                    raise
-                print(tr(f'Проверка анонимности: judge {public_url(config["anonymity"]["judge_url"])}', f'Anonymity check: judge {public_url(config["anonymity"]["judge_url"])}'), flush=True)
+            expensive_probe = None
+            basic_config = config
+            own_ips = ()
+            if config.get('anonymity') or config.get('speedtest'):
+                if config.get('anonymity'):
+                    try:
+                        own_ips = asyncio.run(detect_own_ips(config))
+                    except (httpx.HTTPError, TimeoutError, OSError, ValueError) as exc:
+                        reason = str(exc) if isinstance(exc, ValueError) else type(exc).__name__
+                        print(tr(f'Не удалось определить внешний IP через judge URL: {reason}', f'Could not detect the external IP through the judge URL: {reason}'), file=sys.stderr)
+                        raise
+                    print(tr(f'Проверка анонимности: judge {public_url(config["anonymity"]["judge_url"])}', f'Anonymity check: judge {public_url(config["anonymity"]["judge_url"])}'), flush=True)
+                # The profile hash covers the whole profile, judge and speedtest
+                # included, so only the copy the request stage reads is trimmed.
+                basic_config = {key: value for key, value in config.items()
+                                if key not in ('anonymity', 'speedtest')}
 
                 async def probe(proxy, scan_config, limiter):
-                    return await check_proxy(proxy, scan_config, limiter, own_ips=own_ips)
+                    return await check_proxy(proxy, basic_config, limiter)
+
+                async def expensive_probe(proxy, scan_config, limiter, row):
+                    """Judge and bandwidth for a proxy that already works.
+
+                    The same two conditions the single call used to apply: the
+                    judge is asked only of a proxy that reached a target, and the
+                    bandwidth only of a proxy that reached every one of them.
+                    """
+                    if scan_config.get('anonymity') and own_ips and row.get('successes'):
+                        row['anonymity'] = await judge_proxy(proxy, scan_config, limiter, own_ips)
+                    if scan_config.get('speedtest') and (row.get('min_target_reliability') or 0) > 0:
+                        row['speed'] = await measure_speed(proxy, scan_config, limiter)
+                    return row
 
             prefilter = fit_prefilter(workers, args.prefilter)
 
@@ -4480,6 +4920,10 @@ def main(argv=None):
                                                max_requests=args.max_requests or None,
                                                max_bytes=args.run_max_bytes or None,
                                                count_what=args.count_what,
+                                               max_per_host=args.max_per_host,
+                                               min_host_interval_s=args.min_host_interval,
+                                               target_inflight=args.judge_concurrency,
+                                               expensive_probe=expensive_probe,
                                                job_store=scan_workbench.jobs() if scan_workbench else None,
                                                job_id=current_job_id[0],
                                                run_state=state, **options), args.stop_file))
