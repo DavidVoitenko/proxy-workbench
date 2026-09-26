@@ -872,6 +872,13 @@ PARSERS = {
 }
 
 
+def _is_blank(body):
+    """True for a body that carries no content at all."""
+    if not isinstance(body, (bytes, bytearray, memoryview)):
+        return False
+    return not bytes(body).strip()
+
+
 def parse_page(body, profile, page_context=None, limits=None):
     """Parse one bounded page; all returned records are still unnormalized."""
     limits = _limits(limits)
@@ -886,6 +893,14 @@ def parse_page(body, profile, page_context=None, limits=None):
     parser = PARSERS.get(kind)
     if parser is None:
         raise AdapterError("SOURCE_ADAPTER_UNSUPPORTED")
+    if _is_blank(body):
+        # A source that answers 200 with a valid ETag and no bytes delivered
+        # nothing.  That is its own outcome, and it is not the same thing as a
+        # broken format: reporting it as "invalid JSON" or "unreadable table"
+        # would blame the document for an empty body and would make a silent
+        # no-op look like a read failure.
+        return dict(state="empty", records=[], rejects={}, pages=1, metadata={},
+                    next=None, truncated=False, reason="SOURCE_EMPTY_BODY")
     try:
         result = parser(body, {**profile, "profile": profile.get("profile", "generic-v1"),
                                "config": profile.get("config", {})}, page_context or {}, limits)

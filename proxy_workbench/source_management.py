@@ -55,6 +55,10 @@ ACCESS_REASONS = {
     "free_with_api_key": "Нужен API-ключ; приложение не хранит ключи.",
     "own_infrastructure": "Собственная инфраструктура.",
     "snapshot_unavailable": "Снимок в исследовании получить не удалось.",
+    # Not an access rule and not a format rule: the catalog record itself
+    # refuses collection.  The reason is in the record, and it is shown next to
+    # this line rather than replaced by a guess.
+    "catalog_not_enabled": "Каталог не разрешает сбор этого источника.",
 }
 FETCH_STATES = ("not_run", "not_attempted", "http_2xx_nonempty", "empty_body", "not_modified",
                 "http_429", "http_error", "timeout", "blocked_destination", "redirect_blocked", "canceled")
@@ -277,6 +281,8 @@ def attach_contributions(runtime, db, source_ids):
     if db is None or not ids or len(ids) > MAX_CONTRIBUTION_SOURCES:
         return runtime
     from . import proxytool
+    # proxytool grows independently of this module; an older engine that has not
+    # learned the query yet leaves the contribution honestly absent.
     if hasattr(proxytool, 'source_contributions'):
         for source_id, values in proxytool.source_contributions(db, ids).items():
             runtime[source_id]['contribution'] = values
@@ -302,6 +308,11 @@ def public_row(source, *, selected_ids=(), disabled_ids=(), set_ids=(), runtime=
     evidence = source.get('evidence') or {}
     reason = not_proxy_reason(source)
     blocked = access_reason(source) if source.get('collection_allowed', True) is False else None
+    if blocked is None and source.get('collection_allowed', True) is False:
+        # A record can refuse collection without an access rule naming it. The
+        # catalog's own words are the only honest answer, so they are carried
+        # through instead of the row pretending there is no explanation.
+        blocked = 'catalog_not_enabled'
     rights = source.get('rights') or {}
     endpoints = [{'id': item.get('id'), 'role': item.get('role'), 'url': _endpoint_url(item.get('url', ''), redact)}
                  for item in source.get('endpoints') or []]
@@ -310,6 +321,7 @@ def public_row(source, *, selected_ids=(), disabled_ids=(), set_ids=(), runtime=
         'name': source.get('name') or source['id'],
         'publisher': source.get('publisher') or {},
         'family_id': source.get('family_id'),
+        'dataset_group': source_catalog.dataset_group_of(source),
         'category': source.get('category', 'unknown'),
         'homepage': source.get('homepage', ''),
         'documentation_url': source.get('documentation_url', ''),
@@ -319,6 +331,7 @@ def public_row(source, *, selected_ids=(), disabled_ids=(), set_ids=(), runtime=
         'protocols': list(source.get('protocols') or []),
         'formats': list(source.get('formats') or []),
         'adapter': (source.get('adapter') or {}).get('kind') or 'none',
+        'support': source_catalog.support_status(source),
         'payload_role': source.get('payload_role', 'unknown'),
         'access': (source.get('access') or {}).get('kind', 'unknown'),
         'access_group': access_group((source.get('access') or {}).get('kind')),
@@ -326,6 +339,7 @@ def public_row(source, *, selected_ids=(), disabled_ids=(), set_ids=(), runtime=
         'quota_text': source.get('quota_text', 'unknown'),
         'account_required': bool(source.get('account_required')),
         'collection_allowed': bool(source.get('collection_allowed', True)),
+        'collection_note': (source.get('priority_reason') or source.get('access_note', '')),
         'rights': {'terms_url': terms_url(source), 'data_license': rights.get('data_license', 'unknown'),
                    'code_license': rights.get('code_license', 'unknown'), 'checked_at': rights.get('checked_at')},
         'rights_approved': bool(source.get('rights_approved')),
@@ -333,6 +347,7 @@ def public_row(source, *, selected_ids=(), disabled_ids=(), set_ids=(), runtime=
         'not_proxy_source': reason,
         'not_proxy_source_reason': NOT_PROXY_REASONS.get(reason, ''),
         'access_blocked_reason': ACCESS_REASONS.get(blocked, 'Требуется отдельный доступ, которого у приложения нет.' if blocked else None),
+        'access_blocked_code': blocked,
         'custom': bool(custom),
         'retired': bool(source.get('catalog_retired')),
         'selected': source['id'] in set(selected_ids),
@@ -398,7 +413,10 @@ STATE_FILTERS = {
     'not_proxy_source': lambda row, now: bool(row['not_proxy_source']),
     'provider': lambda row, now: row['access_group'] in PROVIDER_GROUPS,
     'needs_access': lambda row, now: bool(row['access_blocked_reason']),
-    'rights_unresolved': lambda row, now: not row['rights_approved'] and row['rights']['data_license'] not in ('unknown', '', None),
+    # The same rule the row badge uses, so a filter and the badge it filters on
+    # can never answer different questions about the same row.
+    'rights_unresolved': lambda row, now: (not row['collectable'] and not row['rights_approved']
+                                           and row['rights']['data_license'] not in ('unknown', '', None)),
     'never_checked': lambda row, now: row['runtime'].get('observed_at') is None,
     'has_data': lambda row, now: row['runtime'].get('observed_at') is not None,
     'last_good': lambda row, now: bool(row['runtime'].get('generation')),
@@ -560,7 +578,9 @@ def build_view(catalog, selection, runtime=None, query=None, *, redact=True, now
     if filters.get('state'):
         predicate = STATE_FILTERS[filters['state']]
         rows = [row for row in rows if predicate(row, now)]
-    rows = _sort_rows(rows, filters.get('sort') or 'name')
+    custom_ids = [item.get('id') for item in (selection.get('custom_sources') or [])
+                  if isinstance(item, dict) and item.get('id')]
+    rows = _sort_rows(rows, filters.get('sort') or 'name', custom_ids)
     total = len(rows)
     offset = filters.get('offset', 0)
     limit = filters.get('limit', 200)
@@ -637,8 +657,19 @@ def _retired_view_record(source_id):
             'maturity': 'retired', 'catalog_state': 'retired', 'tags': ['retired']}
 
 
-def _sort_rows(rows, key):
+def _sort_rows(rows, key, custom_order=None):
     runtime_contribution = lambda row: (row['runtime'].get('contribution') or {}).get('exclusive') or 0
+    # A user's own lists keep the order they added them in: the catalog screen
+    # and the state filter must not disagree about the same two rows.
+    if custom_order:
+        order = {source_id: index for index, source_id in enumerate(custom_order)}
+
+        def custom_first(row):
+            if row['id'] in order:
+                return (0, order[row['id']], '')
+            return (1, 0, str(row['name']).lower())
+    else:
+        custom_first = None
     keys = {
         'name': lambda row: (str(row['name']).lower(), row['id']),
         'id': lambda row: row['id'],
@@ -648,6 +679,8 @@ def _sort_rows(rows, key):
         'accepted': lambda row: -(row['runtime'].get('accepted') or 0),
         'exclusive': lambda row: -runtime_contribution(row),
     }
+    if custom_first is not None:
+        return sorted(rows, key=lambda row: (custom_first(row), keys.get(key, keys['name'])(row)))
     return sorted(rows, key=keys.get(key, keys['name']))
 
 
@@ -747,6 +780,11 @@ def cache_state(db, source_id, now=None):
                              FROM source_generation WHERE source_id=? ORDER BY id DESC LIMIT 10''', (source_id,))
         generations = [dict(zip(('id', 'state', 'active', 'last_good', 'created_at', 'record_count',
                                  'estimated_bytes', 'endpoint_url'), row)) for row in rows]
+        # The stored endpoint is the URL after every redirect, query string
+        # included. A CDN that signs its list would leak that signature through
+        # the API, so it is redacted the same way every other shown URL is.
+        for item in generations:
+            item['endpoint_url'] = _endpoint_url(item.get('endpoint_url'), True)
         totals = dict(db.execute('SELECT source_id,COALESCE(SUM(estimated_bytes),0) FROM source_generation'
                                  ' GROUP BY source_id').fetchall()).get(source_id, 0)
     except sqlite3.Error:
@@ -757,12 +795,18 @@ def cache_state(db, source_id, now=None):
             'cached_bytes': totals}
 
 
-def source_addresses(db, source_id, *, exclusive=False, limit=200_000):
+def source_addresses(db, source_id, *, exclusive=False, limit=200_000, dataset_groups=None):
     """Addresses this source already delivered to the local database.
 
     ``exclusive=True`` keeps only addresses that no other publisher family
     offers, so excluding them from the current scope removes this source's own
     contribution without touching addresses somebody else still provides.
+
+    ``dataset_groups`` is the catalog's ``{source_id: dataset group}`` map.  It
+    is optional and defaults to the family rule; when it is given, a source
+    whose dataset another source already serves is not an independent
+    publisher even if the two come from different people, which is exactly the
+    case a snapshot comparison in the source research found.
     """
     if db is None:
         return set()
@@ -772,12 +816,31 @@ def source_addresses(db, source_id, *, exclusive=False, limit=200_000):
             return set(own) if not exclusive else set()
         families = dict(db.execute('SELECT source_id,family_id FROM source_identity WHERE family_id IS NOT NULL'))
         mine = families.get(source_id, source_id)
-        others = set()
-        for proxy, source in db.execute('SELECT proxy,source FROM candidate_seen'):
-            if source != source_id and families.get(source, source) != mine:
-                others.add(proxy)
-                if own <= others:
-                    break
+        if isinstance(dataset_groups, dict) and dataset_groups:
+            mine = dataset_groups.get(source_id, mine)
+        # The comparison is a set question, so it is asked of the index instead
+        # of by reading every membership row into Python: this runs under the
+        # workbench lock, and a full scan there blocks the whole application.
+        db.execute('CREATE TEMP TABLE IF NOT EXISTS own_source_address (proxy TEXT PRIMARY KEY)')
+        db.execute('DELETE FROM own_source_address')
+        db.executemany('INSERT OR IGNORE INTO own_source_address VALUES (?)', ((proxy,) for proxy in own))
+        # Same rule as before, asked of the index: another source, in another
+        # publisher family, also offers the address. A source with no family
+        # row counts as its own family.
+        pairs = db.execute(
+            'SELECT DISTINCT c.proxy, c.source FROM candidate_seen c'
+            ' JOIN own_source_address o ON o.proxy = c.proxy'
+            ' LEFT JOIN source_identity i ON i.source_id = c.source'
+            ' WHERE c.source <> ?', (source_id,)).fetchall()
+        if isinstance(dataset_groups, dict) and dataset_groups:
+            # The identity of a *dataset* is a property of the catalog, not a
+            # column, so the last step of the comparison is done in Python on
+            # the joined pairs only -- never on the whole membership table.
+            others = {proxy for proxy, other in pairs
+                      if dataset_groups.get(other, families.get(other, other)) != mine}
+        else:
+            others = {proxy for proxy, other in pairs
+                      if families.get(other, other) != mine}
     except sqlite3.Error:
         return set()
     result = own - others

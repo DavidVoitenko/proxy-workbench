@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
   "catalog_id": "proxy-workbench.sources",
-  "revision": 2026092501,
-  "published_at": "2026-09-25T14:01:37Z",
+  "revision": 2026092502,
+  "published_at": "2026-09-26T09:12:00Z",
   "minimum_app_version": "2.3.0",
   "sources": [
     {
@@ -1129,6 +1129,7 @@
         "name": "dinoz0rg"
       },
       "family_id": "current:github:dinoz0rg/proxy-list",
+      "dataset_group": "dataset:dinoz0rg-checked-2037",
       "category": "txt-list",
       "homepage": "https://github.com/dinoz0rg/proxy-list",
       "documentation_url": "https://github.com/dinoz0rg/proxy-list/blob/main/README.md",
@@ -4444,6 +4445,7 @@
         "name": "hookzof"
       },
       "family_id": "current:github:hookzof/socks5_list",
+      "dataset_group": "dataset:hookzof-proxifly-socks5-21036",
       "category": "txt-list",
       "homepage": "https://github.com/hookzof/socks5_list",
       "documentation_url": "https://github.com/hookzof/socks5_list/blob/master/README.md",
@@ -4666,6 +4668,7 @@
         "name": "proxifly"
       },
       "family_id": "current:github:proxifly/free-proxy-list",
+      "dataset_group": "dataset:hookzof-proxifly-socks5-21036",
       "category": "txt-list",
       "homepage": "https://github.com/proxifly/free-proxy-list",
       "documentation_url": "https://github.com/proxifly/free-proxy-list/blob/main/README.md",
@@ -14957,6 +14960,7 @@
         "name": "dinoz0rg"
       },
       "family_id": "dinoz0rg",
+      "dataset_group": "dataset:dinoz0rg-checked-2037",
       "category": "structured-export",
       "homepage": "https://github.com/dinoz0rg/proxy-list",
       "documentation_url": "https://github.com/dinoz0rg/proxy-list#readme",
@@ -16809,7 +16813,7 @@
       "id": "quick",
       "name": "Базовый быстрый",
       "kind": "system",
-      "catalog_revision": 2026092501,
+      "catalog_revision": 2026092502,
       "members": [
         "cur-02",
         "cur-04",
@@ -16826,7 +16830,7 @@
       "id": "extended",
       "name": "Расширенный",
       "kind": "system",
-      "catalog_revision": 2026092501,
+      "catalog_revision": 2026092502,
       "members": [
         "cur-01",
         "cur-03",
@@ -16904,7 +16908,7 @@
       "id": "experimental",
       "name": "Экспериментальные",
       "kind": "system",
-      "catalog_revision": 2026092501,
+      "catalog_revision": 2026092502,
       "members": [
         "cur-37",
         "new-010",
@@ -16934,7 +16938,7 @@
       "id": "protocol:http",
       "name": "HTTP",
       "kind": "protocol",
-      "catalog_revision": 2026092501,
+      "catalog_revision": 2026092502,
       "members": [
         "cur-01",
         "cur-02",
@@ -17017,7 +17021,7 @@
       "id": "protocol:https",
       "name": "HTTPS",
       "kind": "protocol",
-      "catalog_revision": 2026092501,
+      "catalog_revision": 2026092502,
       "members": [
         "cur-06",
         "cur-08",
@@ -17064,7 +17068,7 @@
       "id": "protocol:socks4",
       "name": "SOCKS4",
       "kind": "protocol",
-      "catalog_revision": 2026092501,
+      "catalog_revision": 2026092502,
       "members": [
         "cur-47",
         "cur-48",
@@ -17111,7 +17115,7 @@
       "id": "protocol:socks5",
       "name": "SOCKS5",
       "kind": "protocol",
-      "catalog_revision": 2026092501,
+      "catalog_revision": 2026092502,
       "members": [
         "cur-41",
         "cur-42",
@@ -17161,7 +17165,7 @@
       "id": "custom",
       "name": "Пользовательские",
       "kind": "custom",
-      "catalog_revision": 2026092501,
+      "catalog_revision": 2026092502,
       "members": [],
       "auto_add_new": false
     }
