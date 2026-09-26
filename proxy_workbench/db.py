@@ -19,6 +19,9 @@ collections
     :func:`get_collection`, :func:`list_collections`, :func:`add_member`,
     :func:`remove_member`, :func:`collection_members`, :func:`endpoint_collections`,
     :func:`legacy_summary`
+scope exclusions
+    :func:`add_scope_exclusion`, :func:`scope_exclusions`, :func:`excluded_addresses`,
+    :func:`clear_scope_exclusions`
 backup
     :func:`create_backup`, :func:`verify_backup`, :func:`list_backups`, :func:`manifest_path`
 restore
@@ -58,7 +61,9 @@ from typing import Callable
 __all__ = [
     "SCHEMA_VERSION", "APPLICATION_ID", "DB_FILENAME", "BACKUP_DIRNAME",
     "PUBLIC_COLLECTION_ID", "LEGACY_COLLECTION_ID", "PUBLIC_COLLECTION_NAME",
-    "LEGACY_COLLECTION_NAME", "COLLECTION_KINDS", "MIGRATIONS",
+    "LEGACY_COLLECTION_NAME", "COLLECTION_KINDS", "MIGRATIONS", "SOURCE_TABLES_DDL",
+    "SOURCE_INDEXES", "SCHEDULE_RUNTIME_COLUMNS", "SCHEDULE_RUN_COLUMNS",
+    "SCOPE_EXCLUSION_DDL", "DEFAULT_SCOPE",
     "DbError", "DbVersionError", "DbForeignError", "DbCorruptError", "BackupError",
     "RetentionError", "Migration", "MigrationReport", "BackupManifest", "RestorePreview",
     "RestoreReport", "RetentionPolicy", "RetentionPreview", "RetentionReport",
@@ -68,7 +73,8 @@ __all__ = [
     "database_bytes", "table_bytes", "endpoint_id", "upsert_endpoint",
     "create_collection", "rename_collection", "archive_collection", "get_collection",
     "list_collections", "add_member", "remove_member", "collection_members",
-    "endpoint_collections", "legacy_summary", "create_backup", "verify_backup",
+    "endpoint_collections", "legacy_summary", "add_scope_exclusion", "scope_exclusions",
+    "excluded_addresses", "clear_scope_exclusions", "create_backup", "verify_backup",
     "list_backups", "manifest_path", "restore_preview", "restore", "rollback",
     "migrate_data_path", "retention_preview", "apply_retention", "cleanup_preview",
     "cleanup", "secret_bindings", "rebind_secrets", "write_json", "read_json",
@@ -79,7 +85,7 @@ __all__ = [
 # version identity
 # ---------------------------------------------------------------------------
 
-SCHEMA_VERSION = 15
+SCHEMA_VERSION = 18
 #: Magic number of this package. 0 means "no application id yet" (pre-versioning file).
 APPLICATION_ID = 0x50574231
 DB_FILENAME = "proxies.sqlite3"
@@ -570,7 +576,7 @@ def describe(conn):
 
 
 # ---------------------------------------------------------------------------
-# migrations 0..14
+# migrations 0..18
 # ---------------------------------------------------------------------------
 
 
@@ -1079,6 +1085,264 @@ def _m15(conn, context):
         conn.execute(statement)
 
 
+# ---------------------------------------------------------------------------
+# source desk, schedule runtime, scope exclusions (migrations 16..18)
+# ---------------------------------------------------------------------------
+
+#: The tables the source desk and the source views are written against.
+#:
+#: `source_feed` and `membership_source` are :data:`sourcedesk.REQUESTED_DDL`
+#: verbatim.  That constant is the contract between the module and the
+#: migrator, and HANDOFF/sources-handoff.ru.md §3.1.2 asks for it to stay a
+#: string nobody outside this file executes -- so the shape is repeated here and
+#: `tests/test_area_ddl_sourcedesk.py` compares the migrated table against a
+#: database built from the constant itself, so the two cannot drift.
+#:
+#: The other five come from the generation DDL of the sources branch, moved
+#: here as migrations instead of an `executescript` in that branch's `open_db`
+#: (§3.1 п. 5).  One translation was applied: the branch keys its rows by the
+#: address *string* (`source_generation_entry(generation_id, proxy)`), while
+#: CONTRACTS §1.1 makes `endpoints(id, canonical)` the one address entity, so
+#: that column is `endpoint_id` (§1.2 п. 6).
+#:
+#: Foreign keys are declared only where the parent is unconditionally written
+#: first: a generation exists before its entries, an observation before the
+#: generation that cites it.  `membership_source` deliberately has none -- the
+#: declared DDL has none, and `SourceDesk.apply_plan` writes the *canonical
+#: address* it got from `ImportedEndpoint.endpoint` into `endpoint_id`, so a
+#: reference to `endpoints(id)` would reject the module's own writes.  That
+#: two-address-models conflict is `HANDOFF/sources-handoff.ru.md` §2 C7 and it
+#: belongs to `sourcedesk.py`, not to a constraint invented here.
+SOURCE_TABLES_DDL = (
+    """CREATE TABLE IF NOT EXISTS source_observation(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id TEXT NOT NULL,
+        source_id TEXT NOT NULL,
+        endpoint_id TEXT NOT NULL,
+        started_at REAL NOT NULL,
+        ended_at REAL,
+        http_state TEXT NOT NULL,
+        parse_state TEXT NOT NULL,
+        cache_state TEXT NOT NULL,
+        outcome TEXT NOT NULL,
+        status INTEGER,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        pages INTEGER NOT NULL DEFAULT 0,
+        bytes INTEGER NOT NULL DEFAULT 0,
+        received INTEGER NOT NULL DEFAULT 0,
+        recognized INTEGER NOT NULL DEFAULT 0,
+        accepted INTEGER NOT NULL DEFAULT 0,
+        rejected INTEGER NOT NULL DEFAULT 0,
+        duplicate INTEGER NOT NULL DEFAULT 0,
+        duplicates_existing INTEGER NOT NULL DEFAULT 0,
+        blocked INTEGER NOT NULL DEFAULT 0,
+        new_endpoints INTEGER NOT NULL DEFAULT 0,
+        partial INTEGER NOT NULL DEFAULT 0,
+        error TEXT,
+        retryable INTEGER NOT NULL DEFAULT 0,
+        body_sha256 TEXT,
+        fallback_used INTEGER NOT NULL DEFAULT 0,
+        profile_digest TEXT,
+        retry_after REAL,
+        UNIQUE(run_id, source_id, endpoint_id))""",
+    """CREATE TABLE IF NOT EXISTS source_generation(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source_id TEXT NOT NULL,
+        observation_id INTEGER REFERENCES source_observation(id),
+        state TEXT NOT NULL,
+        active INTEGER NOT NULL DEFAULT 0,
+        last_good INTEGER NOT NULL DEFAULT 0,
+        created_at REAL NOT NULL,
+        record_count INTEGER NOT NULL DEFAULT 0,
+        estimated_bytes INTEGER NOT NULL DEFAULT 0,
+        profile_digest TEXT,
+        endpoint_url TEXT)""",
+    """CREATE TABLE IF NOT EXISTS source_generation_entry(
+        generation_id INTEGER NOT NULL REFERENCES source_generation(id),
+        endpoint_id TEXT NOT NULL,
+        metadata_json TEXT,
+        PRIMARY KEY(generation_id, endpoint_id)) WITHOUT ROWID""",
+    """CREATE TABLE IF NOT EXISTS source_state(
+        source_id TEXT NOT NULL,
+        endpoint_id TEXT NOT NULL,
+        final_url TEXT,
+        etag TEXT,
+        last_modified TEXT,
+        last_attempt_at REAL,
+        last_success_at REAL,
+        last_body_at REAL,
+        last_304_at REAL,
+        current_generation INTEGER,
+        last_good_generation INTEGER,
+        consecutive_failures INTEGER NOT NULL DEFAULT 0,
+        backoff_until REAL,
+        quarantine_until REAL,
+        retry_after REAL,
+        last_error TEXT,
+        profile_digest TEXT,
+        PRIMARY KEY(source_id, endpoint_id)) WITHOUT ROWID""",
+    """CREATE TABLE IF NOT EXISTS source_identity(
+        source_id TEXT PRIMARY KEY,
+        family_id TEXT,
+        publisher_id TEXT,
+        metadata_json TEXT)""",
+    """CREATE TABLE IF NOT EXISTS source_feed(
+        source_id TEXT NOT NULL,
+        collection_id TEXT NOT NULL,
+        mode TEXT NOT NULL,
+        url_ref TEXT NOT NULL,
+        public_url TEXT NOT NULL,
+        source_format TEXT NOT NULL,
+        adapter_kind TEXT,
+        adapter_profile TEXT,
+        header_refs_json TEXT NOT NULL,
+        access_ref TEXT,
+        access_id TEXT,
+        access_revision INTEGER NOT NULL DEFAULT 1,
+        etag TEXT,
+        last_modified TEXT,
+        body_sha256 TEXT,
+        active_json TEXT NOT NULL,
+        last_good_json TEXT NOT NULL,
+        last_attempt_at REAL,
+        last_success_at REAL,
+        last_good_at REAL,
+        last_validated_at REAL,
+        expires_at REAL,
+        next_attempt_at REAL,
+        retry_after REAL,
+        quarantine_until REAL,
+        consecutive_failures INTEGER NOT NULL DEFAULT 0,
+        last_outcome TEXT,
+        last_error TEXT,
+        PRIMARY KEY(source_id, collection_id))""",
+    """CREATE TABLE IF NOT EXISTS membership_source(
+        collection_id TEXT NOT NULL,
+        endpoint_id TEXT NOT NULL,
+        source_id TEXT NOT NULL,
+        origin TEXT NOT NULL,
+        added_at REAL NOT NULL,
+        last_seen_at REAL,
+        PRIMARY KEY(collection_id, endpoint_id, source_id)) WITHOUT ROWID""",
+)
+
+#: Indexes over the source tables.  The first two are the ones
+#: :data:`sourcedesk.REQUESTED_DDL` declares; the rest serve the reads that
+#: `source_management` actually issues (`history()` and `cache_state()` are
+#: `WHERE source_id=? ORDER BY id DESC LIMIT n`, and `runtime_snapshot()` counts
+#: per `source_id`) -- without them those are full scans of a table that grows
+#: with every fetch.
+SOURCE_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS membership_source_by_source ON membership_source(collection_id, source_id)",
+    "CREATE INDEX IF NOT EXISTS source_feed_by_collection ON source_feed(collection_id)",
+    "CREATE INDEX IF NOT EXISTS source_observation_by_source ON source_observation(source_id, id DESC)",
+    "CREATE INDEX IF NOT EXISTS source_generation_by_source ON source_generation(source_id, id DESC)",
+    "CREATE INDEX IF NOT EXISTS source_generation_by_observation ON source_generation(observation_id)",
+    "CREATE INDEX IF NOT EXISTS source_state_by_source ON source_state(source_id)",
+    "CREATE INDEX IF NOT EXISTS membership_source_by_endpoint ON membership_source(collection_id, endpoint_id)",
+)
+
+
+def _m16(conn, context):
+    """The seven tables the source desk and the source views are written against.
+
+    Purely additive: eight `CREATE ... IF NOT EXISTS` and no read of an existing
+    row, so the cost does not depend on how much the file already holds and
+    re-running it on a migrated database writes nothing.
+    """
+    for statement in SOURCE_TABLES_DDL + SOURCE_INDEXES:
+        conn.execute(statement)
+
+
+#: Columns `schedules` needs so that a pause and a period budget survive a
+#: restart, plus the spec columns `SqliteScheduleStore.save_spec` writes only
+#: when they exist (`HANDOFF/scheduler.md` §1.1; the same names are the
+#: scheduler's own `REQUESTED_COLUMNS`).
+#:
+#: `paused` and `counters_json` are the two the contract is really about: without
+#: them a restart hands the whole daily limit back, so the user reads a
+#: counter, trusts it, and gets more than the limit allows (F15).
+SCHEDULE_RUNTIME_COLUMNS = (
+    ("last_run_at", "REAL"),
+    ("paused", "INTEGER NOT NULL DEFAULT 0"),
+    ("pause_reason", "TEXT"),
+    ("resume_at", "REAL"),
+    ("dst_policy", "TEXT"),
+    ("catch_up", "INTEGER NOT NULL DEFAULT 0"),
+    ("max_catch_up", "INTEGER NOT NULL DEFAULT 1"),
+    ("wake_gap_s", "REAL"),
+    ("power_json", "TEXT"),
+    ("notify_json", "TEXT"),
+    ("notifications_json", "TEXT"),
+    ("counters_json", "TEXT"),
+    ("updated_at", "REAL"),
+)
+#: The same for one recorded run: why it was due and whether it was missed.
+SCHEDULE_RUN_COLUMNS = (
+    ("reason", "TEXT"),
+    ("missed", "INTEGER NOT NULL DEFAULT 0"),
+)
+
+
+def _m17(conn, context):
+    """`schedules` learns the pause and the budget it has been writing nowhere.
+
+    Additive, and `_add_column` makes it a no-op per column, so a file that a
+    later build already carries them is left exactly as it is.  The defaults are
+    the honest ones for a row that was saved before this migration: not paused,
+    no counters spent, no grid anchor -- never a paused-looking 0 that would
+    hide the fact.
+    """
+    for column, declaration in SCHEDULE_RUNTIME_COLUMNS:
+        _add_column(conn, "schedules", column, declaration)
+    for column, declaration in SCHEDULE_RUN_COLUMNS:
+        _add_column(conn, "schedule_run", column, declaration)
+
+
+#: A scope exclusion removes an address from the user's own scope -- not from
+#: the database, and not from the global denylist
+#: (`source-system-design.ru.md` §12.3: "Scan/export exclude them, but the data
+#: is not deleted").  The GUI keeps these in a sidecar precisely because no such
+#: table existed; the three routes it serves need `scope`, `source`, address,
+#: time and the exclusive flag.
+#:
+#: `exclusive` and `shared` are one fact under two names: the GUI stores
+#: `shared` and reasons about "exclusive addresses", and a reader of either name
+#: must get the truth, so a CHECK makes a contradictory row unstorable.  The
+#: foreign sources branch has the same table without the last three columns and
+#: the same key, so the names stay compatible.
+SCOPE_EXCLUSION_DDL = (
+    """CREATE TABLE IF NOT EXISTS candidate_scope_exclusion(
+        proxy TEXT NOT NULL,
+        reason TEXT,
+        source_id TEXT,
+        scope_digest TEXT NOT NULL DEFAULT '',
+        created_at REAL NOT NULL,
+        expires_at REAL,
+        as_seen TEXT,
+        exclusive INTEGER NOT NULL DEFAULT 1,
+        shared INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY(proxy, scope_digest),
+        CHECK(exclusive <> shared)) WITHOUT ROWID""",
+    "CREATE INDEX IF NOT EXISTS candidate_scope_exclusion_by_source"
+    " ON candidate_scope_exclusion(source_id)",
+    "CREATE INDEX IF NOT EXISTS candidate_scope_exclusion_by_scope"
+    " ON candidate_scope_exclusion(scope_digest, created_at)",
+)
+
+
+def _m18(conn, context):
+    """`candidate_scope_exclusion`: what the GUI kept in a JSON sidecar.
+
+    Additive, and an exclusion is a statement about the user's scope, never
+    about the address: the row is created here and no row of `candidates`,
+    `membership` or `membership_source` is touched, so undo is a delete and
+    another source's membership is unaffected by construction.
+    """
+    for statement in SCOPE_EXCLUSION_DDL:
+        conn.execute(statement)
+
+
 MIGRATIONS = (
     Migration(0, "application_id_and_journal", _m0),
     Migration(1, "endpoints", _m1),
@@ -1096,6 +1360,9 @@ MIGRATIONS = (
     Migration(13, "results_rebuild", _m13),
     Migration(14, "indexes", _m14),
     Migration(15, "results_one_row_per_address", _m15),
+    Migration(16, "source_tables", _m16),
+    Migration(17, "schedule_runtime_columns", _m17),
+    Migration(18, "candidate_scope_exclusion", _m18),
 )
 
 #: Migrations that rewrite data they did not create: a `DROP TABLE` plus a copy, so
@@ -1219,7 +1486,8 @@ def migrate(path, *, backup_dir=None, app_version=None, now=None, create=True):
        :data:`DESTRUCTIVE_MIGRATIONS`) gets that same backup even when it is not a
        version-0 legacy file -- an intermediate build of this branch leaves a
        ``user_version`` of 1..15, and those rebuilds drop a table the user cannot
-       get back from the file alone;
+       get back from the file alone.  Migrations 16..18 are additive and are not
+       in that set, so a database that only needs them is not copied;
     4. each remaining migration runs in its own transaction together with the
        ``user_version`` write and its ``schema_migrations`` row, so an interrupted
        migration leaves the file at the previous version rather than in between.
@@ -2041,6 +2309,96 @@ def endpoint_collections(conn, endpoint_id):
     return [row[0] for row in conn.execute(
         "SELECT collection_id FROM membership WHERE endpoint_id = ? ORDER BY collection_id",
         (endpoint_id,))]
+
+
+# ---------------------------------------------------------------------------
+# scope exclusions
+# ---------------------------------------------------------------------------
+
+#: The scope an exclusion applies to when the caller names none.  An empty digest
+#: is the user's ordinary working scope, which is what the GUI sidecar held: the
+#: exclusion is "not in what I am looking at now", never a global denylist
+#: (source-system-design §12.3).  Naming a scope keeps two scopes of the same
+#: database independent -- one row per (address, scope).
+DEFAULT_SCOPE = ""
+
+
+def add_scope_exclusion(conn, proxy, *, source_id=None, scope_digest=DEFAULT_SCOPE,
+                        as_seen=None, reason="source_scope", shared=False,
+                        expires_at=None, now=None):
+    """Exclude one address from one scope, and remove nothing.
+
+    The row is a statement about the scope, not about the address: no row of
+    `candidates`, `membership` or `membership_source` is touched, so undo is a
+    delete and an address another source still contributes keeps its
+    membership.  Re-excluding the same address in the same scope updates the
+    row instead of duplicating it, so the count a caller reports stays a count
+    of addresses.
+    """
+    proxy = str(proxy or "").strip()
+    if not proxy:
+        raise DbError(E_PATH_CONFLICT, "scope exclusion needs an address")
+    exclusive = 0 if shared else 1
+    conn.execute(
+        "INSERT INTO candidate_scope_exclusion"
+        "(proxy, reason, source_id, scope_digest, created_at, expires_at, as_seen, exclusive, shared)"
+        " VALUES (?,?,?,?,?,?,?,?,?)"
+        " ON CONFLICT(proxy, scope_digest) DO UPDATE SET"
+        " reason=excluded.reason, source_id=excluded.source_id, expires_at=excluded.expires_at,"
+        " as_seen=excluded.as_seen, exclusive=excluded.exclusive, shared=excluded.shared",
+        (proxy, reason, source_id, str(scope_digest or ""), _now(now), expires_at, as_seen,
+         exclusive, int(bool(shared))))
+    return proxy
+
+
+def scope_exclusions(conn, *, scope_digest=DEFAULT_SCOPE, source_id=None, now=None,
+                     include_expired=True):
+    """Every exclusion of one scope, as plain rows.
+
+    `include_expired=False` drops the rows whose `expires_at` has passed: an
+    exclusion that has run out is not stored away, it simply stops applying,
+    which is what the column is for.  The order is stable (`created_at`, then
+    the address) so two calls return the same list.
+    """
+    clauses, params = ["scope_digest = ?"], [str(scope_digest or "")]
+    if source_id is not None:
+        clauses.append("source_id = ?")
+        params.append(source_id)
+    if not include_expired:
+        clauses.append("(expires_at IS NULL OR expires_at > ?)")
+        params.append(_now(now))
+    return [dict(row) for row in conn.execute(
+        "SELECT proxy, reason, source_id, scope_digest, created_at, expires_at, as_seen,"
+        " exclusive, shared FROM candidate_scope_exclusion WHERE "
+        + " AND ".join(clauses) + " ORDER BY created_at, proxy", params)]
+
+
+def excluded_addresses(conn, *, scope_digest=DEFAULT_SCOPE, now=None, include_expired=True):
+    """Just the addresses one scope hides, as a set a result read can test against.
+
+    This is the primitive the exclusion is applied with: a caller that reads
+    `results` or exports it drops these canonical addresses and nothing else,
+    so an exclusion cannot remove an address the user did not exclude and
+    cannot touch one belonging to another source.
+    """
+    return frozenset(row["proxy"] for row in scope_exclusions(
+        conn, scope_digest=scope_digest, now=now, include_expired=include_expired))
+
+
+def clear_scope_exclusions(conn, *, source_id=None, scope_digest=DEFAULT_SCOPE):
+    """Drop the exclusions of one scope, or of one source inside it.
+
+    Returns how many rows went.  A source that excluded nothing is not an error:
+    clearing an exclusion is an undo, and an undo with nothing to undo changed
+    nothing.
+    """
+    clause = "scope_digest = ?"
+    params = [str(scope_digest or "")]
+    if source_id is not None:
+        clause += " AND source_id = ?"
+        params.append(source_id)
+    return conn.execute(
+        f"DELETE FROM candidate_scope_exclusion WHERE {clause}", params).rowcount
 
 
 def legacy_summary(conn):
