@@ -926,6 +926,247 @@ const messages = {
     'log.terminalTitle': 'Terminal Output — Log',
     'help.pipelineBadge': 'WORKFLOW',
     'region.cis': '🌐 CIS',
+
+    // --- import with a preview (F03), pools, schedules, keys, storage ---
+    'nav.pools': 'Pools & Schedules',
+    'nav.keys': 'API Keys',
+    'common.cancel': 'Cancel',
+    'common.close': 'Close',
+    'imp.title': 'Import a list from a file, with a preview',
+    'imp.lead': 'TXT, URI, CSV and JSON. The preview reads the file and writes nothing: it says how many lines are valid, how many are duplicates and which line numbers are refused, and only the confirmation changes the list.',
+    'imp.file': '↑ Choose a file to import',
+    'imp.fileHint': 'or paste the text below (.txt, .list, .csv, .json)',
+    'imp.collection': 'Into which list',
+    'imp.format': 'Format',
+    'imp.formatAuto': 'Detect automatically',
+    'imp.mode': 'Mode',
+    'imp.modeMerge': 'Merge — add, keep what is already in the list',
+    'imp.modeReplace': 'Replace — the list becomes exactly this file',
+    'imp.pasteTitle': 'Or paste the text',
+    'imp.preview': 'Preview',
+    'imp.apply': 'Apply to the list',
+    'imp.mapping': 'Which column is which',
+    'imp.mappingHint': 'The header could not be matched on its own. Choose the columns and preview again.',
+    'imp.mappingHost': 'Host',
+    'imp.mappingPort': 'Port',
+    'imp.mappingScheme': 'Protocol (optional)',
+    'imp.mappingCountry': 'Country (optional)',
+    'imp.mappingNone': '— none —',
+    'imp.mappingColumn': 'Column {name}',
+    'imp.history': 'Import history',
+    'imp.historyEmpty': 'No imports yet.',
+    'imp.historyTitle': 'Past imports',
+    'imp.historyBatch': 'Batch',
+    'imp.historyState': 'State',
+    'imp.historyCollection': 'List',
+    'imp.historyWhen': 'When',
+    'imp.historyRevision': 'Revision',
+    'imp.summary': 'Preview: {valid} valid, {duplicates} duplicate, {rejected} refused, {removed} to be removed.',
+    'imp.summaryReplace': 'Preview: {valid} valid, {duplicates} duplicate, {rejected} refused, {removed} will be REMOVED from the list.',
+    'imp.nothingWritten': 'Nothing has been written yet — the list is unchanged.',
+    'imp.noChanges': 'Nothing to apply: this import would change nothing.',
+    'imp.needFile': 'Choose a file or paste the text first.',
+    'imp.needMapping': 'Match the columns first — host and port are required.',
+    'imp.rows': 'Lines',
+    'imp.rejectedLines': 'Refused lines',
+    'imp.added': 'Will be added',
+    'imp.removed': 'Will be removed',
+    'imp.unchanged': 'Already in the list',
+    'imp.partial': 'The file has {count} refused lines. Applying will import only the usable ones.',
+    'imp.applied': 'Imported: {added} added, {removed} removed, {rejected} refused.',
+    'imp.replayed': 'This import was already applied: nothing was added a second time.',
+    'imp.reason': 'Reason',
+    'imp.digest': 'File digest',
+    'imp.batch': 'Batch',
+    'imp.duplicateInSource': 'Repeated inside the file',
+    'imp.alreadyMember': 'Already in this list',
+    'imp.formatError': 'Unreadable line',
+    'imp.credentials': 'The row carries a login or a password',
+    'imp.hostname': 'A name, not an address',
+    'imp.private': 'Not a public address',
+    'imp.missingField': 'A required field is missing',
+    'pool.eyebrow': 'STEADY SUPPLY',
+    'pool.title': 'Pools and schedules',
+    'pool.lead': 'A named pool holds a chosen number of working proxies for one list and one check profile. A schedule says when work may run and how much it may spend.',
+    'pool.listTitle': 'Pools',
+    'pool.lead2': 'A pool is bound to one list and one profile: it never drifts to rows you did not ask for. "Hold" is the number of working proxies to keep, "reserve" is the standby in the background.',
+    'pool.newName': 'Name of a new pool',
+    'pool.collection': 'List',
+    'pool.desired': 'Hold',
+    'pool.reserve': 'Reserve',
+    'pool.create': 'Create a pool',
+    'pool.empty': 'No pools yet. Create one above.',
+    'pool.detailTitle': 'Members and state of the selected pool',
+    'pool.hold': 'Hold',
+    'pool.state': 'State',
+    'pool.served': 'Served',
+    'pool.deficit': 'Short because',
+    'pool.nextAttempt': 'Next attempt',
+    'pool.start': 'Start and fill',
+    'pool.refill': 'Top up now',
+    'pool.recheck': 'Re-check the list',
+    'pool.pause': 'Pause',
+    'pool.saveTarget': 'Save the target',
+    'pool.targetSaved': 'Target saved.',
+    'pool.refilled': 'Topped up: {served} of {desired} in service.',
+    'pool.rechecked': 'Re-check queued: {count} addresses.',
+    'pool.started': 'Started.',
+    'pool.paused': 'Paused.',
+    'pool.members': 'Members',
+    'pool.noMembers': 'The pool has no members yet.',
+    'pool.removeMember': 'Remove from the pool',
+    'pool.select': 'Select this pool',
+    'pool.needProfile': 'A pool needs a check profile. Run a check first, then create the pool.',
+    'pool.count': 'of',
+    'pool.ready': 'ready for clients',
+    'sched.title': 'Schedules',
+    'sched.lead': 'A schedule answers "when may work run", not "run it": the run itself is the job layer\'s. The nearest run and the counters come from the scheduler, not from this page.',
+    'sched.newName': 'Name of a new schedule',
+    'sched.interval': 'Every N minutes',
+    'sched.timezone': 'Time zone',
+    'sched.pool': 'Pool',
+    'sched.create': 'Create a schedule',
+    'sched.empty': 'No schedules yet. Create one above.',
+    'sched.next': 'Nearest run',
+    'sched.reason': 'Why',
+    'sched.runs': 'Runs',
+    'sched.skipped': 'Skipped',
+    'sched.last': 'Last run',
+    'sched.enable': 'Enable',
+    'sched.disable': 'Disable',
+    'sched.runNow': 'Run now',
+    'sched.remove': 'Remove',
+    'sched.enabled': 'Enabled',
+    'sched.disabled': 'Disabled',
+    'sched.removed': 'Schedule removed.',
+    'sched.runQueued': 'Run requested: {id}.',
+    'sched.noNext': 'no next run',
+    'sched.paused': 'paused',
+    'gwb.title': 'What the rotating proxy serves',
+    'gwb.lead': 'A binding pins the pool and the profile the rotating proxy offers. A pinned generation means "this exact export", so publishing a new run does not move a client that is already connected.',
+    'gwb.pool': 'Pool',
+    'gwb.profile': 'Check profile',
+    'gwb.revision': 'Profile revision',
+    'gwb.generation': 'Published generation',
+    'gwb.apply': 'Apply and restart the listener',
+    'gwb.applied': 'Binding saved{restarted}.',
+    'gwb.unbound': 'The whole published list',
+    'gwb.needsRestart': 'The rotating proxy is not running; the binding applies at the next start.',
+    'keys.eyebrow': 'ACCESS CONTROL',
+    'keys.title': 'API keys',
+    'keys.createTitle': 'Issue a key',
+    'keys.lead': 'A key is the identity your own programs present to /v1. The secret is shown once, at the moment it is issued, and is never stored anywhere you can read it back from.',
+    'keys.bootstrapTitle': 'The first administrator key',
+    'keys.bootstrapLead': 'This is the only action that needs no credential: the interface is a local, file-locked surface. Every key after this one is issued through the interface as an administrator.',
+    'keys.bootstrap': 'Issue the first key',
+    'keys.bootstrapDone': 'First administrator key {id} issued. The secret is below — save it now.',
+    'keys.name': 'Name',
+    'keys.ttl': 'Valid for, days (0 = forever)',
+    'keys.purpose': 'What it is for',
+    'keys.adminSecret': 'Administrator key (optional)',
+    'keys.adminSecretHint': 'Leave empty to act as the installation\'s own administrator key. Paste a key to act as that one instead; it is kept in the page\'s memory and is never written to a file or a log.',
+    'keys.permissions': 'Rights',
+    'keys.permissionsHint': 'Nothing but a secret the programs actually need. A key with no rights answers 403 to everything — that is an empty grant, not an error.',
+    'keys.create': 'Issue the key',
+    'keys.presetRead': 'Read-only preset',
+    'keys.presetFull': 'Full preset',
+    'keys.listTitle': 'Your keys',
+    'keys.apiUrl': 'Send the secret in the Authorization: Bearer header. A key in a query string is visible in every log on the way.',
+    'keys.apiEndpoint': 'Base address: {url}/v1',
+    'keys.empty': 'No keys yet.',
+    'keys.state': 'State',
+    'keys.prefix': 'Prefix',
+    'keys.created': 'Created',
+    'keys.expires': 'Expires',
+    'keys.lastUsed': 'Last used',
+    'keys.rights': 'Rights',
+    'keys.rotate': 'Rotate',
+    'keys.disable': 'Disable',
+    'keys.enable': 'Enable',
+    'keys.revoke': 'Revoke',
+    'keys.remove': 'Delete',
+    'keys.stateActive': 'active',
+    'keys.stateDisabled': 'disabled',
+    'keys.stateRevoked': 'revoked',
+    'keys.stateExpired': 'expired',
+    'keys.never': 'never',
+    'keys.expiredAgo': 'expired {when}',
+    'keys.usedAgo': '{when}',
+    'keys.rotateAsk': 'Rotate {name}? The old secret stops working immediately; a new one is shown once.',
+    'keys.revokeAsk': 'Revoke {name}? It keeps its metadata and its audit trail, and can never be used again.',
+    'keys.disableAsk': 'Disable {name}? It can be enabled again later.',
+    'keys.deleteAsk': 'Delete {name}? The row goes; the audit log keeps the history.',
+    'keys.rotated': 'New secret of {name} — shown once.',
+    'keys.disabled': '{name} disabled.',
+    'keys.enabled': '{name} enabled.',
+    'keys.revoked': '{name} revoked.',
+    'keys.deleted': '{name} deleted.',
+    'keys.secretTitle': 'Copy the secret now — it is not shown again',
+    'keys.secretWarn': 'The verifier stored in the database is one-way: the program cannot show this secret again, and nobody — including this page — can recover it. If you lose it, issue a new key and disable this one.',
+    'keys.copied': 'Secret copied.',
+    'keys.auditTitle': 'Recent key operations',
+    'keys.auditHint': 'What the keys did, and by which key. A full secret is never written here.',
+    'keys.auditWhen': 'When',
+    'keys.auditKey': 'Key',
+    'keys.auditOperation': 'Operation',
+    'keys.auditResult': 'Result',
+    'keys.createdOk': 'Key {id} issued. The secret is below — save it now.',
+    'maint.previewTitle': 'What will be deleted',
+    'maint.preview': 'Preview',
+    'maint.apply': 'Delete',
+    'maint.restore': 'Restore',
+    'maint.move': 'Move',
+    'maint.name': 'Name',
+    'maint.size': 'Size',
+    'maint.protected': 'Kept, and why',
+    'maint.total': 'Total to delete: {size}. The files below are not touched.',
+    'maint.cleanupAsked': 'Preview ready. Nothing has been deleted yet.',
+    'maint.cleanupDone': 'Deleted {count} items.',
+    'maint.cleanupAsk': 'Delete these {count} items ({size})? Local results cannot be restored.',
+    'maint.canceled': 'Canceled — nothing was deleted.',
+    'maint.retentionTitle': 'Keep only fresh measurements',
+    'maint.retentionLead': 'Old measurements and the results that depend on them are the largest part of a long-running database. The preview counts exactly the rows the delete would remove, and the delete refuses to run when a table it would empty is still referenced.',
+    'maint.keepDays': 'Keep measurements newer than, days (0 = any age)',
+    'maint.keepNewest': 'Keep the newest N rows (0 = no reserve)',
+    'maint.expiredOnly': 'Only rows whose proof has already expired',
+    'maint.vacuum': 'Compact the database file afterwards',
+    'maint.retentionRows': '{table}: {rows} rows',
+    'maint.retentionTotal': '{rows} rows, about {size} of {total}. Nothing has been deleted yet.',
+    'maint.retentionNothing': 'This policy removes nothing.',
+    'maint.retentionDone': 'Deleted {rows} rows; the database went from {before} to {after}.',
+    'maint.restoreTitle': 'Restore a database into a new folder',
+    'maint.restoreLead': 'A restore never overwrites the folder you are working in: it writes a copy into a new, empty folder and leaves the current data exactly where it is. The copy goes through SQLite\'s own backup API, so a database with a write-ahead log is copied consistently.',
+    'maint.restoreSource': 'Source: a .sqlite3 file or a data folder',
+    'maint.restoreTarget': 'Target: a new, empty folder',
+    'maint.restoreNote': 'Verified copy of {size} into {target}. The current data folder is untouched.',
+    'maint.restoreConflicts': 'The target folder is not empty: {names}. Choose another one.',
+    'maint.restoreDone': 'Restored into {target}.',
+    'maint.moveTitle': 'Move the data folder',
+    'maint.moveLead': 'The new folder is a copy, and a backup of the old database is written first. The old folder is never deleted by this action — that stays a separate, explicit step you take yourself.',
+    'maint.moveTarget': 'New data folder',
+    'maint.moveNote': 'Would copy {size} into {target}. Nothing has been written yet.',
+    'maint.moveDone': 'Copied into {target}. {note}',
+    'cat.scopeTitle': 'Your scope',
+    'cat.scopeHint': 'An excluded address leaves the results table and every export of this interface, but is never deleted: it is still in the database and still in its list. This is not the local denylist — that forbids an address everywhere and for good.',
+    'cat.scopeOpen': 'Excluded addresses…',
+    'cat.scopeEmpty': 'Nothing is excluded from your scope.',
+    'cat.scopeCount': '{count} excluded',
+    'cat.scopeListTitle': 'Excluded addresses',
+    'cat.scopeClearAll': 'Return all of them',
+    'cat.scopeClearSource': 'Return the addresses of this source',
+    'cat.scopeIncludeShared': 'Also exclude the addresses other sources also delivered',
+    'cat.scopeSharedNote': 'Only addresses this source delivered alone are excluded by default; a shared address needs the explicit choice above.',
+    'cat.scopeExcluded': 'Excluded {count} addresses ({unique} of them exclusive to this source).',
+    'cat.scopeDone': 'Returned {count} addresses to the scope.',
+    'cat.scopeNoSource': 'This source delivered nothing yet; there is nothing to exclude.',
+    'cat.scopeSource': 'Source',
+    'cat.scopeWhen': 'Since',
+    'cat.scopeProxy': 'Address',
+    'cat.scopeShared': 'shared',
+    'pool.minimum': 'Minimum',
+    'imp.proxy': 'Address',
+    'error.fileTooLarge': 'The file is larger than 32 MB.',
+    'gateway.restarted': 'The rotating proxy was restarted with it.',
   },
   ru: {
     'lang.currentName': 'Русский язык',
@@ -1832,6 +2073,247 @@ const messages = {
     'log.terminalTitle': 'Терминал — Лог выполнения',
     'help.pipelineBadge': 'ПРОЦЕСС',
     'region.cis': '🌐 СНГ',
+
+    // --- импорт с предпросмотром (F03), пулы, расписания, ключи, хранение ---
+    'nav.pools': 'Пулы и расписания',
+    'nav.keys': 'Ключи API',
+    'common.cancel': 'Отмена',
+    'common.close': 'Закрыть',
+    'imp.title': 'Импорт списка из файла, с предпросмотром',
+    'imp.lead': 'TXT, URI, CSV и JSON. Предпросмотр только читает файл и ничего не пишет: он показывает, сколько строк пригодно, сколько дубликатов и номера отклонённых строк. Список меняется только после подтверждения.',
+    'imp.file': '↑ Выберите файл для импорта',
+    'imp.fileHint': 'или вставьте текст ниже (.txt, .list, .csv, .json)',
+    'imp.collection': 'В какой список',
+    'imp.format': 'Формат',
+    'imp.formatAuto': 'Определить автоматически',
+    'imp.mode': 'Режим',
+    'imp.modeMerge': 'Дополнить — добавить, сохранив то, что уже есть',
+    'imp.modeReplace': 'Заменить — список станет в точности этим файлом',
+    'imp.pasteTitle': 'Или вставьте текст',
+    'imp.preview': 'Предпросмотр',
+    'imp.apply': 'Применить к списку',
+    'imp.mapping': 'Какая колонка что значит',
+    'imp.mappingHint': 'Заголовок не удалось сопоставить однозначно. Выберите колонки и повторите предпросмотр.',
+    'imp.mappingHost': 'Хост',
+    'imp.mappingPort': 'Порт',
+    'imp.mappingScheme': 'Протокол (необязательно)',
+    'imp.mappingCountry': 'Страна (необязательно)',
+    'imp.mappingNone': '— нет —',
+    'imp.mappingColumn': 'Колонка {name}',
+    'imp.history': 'История импортов',
+    'imp.historyEmpty': 'Импортов пока нет.',
+    'imp.historyTitle': 'Прошлые импорты',
+    'imp.historyBatch': 'Пакет',
+    'imp.historyState': 'Состояние',
+    'imp.historyCollection': 'Список',
+    'imp.historyWhen': 'Когда',
+    'imp.historyRevision': 'Ревозия',
+    'imp.summary': 'Предпросмотр: пригодно {valid}, дубликатов {duplicates}, отклонено {rejected}, будет удалено {removed}.',
+    'imp.summaryReplace': 'Предпросмотр: пригодно {valid}, дубликатов {duplicates}, отклонено {rejected}, будет УДАЛЕНО из списка {removed}.',
+    'imp.nothingWritten': 'Пока ничего не записано — список не изменён.',
+    'imp.noChanges': 'Применять нечего: импорт ничего не изменит.',
+    'imp.needFile': 'Сначала выберите файл или вставьте текст.',
+    'imp.needMapping': 'Сначала сопоставьте колонки: хост и порт обязательны.',
+    'imp.rows': 'Строки',
+    'imp.rejectedLines': 'Отклонённые строки',
+    'imp.added': 'Будет добавлено',
+    'imp.removed': 'Будет удалено',
+    'imp.unchanged': 'Уже в списке',
+    'imp.partial': 'В файле {count} отклонённых строк. Применение импортирует только пригодные.',
+    'imp.applied': 'Импортировано: добавлено {added}, удалено {removed}, отклонено {rejected}.',
+    'imp.replayed': 'Этот импорт уже применён: повторно ничего не добавлено.',
+    'imp.reason': 'Причина',
+    'imp.digest': 'Отпечаток файла',
+    'imp.batch': 'Пакет',
+    'imp.duplicateInSource': 'Повтор внутри файла',
+    'imp.alreadyMember': 'Уже в этом списке',
+    'imp.formatError': 'Строка не читается',
+    'imp.credentials': 'В строке есть логин или пароль',
+    'imp.hostname': 'Имя, а не адрес',
+    'imp.private': 'Не публичный адрес',
+    'imp.missingField': 'Не хватает обязательного поля',
+    'pool.eyebrow': 'ПОСТОЯННЫЙ ЗАПАС',
+    'pool.title': 'Пулы и расписания',
+    'pool.lead': 'Именованный пул держит выбранное число рабочих прокси для одного списка и одного профиля проверки. Расписание отвечает, когда работе можно идти и сколько она может потратить.',
+    'pool.listTitle': 'Пулы',
+    'pool.lead2': 'Пул привязан к одному списку и одному профилю: он никогда не переходит на строки, которых вы не просили. «Держать» — сколько рабочих прокси держать в работе, «резерв» — сколько ждать в фоне.',
+    'pool.newName': 'Имя нового пула',
+    'pool.collection': 'Список',
+    'pool.desired': 'Держать',
+    'pool.reserve': 'Резерв',
+    'pool.create': 'Создать пул',
+    'pool.empty': 'Пулов нет. Создайте выше.',
+    'pool.detailTitle': 'Участники и состояние выбранного пула',
+    'pool.hold': 'Держать',
+    'pool.state': 'Состояние',
+    'pool.served': 'В работе',
+    'pool.deficit': 'Не хватает потому что',
+    'pool.nextAttempt': 'Следующая попытка',
+    'pool.start': 'Запустить и наполнить',
+    'pool.refill': 'Пополнить сейчас',
+    'pool.recheck': 'Перепроверить список',
+    'pool.pause': 'Пауза',
+    'pool.saveTarget': 'Сохранить цель',
+    'pool.targetSaved': 'Цель сохранена.',
+    'pool.refilled': 'Пополнено: {served} из {desired} в работе.',
+    'pool.rechecked': 'Перепроверка поставлена в очередь: адресов — {count}.',
+    'pool.started': 'Запущен.',
+    'pool.paused': 'На паузе.',
+    'pool.members': 'Участники',
+    'pool.noMembers': 'В пуле пока нет участников.',
+    'pool.removeMember': 'Убрать из пула',
+    'pool.select': 'Выбрать этот пул',
+    'pool.needProfile': 'Пулу нужен профиль проверки. Сначала выполните проверку, потом создайте пул.',
+    'pool.count': 'из',
+    'pool.ready': 'готов для клиентов',
+    'sched.title': 'Расписания',
+    'sched.lead': 'Расписание отвечает на вопрос «когда работе можно идти», а не «запусти её»: сама за��уска — дело слоя заданий. Ближайший запуск и счётчики считает планировщик, а не эта страница.',
+    'sched.newName': 'Имя нового расписания',
+    'sched.interval': 'Каждые N минут',
+    'sched.timezone': 'Часовой пояс',
+    'sched.pool': 'Пул',
+    'sched.create': 'Создать расписание',
+    'sched.empty': 'Расписаний нет. Создайте выше.',
+    'sched.next': 'Ближайший запуск',
+    'sched.reason': 'Почему',
+    'sched.runs': 'Запусков',
+    'sched.skipped': 'Пропущено',
+    'sched.last': 'Последний запуск',
+    'sched.enable': 'Включить',
+    'sched.disable': 'Выключить',
+    'sched.runNow': 'Запустить сейчас',
+    'sched.remove': 'Удалить',
+    'sched.enabled': 'Включено',
+    'sched.disabled': 'Выключено',
+    'sched.removed': 'Расписание удалено.',
+    'sched.runQueued': 'Запуск запрошен: {id}.',
+    'sched.noNext': 'следующего запуска нет',
+    'sched.paused': 'на паузе',
+    'gwb.title': 'Что отдаёт ротирующий прокси',
+    'gwb.lead': 'Привязка фиксирует пул и профиль, которые предлагает ротирующий прокси. Зафиксированное поколение означает «вот этот снимок», поэтому новая публикация не перебросит уже подключённого клиента.',
+    'gwb.pool': 'Пул',
+    'gwb.profile': 'Профиль проверки',
+    'gwb.revision': 'Ревозия профиля',
+    'gwb.generation': 'Опубликованное поколение',
+    'gwb.apply': 'Применить и перезапустить шлюз',
+    'gwb.applied': 'Привязка сохранена{restarted}.',
+    'gwb.unbound': 'Весь опубликованный список',
+    'gwb.needsRestart': 'Ротирующий прокси не запущен; привязка применится при следующем старте.',
+    'keys.eyebrow': 'ДОСТУП',
+    'keys.title': 'Ключи API',
+    'keys.createTitle': 'Выдать ключ',
+    'keys.lead': 'Ключ — это идентичность, которую ваши собственные программы предъявляют на /v1. Секрет показывается один раз, в момент выдачи, и нигде не хранится в читаемом виде.',
+    'keys.bootstrapTitle': 'Первый административный ключ',
+    'keys.bootstrapLead': 'Это единственное действие, которому не нужен секрет: интерфейс — локальная поверхность под файловой блокировкой. Все ключи после него выдаёт интерфейс от имени администратора.',
+    'keys.bootstrap': 'Выпустить первый ключ',
+    'keys.bootstrapDone': 'Первый административный ключ {id} выпущен. Секрет ниже — сохраните его сейчас.',
+    'keys.name': 'Название',
+    'keys.ttl': 'Срок действия, дней (0 = бессрочно)',
+    'keys.purpose': 'Зачем он',
+    'keys.adminSecret': 'Административный ключ (необязательно)',
+    'keys.adminSecretHint': 'Оставьте пустым, чтобы действовать от собственного административного ключа установки. Вставьте ключ, чтобы действовать от него; он остаётся в памяти страницы и никогда не пишется в файл или журнал.',
+    'keys.permissions': 'Права',
+    'keys.permissionsHint': 'Только то, что программам действительно нужно. Ключ без прав отвечает 403 на всё — это пустая выдача, а не ошибка.',
+    'keys.create': 'Выпустить ключ',
+    'keys.presetRead': 'Только чтение',
+    'keys.presetFull': 'Полный набор',
+    'keys.listTitle': 'Ваши ключи',
+    'keys.apiUrl': 'Передавайте секрет в заголовке Authorization: Bearer. Ключ в строке запроса виден в каждом журнале по дороге.',
+    'keys.apiEndpoint': 'Базовый адрес: {url}/v1',
+    'keys.empty': 'Ключей пока нет.',
+    'keys.state': 'Состояние',
+    'keys.prefix': 'Префикс',
+    'keys.created': 'Создан',
+    'keys.expires': 'Истекает',
+    'keys.lastUsed': 'Последнее использование',
+    'keys.rights': 'Права',
+    'keys.rotate': 'Ротировать',
+    'keys.disable': 'Отключить',
+    'keys.enable': 'Включить',
+    'keys.revoke': 'Отозвать',
+    'keys.remove': 'Удалить',
+    'keys.stateActive': 'активен',
+    'keys.stateDisabled': 'отключён',
+    'keys.stateRevoked': 'отозван',
+    'keys.stateExpired': 'истёк',
+    'keys.never': 'никогда',
+    'keys.expiredAgo': 'истёк {when}',
+    'keys.usedAgo': '{when}',
+    'keys.rotateAsk': 'Ротировать {name}? Старый секрет перестанет работать сразу; новый покажут один раз.',
+    'keys.revokeAsk': 'Отозвать {name}? Он сохранит свои метаданные и журнал операций и больше никогда не сработает.',
+    'keys.disableAsk': 'Отключить {name}? Позже его можно включить снова.',
+    'keys.deleteAsk': 'Удалить {name}? Строка исчезнет, журнал операций сохранит историю.',
+    'keys.rotated': 'Новый секрет {name} — показан один раз.',
+    'keys.disabled': '{name} отключён.',
+    'keys.enabled': '{name} включён.',
+    'keys.revoked': '{name} отозван.',
+    'keys.deleted': '{name} удалён.',
+    'keys.secretTitle': 'Скопируйте секрет сейчас — он больше не показывается',
+    'keys.secretWarn': 'В базе лежит односторонняя проверка: программа не сможет показать этот секрет снова, и никто — включая эту страницу — не сможет его восстановить. Если потеряете, выпустите новый ключ, а этот отключите.',
+    'keys.copied': 'Секрет скопирован.',
+    'keys.auditTitle': 'Последние операции с ключами',
+    'keys.auditHint': 'Что делали ключи и каким ключом. Полный секрет сюда не пишется никогда.',
+    'keys.auditWhen': 'Когда',
+    'keys.auditKey': 'Ключ',
+    'keys.auditOperation': 'Операция',
+    'keys.auditResult': 'Результат',
+    'keys.createdOk': 'Ключ {id} выпущен. Секрет ниже — сохраните его сейчас.',
+    'maint.previewTitle': 'Что будет удалено',
+    'maint.preview': 'Предпросмотр',
+    'maint.apply': 'Удалить',
+    'maint.restore': 'Восстановить',
+    'maint.move': 'Перенести',
+    'maint.name': 'Имя',
+    'maint.size': 'Размер',
+    'maint.protected': 'Сохраняется, и почему',
+    'maint.total': 'Всего к удалению: {size}. Перечисленные ниже файлы не затрагиваются.',
+    'maint.cleanupAsked': 'Предпросмотр готов. Пока ничего не удалено.',
+    'maint.cleanupDone': 'Удалено объектов: {count}.',
+    'maint.cleanupAsk': 'Удалить {count} объект��в ({size})? Локальные результаты восстановить будет нельзя.',
+    'maint.canceled': 'Отменено — ничего не удалено.',
+    'maint.retentionTitle': 'Хранить только свежие измерения',
+    'maint.retentionLead': 'Старые измерения и зависящие от них результаты — самая большая часть долгоживущей базы. Предпросмотр считает ровно те строки, которые удаление уберёт, а удаление отказывается работать, если очищаемую таблицу ещё на что-то ссылается.',
+    'maint.keepDays': 'Хранить измерения не старше, дней (0 = любой возраст)',
+    'maint.keepNewest': 'Оставить N новейших строк (0 = без запаса)',
+    'maint.expiredOnly': 'Только строки, у которых доказательство уже истекло',
+    'maint.vacuum': 'Сжать файл базы после удаления',
+    'maint.retentionRows': '{table}: строк — {rows}',
+    'maint.retentionTotal': 'Строк — {rows}, это примерно {size} из {total}. Пока ничего не удалено.',
+    'maint.retentionNothing': 'Эта политика ничего не удаляет.',
+    'maint.retentionDone': 'Удалено строк: {rows}; база изменилась с {before} до {after}.',
+    'maint.restoreTitle': 'Восстановить базу в новую папку',
+    'maint.restoreLead': 'Восстановление никогда не перезаписывает папку, в которой вы работаете: оно делает копию в новую пустую папку и оставляет текущие данные ровно на месте. Копирование идёт через собственный API SQLite, поэтому база с журналом упреждающей записи переносится согласованно.',
+    'maint.restoreSource': 'Источник: файл .sqlite3 или папка данных',
+    'maint.restoreTarget': 'Куда: новая пустая папка',
+    'maint.restoreNote': 'Проверенная копия {size} в {target}. Текущая папка данных не тронута.',
+    'maint.restoreConflicts': 'Папка назначения не пуста: {names}. Выберите другую.',
+    'maint.restoreDone': 'Восстановлено в {target}.',
+    'maint.moveTitle': 'Перенести папку данных',
+    'maint.moveLead': 'Новая папка — это копия, а резервная копия старой базы пишется сначала. Старая папка этим действием никогда не удаляется — это остаётся отдельным, явным шагом, который делаете вы.',
+    'maint.moveTarget': 'Новая папка данных',
+    'maint.moveNote': 'Будет скопировано {size} в {target}. Пока ничего не записано.',
+    'maint.moveDone': 'Скопировано в {target}. {note}',
+    'cat.scopeTitle': 'Ваша область',
+    'cat.scopeHint': 'Исключённый адрес уходит из таблицы результатов и из любого экспорта этого интерфейса, но не удаляется: он по-прежнему в базе и в своём списке. Это не локальный запрет — тот запрещает адрес везде и навсегда.',
+    'cat.scopeOpen': 'Исключённые адреса…',
+    'cat.scopeEmpty': 'Из вашей области ничего не исключено.',
+    'cat.scopeCount': 'Исключено: {count}',
+    'cat.scopeListTitle': 'Исключённые адреса',
+    'cat.scopeClearAll': 'Вернуть все',
+    'cat.scopeClearSource': 'Вернуть адреса этого источника',
+    'cat.scopeIncludeShared': 'Исключить и те адреса, которые прислали и другие источники',
+    'cat.scopeSharedNote': 'По умолчанию исключаются только те адреса, которые прислал один этот источник; общий адрес требует явного выбора выше.',
+    'cat.scopeExcluded': 'Исключено адресов: {count} (из них {unique} — только от этого источника).',
+    'cat.scopeDone': 'Вернуто в область адресов: {count}.',
+    'cat.scopeNoSource': 'Этот источник ещё ничего не прислал; исключать нечего.',
+    'cat.scopeSource': 'Источник',
+    'cat.scopeWhen': 'С какого момента',
+    'cat.scopeProxy': 'Адрес',
+    'cat.scopeShared': 'общий',
+    'pool.minimum': 'Минимум',
+    'imp.proxy': 'Адрес',
+    'error.fileTooLarge': 'Файл больше 32 МБ.',
+    'gateway.restarted': 'Ротирующий прокси перезапущен с новой привязкой.',
   }
 };
 
@@ -2287,6 +2769,15 @@ function showTab(name) {
   window.scrollTo({top: 0, behavior: 'instant'});
   if (name === 'results') loadResults();
   if (name === 'sources' && typeof reloadCatalog === 'function') reloadCatalog();
+  if (name === 'pools') {
+    if (typeof loadPools === 'function') loadPools();
+    if (typeof loadSchedules === 'function') loadSchedules();
+    if (typeof loadGatewayOptions === 'function') loadGatewayOptions();
+  }
+  if (name === 'keys' && typeof loadKeys === 'function') loadKeys();
+  if (window.location.hash !== '#' + name) {
+    try { history.replaceState(null, '', '#' + name); } catch (error) { /* older engines */ }
+  }
 }
 
 
@@ -4832,18 +5323,243 @@ if ($('stop')) {
   };
 }
 
+// Deleting local data used to be one click: the server removed the database,
+// every generation and the logs, and only then printed what had gone.  The
+// preview comes first, it says how many bytes are involved, and it can be
+// cancelled without a single file being touched.
 async function clearLocalData() {
-  if (!confirm(t('confirm.clear'))) return;
+  const box = $('cleanup-preview-box');
   try {
-    const result = await api('/api/clear-data', {});
-    toast(t('toast.cleared', {count: (result && result.removed) ? result.removed.length : 0}));
+    const preview = await api('/api/maintenance/cleanup-preview');
+    if (box) box.hidden = false;
+    renderCleanupPreview(preview);
     await poll();
   } catch (error) {
     toast(error.message, true);
   }
 }
+
+function humanBytes(value) {
+  const bytes = Number(value || 0);
+  if (!isFinite(bytes) || bytes <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let index = 0;
+  let size = bytes;
+  while (size >= 1024 && index < units.length - 1) { size /= 1024; index += 1; }
+  return (index ? size.toFixed(1) : String(Math.round(size))) + ' ' + units[index];
+}
+
+function humanWhen(stamp) {
+  if (!stamp) return '';
+  const at = Number(stamp) * 1000;
+  if (!isFinite(at) || at <= 0) return '';
+  const diff = Math.max(0, Date.now() - at);
+  const minute = 60000, hour = 3600000, day = 86400000;
+  if (diff < minute) return t('keys.usedAgo', {when: '< 1 min'});
+  if (diff < hour) return t('keys.usedAgo', {when: Math.floor(diff / minute) + ' min'});
+  if (diff < day) return t('keys.usedAgo', {when: Math.floor(diff / hour) + ' h'});
+  return t('keys.usedAgo', {when: Math.floor(diff / day) + ' d'});
+}
+
+function renderCleanupPreview(preview) {
+  const list = $('cleanup-preview-list');
+  const total = $('cleanup-preview-total');
+  const remove = (preview && preview.remove) || [];
+  const protectedFiles = (preview && preview.protected) || [];
+  if (list) {
+    const rows = remove.map(item => `<div class="maint-row">
+        <span class="maint-name">${esc(item.name)}</span>
+        <span class="maint-size">${esc(humanBytes(item.bytes))}</span>
+      </div>`);
+    const kept = protectedFiles.map(item => `<div class="maint-row is-kept">
+        <span class="maint-name">${esc(item.name)}</span>
+        <span class="maint-size">${esc(humanBytes(item.bytes))} — ${esc(item.reason)}</span>
+      </div>`);
+    list.innerHTML = rows.join('') + (kept.length
+      ? `<h4 class="maint-subhead">${esc(t('maint.protected'))}</h4>${kept.join('')}`
+      : '');
+  }
+  if (total) total.textContent = t('maint.total', {size: humanBytes(preview && preview.total_bytes)});
+  toast(t('maint.cleanupAsked'));
+}
+
 if ($('clear-data')) $('clear-data').onclick = clearLocalData;
 document.querySelectorAll('[data-action="clear-data"]').forEach(button => { button.onclick = clearLocalData; });
+
+if ($('cleanup-apply')) $('cleanup-apply').onclick = async () => {
+  const button = $('cleanup-apply');
+  button.disabled = true;
+  try {
+    const result = await api('/api/maintenance/cleanup', {});
+    toast(t('maint.cleanupDone', {count: (result.removed || []).length}));
+    const box = $('cleanup-preview-box');
+    if (box) box.hidden = true;
+    await poll();
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+};
+
+if ($('cleanup-cancel')) $('cleanup-cancel').onclick = () => {
+  const box = $('cleanup-preview-box');
+  if (box) box.hidden = true;
+  toast(t('maint.canceled'));
+};
+
+// Retention: the preview is the same numbers the delete removes, so the button
+// below it is only enabled when the preview is on screen and says something.
+function retentionPolicy() {
+  const days = Number(($('retention-days') || {}).value || 0);
+  return {
+    include: ['observations', 'results'],
+    max_age_seconds: days > 0 ? Math.round(days * 86400) : null,
+    keep_newest: Number(($('retention-keep') || {}).value || 0),
+    expired_only: !($('retention-expired') || {checked: true}).checked ? false : true,
+    vacuum: !($('retention-vacuum') || {checked: false}).checked
+  };
+}
+
+if ($('retention-preview')) $('retention-preview').onclick = async () => {
+  const button = $('retention-preview');
+  button.disabled = true;
+  try {
+    const preview = await api('/api/maintenance/retention-preview', retentionPolicy());
+    const box = $('retention-preview-box');
+    if (box) box.hidden = false;
+    const list = $('retention-preview-list');
+    if (list) {
+      const targets = preview.targets || [];
+      list.innerHTML = targets.length
+        ? targets.map(item => `<div class="maint-row">
+            <span class="maint-name">${esc(item.table)} · ${esc(item.time_column)}</span>
+            <span class="maint-size">${esc(fmt(item.rows))}</span>
+          </div>`).join('')
+        : `<p class="hint">${esc(t('maint.retentionNothing'))}</p>`;
+    }
+    const total = $('retention-preview-total');
+    if (total) total.textContent = t('maint.retentionTotal', {
+      rows: fmt(preview.total_rows), size: humanBytes(preview.target_bytes),
+      total: humanBytes(preview.database_bytes)
+    });
+    const apply = $('retention-apply');
+    if (apply) apply.disabled = !preview.total_rows;
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+};
+
+if ($('retention-apply')) $('retention-apply').onclick = async () => {
+  const button = $('retention-apply');
+  button.disabled = true;
+  try {
+    const report = await api('/api/maintenance/retention', retentionPolicy());
+    const rows = Object.values(report.deleted || {}).reduce((sum, value) => sum + (Number(value) || 0), 0);
+    toast(t('maint.retentionDone', {
+      rows: fmt(rows), before: humanBytes(report.database_bytes_before),
+      after: humanBytes(report.database_bytes_after)
+    }));
+    const box = $('retention-preview-box');
+    if (box) box.hidden = true;
+    await poll();
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+};
+
+if ($('restore-preview')) $('restore-preview').onclick = async () => {
+  const button = $('restore-preview');
+  button.disabled = true;
+  try {
+    const preview = await api('/api/maintenance/restore-preview', {
+      source: (($('restore-source') || {}).value || '').trim(),
+      target: (($('restore-target') || {}).value || '').trim()
+    });
+    const box = $('restore-preview-box');
+    if (box) box.hidden = false;
+    const list = $('restore-preview-list');
+    if (list) {
+      list.innerHTML = (preview.files || []).map(item =>
+        `<div class="maint-row"><span class="maint-name">${esc(item[0])}</span>
+          <span class="maint-size">${esc(humanBytes(item[1]))}</span></div>`).join('');
+    }
+    const note = $('restore-preview-note');
+    if (note) {
+      note.textContent = (preview.conflicts || []).length
+        ? t('maint.restoreConflicts', {names: (preview.conflicts || []).join(', ')})
+        : t('maint.restoreNote', {size: humanBytes(preview.total_bytes), target: preview.target_path});
+    }
+    const apply = $('restore-apply');
+    if (apply) apply.disabled = !(preview.ok && preview.total_bytes);
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+};
+
+if ($('restore-apply')) $('restore-apply').onclick = async () => {
+  const button = $('restore-apply');
+  button.disabled = true;
+  try {
+    const result = await api('/api/maintenance/restore', {
+      source: (($('restore-source') || {}).value || '').trim(),
+      target: (($('restore-target') || {}).value || '').trim()
+    });
+    const target = (result.preview && result.preview.target_path) || '';
+    toast(t('maint.restoreDone', {target}));
+    const box = $('restore-preview-box');
+    if (box) box.hidden = true;
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+};
+
+if ($('move-preview')) $('move-preview').onclick = async () => {
+  const button = $('move-preview');
+  button.disabled = true;
+  try {
+    const preview = await api('/api/maintenance/data-path', {
+      target: (($('move-target') || {}).value || '').trim(), apply: false
+    });
+    const box = $('move-preview-box');
+    if (box) box.hidden = false;
+    const note = $('move-preview-note');
+    if (note) note.textContent = t('maint.moveNote', {
+      size: humanBytes(preview.total_bytes), target: preview.target_path
+    });
+    const apply = $('move-apply');
+    if (apply) apply.disabled = !preview.total_bytes;
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+};
+
+if ($('move-apply')) $('move-apply').onclick = async () => {
+  const button = $('move-apply');
+  button.disabled = true;
+  try {
+    const result = await api('/api/maintenance/data-path', {
+      target: (($('move-target') || {}).value || '').trim(), apply: true
+    });
+    toast(t('maint.moveDone', {target: result.preview.target_path, note: result.note || ''}));
+    const box = $('move-preview-box');
+    if (box) box.hidden = true;
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
+};
 
 let isSyncingFilters = false;
 
@@ -6909,7 +7625,17 @@ function renderCollections(view) {
 
 async function loadCollections() {
   try {
-    renderCollections(await api('/api/collections'));
+    const view = await api('/api/collections');
+    renderCollections(view);
+    // The import card offers the same lists, so a file can be aimed at the
+    // user's own list without leaving the page.
+    if (typeof fillSelect === 'function') {
+      const importSelect = $('import-collection');
+      fillSelect(importSelect, view.collections || [], {
+        value: (importSelect || {}).value || view.selected || '',
+        label: item => `${item.name} (${item.kind === 'public' ? t('col.public') : t('col.private')})`
+      });
+    }
   } catch (error) {
     const list = $('collection-list');
     if (list) list.innerHTML = `<p class="hint">${esc(error.message)}</p>`;
@@ -7411,13 +8137,988 @@ function setupServiceCatalogListeners() {
   }
 }
 
-try { setupCatalogListeners(); } catch (e) { console.error(e); }
+// ---------------------------------------------------------------------------
+// Import with a preview (F03)
+//
+// The own-list box writes membership straight through the collections route,
+// so a file never reached `importer.preview`/`importer.commit`: there was no
+// preview, no refused line number, no column mapping, no merge/replace choice
+// and no report.  This is the file path.  The preview is a POST that writes
+// nothing; "Apply" posts the batch id the preview returned, so the numbers on
+// screen and the numbers that land are the same computation, and a second
+// click on Apply replays instead of duplicating.
+// ---------------------------------------------------------------------------
+
+let importState = {plan: null, source: null, mapping: null, busy: false};
+
+// One place decides whether "Apply" is clickable, so a finishing request can
+// never re-enable a button the preview had just disabled for "nothing to do".
+function updateImportButtons() {
+  const preview = $('import-preview');
+  const apply = $('import-commit');
+  const plan = importState.plan;
+  const counts = (plan && plan.counts) || {};
+  if (preview) preview.disabled = !!importState.busy;
+  if (apply) {
+    apply.disabled = !!importState.busy || !plan || plan.needs_mapping
+      || ((counts.added || 0) === 0 && (counts.removed || 0) === 0);
+    apply.dataset.partial = (counts.rejected || 0) > 0 ? '1' : '';
+  }
+}
+
+function setImportBusy(busy) {
+  importState.busy = busy;
+  updateImportButtons();
+}
+
+function importNote(text) {
+  const node = $('import-note');
+  if (node) node.textContent = text || '';
+}
+
+function fillSelect(select, values, {value, label, empty}) {
+  if (!select) return;
+  const previous = value === undefined ? select.value : value;
+  const options = [];
+  if (empty) options.push(new Option(empty, ''));
+  (values || []).forEach(item => {
+    const itemValue = typeof item === 'string' ? item : item.id;
+    const itemLabel = typeof item === 'string' ? item : (label ? label(item) : item.name || item.id);
+    options.push(new Option(itemLabel, itemValue));
+  });
+  select.innerHTML = '';
+  options.forEach(option => select.add(option));
+  if (previous && options.some(option => option.value === previous)) select.value = previous;
+}
+
+function currentImportSource() {
+  if (importState.source) return importState.source;
+  const text = (($('import-text') || {}).value || '').trim();
+  if (!text) return null;
+  return {text, name: 'pasted list', channel: 'clipboard'};
+}
+
+function renderImportMapping(suggestion, problem) {
+  const box = $('import-mapping');
+  const grid = $('import-mapping-grid');
+  if (!box || !grid) return;
+  // `Preview.to_dict` sends `mapping_problem` as {missing, ambiguous}; the
+  // picker only needs the proposal and the names it has to warn about.
+  const suggestionMap = (suggestion && suggestion.mapping) || {};
+  const missing = (problem && problem.missing) || [];
+  const ambiguous = (problem && problem.ambiguous) || [];
+  if (!suggestion) { box.hidden = true; return; }
+  const columns = Object.values(suggestionMap).filter(value => value !== null && value !== undefined);
+  if (!columns.length) { box.hidden = true; return; }
+  const roles = ['host', 'port', 'scheme', 'country'];
+  grid.innerHTML = roles.map(role => {
+    const chosen = suggestionMap[role];
+    const warn = missing.includes(role) || ambiguous.includes(role);
+    const options = [`<option value="">${esc(t('imp.mappingNone'))}</option>`]
+      .concat(columns.map(name => `<option value="${esc(name)}"${String(chosen) === String(name) ? ' selected' : ''}>${esc(name)}</option>`))
+      .join('');
+    return `<label${warn ? ' class="field-warn"' : ''}>
+        <span>${esc(t('imp.mapping' + role.charAt(0).toUpperCase() + role.slice(1)))}</span>
+        <select data-mapping-role="${esc(role)}">${options}</select>
+      </label>`;
+  }).join('');
+  box.hidden = false;
+}
+
+function renderImportPreview(plan) {
+  const body = $('import-preview-body');
+  const apply = $('import-commit');
+  const counts = plan.counts || {};
+  if (body) {
+    const summary = t(plan.mode === 'replace' ? 'imp.summaryReplace' : 'imp.summary', {
+      valid: fmt(counts.valid || 0), duplicates: fmt(counts.duplicates || 0),
+      rejected: fmt(counts.rejected || 0), removed: fmt(counts.removed || 0)
+    });
+    const rejected = (plan.rows || []).filter(row => row.state === 'rejected').slice(0, 60);
+    const groups = [
+      ['imp.added', (plan.added || []).length],
+      ['imp.unchanged', (plan.unchanged || []).length],
+      ['imp.removed', (plan.removed || []).length],
+      ['imp.rejectedLines', (plan.rejected || []).length]
+    ];
+    const head = `<div class="imp-summary">
+        <p class="imp-summary-line">${esc(summary)}</p>
+        <p class="hint">${esc(t('imp.nothingWritten'))}</p>
+        <div class="imp-counters">${groups.map(([key, value]) =>
+          `<span class="imp-counter"><b>${esc(fmt(value))}</b><span>${esc(t(key))}</span></span>`).join('')}</div>
+        <p class="hint">${esc(t('imp.batch'))}: <code>${esc(plan.batch_id)}</code> ·
+          ${esc(t('imp.digest'))}: <code>${esc(String(plan.source_digest || '').slice(0, 16))}</code> ·
+          ${esc(plan.format || 'txt')}</p>
+      </div>`;
+    const table = rejected.length ? `<div class="imp-rejected"><h4>${esc(t('imp.rejectedLines'))}</h4>
+        <table class="imp-table"><thead><tr>
+          <th>${esc(t('imp.rows'))}</th><th>${esc(t('imp.reason'))}</th><th>${esc(t('imp.proxy'))}</th>
+        </tr></thead><tbody>${rejected.map(row => `<tr>
+          <td>${esc(row.line)}</td>
+          <td>${esc(importReasonText(row.reason))}</td>
+          <td class="mono">${esc(row.sample || '')}</td>
+        </tr>`).join('')}</tbody></table>
+        ${(plan.rejected || []).length > rejected.length
+          ? `<p class="hint">${esc(fmt(plan.rejected.length - rejected.length))} …</p>` : ''}
+      </div>` : '';
+    body.innerHTML = head + table;
+  }
+  const hasChanges = (counts.added || 0) > 0 || (counts.removed || 0) > 0;
+  updateImportButtons();
+  importNote((counts.rejected || 0)
+    ? t('imp.partial', {count: fmt(counts.rejected)})
+    : (hasChanges ? '' : t('imp.noChanges')));
+}
+
+function importReasonText(reason) {
+  const map = {
+    E_IMPORT_DUPLICATE_IN_SOURCE: 'imp.duplicateInSource',
+    E_IMPORT_ALREADY_MEMBER: 'imp.alreadyMember',
+    E_IMPORT_FORMAT: 'imp.formatError',
+    E_IMPORT_CREDENTIALS: 'imp.credentials',
+    E_IMPORT_HOSTNAME: 'imp.hostname',
+    E_IMPORT_PRIVATE: 'imp.private',
+    E_IMPORT_MISSING_FIELD: 'imp.missingField'
+  };
+  const key = map[reason];
+  return key ? t(key) : (reason || '');
+}
+
+function mappingFromForm() {
+  const grid = $('import-mapping-grid');
+  if (!grid || grid.closest('#import-mapping').hidden) return null;
+  const mapping = {};
+  grid.querySelectorAll('[data-mapping-role]').forEach(node => {
+    mapping[node.dataset.mappingRole] = node.value || null;
+  });
+  return (mapping.host && mapping.port) ? mapping : null;
+}
+
+async function runImportPreview() {
+  const source = currentImportSource();
+  if (!source) { importNote(t('imp.needFile')); return; }
+  setImportBusy(true);
+  try {
+    const plan = await api('/api/import/preview', {
+      collection: (($('import-collection') || {}).value || ''),
+      format: (($('import-format') || {}).value || '') || null,
+      mode: (($('import-mode') || {}).value || 'merge'),
+      mapping: mappingFromForm(),
+      text: source.text,
+      name: source.name,
+      channel: source.channel
+    });
+    importState.plan = plan;
+    importState.source = source;
+    renderImportMapping(plan.mapping_suggestion, plan.mapping_problem);
+    renderImportPreview(plan);
+    const count = $('imp-count');
+    if (count) count.textContent = fmt((plan.counts || {}).total || 0);
+    if (plan.needs_mapping) importNote(t('imp.needMapping'));
+  } catch (error) {
+    importState.plan = null;
+    importNote('');
+    toast(error.message, true);
+  } finally {
+    setImportBusy(false);
+  }
+}
+
+async function runImportCommit() {
+  const plan = importState.plan;
+  if (!plan) { importNote(t('imp.needFile')); return; }
+  const apply = $('import-commit');
+  if (apply && apply.dataset.partial && !confirm(t('imp.partial', {count: fmt((plan.counts || {}).rejected || 0)}))) {
+    return;
+  }
+  setImportBusy(true);
+  try {
+    const report = await api('/api/import/commit', {
+      batch_id: plan.batch_id, allow_partial: true
+    });
+    const reportBox = $('import-report');
+    if (reportBox) {
+      const counts = report.counts || {};
+      reportBox.innerHTML = `<div class="imp-summary">
+          <p class="imp-summary-line">${esc(t('imp.applied', {
+            added: fmt(counts.added || 0), removed: fmt(counts.removed || 0),
+            rejected: fmt(counts.rejected || 0)}))}</p>
+          <p class="hint">${esc(report.replayed ? t('imp.replayed') : t('imp.batch') + ': ' + report.batch_id)}</p>
+          ${(report.rejected || []).length ? `<p class="hint">${esc(t('imp.rejectedLines'))}: ${
+            esc((report.rejected || []).map(row => row.line).join(', '))}</p>` : ''}
+        </div>`;
+    }
+    toast(t('imp.applied', {
+      added: fmt((report.counts || {}).added || 0), removed: fmt((report.counts || {}).removed || 0),
+      rejected: fmt((report.counts || {}).rejected || 0)}));
+    importState.plan = null;
+    if (apply) apply.disabled = true;
+    const preview = $('import-preview-body');
+    if (preview) preview.innerHTML = '';
+    await loadCollections();
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    setImportBusy(false);
+  }
+}
+
+async function loadImportHistory() {
+  const box = $('import-history');
+  if (!box) return;
+  try {
+    const value = await api('/api/import/batches');
+    const rows = value.batches || [];
+    box.hidden = false;
+    box.innerHTML = `<h3>${esc(t('imp.historyTitle'))}</h3>` + (rows.length
+      ? `<table class="imp-table"><thead><tr>
+          <th>${esc(t('imp.historyBatch'))}</th><th>${esc(t('imp.historyState'))}</th>
+          <th>${esc(t('imp.historyCollection'))}</th><th>${esc(t('imp.historyRevision'))}</th>
+          <th>${esc(t('imp.historyWhen'))}</th>
+        </tr></thead><tbody>${rows.map(row => `<tr>
+          <td class="mono">${esc(row.id)}</td><td>${esc(row.state)}</td>
+          <td class="mono">${esc(row.collection_id)}</td><td>${esc(row.revision)}</td>
+          <td>${esc(humanWhen(row.created_at))}</td>
+        </tr>`).join('')}</tbody></table>`
+      : `<p class="hint">${esc(t('imp.historyEmpty'))}</p>`);
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+
+function setupImportListeners() {
+  const file = $('import-source-file');
+  if (file) {
+    file.onchange = async () => {
+      const chosen = file.files && file.files[0];
+      if (!chosen) return;
+      if (chosen.size > 32 * 1024 * 1024) {
+        importNote(t('error.fileTooLarge'));
+        return;
+      }
+      try {
+        importState.source = {
+          text: await chosen.text(),
+          name: chosen.name,
+          channel: 'file'
+        };
+        const box = $('import-paste-box');
+        if (box) box.open = false;
+        importNote('');
+        await runImportPreview();
+      } catch (error) {
+        toast(error.message, true);
+      }
+    };
+  }
+  const paste = $('import-text');
+  if (paste) {
+    paste.oninput = () => { importState.source = null; };
+  }
+  if ($('import-preview')) $('import-preview').onclick = runImportPreview;
+  if ($('import-commit')) $('import-commit').onclick = runImportCommit;
+  if ($('imp-refresh')) $('imp-refresh').onclick = loadImportHistory;
+  const mode = $('import-mode');
+  if (mode) mode.onchange = () => { if (importState.source) runImportPreview(); };
+  const format = $('import-format');
+  if (format) format.onchange = () => { if (importState.source) runImportPreview(); };
+}
+
+// ---------------------------------------------------------------------------
+// Pools and schedules (F14, F15)
+// ---------------------------------------------------------------------------
+
+let poolsState = {pools: [], selected: null, collections: [], profiles: []};
+
+function poolStateBadge(state) {
+  const map = {
+    ready: 'pass', empty: 'subtle', error: 'fail', paused: 'subtle', degraded: 'warn'
+  };
+  const cls = map[state] || 'muted';
+  return `<span class="badge ${cls}">${esc(state || '—')}</span>`;
+}
+
+function renderPools(view) {
+  poolsState.pools = view.pools || [];
+  poolsState.collections = view.collections || [];
+  poolsState.profiles = view.profiles || [];
+  const list = $('pool-list');
+  fillSelect($('pool-collection'), poolsState.collections,
+    {empty: t('pool.collection'), label: item => `${item.name} (${item.kind})`});
+  if (list) {
+    list.innerHTML = poolsState.pools.length ? poolsState.pools.map(row => `
+      <div class="catalog-row pool-row" data-pool-id="${esc(row.id)}">
+        <div class="catalog-cell catalog-cell-source">
+          <strong>${esc(row.id)}</strong>
+          <div class="catalog-id">${esc(row.collection_id)} · ${esc(row.profile_id)} r${esc(row.profile_revision)}</div>
+        </div>
+        <div class="catalog-cell catalog-cell-state">
+          <span class="badge subtle">${esc(fmt(row.served))} / ${esc(fmt(row.desired))} ${esc(t('pool.count'))}</span>
+          ${poolStateBadge(row.state)}
+          ${row.ready_for_clients ? `<span class="badge pass">${esc(t('pool.ready'))}</span>` : ''}
+        </div>
+        <div class="catalog-cell catalog-cell-choice">
+          <div class="catalog-actions">
+          <button class="button chip" data-pool-select="${esc(row.id)}">${esc(t('pool.select'))}</button>
+          </div>
+        </div>
+      </div>`).join('') : `<p class="hint">${esc(t('pool.empty'))}</p>`;
+  }
+  const count = $('pool-count');
+  if (count) count.textContent = fmt(poolsState.pools.length);
+  const nav = $('nav-pool-count');
+  if (nav) nav.textContent = fmt(poolsState.pools.length);
+  list && list.querySelectorAll('[data-pool-select]').forEach(button => {
+    button.onclick = () => selectPool(button.dataset.poolSelect);
+  });
+  const schedPools = $('sched-pool');
+  if (schedPools) {
+    fillSelect(schedPools, poolsState.pools.map(row => row.id), {empty: '—'});
+  }
+  const gwPools = $('gwb-pool');
+  if (gwPools) fillSelect(gwPools, poolsState.pools.map(row => row.id), {empty: t('gwb.unbound')});
+}
+
+async function selectPool(poolId) {
+  poolsState.selected = poolId;
+  const box = $('pool-detail-box');
+  if (box) box.open = true;
+  try {
+    const view = await api('/api/pools?id=' + encodeURIComponent(poolId));
+    const status = view.status || {};
+    const targets = $('pool-targets');
+    if (targets) {
+      targets.innerHTML = `
+        <label><span>${esc(t('pool.desired'))}</span>
+          <input type="number" id="pool-target-desired" min="0" max="1000" value="${esc(status.desired || 0)}"></label>
+        <label><span>${esc(t('pool.reserve'))}</span>
+          <input type="number" id="pool-target-reserve" min="0" max="1000" value="${esc(status.reserve || 0)}"></label>
+        <label><span>${esc(t('pool.minimum') || 'Minimum')}</span>
+          <input type="number" id="pool-target-minimum" min="0" max="1000" value="${esc(status.minimum || 0)}"></label>`;
+    }
+    const actions = $('pool-actions');
+    if (actions) {
+      actions.innerHTML = `
+        <button class="button primary" data-pool-action="start">${esc(t('pool.start'))}</button>
+        <button class="button light" data-pool-action="refill">${esc(t('pool.refill'))}</button>
+        <button class="button light" data-pool-action="recheck">${esc(t('pool.recheck'))}</button>
+        <button class="button light" data-pool-action="pause">${esc(t('pool.pause'))}</button>
+        <button class="button light" data-pool-action="target">${esc(t('pool.saveTarget'))}</button>`;
+      actions.querySelectorAll('[data-pool-action]').forEach(button => {
+        button.onclick = () => runPoolAction(poolId, button.dataset.poolAction, button);
+      });
+    }
+    const members = $('pool-members');
+    if (members) {
+      const rows = view.members || [];
+      members.innerHTML = rows.length ? rows.map(member => `
+        <div class="catalog-row">
+          <div class="catalog-cell catalog-cell-source">
+            <strong class="mono">${esc(member.endpoint_id)}</strong>
+            <div class="catalog-id">${esc(member.state)} · ${esc(humanWhen(member.admitted_at))}</div>
+          </div>
+          <div class="catalog-cell catalog-cell-choice">
+            <div class="catalog-actions">
+              <button class="button chip" data-pool-member="${esc(member.endpoint_id)}">${esc(t('pool.removeMember'))}</button>
+            </div>
+          </div>
+        </div>`).join('') : `<p class="hint">${esc(t('pool.noMembers'))}</p>`;
+      members.querySelectorAll('[data-pool-member]').forEach(button => {
+        button.onclick = () => runPoolAction(poolId, 'member-remove', button, button.dataset.poolMember);
+      });
+    }
+    const note = $('pool-note');
+    if (note) {
+      const reasons = (status.deficit_reasons || []).map(item => `${item.code} (${item.count})`).join(', ');
+      note.textContent = [status.deficit_reason, reasons].filter(Boolean).join(' · ');
+    }
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+
+async function runPoolAction(poolId, action, button, endpointId) {
+  if (button) button.disabled = true;
+  try {
+    const body = {id: poolId, action};
+    if (action === 'target') {
+      body.desired = Number(($('pool-target-desired') || {}).value || 0);
+      body.reserve = Number(($('pool-target-reserve') || {}).value || 0);
+      body.minimum = Number(($('pool-target-minimum') || {}).value || 0);
+    }
+    if (action === 'member-remove') body.endpoint_id = endpointId;
+    const result = await api('/api/pools/action', body);
+    const status = result.status || {};
+    if (action === 'recheck') {
+      toast(t('pool.rechecked', {count: fmt(result.items || 0)}));
+    } else if (action === 'start') {
+      toast(t('pool.started'));
+    } else if (action === 'pause') {
+      toast(t('pool.paused'));
+    } else if (action === 'target') {
+      toast(t('pool.targetSaved'));
+    } else {
+      toast(t('pool.refilled', {served: fmt(status.served || 0), desired: fmt(status.desired || 0)}));
+    }
+    await loadPools();
+    if (poolsState.selected) await selectPool(poolsState.selected);
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function loadPools() {
+  try {
+    const view = await api('/api/pools');
+    renderPools(view);
+    if (poolsState.selected && poolsState.pools.some(row => row.id === poolsState.selected)) {
+      await selectPool(poolsState.selected);
+    }
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+function setupPoolsListeners() {
+  if ($('pool-refresh')) $('pool-refresh').onclick = loadPools;
+  if ($('pool-create')) $('pool-create').onclick = async () => {
+    const button = $('pool-create');
+    button.disabled = true;
+    try {
+      const result = await api('/api/pools/create', {
+        id: (($('pool-name') || {}).value || '').trim(),
+        collection_id: (($('pool-collection') || {}).value || '') || undefined,
+        desired: Number(($('pool-desired') || {}).value || 1),
+        reserve: Number(($('pool-reserve') || {}).value || 0)
+      });
+      const note = $('pool-note');
+      if (note) note.textContent = result.pool.id;
+      if ($('pool-name')) $('pool-name').value = '';
+      await loadPools();
+      await selectPool(result.pool.id);
+    } catch (error) {
+      toast(error.message, true);
+    } finally {
+      button.disabled = false;
+    }
+  };
+}
+
+function renderSchedules(view) {
+  const list = $('sched-list');
+  const rows = view.schedules || [];
+  if (list) {
+    list.innerHTML = rows.length ? rows.map(row => `
+      <div class="catalog-row">
+        <div class="catalog-cell catalog-cell-source">
+          <strong>${esc(row.id)}</strong>
+          <div class="catalog-id">${esc(t('sched.interval'))}: ${esc(fmt(row.interval_minutes))} ·
+            ${esc(row.timezone)}${row.pool_id ? ' · ' + esc(row.pool_id) : ''}</div>
+          <div class="catalog-id">${esc(t('sched.next'))}: ${
+            row.next_at ? esc(new Date(row.next_at * 1000).toLocaleString() + ' · ' + humanWhen(row.next_at))
+                        : esc(t('sched.noNext'))} (${esc(row.next_reason || '')})</div>
+          <div class="catalog-id">${esc(t('sched.runs'))}: ${esc(fmt(row.runs))} ·
+            ${esc(t('sched.skipped'))}: ${esc(fmt(row.skipped))} ·
+            ${esc(t('sched.last'))}: ${esc(row.last_run_at ? humanWhen(row.last_run_at) : t('keys.never'))}</div>
+        </div>
+        <div class="catalog-cell catalog-cell-state">
+          <span class="badge ${row.enabled ? 'pass' : 'subtle'}">${esc(row.enabled ? t('sched.enabled') : t('sched.disabled'))}</span>
+          ${row.paused ? `<span class="badge warn">${esc(t('sched.paused'))}</span>` : ''}
+        </div>
+        <div class="catalog-cell catalog-cell-choice">
+          <div class="catalog-actions">
+            <button class="button chip" data-sched-action="${row.enabled ? 'disable' : 'enable'}" data-sched-id="${esc(row.id)}">${esc(row.enabled ? t('sched.disable') : t('sched.enable'))}</button>
+            <button class="button chip" data-sched-action="run-now" data-sched-id="${esc(row.id)}">${esc(t('sched.runNow'))}</button>
+            <button class="button danger chip" data-sched-action="remove" data-sched-id="${esc(row.id)}">${esc(t('sched.remove'))}</button>
+          </div>
+        </div>
+      </div>`).join('') : `<p class="hint">${esc(t('sched.empty'))}</p>`;
+    list.querySelectorAll('[data-sched-action]').forEach(button => {
+      button.onclick = () => runScheduleAction(button.dataset.schedId, button.dataset.schedAction, button);
+    });
+  }
+  const count = $('sched-count');
+  if (count) count.textContent = fmt(rows.length);
+}
+
+async function runScheduleAction(scheduleId, action, button) {
+  if (action === 'remove' && !confirm(t('sched.remove') + ' ' + scheduleId + '?')) return;
+  if (button) button.disabled = true;
+  try {
+    const result = await api('/api/schedules/action', {id: scheduleId, action});
+    if (action === 'remove') toast(t('sched.removed'));
+    else if (action === 'run-now') toast(t('sched.runQueued', {id: result.run_id || scheduleId}));
+    await loadSchedules();
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+async function loadSchedules() {
+  try {
+    renderSchedules(await api('/api/schedules'));
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+function setupScheduleListeners() {
+  if ($('sched-create')) $('sched-create').onclick = async () => {
+    const button = $('sched-create');
+    button.disabled = true;
+    try {
+      const result = await api('/api/schedules/action', {
+        action: 'add',
+        id: (($('sched-name') || {}).value || '').trim(),
+        interval_minutes: Number(($('sched-interval') || {}).value || 60),
+        timezone: (($('sched-timezone') || {}).value || 'UTC').trim(),
+        pool_id: (($('sched-pool') || {}).value || '') || null
+      });
+      const note = $('sched-note');
+      if (note) note.textContent = result.id;
+      if ($('sched-name')) $('sched-name').value = '';
+      await loadSchedules();
+    } catch (error) {
+      toast(error.message, true);
+    } finally {
+      button.disabled = false;
+    }
+  };
+}
+
+async function loadGatewayOptions() {
+  const note = $('gwb-note');
+  try {
+    const value = await api('/api/gateway/options');
+    const bindings = value.bindings || {};
+    const gwPools = $('gwb-pool');
+    if (gwPools) {
+      gwPools.innerHTML = '';
+      gwPools.add(new Option(t('gwb.unbound'), ''));
+      (value.pools || []).forEach(item => gwPools.add(new Option(item.id, item.id)));
+      gwPools.value = bindings.pool_id && bindings.pool_id !== 'default' ? bindings.pool_id : '';
+    }
+    const profile = $('gwb-profile');
+    if (profile) {
+      fillSelect(profile, (value.profiles || []).map(item => item.id));
+      profile.value = bindings.profile_id || value.active_profile || '';
+    }
+    if ($('gwb-revision')) $('gwb-revision').value = bindings.profile_revision || '';
+    if ($('gwb-generation')) $('gwb-generation').value = bindings.generation || '';
+    if (note) {
+      const running = state && state.gateway;
+      note.textContent = running
+        ? (bindings.pool_id ? t('gwb.applied', {restarted: ''}) : t('gwb.unbound'))
+        : t('gwb.needsRestart');
+    }
+  } catch (error) {
+    if (note) note.textContent = '';
+  }
+}
+
+function setupGatewayBindingListeners() {
+  if ($('gwb-apply')) $('gwb-apply').onclick = async () => {
+    const button = $('gwb-apply');
+    button.disabled = true;
+    try {
+      const result = await api('/api/gateway/config', {
+        pool_id: ($('gwb-pool') || {}).value || '',
+        profile_id: ($('gwb-profile') || {}).value || '',
+        profile_revision: Number(($('gwb-revision') || {}).value || 0) || null,
+        generation: ($('gwb-generation') || {}).value || ''
+      });
+      toast(t('gwb.applied', {
+        restarted: result.restarted ? ' — ' + t('gateway.restarted') : ''
+      }));
+      await poll();
+      await loadGatewayOptions();
+    } catch (error) {
+      toast(error.message, true);
+    } finally {
+      button.disabled = false;
+    }
+  };
+}
+
+// ---------------------------------------------------------------------------
+// API keys (F29)
+// ---------------------------------------------------------------------------
+
+let keysState = {view: null, permissions: [], groups: {}};
+
+function keyStateBadge(state) {
+  const map = {
+    active: ['pass', 'keys.stateActive'],
+    disabled: ['warn', 'keys.stateDisabled'],
+    revoked: ['fail', 'keys.stateRevoked'],
+    expired: ['subtle', 'keys.stateExpired']
+  };
+  const entry = map[state] || ['subtle', 'keys.state'];
+  return `<span class="badge ${entry[0]}">${esc(t(entry[1]))}</span>`;
+}
+
+function renderPermissions(view) {
+  keysState.permissions = view.permissions || [];
+  const grid = $('keys-permissions');
+  if (!grid) return;
+  const groups = [
+    ['read.*', 'read.permissions' in view ? '' : null]
+  ];
+  const buckets = [
+    {label: 'read.*', items: view.read_permissions || []},
+    {label: 'write.*', items: view.write_permissions || []},
+    {label: 'admin.*', items: view.admin_permissions || []}
+  ];
+  const others = keysState.permissions.filter(name =>
+    !(view.read_permissions || []).includes(name)
+    && !(view.write_permissions || []).includes(name)
+    && !(view.admin_permissions || []).includes(name));
+  if (others.length) buckets.push({label: 'export.secret', items: others});
+  grid.innerHTML = buckets.map(bucket => `
+    <fieldset class="perm-group">
+      <legend><label class="check-label"><input type="checkbox" data-perm-group="${esc(bucket.label)}">
+        <span>${esc(bucket.label)}</span></label></legend>
+      <div class="perm-items">${bucket.items.map(name => `
+        <label class="check-label"><input type="checkbox" data-permission="${esc(name)}">
+          <span class="mono">${esc(name)}</span></label>`).join('')}</div>
+    </fieldset>`).join('');
+  grid.querySelectorAll('[data-perm-group]').forEach(box => {
+    box.onchange = () => {
+      const target = box.checked;
+      grid.querySelectorAll('[data-permission]').forEach(node => {
+        if (node.value.startsWith(box.dataset.permGroup) ||
+            (box.dataset.permGroup === 'export.secret' && node.value === 'export.secret')) {
+          node.checked = target;
+        }
+      });
+    };
+  });
+  void groups;
+}
+
+function selectedPermissions() {
+  const grid = $('keys-permissions');
+  if (!grid) return [];
+  return Array.from(grid.querySelectorAll('[data-permission]'))
+    .filter(node => node.checked).map(node => node.value);
+}
+
+function setPermissions(names) {
+  const grid = $('keys-permissions');
+  if (!grid) return;
+  const wanted = new Set(names || []);
+  grid.querySelectorAll('[data-permission]').forEach(node => { node.checked = wanted.has(node.value); });
+  grid.querySelectorAll('[data-perm-group]').forEach(box => {
+    const items = Array.from(grid.querySelectorAll('[data-permission]'))
+      .filter(node => node.value.startsWith(box.dataset.permGroup));
+    box.checked = items.length > 0 && items.every(node => node.checked);
+  });
+}
+
+function showKeySecret(issued, message) {
+  const card = $('keys-secret-card');
+  const value = $('keys-secret-value');
+  const warnings = $('keys-secret-warnings');
+  if (!card || !value) return;
+  value.textContent = issued.secret || '';
+  if (warnings) {
+    warnings.textContent = [message, ...(issued.warnings || [])].filter(Boolean).join(' · ');
+  }
+  card.hidden = false;
+  card.scrollIntoView({behavior: 'smooth', block: 'center'});
+}
+
+function renderKeys(view) {
+  keysState.view = view;
+  const rows = view.keys || [];
+  renderPermissions(view);
+  const bootstrapCard = $('keys-bootstrap-card');
+  if (bootstrapCard) bootstrapCard.hidden = !!view.bootstrapped;
+  const bootstrapNote = $('keys-bootstrap-note');
+  if (bootstrapNote && view.notice) bootstrapNote.textContent = view.notice;
+  const createCard = $('keys-create-card');
+  if (createCard) createCard.hidden = !view.bootstrapped;
+  const apiUrl = $('keys-api-url');
+  if (apiUrl) {
+    apiUrl.textContent = view.api_url
+      ? t('keys.apiEndpoint', {url: view.api_url})
+      : (state && state.api ? t('keys.apiEndpoint', {url: state.api}) : '');
+  }
+  const list = $('keys-list');
+  if (list) {
+    list.innerHTML = rows.length ? rows.map(row => `
+      <div class="catalog-row">
+        <div class="catalog-cell catalog-cell-source">
+          <strong>${esc(row.name || row.id)}</strong>
+          <div class="catalog-id mono">${esc(row.prefix)} · ${esc(row.id)}</div>
+          <div class="catalog-id">${esc(t('keys.created'))}: ${esc(humanWhen(row.created_at))} ·
+            ${esc(t('keys.expires'))}: ${esc(row.expires_at ? humanWhen(row.expires_at) : t('keys.never'))} ·
+            ${esc(t('keys.lastUsed'))}: ${esc(row.last_used_at ? humanWhen(row.last_used_at) : t('keys.never'))}</div>
+          <div class="catalog-id">${esc(t('keys.rights'))}: ${esc((row.permissions || []).join(', ') || '—')}${
+            (row.scope && ((row.scope.collections || []).length || (row.scope.pools || []).length))
+              ? ' · ' + esc(JSON.stringify(row.scope)) : ''}</div>
+        </div>
+        <div class="catalog-cell catalog-cell-state">${keyStateBadge(row.state)}</div>
+        <div class="catalog-cell catalog-cell-choice">
+          <div class="catalog-actions">
+            <button class="button chip" data-key-action="rotate" data-key-id="${esc(row.id)}" data-key-name="${esc(row.name || row.id)}">${esc(t('keys.rotate'))}</button>
+            ${row.state === 'disabled'
+              ? `<button class="button chip" data-key-action="enable" data-key-id="${esc(row.id)}" data-key-name="${esc(row.name || row.id)}">${esc(t('keys.enable'))}</button>`
+              : `<button class="button chip" data-key-action="disable" data-key-id="${esc(row.id)}" data-key-name="${esc(row.name || row.id)}">${esc(t('keys.disable'))}</button>`}
+            ${row.state !== 'revoked'
+              ? `<button class="button danger chip" data-key-action="revoke" data-key-id="${esc(row.id)}" data-key-name="${esc(row.name || row.id)}">${esc(t('keys.revoke'))}</button>` : ''}
+            <button class="button danger chip" data-key-action="delete" data-key-id="${esc(row.id)}" data-key-name="${esc(row.name || row.id)}">${esc(t('keys.remove'))}</button>
+          </div>
+        </div>
+      </div>`).join('') : `<p class="hint">${esc(t('keys.empty'))}</p>`;
+    list.querySelectorAll('[data-key-action]').forEach(button => {
+      button.onclick = () => runKeyAction(button.dataset.keyId, button.dataset.keyAction, button.dataset.keyName, button);
+    });
+  }
+  const count = $('keys-count');
+  if (count) count.textContent = fmt(rows.length);
+  const nav = $('nav-key-count');
+  if (nav) nav.textContent = fmt(rows.length);
+  const auditCard = $('keys-audit-card');
+  const auditList = $('keys-audit');
+  const audit = view.audit || [];
+  if (auditCard) auditCard.hidden = !audit.length;
+  if (auditList) {
+    auditList.innerHTML = audit.length ? audit.map(item => `
+      <div class="catalog-row">
+        <div class="catalog-cell catalog-cell-source">
+          <strong class="mono">${esc(item.operation)}</strong>
+          <div class="catalog-id">${esc(item.key_id || '—')} ${esc(item.object_kind || '')} ${esc(item.object_id || '')}</div>
+        </div>
+        <div class="catalog-cell catalog-cell-state">
+          <span class="badge ${item.result === 'ok' ? 'pass' : 'warn'}">${esc(item.result || '')}</span>
+          <span class="catalog-id">${esc(humanWhen(item.at))}</span>
+        </div>
+      </div>`).join('') : '';
+  }
+}
+
+function keyAdminSecret() {
+  return (($('keys-admin-secret') || {}).value || '').trim();
+}
+
+async function loadKeys() {
+  const secret = keyAdminSecret();
+  try {
+    const query = secret ? '?admin_secret=' + encodeURIComponent(secret) : '';
+    renderKeys(await api('/api/api-keys' + query));
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+
+async function runKeyAction(keyId, action, name, button) {
+  const askKey = {rotate: 'keys.rotateAsk', revoke: 'keys.revokeAsk', disable: 'keys.disableAsk', delete: 'keys.deleteAsk'};
+  if (askKey[action] && !confirm(t(askKey[action], {name}))) return;
+  if (button) button.disabled = true;
+  try {
+    const result = await api('/api/api-keys/action', {
+      id: keyId, action, admin_secret: keyAdminSecret()
+    });
+    if (action === 'rotate') {
+      showKeySecret(result, t('keys.rotated', {name}));
+    } else {
+      const key = {rotate: 'keys.rotated', disable: 'keys.disabled', enable: 'keys.enabled',
+                   revoke: 'keys.revoked', delete: 'keys.deleted'};
+      toast(t(key[action] || 'keys.state', {name}));
+    }
+    await loadKeys();
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+function setupKeyListeners() {
+  if ($('keys-refresh')) $('keys-refresh').onclick = loadKeys;
+  if ($('keys-admin-secret')) {
+    $('keys-admin-secret').onchange = () => loadKeys();
+  }
+  if ($('keys-bootstrap')) $('keys-bootstrap').onclick = async () => {
+    const button = $('keys-bootstrap');
+    button.disabled = true;
+    try {
+      const issued = await api('/api/api-keys/bootstrap', {
+        name: (($('keys-bootstrap-name') || {}).value || 'administrator').trim(),
+        ttl_days: Number(($('keys-bootstrap-ttl') || {}).value || 0)
+      });
+      showKeySecret(issued, t('keys.bootstrapDone', {id: issued.id}));
+      setPermissions(issued.permissions);
+      await loadKeys();
+    } catch (error) {
+      toast(error.message, true);
+    } finally {
+      button.disabled = false;
+    }
+  };
+  if ($('keys-create')) $('keys-create').onclick = async () => {
+    const button = $('keys-create');
+    button.disabled = true;
+    try {
+      const issued = await api('/api/api-keys', {
+        name: (($('keys-name') || {}).value || '').trim(),
+        purpose: (($('keys-purpose') || {}).value || '').trim(),
+        ttl_days: Number(($('keys-ttl') || {}).value || 0),
+        permissions: selectedPermissions(),
+        admin_secret: keyAdminSecret()
+      });
+      showKeySecret(issued, t('keys.createdOk', {id: issued.id}));
+      if ($('keys-name')) $('keys-name').value = '';
+      await loadKeys();
+    } catch (error) {
+      toast(error.message, true);
+    } finally {
+      button.disabled = false;
+    }
+  };
+  if ($('keys-presets-read')) $('keys-presets-read').onclick = () => {
+    setPermissions((keysState.view && keysState.view.read_permissions) || []);
+  };
+  if ($('keys-presets-full')) $('keys-presets-full').onclick = () => {
+    setPermissions((keysState.view && keysState.view.local_permissions) || keysState.permissions);
+  };
+  if ($('keys-secret-copy')) $('keys-secret-copy').onclick = async () => {
+    const value = (($('keys-secret-value') || {}).textContent || '').trim();
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(value);
+      toast(t('keys.copied'));
+    } catch (error) {
+      toast(error.message, true);
+    }
+  };
+  if ($('keys-secret-close')) $('keys-secret-close').onclick = () => {
+    const card = $('keys-secret-card');
+    if (!card) return;
+    card.hidden = true;
+    const value = $('keys-secret-value');
+    if (value) value.textContent = '';
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Source scope exclusions
+//
+// The dialog existed in the markup since the first version and only ever had a
+// close handler: nothing called showModal, so the four routes behind it were
+// unreachable from the page.  It opens from the sources page now and shows
+// what is really excluded.
+// ---------------------------------------------------------------------------
+
+function renderScopeList(view) {
+  const body = $('scope-body');
+  const rows = (view && view.proxies) || [];
+  const count = $('scope-count');
+  if (count) count.textContent = fmt(view ? view.count : 0);
+  if (!body) return;
+  const title = $('scope-title');
+  if (title) title.textContent = t('cat.scopeListTitle');
+  const sources = (view && view.sources) || [];
+  body.innerHTML = `
+    <p class="hint">${esc(t('cat.scopeHint'))}</p>
+    <div class="dialog-tools">
+      ${sources.map(source => `<button class="button light chip" data-scope-clear-source="${esc(source)}">${esc(t('cat.scopeClearSource'))}: ${esc(source)}</button>`).join('')}
+      <button class="button danger chip" data-scope-clear-all="1">${esc(t('cat.scopeClearAll'))}</button>
+    </div>
+    ${rows.length ? `<table class="imp-table"><thead><tr>
+        <th>${esc(t('cat.scopeProxy'))}</th><th>${esc(t('cat.scopeSource'))}</th>
+        <th>${esc(t('cat.scopeWhen'))}</th>
+      </tr></thead><tbody>${rows.slice(0, 500).map(row => `<tr>
+        <td class="mono">${esc(row.proxy)}</td>
+        <td class="mono">${esc(row.source || '—')}${row.shared ? ' · ' + esc(t('cat.scopeShared')) : ''}</td>
+        <td>${esc(humanWhen(row.created_at))}</td>
+      </tr>`).join('')}</tbody></table>
+      ${(view.truncated ? `<p class="hint">${esc(fmt(view.count - 500))} …</p>` : '')}`
+      : `<p class="hint">${esc(t('cat.scopeEmpty'))}</p>`}`;
+  body.querySelectorAll('[data-scope-clear-source]').forEach(button => {
+    button.onclick = () => clearScope({source: button.dataset.scopeClearSource});
+  });
+  const clearAll = body.querySelector('[data-scope-clear-all]');
+  if (clearAll) clearAll.onclick = () => clearScope({});
+}
+
+async function clearScope(payload) {
+  try {
+    const result = await api('/api/sources/scope/clear', payload);
+    toast(t('cat.scopeDone', {count: fmt(result.removed || 0)}));
+    await refreshScope();
+    await poll();
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+
+async function refreshScope() {
+  try {
+    const view = await api('/api/sources/scope');
+    const count = $('scope-count');
+    if (count) count.textContent = fmt(view.count || 0);
+    if ($('scope-dialog') && $('scope-dialog').open) renderScopeList(view);
+    return view;
+  } catch (error) {
+    return {count: 0, proxies: []};
+  }
+}
+
+async function openScopeDialog() {
+  const dialog = $('scope-dialog');
+  if (dialog && typeof dialog.showModal === 'function' && !dialog.open) {
+    const body = $('scope-body');
+    if (body) body.innerHTML = '<div class="details-loading"><span class="spinner" aria-hidden="true"></span></div>';
+    dialog.showModal();
+  }
+  renderScopeList(await refreshScope());
+}
+
+function setupScopeDialog() {
+  const opener = $('scope-open');
+  if (opener) opener.onclick = () => openScopeDialog();
+  const dialog = $('scope-dialog');
+  const closer = $('close-scope');
+  if (closer) {
+    closer.onclick = event => {
+      if (event) event.preventDefault();
+      if (dialog && typeof dialog.close === 'function') dialog.close();
+    };
+  }
+  if (dialog) {
+    dialog.addEventListener('click', event => {
+      if (event.target !== dialog) return;
+      const rect = dialog.getBoundingClientRect();
+      const inside = rect.top <= event.clientY && event.clientY <= rect.bottom
+        && rect.left <= event.clientX && event.clientX <= rect.right;
+      if (!inside && typeof dialog.close === 'function') dialog.close();
+    });
+    window.addEventListener('keydown', event => {
+      if (event.key === 'Escape' && dialog.open && typeof dialog.close === 'function') dialog.close();
+    });
+    dialog.addEventListener('close', () => dialog.removeAttribute('open'));
+  }
+  refreshScope();
+}
+
 try { setupCollectionListeners(); } catch (e) { console.error(e); }
 try { setupServiceCatalogListeners(); } catch (e) { console.error(e); }
 try { setupCountryComboboxes(); } catch (e) { console.error(e); }
 try { setupFieldPresetChips(); } catch (e) { console.error(e); }
 try { setupEnhancedListeners(); } catch (e) { console.error(e); }
 try { setupResultList(); } catch (e) { console.error(e); }
+try { setupImportListeners(); } catch (e) { console.error(e); }
+try { setupPoolsListeners(); } catch (e) { console.error(e); }
+try { setupScheduleListeners(); } catch (e) { console.error(e); }
+try { setupGatewayBindingListeners(); } catch (e) { console.error(e); }
+try { setupKeyListeners(); } catch (e) { console.error(e); }
+try { setupScopeDialog(); } catch (e) { console.error(e); }
 
 try { renderLang(); } catch (e) { console.error(e); }
 try { renderSavedViews(resultState.views); } catch (e) { console.error(e); }
@@ -7444,4 +9145,11 @@ if (initToast) {
   }
   await poll();
   setInterval(poll, 2000);
+  // The terminal prints `{url}#keys` so a user who launched the application with
+  // no arguments lands on the page where the first key is issued.  The other
+  // deep links work the same way.
+  const wanted = String(window.location.hash || '').replace(/^#/, '');
+  if (wanted && document.querySelector(`.nav[data-tab="${CSS.escape(wanted)}"]`)) {
+    showTab(wanted);
+  }
 })();

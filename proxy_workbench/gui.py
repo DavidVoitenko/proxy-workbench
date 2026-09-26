@@ -30,11 +30,13 @@ from .maintenance import clear_runtime, exclusive_lock
 from .reputation import Denylist, normalize_zones
 from . import anonymity
 from . import api
+from . import apikeys
 from . import core as admission
 from . import gateway
 from .i18n import tr, utf8_output, state_detail_text
 from . import paths
 from . import geoip
+from . import importer
 from . import source_catalog
 from . import source_management
 from . import db as schema
@@ -94,6 +96,22 @@ SERVICE_SET_PAGE = 200
 # One paste into a personal list is bounded: the interface never reads a file
 # the size of a public source dump on behalf of a membership edit.
 MAX_COLLECTION_MEMBERS = 20_000
+# The scope exclusions of the sources page: a small user document, kept beside
+# the tags and the views so a check never rewrites it.
+SCOPE_EXCLUSIONS_FILE = 'gui-scope-exclusions.json'
+SCOPE_EXCLUSION_LIMIT = 20_000
+# The gateway binding the user chose on the gateway page.  A user document for
+# the same reason: it names a pool and a profile, it does not run anything.
+GATEWAY_CONFIG_FILE = 'gui-gateway.json'
+# When a schedule became active.  `schedules` (migration 7) has no
+# `activated_at` column and `SqliteScheduleStore` cannot persist one, so the
+# interface keeps the instant it created the schedule here; the next run is
+# still computed by `scheduler.Scheduler.plan`, not by this file.
+SCHEDULES_FILE = 'gui-schedules.json'
+# One preview is kept in memory so the commit button acts on exactly the plan
+# that was shown.  A few plans, not all of them: the list is a menu of pending
+# imports, not a cache of every file the user ever opened.
+IMPORT_PLANS = 6
 # Bulk actions that change stored state can be undone; a scan cannot.
 RECOVERABLE_OPS = frozenset({'tag', 'untag', 'note', 'favorite', 'unfavorite', 'exclude', 'include', 'denylist'})
 BULK_OPS = frozenset({'recheck', 'export', 'copy', 'tag', 'untag', 'note', 'favorite',
@@ -452,6 +470,9 @@ class App:
         self.views = Sidecar(self.data/VIEWS_FILE, {'views': []})
         self.history = Sidecar(self.data/HISTORY_FILE, {'entries': []})
         self.service_sets = Sidecar(self.data/SERVICE_SETS_FILE, {'sets': {}, 'pinned': None})
+        self.scope_exclusions_doc = Sidecar(self.data/SCOPE_EXCLUSIONS_FILE, {'exclusions': []})
+        self.gateway_config = Sidecar(self.data/GATEWAY_CONFIG_FILE, {})
+        self.schedule_activations = Sidecar(self.data/SCHEDULES_FILE, {'activated': {}})
         self.events_path = self.data/EVENTS_FILE
         self.event_seq = {}
         self.event_floor = 0
@@ -463,6 +484,13 @@ class App:
         self._catalog_cache = None
         self._service_catalog = None
         self.catalog_job = {'running': False, 'stage': 'idle', 'added': 0, 'changed': 0, 'retired': 0}
+        # The API key manager opens its own connection over the workbench
+        # database; it is built on first use and closed with the app.
+        self._key_manager = None
+        # Previews waiting for their commit button, newest last.  A preview is a
+        # frozen plan, not a document: it cannot be rebuilt from JSON, so the
+        # page's "apply" acts on the exact object the page was shown.
+        self._import_plans = []
 
     def settings(self):
         settings_path = self.data/'gui-settings.json'
@@ -505,8 +533,15 @@ class App:
 
     CATALOG_FILE = 'source-catalog.json'
 
-    def catalog(self):
-        """Last accepted remote catalog, or the bundled one when there is none."""
+    def source_document(self):
+        """Last accepted remote catalog, or the bundled one when there is none.
+
+        Named apart from :meth:`catalog` on purpose: that one is the *service*
+        catalog (F06), this one is the *source* catalog (F13).  Both were
+        called `catalog`, and the later definition silently won, so every
+        source page and every source preview was handed the service manifest
+        and `source_catalog.source_by_id` raised `KeyError: 'sources'`.
+        """
         if self._catalog_cache is not None:
             return self._catalog_cache
         path = self.data/self.CATALOG_FILE
@@ -541,14 +576,14 @@ class App:
     def source_view(self, query=None):
         with self.source_db() as db:
             runtime = source_management.runtime_snapshot(db)
-            return source_management.build_view(self.catalog(), self.settings(), runtime, query, db=db)
+            return source_management.build_view(self.source_document(), self.settings(), runtime, query, db=db)
 
     def source_row(self, source_id):
         if not isinstance(source_id, str) or not source_id or len(source_id) > 64:
             raise ValueError('Некорректный ID источника.')
         with self.source_db() as db:
             runtime = source_management.runtime_snapshot(db, source_ids=[source_id])
-            view = source_management.detail_view(self.catalog(), self.settings(), source_id, runtime, db)
+            view = source_management.detail_view(self.source_document(), self.settings(), source_id, runtime, db)
         if view is None:
             raise ValueError('Такого источника нет в каталоге.')
         return view
@@ -562,9 +597,9 @@ class App:
         if not isinstance(set_id, str) or not set_id:
             raise ValueError('Выберите набор источников.')
         settings = self.settings()
-        if set_id not in {item['id'] for item in self.catalog()['sets']}:
+        if set_id not in {item['id'] for item in self.source_document()['sets']}:
             raise ValueError('Неизвестный набор источников.')
-        result = source_management.apply_set(settings, set_id, self.catalog())
+        result = source_management.apply_set(settings, set_id, self.source_document())
         saved = self._save_selection(result)
         return dict(settings=saved, set=set_id,
                     members=[value for value in result['source_selection']['selected_ids']],
@@ -574,9 +609,9 @@ class App:
         """One source: pause or resume its download.  Never changes the set."""
         source_id, disabled = _source_id_flag(payload, 'disabled')
         settings = self.settings()
-        if not _known_source(self.catalog(), settings, source_id):
+        if not _known_source(self.source_document(), settings, source_id):
             raise ValueError('Такого источника нет в каталоге.')
-        result = source_management.set_downloads(settings, [source_id], disabled, self.catalog())
+        result = source_management.set_downloads(settings, [source_id], disabled, self.source_document())
         saved = self._save_selection(result)
         return dict(settings=saved, id=source_id, download_disabled=disabled,
                     in_set=source_id in saved['source_selection']['selected_ids'])
@@ -584,10 +619,10 @@ class App:
     def select_source(self, payload):
         source_id, selected = _source_id_flag(payload, 'selected')
         settings = self.settings()
-        if not _known_source(self.catalog(), settings, source_id):
+        if not _known_source(self.source_document(), settings, source_id):
             raise ValueError('Такого источника нет в каталоге.')
-        result = (source_management.select_ids(settings, [source_id], self.catalog()) if selected
-                  else source_management.remove_sources(settings, [source_id], self.catalog()))
+        result = (source_management.select_ids(settings, [source_id], self.source_document()) if selected
+                  else source_management.remove_sources(settings, [source_id], self.source_document()))
         saved = self._save_selection(result)
         return dict(settings=saved, id=source_id, selected=selected,
                     in_set=source_id in saved['source_selection']['selected_ids'])
@@ -596,9 +631,9 @@ class App:
         """Remove a source from the active set.  Cache and history are kept."""
         source_id = _source_id(payload)
         settings = self.settings()
-        if not _known_source(self.catalog(), settings, source_id):
+        if not _known_source(self.source_document(), settings, source_id):
             raise ValueError('Такого источника нет в каталоге.')
-        result = source_management.remove_sources(settings, [source_id], self.catalog())
+        result = source_management.remove_sources(settings, [source_id], self.source_document())
         saved = self._save_selection(result)
         return dict(settings=saved, id=source_id, removed=True,
                     in_set=source_id in saved['source_selection']['selected_ids'])
@@ -624,10 +659,10 @@ class App:
         selection['selected_ids'] = list(dict.fromkeys(list(selection.get('selected_ids', [])) + [descriptor['id']]))
         selection['download_disabled_ids'] = [value for value in selection.get('download_disabled_ids', [])
                                               if value != descriptor['id']]
-        selection['catalog_revision'] = self.catalog()['revision']
+        selection['catalog_revision'] = self.source_document()['revision']
         settings['source_selection'] = selection
         settings['settings_version'] = 3
-        saved = self._save_selection(source_catalog.migrate_settings(settings, self.catalog()))
+        saved = self._save_selection(source_catalog.migrate_settings(settings, self.source_document()))
         return dict(settings=saved, id=descriptor['id'], url=descriptor['url'], kind=kind,
                     adapter=descriptor['adapter']['kind'], added=True)
 
@@ -646,7 +681,7 @@ class App:
             return source_id or descriptor['id'], descriptor['record'], allow_private
         if not isinstance(source_id, str) or not source_id:
             raise ValueError('Укажите источник или адрес списка.')
-        catalog = self.catalog()
+        catalog = self.source_document()
         selection = settings.get('source_selection') or {}
         custom = {item.get('id'): item for item in selection.get('custom_sources', []) if isinstance(item, dict)}
         item = source_catalog.source_by_id(catalog, source_id)
@@ -717,19 +752,187 @@ class App:
             'unique': len(set(sample))
         }, source_id, plan.get('name'))
 
+    # --- source recovery and scope exclusions -----------------------------
+    #
+    # These four used to answer a fixed "ok" body no matter what the database
+    # held, which is worse than no route at all: the page showed an action as
+    # done when nothing had happened.  They now do the work they name, and when
+    # the work is not possible they say so with a reason instead of a smile.
+    #
+    # The storage is the interface's own sidecar because `db.py` has no table
+    # for it and this file must not invent one behind its owner's back (see
+    # docs/integration/HANDOFF/fix-web.md).  The addresses themselves are never
+    # deleted: an exclusion removes an address from the user's *scope*, and
+    # `scoped_rows` is what every read of the results and of the export goes
+    # through, so the exclusion is real where the user meets it.
+
+    def source_scope_keys(self, source_id):
+        """The ``candidate_seen`` keys of one source, resolved from the catalog.
+
+        ``candidate_seen.source`` holds the short digest of the *configured
+        entry*, so a catalog id is resolved through its own endpoints and a raw
+        key is accepted as is.  A source that resolves to nothing is reported
+        as unknown rather than silently excluding zero addresses.
+        """
+        source_id = str(source_id or '').strip()
+        if not source_id:
+            raise ValueError('Укажите источник.')
+        keys = set()
+        if re.fullmatch(r'[0-9a-f]{8,64}', source_id):
+            keys.add(source_id)
+        try:
+            catalog = self.source_document()
+        except (OSError, ValueError):
+            catalog = {}
+        item = source_catalog.source_by_id(catalog, source_id) if catalog else None
+        if item is not None:
+            for endpoint in (item.get('endpoints') or []):
+                url = endpoint.get('url') if isinstance(endpoint, dict) else None
+                if url:
+                    keys.add(core.source_key(url))
+            if item.get('url'):
+                keys.add(core.source_key(item['url']))
+        settings = self.settings()
+        selection = settings.get('source_selection') or {}
+        for custom in (selection.get('custom_sources') or []):
+            if isinstance(custom, dict) and custom.get('id') == source_id and custom.get('url'):
+                keys.add(core.source_key(custom['url']))
+        return source_id, sorted(keys)
+
     def recover_source(self, payload):
-        source_id = _source_id(payload)
-        return dict(id=source_id, cleared=1, recovered=True)
+        """Clear the failure state of one source and re-check it once.
+
+        Recovery is a state transition with evidence behind it: the runtime
+        table of the source is reset (quarantine and backoff gone) and the one
+        availability check that follows is a real request.  Without a catalog
+        entry there is nothing to recover and the route says so.
+        """
+        source_id, keys = self.source_scope_keys((payload or {}).get('id'))
+        catalog = self.source_document()
+        item = source_catalog.source_by_id(catalog, source_id) if catalog else None
+        known = item is not None and bool(item.get('endpoints') or item.get('url'))
+        cleared = 0
+        if known and keys:
+            try:
+                with self.collection_write() as conn:
+                    cleared = conn.execute(
+                        'DELETE FROM candidate_meta WHERE source IN (%s)'
+                        % ','.join('?' * len(keys)), keys).rowcount or 0
+                    conn.commit()
+            except (schema.DbError, sqlite3.Error, ValueError):
+                cleared = 0
+        if not known:
+            return dict(id=source_id, recovered=False, cleared=cleared, known=False,
+                        error='Такого источника нет в каталоге; восстанавливать нечего.',
+                        check=None)
+        try:
+            outcome = ((self.preview_source({'id': source_id}) or {}).get('sources') or [{}])[0]
+            report = {'http_state': outcome.get('http_state'),
+                      'parse_state': outcome.get('parse_state'),
+                      'status': outcome.get('status'),
+                      'recognized': outcome.get('recognized'),
+                      'complete': outcome.get('complete'),
+                      'error': outcome.get('error')}
+        except ValueError as exc:
+            # The state was cleared and the single check that follows refused
+            # the source.  Both facts are reported: a recovery that half
+            # happened is neither a failure nor a success.
+            report = {'http_state': 'refused', 'parse_state': None, 'status': None,
+                      'recognized': 0, 'complete': False, 'error': str(exc)}
+        return dict(id=source_id, recovered=True, cleared=cleared, known=True,
+                    name=item.get('name') or source_id, check=report)
+
+    def scope_exclusion_rows(self):
+        """The exclusions as they are stored, newest last, bounded."""
+        stored = self.scope_exclusions_doc.read().get('exclusions') or []
+        rows = [item for item in stored if isinstance(item, dict) and item.get('proxy')]
+        return rows
+
+    def scope_exclusions(self, query=None):
+        """What is excluded from the user's scope right now, and by whom."""
+        rows = self.scope_exclusion_rows()
+        sources = sorted({str(item.get('source') or '') for item in rows} - {''})
+        return dict(count=len(rows), proxies=rows[:SCOPE_EXCLUSION_LIMIT], sources=sources,
+                    limit=SCOPE_EXCLUSION_LIMIT, truncated=len(rows) > SCOPE_EXCLUSION_LIMIT)
 
     def exclude_source_scope(self, payload):
-        source_id = _source_id(payload)
-        return dict(id=source_id, excluded=0, delivered=0, shared=0, already_excluded=0, scope_digest='default')
+        """Exclude the addresses one source delivered from the current scope.
 
-    def scope_exclusions(self):
-        return dict(scope_digest='default', count=0, proxies=[])
+        Only *exclusive* addresses go by default: an address another source
+        also delivered is not this source's to remove, and a shared address
+        needs an explicit ``include_shared`` (source-system-design §12.3).
+        """
+        payload = payload or {}
+        source_id, keys = self.source_scope_keys(payload.get('id'))
+        if not keys:
+            return dict(id=source_id, excluded=0, delivered=0, shared=0, already_excluded=0,
+                        exclusive=0, error='Источник ничего не доставлял; исключать нечего.')
+        include_shared = bool(payload.get('include_shared'))
+        conn = self.read_connection()
+        if conn is None:
+            raise ValueError('Локальная база ещё не создана. Сначала соберите адреса.')
+        try:
+            placeholders = ','.join('?' * len(keys))
+            delivered = [row[0] for row in conn.execute(
+                'SELECT proxy FROM candidate_seen WHERE source IN (%s) ORDER BY proxy' % placeholders,
+                keys)]
+            shared = set()
+            for row in conn.execute(
+                    'SELECT proxy, COUNT(DISTINCT source) AS n FROM candidate_seen '
+                    'WHERE proxy IN (SELECT proxy FROM candidate_seen WHERE source IN (%s)) '
+                    'GROUP BY proxy HAVING n > 1' % placeholders, keys):
+                shared.add(row[0])
+        except sqlite3.Error:
+            delivered, shared = [], set()
+        finally:
+            conn.close()
+        already = {str(item.get('proxy')) for item in self.scope_exclusion_rows()}
+        exclusive = [value for value in delivered if value not in shared]
+        chosen = delivered if include_shared else exclusive
+        added, present = [], 0
+        rows = self.scope_exclusion_rows()
+        known = {str(item.get('proxy')): item for item in rows}
+        stamp = time.time()
+        for value in chosen:
+            # `candidate_seen.proxy` is the address exactly as a list published
+            # it (`198.51.100.1:8080`), while a results row and
+            # `endpoints.canonical` carry the normalised one
+            # (`http://198.51.100.1:8080`).  The exclusion is stored in the
+            # normalised form, because that is the form `scoped_rows` compares
+            # against; without this the list would be right and the exclusion
+            # would hide nothing.
+            canonical = core.normalize_custom(value) or value
+            if canonical in already:
+                present += 1
+                continue
+            known[canonical] = {'proxy': canonical, 'as_seen': value, 'source': source_id,
+                                'reason': 'source_scope', 'created_at': stamp,
+                                'shared': value in shared}
+            added.append(canonical)
+        if added:
+            stored = list(known.values())[:SCOPE_EXCLUSION_LIMIT]
+            self.scope_exclusions_doc.write({'exclusions': stored})
+        return dict(id=source_id, excluded=len(added), delivered=len(delivered),
+                    exclusive=len(exclusive), shared=len(shared) - len(already & shared),
+                    already_excluded=present, include_shared=include_shared,
+                    excluded_total=len(self.scope_exclusion_rows()),
+                    sample=[{'proxy': value, 'shared': value in shared} for value in added[:20]])
 
     def clear_scope_exclusions(self, payload):
-        return dict(scope_digest='default', removed=0)
+        """Remove exclusions, either all of them or those of one source."""
+        payload = payload or {}
+        source_id = payload.get('source')
+        rows = self.scope_exclusion_rows()
+        if source_id:
+            source_id, _keys = self.source_scope_keys(source_id)
+            kept = [item for item in rows if str(item.get('source') or '') != source_id]
+        else:
+            kept = []
+        removed = len(rows) - len(kept)
+        if removed or not source_id:
+            self.scope_exclusions_doc.write({'exclusions': kept})
+        return dict(removed=removed, remaining=len(kept),
+                    source=str(source_id) if source_id else None)
 
     def refresh_catalog(self, payload=None):
         with self.mutex:
@@ -752,7 +955,7 @@ class App:
                 job['stage'] = 'validating'
                 if not isinstance(incoming, dict):
                     raise ValueError('Каталог источников недоступен.')
-                diff = source_catalog.catalog_diff(self.catalog(), incoming)
+                diff = source_catalog.catalog_diff(self.source_document(), incoming)
                 core.atomic(self.data/self.CATALOG_FILE, json.dumps(incoming, ensure_ascii=False))
                 self._catalog_cache = incoming
                 job.update(running=False, stage='done', error=None, **diff)
@@ -1937,6 +2140,11 @@ class App:
             if plan['quick'] == 'clean':
                 pass
             members = self.collection_scope(plan)
+            # A scope exclusion removes an address from the user's own scope
+            # (source-system-design §12.3).  It is applied here, in the one
+            # place every read of the results table and of the export passes
+            # through, so it is a real exclusion and not a flag in a list.
+            excluded = frozenset(str(item.get('proxy')) for item in self.scope_exclusion_rows())
             for (payload,) in conn.execute('SELECT payload FROM results WHERE '+condition+' ORDER BY '+plan['order'], params):
                 try:
                     row = json.loads(payload)
@@ -1947,6 +2155,8 @@ class App:
                     continue
                 if members is not None and proxy not in members:
                     # F02: another collection's rows are not this table's rows.
+                    continue
+                if proxy in excluded:
                     continue
                 verdict = admission.admit(row, self.snapshot_scope(plan.get('status') or {}),
                                           self.snapshot_access(), policy, now,
@@ -2703,8 +2913,898 @@ class App:
                     cursor=(f'{last["stream"]}:{last["seq"]}' if last else cursor),
                     oldest_seq=oldest, source='measurements', truncated=len(found) > limit)
 
+    # --- API keys (F29) -----------------------------------------------------
+    #
+    # `apikeys` was fully written and reachable only from the CLI: `grep` for
+    # "key" in this file found nothing, so a user who launched the application
+    # without arguments had no way to get the first key and `/v1` was a door
+    # with no key in it (F29 asks for the manager in the GUI *and* the CLI).
+    #
+    # The interface is a locally trusted surface: it holds the data folder
+    # lock, its session token is minted per run, and every request must come
+    # from 127.0.0.1 with this run's Host and Origin.  So `bootstrap` may mint
+    # the first administrator without presenting a credential, exactly as the
+    # CLI does.  Every other action goes through the real permission machinery
+    # of the module: the actor is either the administrator secret the user
+    # pasted into the page (kept in the page's memory, never written to a file
+    # or a log) or the installation's own active administrator key, and the
+    # audit log names that key either way.
+
+    def api_key_banner(self):
+        """What the terminal says about the keys of `/v1`, without a secret.
+
+        The first administrator is not minted here: a terminal line that shows
+        a secret scrolls away, and the page is the place where a secret is shown
+        once on purpose.  The banner only counts the keys, so a user who starts
+        the application with no arguments is told that the door exists and where
+        the key is (F29).
+        """
+        try:
+            admins = self.key_admins()
+        except (ValueError, OSError, sqlite3.Error, apikeys.ApiKeyError):
+            return []
+        if not admins:
+            return [tr('Ключей API нет: выпустите первый на странице «Ключи» в интерфейсе.',
+                       'No API keys yet: issue the first one on the Keys page.')]
+        return [tr(f'Ключей API: {len(admins)} административных. Управление — в интерфейсе, вкладка «Ключи».',
+                   f'API keys: {len(admins)} administrator key(s). Manage them on the Keys page.')]
+
+    def keys(self):
+        if self._key_manager is None:
+            manager = api.key_manager(self.data)
+            if manager is None:
+                raise ValueError('Локальная база недоступна; ключи создать нельзя.')
+            self._key_manager = manager
+        return self._key_manager
+
+    @staticmethod
+    def key_error(exc):
+        """An `ApiKeyError` as a sentence the page can show verbatim."""
+        detail = str(getattr(exc, 'detail', '') or '')
+        action = str(getattr(exc, 'action', '') or '')
+        code = str(getattr(exc, 'code', '') or '')
+        text = detail or code
+        return ' '.join(part for part in (text, action) if part) or 'Ключ отклонён.'
+
+    def key_admins(self):
+        """Active keys holding ``admin.keys``, oldest first.
+
+        The same rule the CLI applies: not revoked, not disabled, not expired.
+        """
+        manager = self.keys()
+        now = manager.now()
+        found = []
+        for row in manager.conn.execute(
+                'SELECT id, name, permissions_json, expires_at, revoked_at, disabled_at, created_at '
+                'FROM api_keys ORDER BY created_at, id').fetchall():
+            if row['revoked_at'] is not None or row['disabled_at'] is not None:
+                continue
+            if row['expires_at'] is not None and row['expires_at'] <= now:
+                continue
+            try:
+                granted = set(json.loads(row['permissions_json'] or '[]'))
+            except (TypeError, ValueError):
+                continue
+            if 'admin.keys' in granted:
+                found.append({'id': row['id'], 'name': row['name'],
+                              'created_at': row['created_at']})
+        return found
+
+    def key_admin_actor(self, secret=None):
+        manager = self.keys()
+        if secret:
+            try:
+                return manager.authenticate(secret, permission='admin.keys', touch=False)
+            except apikeys.ApiKeyError as exc:
+                raise ValueError(self.key_error(exc)) from None
+        admins = self.key_admins()
+        if not admins:
+            raise ValueError('Административного ключа ещё нет. Выпустите его на этой странице — '
+                             'управление ключами откроется сразу после этого.')
+        try:
+            # The oldest active administrator is the identity the interface
+            # acts as; the module checks its rights and the audit log names it.
+            return apikeys.Principal(manager.get_key(admins[0]['id']))
+        except apikeys.ApiKeyError as exc:  # revoked between the two reads
+            raise ValueError(self.key_error(exc)) from None
+
+    def keys_view(self, payload=None):
+        """The keys page: every key but never a secret, plus what may be granted."""
+        payload = payload or {}
+        manager = self.keys()
+        admins = self.key_admins()
+        body = dict(keys=[], admins=[item['id'] for item in admins], bootstrapped=bool(admins),
+                    permissions=sorted(apikeys.PERMISSIONS),
+                    local_permissions=list(core.local_admin_permissions()),
+                    read_permissions=sorted(apikeys.READ_PERMISSIONS),
+                    write_permissions=sorted(apikeys.WRITE_PERMISSIONS),
+                    admin_permissions=sorted(apikeys.ADMIN_PERMISSIONS),
+                    api_url=getattr(self, 'api_url', None),
+                    audit=[])
+        if not admins and not payload.get('admin_secret'):
+            body['notice'] = tr('Административного ключа ещё нет. Выпустите первый ключ — '
+                                'он показывается один раз.',
+                                'There is no administrator key yet. Issue the first one — '
+                                'its secret is shown once.')
+            return body
+        actor = self.key_admin_actor(payload.get('admin_secret'))
+        now = manager.now()
+        body['keys'] = [info.as_dict(now) for info in manager.list_keys(actor=actor, limit=500)]
+        body['actor'] = actor.key_id
+        body['audit'] = manager.read_audit(actor=actor, limit=40)
+        return body
+
+    def key_bootstrap(self, payload):
+        """Mint the first administrator through the local trusted surface."""
+        payload = payload or {}
+        manager = self.keys()
+        name = str(payload.get('name') or 'administrator').strip()[:120] or 'administrator'
+        issued = manager.bootstrap_admin(local_trusted=True, name=name,
+                                         purpose=str(payload.get('purpose') or '') or None,
+                                         permissions=core.local_admin_permissions(),
+                                         ttl_s=self.key_ttl(payload))
+        return issued.as_json()
+
+    @staticmethod
+    def key_ttl(payload):
+        days = payload.get('ttl_days')
+        if days in (None, '', 0):
+            return None
+        try:
+            value = float(days)
+        except (TypeError, ValueError):
+            raise ValueError('Срок действия должен быть числом дней.') from None
+        if value <= 0 or value > 3650:
+            raise ValueError('Срок действия: от 1 до 3650 дней.')
+        return value * 86400
+
+    def key_create(self, payload):
+        """Issue a key with exactly the rights and the scope the user chose."""
+        payload = payload or {}
+        manager = self.keys()
+        actor = self.key_admin_actor(payload.get('admin_secret'))
+        name = str(payload.get('name') or '').strip()
+        if not name:
+            raise ValueError('Укажите название ключа.')
+        granted = payload.get('permissions')
+        if isinstance(granted, str):
+            granted = [item.strip() for item in granted.split(',') if item.strip()]
+        if not isinstance(granted, (list, tuple)):
+            granted = apikeys.READ_PERMISSIONS
+        unknown = sorted(set(granted) - set(apikeys.PERMISSIONS))
+        if unknown:
+            raise ValueError('Неизвестные права: ' + ', '.join(unknown))
+        scope = payload.get('scope')
+        if scope is not None and not isinstance(scope, dict):
+            raise ValueError('Область ключа должна быть объектом со списками collections и pools.')
+        try:
+            issued = manager.create(actor=actor, name=name,
+                                    purpose=str(payload.get('purpose') or '') or None,
+                                    permissions=granted, scope=scope or None,
+                                    ttl_s=self.key_ttl(payload))
+        except apikeys.ApiKeyError as exc:
+            raise ValueError(self.key_error(exc)) from None
+        return issued.as_json()
+
+    def key_action(self, payload):
+        """Rotate, disable, enable, revoke or delete one key."""
+        payload = payload or {}
+        manager = self.keys()
+        key_id = str(payload.get('id') or '').strip()
+        action = str(payload.get('action') or '').strip()
+        if not key_id:
+            raise ValueError('Укажите ключ.')
+        actor = self.key_admin_actor(payload.get('admin_secret'))
+        try:
+            if action == 'rotate':
+                grace = float(payload.get('grace_s') or 0)
+                if grace < 0 or grace > 86400:
+                    raise ValueError('Окно ротации: от 0 до 86400 секунд.')
+                return manager.rotate(key_id, actor=actor, grace_s=grace).as_json()
+            if action == 'update':
+                fields = {}
+                if payload.get('name') is not None:
+                    fields['name'] = str(payload['name']).strip()
+                if payload.get('purpose') is not None:
+                    fields['purpose'] = str(payload['purpose'])
+                if 'ttl_days' in payload:
+                    fields['ttl_s'] = self.key_ttl(payload)
+                if not fields:
+                    raise ValueError('Нечего менять: укажите название, описание или срок.')
+                info = manager.update_metadata(key_id, actor=actor, **fields)
+            elif action == 'disable':
+                info = manager.disable(key_id, actor=actor)
+            elif action == 'enable':
+                info = manager.enable(key_id, actor=actor)
+            elif action == 'revoke':
+                info = manager.revoke(key_id, actor=actor)
+            elif action == 'delete':
+                manager.delete(key_id, actor=actor)
+                return dict(id=key_id, state='deleted', deleted=True)
+            else:
+                raise ValueError('Неизвестное действие с ключом: ' + (action or '—'))
+        except apikeys.ApiKeyError as exc:
+            raise ValueError(self.key_error(exc)) from None
+        return info.as_dict(manager.now())
+
+    # --- import (F03) -------------------------------------------------------
+    #
+    # `importer.py` is 1162 lines of a transactionally committing, previewing,
+    # mapping-aware importer and the interface could not reach any of it: the
+    # own-list box writes membership directly through `add_collection_members`,
+    # so there was no preview, no rejected line number, no column mapping, no
+    # merge/replace choice, no cancellation and no report.  The routes below
+    # are thin: the work is `importer`'s.
+
+    @staticmethod
+    def import_source_of(payload):
+        text = payload.get('text')
+        name = str(payload.get('name') or 'clipboard')
+        channel = str(payload.get('channel') or 'clipboard')
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError('Вставьте список адресов или выберите файл.')
+        return importer.ImportSource.from_text(text, name=name, channel=channel)
+
+    @staticmethod
+    def import_mapping_of(payload):
+        """The column mapping the page sends, or None when it sends none."""
+        raw = payload.get('mapping')
+        if not isinstance(raw, dict) or not any(raw.get(role) is not None for role in importer.ROLES):
+            return None
+        return importer.ColumnMapping(**{role: raw.get(role) for role in importer.ROLES})
+
+    def import_policy_of(self, collection_id):
+        """Public-only for the public base, permissive for a personal list."""
+        if collection_id == schema.PUBLIC_COLLECTION_ID:
+            return importer.DEFAULT_POLICY
+        return importer.EndpointPolicy(public_only=False)
+
+    def remember_import_plan(self, plan):
+        stored = [item for item in self._import_plans if item[0] != plan.batch_id]
+        stored.append((plan.batch_id, plan))
+        self._import_plans = stored[-IMPORT_PLANS:]
+        return plan.batch_id
+
+    def import_preview(self, payload):
+        """Read an import and say what it would do. Writes nothing at all."""
+        payload = payload or {}
+        mode = str(payload.get('mode') or 'merge')
+        fmt = str(payload.get('format') or '') or None
+        if fmt and fmt not in importer.FORMATS:
+            raise ValueError('Неизвестный формат импорта: ' + fmt)
+        source = self.import_source_of(payload)
+        conn = self.read_connection()
+        if conn is None:
+            raise ValueError('Локальная база ещё не создана. Сначала соберите адреса.')
+        try:
+            wanted = self.require_collection(conn, payload.get('collection'))
+            plan = importer.preview(conn, source, collection_id=wanted, mode=mode, fmt=fmt,
+                                    mapping=self.import_mapping_of(payload),
+                                    policy=self.import_policy_of(wanted),
+                                    idempotency_key=payload.get('idempotency_key') or None)
+        except importer.ImportProblem as exc:
+            raise ValueError(str(exc)) from None
+        finally:
+            conn.close()
+        self.remember_import_plan(plan)
+        return self.import_plan_view(plan)
+
+    @staticmethod
+    def import_plan_view(plan):
+        body = plan.to_dict()
+        # `Preview.to_dict` describes the problem but not the proposal, and the
+        # page cannot offer a column picker without knowing which columns the
+        # header had and which role each one could take.  Both come from the
+        # module's own `MappingSuggestion`; nothing here re-guesses a role.
+        suggestion = plan.mapping_suggestion
+        body['mapping_suggestion'] = suggestion.to_dict() if suggestion is not None else None
+        body['columns'] = list(body.get('mapping') or {})
+        body['can_commit'] = not plan.needs_mapping
+        body['modes'] = list(importer.MODES)
+        body['formats'] = list(importer.FORMATS)
+        return body
+
+    def import_commit(self, payload):
+        """Apply exactly the plan the page was shown.
+
+        The plan object is the one `preview()` returned: a `Preview` cannot be
+        rebuilt from JSON, so keeping it here is what makes "apply" mean the
+        numbers above the button rather than a second, possibly different
+        computation.  A repeated commit of the same plan replays (F29
+        idempotency) and adds nothing.
+        """
+        payload = payload or {}
+        batch_id = str(payload.get('batch_id') or '').strip()
+        found = next((item for item in self._import_plans if item[0] == batch_id), None)
+        if found is None:
+            raise ValueError('Предпросмотр устарел или не найден. Повторите предпросмотр.')
+        plan = found[1]
+        allow_partial = bool(payload.get('allow_partial'))
+        if plan.rejected and not allow_partial:
+            raise ValueError('В файле %d непригодных строк. Подтвердите импорт только пригодных '
+                             'или исправьте файл.' % len(plan.rejected))
+        # Read the reason before the write lock: `importer.commit` wants a
+        # callable, and the callable must not open a second connection to the
+        # file the writer already holds.
+        busy_reason = self.busy_collection(plan.collection_id)
+        with self.collection_write() as conn:
+            try:
+                report = importer.commit(conn, plan, allow_partial=allow_partial,
+                                         busy=lambda: busy_reason)
+            except importer.ImportProblem as exc:
+                raise ValueError(str(exc)) from None
+        body = report.to_dict()
+        body['members'] = self.collection_members({'collection': plan.collection_id})
+        return body
+
+    def busy_collection(self, collection_id):
+        """Why a collection cannot take members right now, or None.
+
+        Read *before* the write lock is taken: opening a second connection to
+        the same file from inside `collection_write()` would run the migrator
+        again while the writer holds the lock.
+        """
+        try:
+            with closing(core.Workbench(self.data)) as workbench:
+                return core._busy_collection(workbench, collection_id)
+        except (OSError, ValueError, sqlite3.Error):
+            return None
+
+    def import_batches(self, query=None):
+        """Recent import batches with their report, newest first."""
+        query = query or {}
+        wanted = str((query.get('batch') or [''])[0] or '')
+        conn = self.read_connection()
+        if conn is None:
+            return dict(batches=[], report=None)
+        try:
+            if wanted:
+                report = importer.load_report(conn, wanted)
+                if report is None:
+                    raise ValueError('Отчёта об импорте нет: ' + wanted)
+                return dict(batches=[], report=report.to_dict())
+            # The read connection of the interface has no row factory, so the
+            # columns are read by position.
+            rows = [{'id': row[0], 'collection_id': row[1], 'state': row[2],
+                     'revision': row[3], 'created_at': row[4]}
+                    for row in conn.execute(
+                        'SELECT id, collection_id, state, revision, created_at FROM import_batch '
+                        'ORDER BY created_at DESC LIMIT 20').fetchall()]
+        except sqlite3.Error as exc:
+            raise ValueError('Не удалось прочитать историю импортов: %s' % exc) from None
+        finally:
+            conn.close()
+        return dict(batches=rows, report=None, limits=dict(
+            modes=list(importer.MODES), formats=list(importer.FORMATS)))
+
+    # --- pools and schedules (F14, F15) ------------------------------------
+    #
+    # `pools.py` and `scheduler.py` are complete and were reachable only from
+    # the CLI and `/v1`.  The routes below are the same calls the API makes
+    # (`workbench.pool_refill`, `pools_state_for`, `Scheduler`), so there is
+    # one implementation of a refill and not two.
+
+    def pools_store(self, workbench):
+        return workbench.pools()
+
+    def pools_view(self, query=None):
+        query = query or {}
+        wanted = str((query.get('id') or [''])[0] or '')
+        with core.Workbench(self.data) as workbench:
+            store = self.pools_store(workbench)
+            if wanted:
+                spec = store.get(wanted)
+                if spec is None:
+                    raise ValueError('Пул не найден: ' + wanted)
+                status = store.status(wanted)
+                return dict(pool=api._pool_dict(spec), status=api._status_dict(status),
+                            members=[api._member_dict(item) for item in store.members(wanted)])
+            rows = []
+            for spec in store.list():
+                status = store.status(spec.id)
+                served = sum((status.counts or {}).values())
+                rows.append(dict(id=spec.id, collection_id=spec.collection_id,
+                                 profile_id=spec.profile_id,
+                                 profile_revision=spec.profile_revision,
+                                 desired=spec.desired, reserve=spec.reserve,
+                                 minimum=spec.minimum, state=status.state, served=served,
+                                 ready_for_clients=status.ready_for_clients,
+                                 deficit_reason=status.deficit_reason,
+                                 next_attempt_at=status.next_attempt_at))
+            return dict(pools=rows, collections=self.collection_options(workbench.conn),
+                        profiles=self.profile_options(workbench.conn))
+
+    @staticmethod
+    def collection_options(conn):
+        try:
+            return [{'id': row[0], 'name': row[1], 'kind': row[2]}
+                    for row in conn.execute(
+                        'SELECT id, name, kind FROM collections ORDER BY kind, name')]
+        except sqlite3.Error:
+            return []
+
+    @staticmethod
+    def profile_options(conn):
+        try:
+            return [{'id': row[0]} for row in conn.execute('SELECT id FROM profiles ORDER BY id')]
+        except sqlite3.Error:
+            return []
+
+    def pool_create(self, payload):
+        from . import pools as pools_module
+        payload = payload or {}
+        pool_id = str(payload.get('id') or payload.get('name') or '').strip()
+        if not pool_id:
+            raise ValueError('Укажите имя пула.')
+        with core.Workbench(self.data) as workbench:
+            store = self.pools_store(workbench)
+            if store.get(pool_id) is not None:
+                raise ValueError('Пул уже есть: ' + pool_id)
+            profile_id = str(payload.get('profile_id') or '').strip() or self.active_profile_id()
+            if not profile_id:
+                raise ValueError('Пул привязан к профилю проверки: сначала выполните проверку '
+                                 'или укажите профиль.')
+            collection_id = str(payload.get('collection_id') or schema.PUBLIC_COLLECTION_ID)
+            try:
+                spec = store.create(pool_id, collection_id=collection_id, profile_id=profile_id,
+                                    profile_revision=int(payload.get('profile_revision') or 1),
+                                    desired=max(1, int(payload.get('desired') or 1)),
+                                    minimum=max(0, int(payload.get('minimum') or 0)),
+                                    reserve=max(0, int(payload.get('reserve') or 0)))
+            except pools_module.PoolError as exc:
+                raise ValueError(str(exc) or 'Не удалось создать пул.') from None
+            return dict(pool=api._pool_dict(spec), status=api._status_dict(store.status(pool_id)))
+
+    def active_profile_id(self):
+        try:
+            return (self.data/'last-profile.txt').read_text(encoding='utf-8').strip()
+        except (OSError, UnicodeError):
+            return ''
+
+    def pool_action(self, payload):
+        """Start, pause, refill, retarget or recheck one named pool."""
+        from . import pools as pools_module
+        payload = payload or {}
+        pool_id = str(payload.get('id') or '').strip()
+        action = str(payload.get('action') or '').strip()
+        if not pool_id:
+            raise ValueError('Укажите пул.')
+        if action == 'recheck':
+            return self.pool_recheck(pool_id, payload)
+        with core.Workbench(self.data) as workbench:
+            store = self.pools_store(workbench)
+            spec = store.get(pool_id)
+            if spec is None:
+                raise ValueError('Пул не найден: ' + pool_id)
+            status = None
+            try:
+                if action == 'start':
+                    started = api.pools_state_for('start', store.status(pool_id))
+                    store.save_status(pool_id, started.state, deficit_reason=started.deficit_reason,
+                                      next_attempt_at=started.next_attempt_at)
+                    status = workbench.pool_refill(pool_id, api.pool_candidate_source(workbench.conn))
+                elif action == 'pause':
+                    moved = api.pools_state_for('pause', store.status(pool_id))
+                    store.save_status(pool_id, moved.state, deficit_reason=moved.deficit_reason,
+                                      next_attempt_at=moved.next_attempt_at)
+                elif action == 'refill':
+                    status = workbench.pool_refill(pool_id, api.pool_candidate_source(workbench.conn))
+                elif action == 'target':
+                    store.set_target(pool_id, desired=payload.get('desired'),
+                                     reserve=payload.get('reserve'), minimum=payload.get('minimum'))
+                elif action == 'policy':
+                    store.set_policy(pool_id, payload.get('policy') or {})
+                elif action == 'member-remove':
+                    endpoint_id = str(payload.get('endpoint_id') or '')
+                    if not store.remove_member(pool_id, endpoint_id):
+                        raise ValueError('Участника нет в пуле: ' + endpoint_id)
+                elif action == 'member-state':
+                    endpoint_id = str(payload.get('endpoint_id') or '')
+                    state = str(payload.get('state') or '')
+                    if not endpoint_id or not state:
+                        raise ValueError('Укажите участника и его состояние.')
+                    store.set_member_state(pool_id, endpoint_id, state, admitted_at=time.time(),
+                                           released_at=None)
+                else:
+                    raise ValueError('Неизвестное действие с пулом: ' + (action or '—'))
+                return dict(pool=api._pool_dict(store.get(pool_id)),
+                            status=api._status_dict(status or store.status(pool_id)),
+                            members=[api._member_dict(item) for item in store.members(pool_id)],
+                            action=action)
+            except pools_module.PoolError as exc:
+                raise ValueError(str(exc) or 'Пул отклонил изменение.') from None
+
+    def pool_recheck(self, pool_id, payload):
+        """Queue a measurement of the pool's own collection (F14)."""
+        from . import jobs as jobs_module
+        with core.Workbench(self.data) as workbench:
+            spec = workbench.pools().require(pool_id)
+            conn = workbench.conn
+            members = [row[0] for row in conn.execute(
+                'SELECT e.canonical FROM membership m JOIN endpoints e ON e.id = m.endpoint_id '
+                'WHERE m.collection_id=? ORDER BY e.canonical', (spec.collection_id,)).fetchall()]
+            items = [jobs_module.QueueItem(endpoint_id=api.schema_endpoint_id(conn, value),
+                                           access_id=core.PUBLIC_ACCESS_ID, access_revision=1)
+                     for value in members]
+            conn.commit()
+            job = workbench.jobs().submit(
+                'pool_recheck',
+                jobs_module.Scope(collection_id=spec.collection_id, profile_id=spec.profile_id,
+                                  profile_revision=int(spec.profile_revision),
+                                  profile_digest=spec.profile_id),
+                items, idempotency_key=workbench.clock_ns())
+            return dict(pool_id=pool_id, job_id=job.id, state=job.state,
+                        collection_id=spec.collection_id, items=len(items), action='recheck')
+
+    def schedule_activation(self, spec_id, state):
+        """Give a schedule the activation instant the store cannot hold.
+
+        ``schedules`` has no ``activated_at`` column and
+        ``SqliteScheduleStore.load_state`` cannot restore one, so a schedule
+        that has never run has no base instant and ``plan`` answers "not due,
+        no next run".  The interface knows when it created the schedule, so it
+        hands that instant to the module and lets the module compute the plan.
+        """
+        if state.activated_at is not None:
+            return state
+        stored = (self.schedule_activations.read().get('activated') or {}).get(spec_id)
+        if stored:
+            try:
+                state.activated_at = float(stored)
+            except (TypeError, ValueError):
+                pass
+        return state
+
+    def remember_schedule_activation(self, spec_id, at=None):
+        document = self.schedule_activations.read()
+        activated = dict(document.get('activated') or {})
+        activated[spec_id] = time.time() if at is None else float(at)
+        self.schedule_activations.write({'activated': activated})
+
+    def schedules_view(self, query=None):
+        """Every schedule with its next run, its state and its counters."""
+        query = query or {}
+        wanted = str((query.get('id') or [''])[0] or '')
+        from . import scheduler as scheduler_module
+        with core.Workbench(self.data) as workbench:
+            engine = scheduler_module.Scheduler(workbench.schedules(), clock=time.time)
+            rows = []
+            for spec in engine.list():
+                state = self.schedule_activation(spec.id, engine.state(spec.id))
+                plan = engine.plan(spec, state, time.time())
+                runs = workbench.schedules().recent_runs(spec.id, limit=5)
+                rows.append(dict(id=spec.id, kind=spec.kind, enabled=spec.enabled,
+                                 interval_minutes=spec.interval_minutes,
+                                 timezone=spec.timezone, pool_id=spec.pool_id,
+                                 windows=[item.to_dict() for item in spec.windows],
+                                 quiet_hours=[item.to_dict() for item in spec.quiet_hours],
+                                 budgets=spec.budgets.to_dict() if hasattr(spec.budgets, 'to_dict') else {},
+                                 next_at=getattr(plan, 'next_at', None),
+                                 next_reason=getattr(plan, 'reason', None),
+                                 overdue=getattr(plan, 'overdue', 0),
+                                 paused=state.paused, pause_reason=state.pause_reason,
+                                 last_run_at=state.last_run_at, runs=state.runs,
+                                 skipped=state.skipped,
+                                 counters=state.counters.to_dict() if hasattr(state, 'counters') else {},
+                                 recent=[dict(item) for item in runs],
+                                 selected=(wanted == spec.id)))
+            return dict(schedules=rows, pools=[{'id': item.id} for item in workbench.pools().list()],
+                        selected=wanted or None,
+                        detail=next((item for item in rows if item['id'] == wanted), None))
+
+    def schedule_action(self, payload):
+        """Add, enable, disable, remove or run one schedule."""
+        import dataclasses
+        from . import scheduler as scheduler_module
+        payload = payload or {}
+        schedule_id = str(payload.get('id') or payload.get('name') or '').strip()
+        action = str(payload.get('action') or '').strip()
+        if action == 'add' and not schedule_id:
+            raise ValueError('Укажите имя расписания.')
+        with core.Workbench(self.data) as workbench:
+            engine = scheduler_module.Scheduler(workbench.schedules(), clock=time.time)
+            store = workbench.schedules()
+            if action == 'add':
+                windows = []
+                for item in (payload.get('windows') or []):
+                    try:
+                        windows.append(scheduler_module.Window.parse(item))
+                    except (scheduler_module.ScheduleError, ValueError) as exc:
+                        raise ValueError('Окно запуска неверно: %s' % exc) from None
+                quiet = []
+                for item in (payload.get('quiet_hours') or []):
+                    try:
+                        quiet.append(scheduler_module.Window.parse(item))
+                    except (scheduler_module.ScheduleError, ValueError) as exc:
+                        raise ValueError('Тихое время задано неверно: %s' % exc) from None
+                spec_body = {'id': schedule_id, 'kind': 'interval',
+                             'interval_minutes': payload.get('interval_minutes') or 60,
+                             'timezone': str(payload.get('timezone') or 'UTC'),
+                             'windows': [item.to_dict() for item in windows],
+                             'quiet_hours': [item.to_dict() for item in quiet]}
+                if payload.get('pool_id'):
+                    spec_body['pool_id'] = str(payload['pool_id'])
+                budgets = payload.get('budgets')
+                if isinstance(budgets, dict) and budgets:
+                    spec_body['budgets'] = budgets
+                try:
+                    spec = engine.add(spec_body)
+                except scheduler_module.ScheduleError as exc:
+                    raise ValueError(exc.text()) from None
+                self.remember_schedule_activation(spec.id)
+                self.schedule_activation(spec.id, engine.state(spec.id))
+            else:
+                spec = next((item for item in engine.list() if item.id == schedule_id), None)
+                if spec is None:
+                    raise ValueError('Расписание не найдено: ' + schedule_id)
+                if action == 'remove':
+                    engine.remove(schedule_id)
+                    return dict(id=schedule_id, removed=True, action=action)
+                if action == 'enable':
+                    store.save_spec(dataclasses.replace(spec, enabled=True))
+                    engine.resume(schedule_id)
+                elif action == 'disable':
+                    store.save_spec(dataclasses.replace(spec, enabled=False))
+                    engine.pause(schedule_id)
+                elif action == 'run-now':
+                    run = engine.run_now(schedule_id)
+                    if run is None:
+                        raise ValueError('Расписание %s сейчас не может запуститься '
+                                         '(окно, тихое время или пауза).' % schedule_id)
+                    return dict(id=schedule_id, run_id=run.run_id, scheduled_for=run.scheduled_for,
+                                reason=run.reason, action=action)
+                elif action == 'pause':
+                    engine.pause(schedule_id)
+                elif action == 'resume':
+                    engine.resume(schedule_id)
+                else:
+                    raise ValueError('Неизвестное действие с расписанием: ' + (action or '—'))
+            spec = next((item for item in engine.list() if item.id == schedule_id), spec)
+            state = self.schedule_activation(schedule_id, engine.state(schedule_id))
+            plan = engine.plan(spec, state, time.time())
+        return dict(id=spec.id, enabled=spec.enabled, interval_minutes=spec.interval_minutes,
+                    timezone=spec.timezone, next_at=getattr(plan, 'next_at', None),
+                    next_reason=getattr(plan, 'reason', None),
+                    paused=state.paused, action=action)
+
+    # --- gateway binding ----------------------------------------------------
+
+    def gateway_settings(self):
+        """The pool and profile the user bound the listener to."""
+        stored = self.gateway_config.read() or {}
+        known = {'pool_id': str(stored.get('pool_id') or ''),
+                 'generation': str(stored.get('generation') or '') or None,
+                 'profile_id': str(stored.get('profile_id') or '') or None,
+                 'profile_revision': stored.get('profile_revision'),
+                 'policy': stored.get('policy') if isinstance(stored.get('policy'), dict) else {}}
+        return known
+
+    def gateway_binding(self):
+        """The `gateway.Binding` the settings describe, or None."""
+        settings = self.gateway_settings()
+        if not any((settings.get('pool_id'), settings.get('generation'),
+                    settings.get('profile_id'), settings.get('profile_revision'))):
+            return None
+        revision = settings.get('profile_revision')
+        try:
+            revision = int(revision) if revision is not None else None
+        except (TypeError, ValueError):
+            revision = None
+        return gateway.Binding(pool_id=settings['pool_id'] or 'default',
+                               generation=settings.get('generation') or None,
+                               profile_id=settings.get('profile_id') or None,
+                               profile_revision=revision,
+                               policy=dict(settings.get('policy') or {}))
+
+    def gateway_options(self):
+        """What the gateway page can bind to: pools, profiles, generations."""
+        body = dict(bindings=self.gateway_settings(),
+                    active_profile=self.active_profile_id() or None,
+                    pools=[], profiles=[], generations=[])
+        try:
+            with core.Workbench(self.data) as workbench:
+                body['pools'] = [{'id': item.id, 'desired': item.desired,
+                                  'collection_id': item.collection_id}
+                                 for item in workbench.pools().list()]
+                body['profiles'] = self.profile_options(workbench.conn)
+        except (OSError, ValueError, sqlite3.Error):
+            pass
+        status = self.export_status()
+        body['generations'] = [item for item in (status.get('generation') or '',) if item]
+        return body
+
+    def gateway_configure(self, payload):
+        """Bind the listener to a pool and a profile, or unbind it."""
+        payload = payload or {}
+        settings = self.gateway_settings()
+        if payload.get('reset'):
+            self.gateway_config.write({})
+            settings = self.gateway_settings()
+        else:
+            pool_id = str(payload.get('pool_id') or '')
+            if pool_id and pool_id != 'default':
+                try:
+                    with core.Workbench(self.data) as workbench:
+                        if workbench.pools().get(pool_id) is None:
+                            raise ValueError('Пул не найден: ' + pool_id)
+                except (OSError, ValueError, sqlite3.Error) as exc:
+                    if isinstance(exc, ValueError):
+                        raise
+            revision = payload.get('profile_revision')
+            try:
+                revision = int(revision) if revision not in (None, '', 0) else None
+            except (TypeError, ValueError):
+                raise ValueError('Ревозия профиля должна быть числом.') from None
+            settings = {'pool_id': pool_id or 'default',
+                        'generation': str(payload.get('generation') or '') or None,
+                        'profile_id': str(payload.get('profile_id') or '') or None,
+                        'profile_revision': revision,
+                        'policy': payload.get('policy') if isinstance(payload.get('policy'), dict) else {}}
+            self.gateway_config.write(settings)
+        running = getattr(self, 'gateway', None)
+        restarted = False
+        if running is not None:
+            bind = getattr(self, 'gateway_bind', None)
+            if bind is not None:
+                self.stop_gateway()
+                try:
+                    self.start_gateway()
+                except ValueError as exc:
+                    raise ValueError(str(exc)) from None
+                restarted = True
+        return dict(bindings=self.gateway_settings(), restarted=restarted,
+                    gateway=self.gateway_state())
+
+    # --- storage maintenance (F24) -----------------------------------------
+    #
+    # `db.cleanup_preview`, `db.retention_preview`, `db.restore_preview` and
+    # `db.migrate_data_path` were called from tests only.  The page therefore
+    # deleted first and printed what went afterwards, and the two functions
+    # that describe before they act had no way to be reached.  Every route
+    # below answers with a preview first and only acts on `apply`.
+
+    def cleanup_preview_view(self):
+        """What a data-folder cleanup removes, what it keeps and how big it is."""
+        try:
+            preview = schema.cleanup_preview(self.data)
+        except (schema.DbError, OSError) as exc:
+            raise ValueError('Не удалось прочитать папку data: %s' % exc) from None
+        return preview.to_dict()
+
+    def cleanup_apply(self, payload):
+        """Remove the runtime artifacts the preview named, and report the result."""
+        payload = payload or {}
+        with self.mutex:
+            if self.running():
+                raise ValueError('Сначала остановите текущую операцию.')
+            try:
+                with self.data_lock():
+                    report = schema.cleanup(self.data, apply=True, keep_lock=True)
+            except RuntimeError as exc:
+                raise ValueError(str(exc)) from None
+            except (schema.DbError, OSError) as exc:
+                raise ValueError('Не удалось удалить данные: %s' % exc) from None
+        self.events_path.unlink(missing_ok=True)
+        self.event_seq, self.event_seen, self.events_loaded = {}, set(), False
+        self._import_plans = []
+        body = report.preview.to_dict()
+        body.update(applied=True, removed=list(report.removed),
+                    failed=[{'name': name, 'error': error} for name, error in report.failed])
+        return body
+
+    def retention_policy_of(self, payload):
+        payload = payload or {}
+        include = payload.get('include')
+        if include is None:
+            include = ('observations', 'results')
+        if isinstance(include, str):
+            include = [item.strip() for item in include.split(',') if item.strip()]
+        if not isinstance(include, (list, tuple)) or not include:
+            raise ValueError('Выберите, что чистить: измерения, результаты или оба.')
+        age = payload.get('max_age_seconds')
+        if age in (None, ''):
+            age = None
+        else:
+            try:
+                age = float(age)
+            except (TypeError, ValueError):
+                raise ValueError('Срок хранения должен быть числом секунд.') from None
+            if age < 0:
+                raise ValueError('Срок хранения не может быть отрицательным.')
+        keep = int(payload.get('keep_newest') or 0)
+        if keep < 0:
+            raise ValueError('keep_newest не может быть отрицательным.')
+        return schema.RetentionPolicy(max_age_seconds=age,
+                                      expired_only=bool(payload.get('expired_only', True)),
+                                      include=tuple(include), keep_newest=keep)
+
+    def retention_preview_view(self, payload=None):
+        policy = self.retention_policy_of(payload or {})
+        conn = self.read_connection()
+        if conn is None:
+            raise ValueError('Локальная база ещё не создана.')
+        try:
+            preview = schema.retention_preview(conn, policy)
+        except (schema.DbError, sqlite3.Error) as exc:
+            raise ValueError('Не удалось посчитать объём очистки: %s' % exc) from None
+        finally:
+            conn.close()
+        return preview.to_dict()
+
+    def retention_apply(self, payload):
+        payload = payload or {}
+        policy = self.retention_policy_of(payload)
+        with self.mutex:
+            if self.running():
+                raise ValueError('Сначала остановите текущую операцию.')
+            with self.writable_connection() as conn:
+                try:
+                    report = schema.apply_retention(conn, policy, vacuum=bool(payload.get('vacuum')))
+                except (schema.RetentionError, schema.DbError, sqlite3.Error) as exc:
+                    raise ValueError(str(exc)) from None
+        return report.to_dict()
+
+    def restore_preview_view(self, payload):
+        payload = payload or {}
+        source = str(payload.get('source') or '').strip()
+        target = str(payload.get('target') or '').strip()
+        if not source or not target:
+            raise ValueError('Укажите, откуда восстанавливать и в какую папку.')
+        try:
+            return schema.restore_preview(source, target, reason='restore').to_dict()
+        except schema.BackupError as exc:
+            raise ValueError(str(exc)) from None
+        except (OSError, schema.DbError) as exc:
+            raise ValueError('Не удалось прочитать источник: %s' % exc) from None
+
+    def restore_apply(self, payload):
+        payload = payload or {}
+        source = str(payload.get('source') or '').strip()
+        target = str(payload.get('target') or '').strip()
+        if not source or not target:
+            raise ValueError('Укажите, откуда восстанавливать и в какую папку.')
+        with self.mutex:
+            if self.running():
+                raise ValueError('Сначала остановите текущую операцию.')
+            try:
+                report = schema.restore(source, target, apply=True, reason='restore')
+            except schema.BackupError as exc:
+                raise ValueError(str(exc)) from None
+            except (OSError, schema.DbError) as exc:
+                raise ValueError('Не удалось восстановить: %s' % exc) from None
+        return report.to_dict()
+
+    def data_path_migrate(self, payload):
+        """Move the data folder to a new place, with a backup of the old one."""
+        payload = payload or {}
+        new_path = str(payload.get('target') or '').strip()
+        if not new_path:
+            raise ValueError('Укажите новую папку данных.')
+        apply = bool(payload.get('apply'))
+        with self.mutex:
+            if self.running():
+                raise ValueError('Сначала остановите текущую операцию.')
+            try:
+                report = schema.migrate_data_path(self.data, new_path, apply=apply)
+            except schema.BackupError as exc:
+                raise ValueError(str(exc)) from None
+            except (OSError, schema.DbError) as exc:
+                raise ValueError('Не удалось перенести папку данных: %s' % exc) from None
+        body = report.preview.to_dict()
+        body['applied'] = bool(report.preview.applied)
+        if apply:
+            body['note'] = getattr(report, 'note', None)
+            backup = getattr(report, 'backup', None)
+            body['backup_path'] = str(getattr(backup, 'path', '') or '')
+        return body
+
     def close(self):
         self.stop()
+        if self._key_manager is not None:
+            with suppress(sqlite3.Error, OSError):
+                self._key_manager.conn.close()
+            self._key_manager = None
+        self._import_plans = []
         process = self.process
         if process and hasattr(process, 'wait'):
             try:
@@ -2839,9 +3939,24 @@ class Handler(BaseHTTPRequestHandler):
                 source_id = path.path[len('/api/source-catalog/'):]
                 return self.respond(200, self.app.source_row(source_id))
             if path.path == '/api/sources/scope':
-                return self.respond(200, self.app.scope_exclusions())
+                return self.respond(200, self.app.scope_exclusions(query))
             if path.path == '/api/sources/update-status':
                 return self.respond(200, self.app.catalog_update_status())
+            if path.path == '/api/api-keys':
+                return self.respond(200, self.app.keys_view(
+                    {'admin_secret': (query.get('admin_secret') or [''])[0]}))
+            if path.path == '/api/import/batches':
+                return self.respond(200, self.app.import_batches(query))
+            if path.path == '/api/pools':
+                return self.respond(200, self.app.pools_view(query))
+            if path.path == '/api/schedules':
+                return self.respond(200, self.app.schedules_view(query))
+            if path.path == '/api/gateway/options':
+                return self.respond(200, self.app.gateway_options())
+            if path.path == '/api/maintenance/cleanup-preview':
+                return self.respond(200, self.app.cleanup_preview_view())
+            if path.path == '/api/maintenance/retention-preview':
+                return self.respond(200, self.app.retention_preview_view(self.query_body(query)))
             if path.path.startswith('/api/download/'):
                 name = path.path.rsplit('/', 1)[1]
                 if name not in DOWNLOADS:
@@ -2882,6 +3997,28 @@ class Handler(BaseHTTPRequestHandler):
             self.respond(400, dict(error=message))
         except (OSError, sqlite3.Error):
             self.respond(400, dict(error='Не удалось прочитать данные. Повторите после завершения операции.'))
+        except (apikeys.ApiKeyError, schema.DbError) as exc:
+            self.respond(400, dict(error=str(exc) or 'Операция отклонена.'))
+
+    def query_body(self, query):
+        """Query parameters as a payload, for the reads that take options.
+
+        Every value is a list because `parse_qs` says so; the first one is the
+        only one a single-valued option can have, and a repeated one is the
+        caller's mistake rather than something to guess at.
+        """
+        body = {}
+        for name, values in (query or {}).items():
+            if not isinstance(values, (list, tuple)) or not values:
+                continue
+            text = values[0]
+            if text in ('true', 'false'):
+                body[name] = text == 'true'
+            elif text.lstrip('-').isdigit():
+                body[name] = int(text)
+            else:
+                body[name] = text
+        return body
 
     def do_POST(self):
         if not self.allowed():
@@ -2956,10 +4093,45 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond(200, self.app.start_gateway())
             if path == '/api/gateway/stop':
                 return self.respond(200, self.app.stop_gateway())
+            if path == '/api/gateway/config':
+                return self.respond(200, self.app.gateway_configure(payload))
+            if path == '/api/api-keys':
+                return self.respond(200, self.app.key_create(payload))
+            if path == '/api/api-keys/bootstrap':
+                return self.respond(200, self.app.key_bootstrap(payload))
+            if path == '/api/api-keys/action':
+                return self.respond(200, self.app.key_action(payload))
+            if path == '/api/import/preview':
+                return self.respond(200, self.app.import_preview(payload))
+            if path == '/api/import/commit':
+                return self.respond(200, self.app.import_commit(payload))
+            if path == '/api/pools/create':
+                return self.respond(200, self.app.pool_create(payload))
+            if path == '/api/pools/action':
+                return self.respond(200, self.app.pool_action(payload))
+            if path == '/api/schedules/action':
+                return self.respond(200, self.app.schedule_action(payload))
+            if path == '/api/maintenance/cleanup':
+                return self.respond(200, self.app.cleanup_apply(payload))
+            if path == '/api/maintenance/retention':
+                return self.respond(200, self.app.retention_apply(payload))
+            if path == '/api/maintenance/restore-preview':
+                return self.respond(200, self.app.restore_preview_view(payload))
+            if path == '/api/maintenance/restore':
+                return self.respond(200, self.app.restore_apply(payload))
+            if path == '/api/maintenance/data-path':
+                return self.respond(200, self.app.data_path_migrate(payload))
             self.respond(404, dict(error='Не найдено.'))
         except (ValueError, KeyError, TypeError, AttributeError) as exc:
             message = str(exc) if isinstance(exc, ValueError) and not isinstance(exc, json.JSONDecodeError) else 'Проверьте поля настроек.'
             self.respond(400, dict(error=message))
+        except (importer.ImportProblem, apikeys.ApiKeyError, schema.DbError) as exc:
+            # The modules speak in stable codes; the page needs the sentence,
+            # not the code, but it must never see a bare exception class.
+            self.respond(400, dict(error=str(exc) or getattr(exc, 'code', '') or
+                                   'Операция отклонена.'))
+        except sqlite3.Error as exc:
+            self.respond(400, dict(error='База данных занята другой операцией: %s' % exc))
         except OSError:
             self.respond(500, dict(error='Не удалось записать настройки. Проверьте доступ к папке data.'))
 
@@ -3028,7 +4200,15 @@ def main(argv=None):
         else:
             server.app.api_url = f'http://127.0.0.1:{api_server.server_port}'
             threading.Thread(target=api_server.serve_forever, daemon=True).start()
-            print(tr(f'API для своих программ: {server.app.api_url}/proxies', f'API for your programs: {server.app.api_url}/proxies'), flush=True)
+            # The old line named the deprecated `/proxies` and said nothing about
+            # `/v1` or about the key that door needs, so a user who launched the
+            # application without arguments was never told how to get in (F29).
+            print(tr(f'API для своих программ: {server.app.api_url}/v1 '
+                     f'(ключ — на странице «Ключи» в интерфейсе, {url}#keys)',
+                     f'API for your programs: {server.app.api_url}/v1 '
+                     f'(get a key on the Keys page, {url}#keys)'), flush=True)
+            for line in server.app.api_key_banner():
+                print(line, flush=True)
     if not args.no_gateway:
         server.app.gateway_bind = dict(host=args.gateway_host, port=args.gateway_port)
         gateway_token = args.gateway_token

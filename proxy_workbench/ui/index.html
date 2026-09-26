@@ -106,6 +106,32 @@
         <span data-i18n="nav.sources">Sources</span>
       </button>
 
+      <button class="nav" data-tab="pools">
+        <span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"/>
+            <ellipse cx="12" cy="12" rx="10" ry="4.5"/>
+            <ellipse cx="12" cy="12" rx="10" ry="4.5" transform="rotate(60 12 12)"/>
+            <ellipse cx="12" cy="12" rx="10" ry="4.5" transform="rotate(120 12 12)"/>
+          </svg>
+        </span>
+        <span data-i18n="nav.pools">Pools &amp; Schedules</span>
+        <small id="nav-pool-count">0</small>
+      </button>
+
+      <button class="nav" data-tab="keys">
+        <span>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="7.5" cy="15.5" r="4.5"/>
+            <path d="m10.7 12.3 8.3-8.3"/>
+            <path d="m17 6 2.5 2.5"/>
+            <path d="m14.5 8.5 2 2"/>
+          </svg>
+        </span>
+        <span data-i18n="nav.keys">API Keys</span>
+        <small id="nav-key-count">0</small>
+      </button>
+
       <button class="nav" data-tab="help">
         <span>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1464,6 +1490,77 @@ with httpx.Client(proxy="socks5://127.0.0.1:8899") as client:
         </section>
       </div>
 
+      <!-- Import with a preview (F03): the file path, not the paste path -->
+      <section class="card catalog-card" id="import-card">
+        <div class="card-title">
+          <div class="geo-title-wrap">
+            <span class="code-editor-badge">IMPORT</span>
+            <h2 data-i18n="imp.title">Import a list from a file, with a preview</h2>
+          </div>
+          <div class="catalog-head-meta">
+            <span id="imp-count" class="badge subtle">0</span>
+            <button class="button light" id="imp-refresh" data-i18n="imp.history">Import history</button>
+          </div>
+        </div>
+        <p class="hint" data-i18n="imp.lead">TXT, URI, CSV and JSON. The preview reads the file and writes nothing: it says how many lines are valid, how many are duplicates and which line numbers are refused, and only the confirmation changes the list.</p>
+
+        <label class="file-drop">
+          <svg class="file-drop-icon" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="17 8 12 3 7 8"/>
+            <line x1="12" y1="3" x2="12" y2="15"/>
+          </svg>
+          <span class="file-drop-title" data-i18n="imp.file">↑ Choose a file to import</span>
+          <small class="file-drop-hint" data-i18n="imp.fileHint">or paste the text below (.txt, .list, .csv, .json)</small>
+          <input type="file" id="import-source-file" accept=".txt,.list,.csv,.tsv,.json,text/plain,text/csv,application/json">
+        </label>
+
+        <div class="field-grid">
+          <label>
+            <span data-i18n="imp.collection">Into which list</span>
+            <select id="import-collection" data-i18n-aria-label="imp.collection" aria-label="Into which list"></select>
+          </label>
+          <label>
+            <span data-i18n="imp.format">Format</span>
+            <select id="import-format" data-i18n-aria-label="imp.format" aria-label="Format">
+              <option value="" data-i18n="imp.formatAuto">Detect automatically</option>
+              <option value="txt">TXT</option>
+              <option value="uri">URI</option>
+              <option value="csv">CSV</option>
+              <option value="json">JSON</option>
+            </select>
+          </label>
+          <label>
+            <span data-i18n="imp.mode">Mode</span>
+            <select id="import-mode" data-i18n-aria-label="imp.mode" aria-label="Mode">
+              <option value="merge" data-i18n="imp.modeMerge">Merge — add, keep what is already in the list</option>
+              <option value="replace" data-i18n="imp.modeReplace">Replace — the list becomes exactly this file</option>
+            </select>
+          </label>
+        </div>
+
+        <details class="advanced-accordion" id="import-paste-box">
+          <summary data-i18n="imp.pasteTitle">Or paste the text</summary>
+          <textarea id="import-text" rows="6" spellcheck="false" class="mono-textarea" placeholder="198.51.100.7:8080&#10;socks5://198.51.100.8:1080"></textarea>
+        </details>
+
+        <div class="button-row">
+          <button class="button primary" id="import-preview" data-i18n="imp.preview">Preview</button>
+          <button class="button light" id="import-commit" data-i18n="imp.apply" disabled>Apply to the list</button>
+        </div>
+        <p class="hint" id="import-note"></p>
+
+        <div id="import-mapping" hidden>
+          <h3 data-i18n="imp.mapping">Which column is which</h3>
+          <p class="hint" data-i18n="imp.mappingHint">The header could not be matched on its own. Choose the columns and preview again.</p>
+          <div class="field-grid" id="import-mapping-grid"></div>
+        </div>
+
+        <div class="catalog-preview" id="import-preview-body"></div>
+        <div class="catalog-list" id="import-report"></div>
+        <div class="catalog-detail" id="import-history" hidden></div>
+      </section>
+
       <!-- Collections: the scope of a check and of the results view (F02) -->
       <section class="card catalog-card" id="collections">
         <div class="card-title">
@@ -1524,6 +1621,15 @@ with httpx.Client(proxy="socks5://127.0.0.1:8899") as client:
         </div>
         <p class="hint" data-i18n="cat.rules">Five statuses stay separate.</p>
         <p class="hint" id="catalog-update-note" hidden></p>
+
+        <div class="catalog-section">
+          <h3 data-i18n="cat.scopeTitle">Your scope</h3>
+          <p class="hint" data-i18n="cat.scopeHint">An excluded address leaves the results table and every export of this interface, but is never deleted: it is still in the database and still in its list. This is not the local denylist — that forbids an address everywhere and for good.</p>
+          <div class="button-row">
+            <button class="button light" id="scope-open" data-i18n="cat.scopeOpen">Excluded addresses…</button>
+            <span class="badge subtle" id="scope-count">0</span>
+          </div>
+        </div>
 
         <div class="catalog-section">
           <h3 data-i18n="cat.sets">Sets</h3>
@@ -1648,6 +1754,255 @@ with httpx.Client(proxy="socks5://127.0.0.1:8899") as client:
     </section>
 
             <!-- Page: How it works / Tools -->
+
+<section class="page" id="page-pools">
+      <div class="page-heading">
+        <div>
+          <div class="eyebrow" data-i18n="pool.eyebrow">STEADY SUPPLY</div>
+          <h1 data-i18n="pool.title">Pools and schedules</h1>
+          <p data-i18n="pool.lead">A named pool holds a chosen number of working proxies for one list and one check profile. A schedule says when work may run and how much it may spend.</p>
+        </div>
+        <button class="button light" id="pool-refresh" data-i18n="common.refresh">Refresh</button>
+      </div>
+
+      <section class="card catalog-card" id="pools-card">
+        <div class="card-title">
+          <div class="geo-title-wrap">
+            <span class="code-editor-badge">POOLS</span>
+            <h2 data-i18n="pool.listTitle">Pools</h2>
+          </div>
+          <div class="catalog-head-meta">
+            <span id="pool-count" class="badge subtle">0</span>
+          </div>
+        </div>
+        <p class="hint" data-i18n="pool.lead2">A pool is bound to one list and one profile: it never drifts to rows you did not ask for. "Hold" is the number of working proxies to keep, "reserve" is the standby in the background.</p>
+
+        <div class="field-grid">
+          <label>
+            <span data-i18n="pool.newName">Name of a new pool</span>
+            <input id="pool-name" maxlength="80" spellcheck="false" placeholder="steady">
+          </label>
+          <label>
+            <span data-i18n="pool.collection">List</span>
+            <select id="pool-collection" data-i18n-aria-label="pool.collection" aria-label="List"></select>
+          </label>
+          <label>
+            <span data-i18n="pool.desired">Hold</span>
+            <input id="pool-desired" type="number" value="5" min="1" max="1000">
+          </label>
+          <label>
+            <span data-i18n="pool.reserve">Reserve</span>
+            <input id="pool-reserve" type="number" value="2" min="0" max="1000">
+          </label>
+        </div>
+        <div class="button-row">
+          <button class="button primary" id="pool-create" data-i18n="pool.create">Create a pool</button>
+        </div>
+        <p class="hint" id="pool-note"></p>
+
+        <div class="catalog-list" id="pool-list"></div>
+
+        <details class="advanced-accordion" id="pool-detail-box">
+          <summary data-i18n="pool.detailTitle">Members and state of the selected pool</summary>
+          <div class="field-grid" id="pool-targets"></div>
+          <div class="button-row" id="pool-actions"></div>
+          <div class="catalog-list" id="pool-members"></div>
+        </details>
+      </section>
+
+      <section class="card catalog-card" id="schedules-card">
+        <div class="card-title">
+          <div class="geo-title-wrap">
+            <span class="code-editor-badge">SCHEDULE</span>
+            <h2 data-i18n="sched.title">Schedules</h2>
+          </div>
+          <div class="catalog-head-meta">
+            <span id="sched-count" class="badge subtle">0</span>
+          </div>
+        </div>
+        <p class="hint" data-i18n="sched.lead">A schedule answers "when may work run", not "run it": the run itself is the job layer's. The nearest run and the counters come from the scheduler, not from this page.</p>
+
+        <div class="field-grid">
+          <label>
+            <span data-i18n="sched.newName">Name of a new schedule</span>
+            <input id="sched-name" maxlength="80" spellcheck="false" placeholder="nightly">
+          </label>
+          <label>
+            <span data-i18n="sched.interval">Every N minutes</span>
+            <input id="sched-interval" type="number" value="120" min="1" max="1440">
+          </label>
+          <label>
+            <span data-i18n="sched.timezone">Time zone</span>
+            <input id="sched-timezone" value="UTC" spellcheck="false" maxlength="64">
+          </label>
+          <label>
+            <span data-i18n="sched.pool">Pool</span>
+            <select id="sched-pool" data-i18n-aria-label="sched.pool" aria-label="Pool"></select>
+          </label>
+        </div>
+        <div class="button-row">
+          <button class="button primary" id="sched-create" data-i18n="sched.create">Create a schedule</button>
+        </div>
+        <p class="hint" id="sched-note"></p>
+
+        <div class="catalog-list" id="sched-list"></div>
+      </section>
+
+      <!-- What the rotating gateway serves: a named pool and a profile -->
+      <section class="card catalog-card" id="gateway-binding">
+        <div class="card-title">
+          <div class="geo-title-wrap">
+            <span class="code-editor-badge">GATEWAY</span>
+            <h2 data-i18n="gwb.title">What the rotating proxy serves</h2>
+          </div>
+          <div class="catalog-head-meta">
+            <button class="button light" id="gwb-apply" data-i18n="gwb.apply">Apply and restart the listener</button>
+          </div>
+        </div>
+        <p class="hint" data-i18n="gwb.lead">A binding pins the pool and the profile the rotating proxy offers. A pinned generation means "this exact export", so publishing a new run does not move a client that is already connected.</p>
+        <div class="field-grid">
+          <label>
+            <span data-i18n="gwb.pool">Pool</span>
+            <select id="gwb-pool" data-i18n-aria-label="gwb.pool" aria-label="Pool"></select>
+          </label>
+          <label>
+            <span data-i18n="gwb.profile">Check profile</span>
+            <select id="gwb-profile" data-i18n-aria-label="gwb.profile" aria-label="Check profile"></select>
+          </label>
+          <label>
+            <span data-i18n="gwb.revision">Profile revision</span>
+            <input id="gwb-revision" type="number" min="1" placeholder="1">
+          </label>
+          <label>
+            <span data-i18n="gwb.generation">Published generation</span>
+            <input id="gwb-generation" spellcheck="false" placeholder="—">
+          </label>
+        </div>
+        <p class="hint" id="gwb-note"></p>
+      </section>
+    </section>
+
+<section class="page" id="page-keys">
+      <div class="page-heading">
+        <div>
+          <div class="eyebrow" data-i18n="keys.eyebrow">ACCESS CONTROL</div>
+          <h1 data-i18n="keys.title">API keys</h1>
+          <p data-i18n="keys.lead">A key is the identity your own programs present to <code>/v1</code>. The secret is shown once, at the moment it is issued, and is never stored anywhere you can read it back from.</p>
+        </div>
+        <button class="button light" id="keys-refresh" data-i18n="common.refresh">Refresh</button>
+      </div>
+
+      <section class="card" id="keys-bootstrap-card">
+        <div class="card-title">
+          <div class="geo-title-wrap">
+            <span class="code-editor-badge">FIRST KEY</span>
+            <h2 data-i18n="keys.bootstrapTitle">The first administrator key</h2>
+          </div>
+          <div class="catalog-head-meta">
+            <button class="button primary" id="keys-bootstrap" data-i18n="keys.bootstrap">Issue the first key</button>
+          </div>
+        </div>
+        <p class="hint" data-i18n="keys.bootstrapLead">This is the only action that needs no credential: the interface is a local, file-locked surface. Every key after this one is issued through the interface as an administrator.</p>
+        <div class="field-grid">
+          <label>
+            <span data-i18n="keys.name">Name</span>
+            <input id="keys-bootstrap-name" value="administrator" maxlength="120" spellcheck="false">
+          </label>
+          <label>
+            <span data-i18n="keys.ttl">Valid for, days (0 = forever)</span>
+            <input id="keys-bootstrap-ttl" type="number" value="0" min="0" max="3650">
+          </label>
+        </div>
+        <p class="hint" id="keys-bootstrap-note"></p>
+      </section>
+
+      <section class="card" id="keys-secret-card" hidden>
+        <div class="card-title">
+          <div class="geo-title-wrap">
+            <span class="code-editor-badge" style="background:rgba(220,80,80,.16);color:#e35d5d;">SECRET</span>
+            <h2 data-i18n="keys.secretTitle">Copy the secret now — it is not shown again</h2>
+          </div>
+          <div class="catalog-head-meta">
+            <button class="button light" id="keys-secret-copy" data-i18n="api.copy">Copy</button>
+            <button class="button light" id="keys-secret-close" data-i18n="common.close">Close</button>
+          </div>
+        </div>
+        <p class="hint" data-i18n="keys.secretWarn">The verifier stored in the database is one-way: the program cannot show this secret again, and nobody — including this page — can recover it. If you lose it, issue a new key and disable this one.</p>
+        <div class="code-editor-frame">
+          <div class="code-editor-body">
+            <div class="code-editor-input-wrap">
+              <code id="keys-secret-value" class="mono-textarea" style="display:block;padding:12px;word-break:break-all;"></code>
+            </div>
+          </div>
+        </div>
+        <p class="hint" id="keys-secret-warnings"></p>
+      </section>
+
+      <section class="card" id="keys-create-card">
+        <div class="card-title">
+          <div class="geo-title-wrap">
+            <span class="code-editor-badge">NEW KEY</span>
+            <h2 data-i18n="keys.createTitle">Issue a key</h2>
+          </div>
+        </div>
+        <div class="field-grid">
+          <label>
+            <span data-i18n="keys.name">Name</span>
+            <input id="keys-name" maxlength="120" spellcheck="false" placeholder="telegram-bot">
+          </label>
+          <label>
+            <span data-i18n="keys.purpose">What it is for</span>
+            <input id="keys-purpose" maxlength="400" spellcheck="false" placeholder="reads the published list">
+          </label>
+          <label>
+            <span data-i18n="keys.ttl">Valid for, days (0 = forever)</span>
+            <input id="keys-ttl" type="number" value="0" min="0" max="3650">
+          </label>
+          <label>
+            <span data-i18n="keys.adminSecret">Administrator key (optional)</span>
+            <input id="keys-admin-secret" type="password" spellcheck="false" autocomplete="off" placeholder="pwk_…">
+          </label>
+        </div>
+        <p class="hint" data-i18n="keys.adminSecretHint">Leave empty to act as the installation's own administrator key. Paste a key to act as that one instead; it is kept in the page's memory and is never written to a file or a log.</p>
+        <fieldset class="permissions-box">
+          <legend data-i18n="keys.permissions">Rights</legend>
+          <p class="hint" data-i18n="keys.permissionsHint">Nothing but a secret the programs actually need. A key with no rights answers 403 to everything — that is an empty grant, not an error.</p>
+          <div class="field-grid" id="keys-permissions"></div>
+        </fieldset>
+        <div class="button-row">
+          <button class="button primary" id="keys-create" data-i18n="keys.create">Issue the key</button>
+          <button class="button light" id="keys-presets-read" data-i18n="keys.presetRead">Read-only preset</button>
+          <button class="button light" id="keys-presets-full" data-i18n="keys.presetFull">Full preset</button>
+        </div>
+        <p class="hint" id="keys-create-note"></p>
+      </section>
+
+      <section class="card" id="keys-list-card">
+        <div class="card-title">
+          <div class="geo-title-wrap">
+            <span class="code-editor-badge">KEYS</span>
+            <h2 data-i18n="keys.listTitle">Your keys</h2>
+          </div>
+          <div class="catalog-head-meta">
+            <span id="keys-count" class="badge subtle">0</span>
+          </div>
+        </div>
+        <p class="hint" data-i18n="keys.apiUrl">Send the secret in the <code>Authorization: Bearer</code> header. A key in a query string is visible in every log on the way.</p>
+        <p class="hint" id="keys-api-url"></p>
+        <div class="catalog-list" id="keys-list"></div>
+      </section>
+
+      <section class="card" id="keys-audit-card" hidden>
+        <div class="card-title">
+          <div class="geo-title-wrap">
+            <span class="code-editor-badge">AUDIT</span>
+            <h2 data-i18n="keys.auditTitle">Recent key operations</h2>
+          </div>
+        </div>
+        <p class="hint" data-i18n="keys.auditHint">What the keys did, and by which key. A full secret is never written here.</p>
+        <div class="catalog-list" id="keys-audit"></div>
+      </section>
+    </section>
 
 <section class="page" id="page-help">
       <div class="help-hero-banner">
@@ -1937,8 +2292,105 @@ with httpx.Client(proxy="socks5://127.0.0.1:8899") as client:
           </div>
           <button class="button danger full" id="clear-data" data-action="clear-data" data-i18n="help.clear">Delete local results</button>
           <p class="hint" data-i18n="help.clearHint">Deletes the database, profiles and exports but keeps settings and the denylist. Local results cannot be restored.</p>
+
+          <!-- What a cleanup removes, before it removes it (F24) -->
+          <div class="maint-block" id="cleanup-preview-box" hidden>
+            <h3 data-i18n="maint.previewTitle">What will be deleted</h3>
+            <div class="maint-list" id="cleanup-preview-list"></div>
+            <p class="hint" id="cleanup-preview-total"></p>
+            <div class="button-row">
+              <button class="button danger" id="cleanup-apply" data-i18n="maint.apply">Delete</button>
+              <button class="button light" id="cleanup-cancel" data-i18n="common.cancel">Cancel</button>
+            </div>
+          </div>
         </section>
       </div>
+
+      <!-- Retention, restore and the data folder: every one describes first (F24) -->
+      <section class="card" id="retention-card">
+        <div class="card-title">
+          <div class="geo-title-wrap">
+            <span class="code-editor-badge">RETENTION</span>
+            <h2 data-i18n="maint.retentionTitle">Keep only fresh measurements</h2>
+          </div>
+          <div class="catalog-head-meta">
+            <button class="button light" id="retention-preview" data-i18n="maint.preview">Preview</button>
+            <button class="button danger" id="retention-apply" data-i18n="maint.apply" disabled>Delete what the preview named</button>
+          </div>
+        </div>
+        <p class="hint" data-i18n="maint.retentionLead">Old measurements and the results that depend on them are the largest part of a long-running database. The preview counts exactly the rows the delete would remove, and the delete refuses to run when a table it would empty is still referenced.</p>
+        <div class="field-grid">
+          <label>
+            <span data-i18n="maint.keepDays">Keep measurements newer than, days (0 = any age)</span>
+            <input id="retention-days" type="number" value="7" min="0" max="3650">
+          </label>
+          <label>
+            <span data-i18n="maint.keepNewest">Keep the newest N rows (0 = no reserve)</span>
+            <input id="retention-keep" type="number" value="0" min="0" max="1000000">
+          </label>
+          <label class="check-label">
+            <input type="checkbox" id="retention-expired" checked>
+            <span data-i18n="maint.expiredOnly">Only rows whose proof has already expired</span>
+          </label>
+          <label class="check-label">
+            <input type="checkbox" id="retention-vacuum">
+            <span data-i18n="maint.vacuum">Compact the database file afterwards</span>
+          </label>
+        </div>
+        <div class="maint-block" id="retention-preview-box" hidden>
+          <div class="maint-list" id="retention-preview-list"></div>
+          <p class="hint" id="retention-preview-total"></p>
+        </div>
+      </section>
+
+      <section class="card" id="restore-card">
+        <div class="card-title">
+          <div class="geo-title-wrap">
+            <span class="code-editor-badge">RESTORE</span>
+            <h2 data-i18n="maint.restoreTitle">Restore a database into a new folder</h2>
+          </div>
+          <div class="catalog-head-meta">
+            <button class="button light" id="restore-preview" data-i18n="maint.preview">Preview</button>
+            <button class="button primary" id="restore-apply" data-i18n="maint.restore" disabled>Restore</button>
+          </div>
+        </div>
+        <p class="hint" data-i18n="maint.restoreLead">A restore never overwrites the folder you are working in: it writes a copy into a new, empty folder and leaves the current data exactly where it is. The copy goes through SQLite's own backup API, so a database with a write-ahead log is copied consistently.</p>
+        <div class="field-grid">
+          <label>
+            <span data-i18n="maint.restoreSource">Source: a .sqlite3 file or a data folder</span>
+            <input id="restore-source" spellcheck="false" placeholder="/path/to/proxies.sqlite3">
+          </label>
+          <label>
+            <span data-i18n="maint.restoreTarget">Target: a new, empty folder</span>
+            <input id="restore-target" spellcheck="false" placeholder="/path/to/restored">
+          </label>
+        </div>
+        <div class="maint-block" id="restore-preview-box" hidden>
+          <div class="maint-list" id="restore-preview-list"></div>
+          <p class="hint" id="restore-preview-note"></p>
+        </div>
+
+        <div class="card-title" style="margin-top:20px;">
+          <div class="geo-title-wrap">
+            <span class="code-editor-badge">DATA FOLDER</span>
+            <h3 data-i18n="maint.moveTitle">Move the data folder</h3>
+          </div>
+          <div class="catalog-head-meta">
+            <button class="button light" id="move-preview" data-i18n="maint.preview">Preview</button>
+            <button class="button primary" id="move-apply" data-i18n="maint.move" disabled>Move</button>
+          </div>
+        </div>
+        <p class="hint" data-i18n="maint.moveLead">The new folder is a copy, and a backup of the old database is written first. The old folder is never deleted by this action — that stays a separate, explicit step you take yourself.</p>
+        <div class="field-grid">
+          <label>
+            <span data-i18n="maint.moveTarget">New data folder</span>
+            <input id="move-target" spellcheck="false" placeholder="/path/to/new-data">
+          </label>
+        </div>
+        <div class="maint-block" id="move-preview-box" hidden>
+          <p class="hint" id="move-preview-note"></p>
+        </div>
+      </section>
     </section>
 
 <footer>
