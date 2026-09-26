@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from urllib.parse import parse_qs, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -46,6 +47,7 @@ class ResearchCollectIntegrationTests(unittest.IsolatedAsyncioTestCase):
     @asynccontextmanager
     async def serve(self, pages):
         writers, tasks, errors = set(), set(), []
+        closing = False
 
         async def handler(reader, writer):
             try:
@@ -83,6 +85,10 @@ class ResearchCollectIntegrationTests(unittest.IsolatedAsyncioTestCase):
                 errors.append(error)
 
         def connected(reader, writer):
+            if closing:
+                writer.close()
+                writer.transport.abort()
+                return
             writers.add(writer)
             task = asyncio.create_task(handler(reader, writer))
             tasks.add(task)
@@ -96,6 +102,7 @@ class ResearchCollectIntegrationTests(unittest.IsolatedAsyncioTestCase):
             # Server.wait_closed() also waits for accepted streams on newer
             # Python versions. Own and stop those streams before waiting, even
             # when a retry opened a connection without sending a request.
+            closing = True
             server.close()
             for task in tuple(tasks):
                 task.cancel()
@@ -201,6 +208,17 @@ class SyntheticCollectIntegrationTests(ResearchCollectIntegrationTests):
             if writer is not None:
                 writer.close()
                 await asyncio.wait_for(writer.wait_closed(), 2)
+
+    async def test_cleanup_also_closes_an_accept_callback_queued_before_shutdown(self):
+        original = asyncio.start_server
+        loop = asyncio.get_running_loop()
+
+        async def delayed(callback, *args, **kwargs):
+            return await original(lambda reader, writer: loop.call_later(
+                .05, callback, reader, writer), *args, **kwargs)
+
+        with mock.patch.object(asyncio, 'start_server', side_effect=delayed):
+            await self.test_server_cleanup_closes_a_client_without_a_request()
 
     def sample(self, source_id):
         line = b'11.1.1.1:8080\n11.1.1.2:3128\n'
