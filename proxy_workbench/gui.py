@@ -214,8 +214,8 @@ def read_json(path, fallback):
 #: page: a page that is rearranged does not get the section rather than getting
 #: a broken one.
 SOURCE_COMPARE_ANCHOR = '</tbody>\n          </table>\n        </div>\n      </section>\n    </section>'
-SOURCE_COMPARE_SECTION = SOURCE_COMPARE_ANCHOR.replace(
-    '    </section>',
+SOURCE_COMPARE_SECTION = SOURCE_COMPARE_ANCHOR.rsplit(
+    '\n    </section>', 1)[0] + '\n' + (
     '''      <section class="card" id="source-compare-card">
         <div class="card-title">
           <div class="geo-title-wrap">
@@ -786,7 +786,7 @@ def read_settings(data):
         return None
 
 class App:
-    def __init__(self, data):
+    def __init__(self, data, *, execute_jobs=False):
         self.data = data.resolve()
         self.data.mkdir(parents=True, exist_ok=True)
         self.instance_lock = (self.data/'gui-instance.lock').open('a+b')
@@ -844,6 +844,11 @@ class App:
         # frozen plan, not a document: it cannot be rebuilt from JSON, so the
         # page's "apply" acts on the exact object the page was shown.
         self._import_plans = []
+        self._job_runner = None
+        if execute_jobs:
+            from .jobrunner import runner_for
+            self._job_runner = runner_for(self.data)
+            self._job_runner.start()
 
     def settings(self):
         settings_path = self.data/'gui-settings.json'
@@ -1094,7 +1099,8 @@ class App:
         if not isinstance(url, str) or not url.strip():
             raise ValueError('Укажите адрес списка.')
         try:
-            descriptor = source_catalog.custom_source(url.strip(), kind)
+            descriptor = source_catalog.custom_source(url.strip(), kind,
+                                                       allow_unsafe=payload.get('allow_private') is True)
         except source_catalog.CatalogError as exc:
             raise ValueError(str(exc)) from None
         settings = self.settings()
@@ -1121,7 +1127,7 @@ class App:
         url = payload.get('url')
         kind = payload.get('kind') or 'http'
         if isinstance(url, str) and url.strip():
-            allow_private = bool(payload.get('allow_private'))
+            allow_private = payload.get('allow_private') is True
             try:
                 descriptor = source_catalog.custom_source(url.strip(), kind, allow_unsafe=allow_private)
             except source_catalog.CatalogError as exc:
@@ -1137,7 +1143,7 @@ class App:
             item = source_catalog._custom_plan(source_id, custom[source_id], []) if source_id in custom else None
         if item is None:
             raise ValueError('Такого источника нет в каталоге.')
-        return source_id, item, False
+        return source_id, item, payload.get('allow_private') is True
 
     def preview_source(self, payload):
         """Availability and format check. Never writes candidates or settings.
@@ -1156,42 +1162,26 @@ class App:
         source_id, plan, allow_private = self._preview_plan(payload, settings)
         if not source_catalog.collectable_source(plan):
             raise ValueError('Это не список прокси-адресов: формат источника не поддерживается сборщиком.')
-        report = self._preview_report(plan)
+        report = self._preview_report(plan, allow_private=allow_private)
         return source_management.preview_view(report, source_id, plan.get('name'))
 
-    def _preview_report(self, plan):
+    def _preview_report(self, plan, *, allow_private=False):
         """One checked source, through ``proxytool``, writing nothing."""
-        from . import proxytool
-        try:
-            db = self.read_db()
-        except sqlite3.Error:
-            db = None
-        if db is None:
-            db = proxytool.open_db(self.data / 'preview-check.sqlite3')
-            try:
-                report = self._run_preview(plan, db)
-            finally:
-                db.close()
-                path = self.data / 'preview-check.sqlite3'
-                for suffix in ('', '-wal', '-shm'):
-                    (path.parent / (path.name + suffix)).unlink(missing_ok=True)
-            return report
-        try:
-            return self._run_preview(plan, db)
-        finally:
-            db.close()
+        # The collector owns a separate TemporaryDirectory per preview. Do
+        # not open a second, shared database in data/ merely to pass it along.
+        return self._run_preview(plan, None, allow_private=allow_private)
 
     #: A check is a question, not a collection.  Eight seconds is long enough
     #: for a list on a slow link and short enough that a page waiting on it
     #: stays a page; the collector's own default is four times that.
     PREVIEW_TIMEOUT = 8
 
-    def _run_preview(self, plan, db):
+    def _run_preview(self, plan, db, *, allow_private=False):
         from . import proxytool
         return proxytool.run_preview(db, [plan], timeout=self.PREVIEW_TIMEOUT,
                                      max_source_candidates=proxytool.PREVIEW_CHECK_CANDIDATES,
-                                     allow_private_sources=True,
-                                     allow_private_endpoints=True)
+                                     allow_private_sources=allow_private,
+                                     allow_private_endpoints=False)
 
     # --- source recovery and scope exclusions -----------------------------
     #
@@ -1776,15 +1766,28 @@ class App:
     def prune_sources(self, payload):
         """Drop sources that delivered only non-working fresh profile checks."""
         settings = validate(payload)
+        catalog = self.source_document()
+        aliases = source_catalog.legacy_aliases(catalog)
+        materialized = source_catalog.migrate_settings(settings, catalog)
+        if materialized.get('sources') != settings.get('sources'):
+            # A legacy client (or the editable URL list) can submit new URLs
+            # alongside an older catalog selection. Honor that explicit list.
+            legacy = dict(settings)
+            previous_selection = legacy.pop('source_selection', {})
+            legacy['download_disabled_ids'] = previous_selection.get('download_disabled_ids', [])
+            settings = source_catalog.migrate_settings(legacy, catalog)
         status = read_json(core.export_file(self.data/'exports', 'status.json'), {})
         if status.get('stale') or status.get('state') in ('error', 'stale'):
             quality = {}
         else:
             quality = status.get('source_quality') or {}
         dead = [source for source in settings['sources']
-                if (stats := quality.get(core.source_key(source))) and stats.get('checked', 0) >= PRUNE_MIN_CHECKED
+                if (stats := quality.get(aliases.get(source)) or quality.get(core.source_key(source)))
+                and stats.get('checked', 0) >= PRUNE_MIN_CHECKED
                 and not stats.get('passed')]
         settings['sources'] = [source for source in settings['sources'] if source not in dead]
+        dead_ids = [aliases.get(source) or source_catalog.custom_id(source) for source in dead]
+        settings = source_management.remove_sources(settings, dead_ids, catalog)
         saved = self.save(settings)
         return dict(settings=saved, removed=[public_source(source) for source in dead])
 
@@ -4833,6 +4836,9 @@ class App:
 
     def close(self):
         self.stop()
+        if self._job_runner is not None:
+            self._job_runner.stop()
+            self._job_runner = None
         if self._key_manager is not None:
             with suppress(sqlite3.Error, OSError):
                 self._key_manager.conn.close()
@@ -5247,11 +5253,11 @@ class Handler(BaseHTTPRequestHandler):
             self.respond(500, dict(error='Не удалось записать настройки. Проверьте доступ к папке data.'))
 
 
-def make_server(data, port=0):
+def make_server(data, port=0, *, execute_jobs=False):
     server = ThreadingHTTPServer(('127.0.0.1', port), Handler)
     server.daemon_threads = True
     try:
-        server.app = App(data)
+        server.app = App(data, execute_jobs=execute_jobs)
     except Exception:
         server.server_close()
         raise
@@ -5286,7 +5292,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     os.umask(0o077)
     try:
-        server = make_server(args.data, args.port)
+        server = make_server(args.data, args.port, execute_jobs=True)
     except OSError:
         old = read_json(args.data/'gui-address.json', {})
         if old.get('port') and type(old['port']) is int and 1 <= old['port'] <= 65535:
@@ -5308,7 +5314,7 @@ def main(argv=None):
     api_server = None
     if not args.no_api:
         try:
-            api_server = api.make_api_server(args.data, '127.0.0.1', args.api_port)
+            api_server = api.make_api_server(args.data, '127.0.0.1', args.api_port, execute_jobs=True)
         except (OSError, ValueError):
             print(tr(f'Локальное API не запущено: порт {args.api_port} занят.', f'Local API not started: port {args.api_port} is busy.'), flush=True)
         else:

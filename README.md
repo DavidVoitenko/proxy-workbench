@@ -4,14 +4,14 @@
 
 # Proxy Workbench
 
-**Collect free public proxies from 55 open lists and web pages, test every one against _your_ services, and keep only the fast, stable, clean and anonymous ones.**
+**Collect free public proxies from a catalog of 150 entries with 98 collectable feeds, test every one against _your_ services, and keep only the fast, stable, clean and anonymous ones.**
 
 Local browser GUI (English / Russian) + CLI · HTTP / HTTPS (CONNECT) / SOCKS5 · anonymity levels · resumable · no accounts, no telemetry
 
 ![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)
 ![License: MIT](https://img.shields.io/badge/license-MIT-2ea44f)
 ![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-5f6b73)
-![Dependencies](https://img.shields.io/badge/dependencies-1%20(httpx)-42bbaa)
+![Dependencies](https://img.shields.io/badge/dependencies-httpx%20%2B%20keyring-42bbaa)
 ![Runs locally](https://img.shields.io/badge/runs-100%25%20local-209c8b)
 
 **English** · [Русский](README.ru.md)
@@ -59,7 +59,7 @@ Everything runs on your machine. The GUI binds to `127.0.0.1` only.
 
 | | |
 | --- | --- |
-| **55 built-in sources** | Popular GitHub-hosted lists, ProxyScrape, paginated Geonode API and free-proxy web pages. Any web page, CSV or HTML table works as a source: every `ip:port` is pulled out of it. **Remove dead sources** and **Get new sources** keep the list healthy in one click. |
+| **150 catalog entries / 98 collectable feeds** | Popular GitHub-hosted lists, ProxyScrape, paginated Geonode API and free-proxy web pages. Any web page, CSV or HTML table works as a source: every `ip:port` is pulled out of it. **Remove dead sources** and **Get new sources** keep the list healthy in one click. |
 | **Unknown protocol? No problem** | Addresses without a protocol can be tried as HTTP, SOCKS4 and SOCKS5 at once; the checks keep whichever works. |
 | **Protocols** | HTTP, HTTPS/CONNECT, explicit `https://` proxies, SOCKS4, SOCKS5 / SOCKS5h, IPv4 and IPv6. |
 | **Test against your services** | Several targets per profile (up to 20 in the GUI). A proxy passes only if it works for **all** of them. |

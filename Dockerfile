@@ -12,7 +12,7 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN python -m pip install --requirement requirements.txt
 
-COPY proxy_workbench/*.py proxy_workbench/sources.json ./proxy_workbench/
+COPY proxy_workbench/*.py proxy_workbench/*.json ./proxy_workbench/
 COPY proxytool.py service.example.json ./
 RUN useradd --create-home --uid 10001 workbench \
     && mkdir -p /app/data \

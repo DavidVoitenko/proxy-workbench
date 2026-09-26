@@ -57,6 +57,9 @@ ENDPOINTS = {
     '/clash': 'Clash / Mihomo config with the best matching proxies; same filters',
     '/singbox': 'sing-box config with the best matching proxies; same filters',
     '/status': 'summary of the latest export',
+    '/sources': 'read-only source catalog; filters: q, set, category, protocol, format, access, state, limit, offset',
+    '/sources/{id}': 'one source with research evidence, runtime history and cache',
+    '/source-sets': 'available source sets and the saved selection',
     '/v1': 'versioned control API; needs an API key (read.status is enough for reads)',
 }
 
@@ -662,7 +665,7 @@ class WorkbenchService(apiv1.Service):
         window = items[start:start + limit] if limit else items[start:]
         return {'items': window, 'stream_id': stream_id,
                 'cursor_seq': start + len(window) if window else None,
-                'next_seq': start + len(window) + 1 if window and len(window) < len(items) else None,
+                'next_seq': start + len(window) + 1 if window and start + len(window) < len(items) else None,
                 'total': len(items)}
 
     def queue_state(self):
@@ -948,7 +951,9 @@ class WorkbenchService(apiv1.Service):
         from . import jobs as jobs_module
 
         body = call.body or {}
+        budgets = self._check_job_options(body, 'collect')
         collection_id = str(body.get('collection_id') or schema_public_collection())
+        apiv1.require_scope(call.principal, 'collection', collection_id)
         # A collect run still measures something, so the scope names the profile
         # it runs under; the published one is the default rather than a blank.
         profile_id = str(body.get('profile_id') or self.published_profile_id())
@@ -960,10 +965,12 @@ class WorkbenchService(apiv1.Service):
                                  action=tr('откройте папку данных программы',
                                            'open the program data folder first'))
         try:
+            if not conn.execute('SELECT 1 FROM collections WHERE id=?', (collection_id,)).fetchone():
+                raise apiv1.ApiError('E_STATE_NOT_FOUND', status=404)
             scope = jobs_module.Scope(collection_id=collection_id, profile_id=profile_id,
                                       profile_revision=revision,
                                       filters={'mode': str(body.get('mode') or 'collect_only'),
-                                               'want': int(body.get('want') or 0)})
+                                               'want': int(body.get('want') or 0)}, budgets=budgets)
             job = store.submit('collect', scope, (), idempotency_key=call.idempotency_key)
         except jobs_module.JobError as exc:
             raise apiv1.ApiError('E_CONFLICT_BUSY', status=409,
@@ -976,10 +983,7 @@ class WorkbenchService(apiv1.Service):
                 'created_at': job.created_at}
 
     def _op_checks_recheck(self, call):
-        raise apiv1.ApiError('E_STATE_NOT_FOUND', status=409,
-                             details={'reason': 'recheck runs on the GUI or the CLI worker'},
-                             action=tr('запустите перепроверку через GUI или CLI',
-                                       'start the recheck from the GUI or the CLI'))
+        return self._submit_collection_job(call, 'recheck')
 
     def _profile_store(self):
         from . import profiles as profiles_module
@@ -1818,24 +1822,52 @@ class WorkbenchService(apiv1.Service):
         """A quick test is a job with a budget, not a request that never returns."""
         return self._submit_collection_job(call, 'quick_test')
 
+    def _check_job_options(self, body, kind):
+        """Do not accept execution controls the selected worker cannot honour."""
+        budgets = dict(body.get('budget') or {})
+        if 'max_cost' in budgets:
+            raise apiv1.field_error('budget.max_cost', 'monetary cost limits are not supported')
+        mode = body.get('mode')
+        supported = (None, 'collect_only') if kind == 'collect' else (None, 'full')
+        if mode not in supported:
+            raise apiv1.field_error('mode', 'use collect_only for collection or full for checks')
+        if body.get('max_seconds') is not None:
+            budgets['max_seconds'] = min(body['max_seconds'], budgets.get('max_seconds', body['max_seconds']))
+        return budgets
+
     def _submit_collection_job(self, call, kind):
         from . import proxytool as engine
         from . import jobs as jobs_module
+        from . import jobrunner
 
         def action(workbench):
             body = call.body or {}
+            budgets = self._check_job_options(body, kind)
             collection = str(body.get('collection_id') or schema_public_collection())
+            apiv1.require_scope(call.principal, 'collection', collection)
             conn = workbench.conn
+            if not conn.execute('SELECT 1 FROM collections WHERE id=?', (collection,)).fetchone():
+                raise apiv1.ApiError('E_STATE_NOT_FOUND', status=404)
             members = [row[0] for row in conn.execute(
                 'SELECT e.canonical FROM membership m JOIN endpoints e ON e.id = m.endpoint_id '
                 'WHERE m.collection_id=? ORDER BY e.canonical', (collection,)).fetchall()]
+            if kind == 'quick_test':
+                endpoint = engine.normalize_custom(body.get('endpoint'))
+                if endpoint is None:
+                    raise apiv1.field_error('endpoint', 'a valid credential-free proxy address is required')
+                if endpoint not in members:
+                    raise apiv1.ApiError('E_STATE_NOT_FOUND', status=404)
+                members = [endpoint]
+            if budgets.get('max_items') is not None:
+                members = members[:int(budgets['max_items'])]
+            profile_id, revision, _ = jobrunner.resolve_profile(
+                workbench, body.get('profile_id') or self.published_profile_id(),
+                body.get('profile_revision'))
             scope = jobs_module.Scope(collection_id=collection,
-                                      profile_id=str(body.get('profile_id') or self.published_profile_id()),
-                                      profile_revision=int(body.get('profile_revision') or 1),
-                                      profile_digest=str(body.get('profile_id') or ''),
-                                      filters={'protocol': body.get('protocol', 'all')},
-                                      budgets={'max_seconds': body.get('max_seconds'),
-                                               'max_requests': body.get('max_requests')})
+                                      profile_id=profile_id, profile_revision=revision,
+                                      profile_digest=profile_id,
+                                      filters={'protocol': body.get('protocol', 'all'),
+                                               'want': int(body.get('want') or 0)}, budgets=budgets)
             items = [jobs_module.QueueItem(endpoint_id=schema_endpoint_id(conn, value),
                                            access_id=engine.PUBLIC_ACCESS_ID, access_revision=1)
                      for value in members]
@@ -1844,8 +1876,7 @@ class WorkbenchService(apiv1.Service):
                                           idempotency_key=call.idempotency_key)
             return {'job_id': job.id, 'kind': job.kind, 'state': job.state,
                     'collection_id': collection, 'items': len(items),
-                    'budget': {'max_seconds': body.get('max_seconds'),
-                               'max_requests': body.get('max_requests')}}
+                    'budget': budgets}
         return self._with_workbench(action)
 
     # -- pools as jobs ------------------------------------------------------
@@ -2024,21 +2055,32 @@ class WorkbenchService(apiv1.Service):
     def _op_schedules_list(self, call):
         def action(workbench):
             engine = self._scheduler(workbench)
-            items = [_schedule_dict(spec) for spec in engine.list()]
-            return {'items': self._guard_objects(items, call, 'id', 'schedules'),
-                    'stream_id': 'schedules', 'next_seq': None}
+            items = [_schedule_dict(spec) for spec in engine.list()
+                     if self._schedule_visible(spec, call, workbench)]
+            return self.page(items, 'schedules', offset=call.query.get('cursor_seq', 0),
+                             limit=call.query.get('limit'))
         return self._with_workbench(action)
 
     def _op_schedules_get(self, call):
-        found = self._find_schedule(call)
-        return self._guard_objects([_schedule_dict(found)], call, 'id', 'schedules')[0]
+        return _schedule_dict(self._find_schedule(call))
+
+    def _schedule_visible(self, spec, call, workbench):
+        collections = _scope_values(call.principal, 'collections')
+        allowed_pools = _scope_values(call.principal, 'pools')
+        if allowed_pools is not None and spec.pool_id not in allowed_pools:
+            return False
+        collection = spec.collection_id
+        if not collection and spec.pool_id:
+            pool = workbench.pools().get(spec.pool_id)
+            collection = pool.collection_id if pool else None
+        return collections is None or collection in collections
 
     def _find_schedule(self, call):
         wanted = str(call.params.get('id') or '')
 
         def action(workbench):
             for spec in self._scheduler(workbench).list():
-                if spec.id == wanted:
+                if spec.id == wanted and self._schedule_visible(spec, call, workbench):
                     return spec
             return None
         found = self._with_workbench(action)
@@ -2048,8 +2090,24 @@ class WorkbenchService(apiv1.Service):
 
     def _op_schedules_create(self, call):
         def action(workbench):
+            workbench.conn.execute('BEGIN IMMEDIATE')
             engine = self._scheduler(workbench)
-            spec = engine.add(self._schedule_payload(call))
+            payload = self._schedule_payload(call)
+            if engine.get(payload['id']) is not None:
+                raise apiv1.ApiError('E_CONFLICT_REVISION', status=409,
+                                     details={'id': payload['id']})
+            if payload.get('pool_id'):
+                pool = workbench.pools().require(payload['pool_id'])
+                if payload.get('collection_id') not in (None, pool.collection_id):
+                    raise apiv1.field_error('collection_id', 'must match the pool collection')
+                payload['collection_id'] = pool.collection_id
+            else:
+                payload['collection_id'] = payload.get('collection_id') or schema_public_collection()
+            from . import scheduler
+            spec = scheduler.ScheduleSpec.from_dict(payload)
+            if not self._schedule_visible(spec, call, workbench):
+                raise apiv1.ApiError('E_STATE_NOT_FOUND', status=404)
+            spec = engine.add(spec)
             return _schedule_dict(spec)
         return self._with_workbench(action)
 
@@ -2059,59 +2117,68 @@ class WorkbenchService(apiv1.Service):
     SCHEDULE_KINDS = {'check': 'interval', 'refill': 'interval', 'recheck': 'interval',
                       'export': 'interval', 'source': 'interval'}
 
-    def _schedule_payload(self, call):
+    def _schedule_payload(self, call, current=None):
         """The route body in the shape the schedule store persists."""
         from . import scheduler
         body = dict(call.body or {})
-        payload = {'id': str(body.get('name') or '').strip(),
-                   'kind': self.SCHEDULE_KINDS.get(str(body.get('kind') or 'check'), 'interval'),
-                   'interval_minutes': body.get('interval_minutes'),
-                   'timezone': str((body.get('window') or {}).get('timezone') or 'UTC')}
-        if body.get('pool_id'):
-            payload['pool_id'] = str(body['pool_id'])
+        payload = current.to_dict() if current else {
+            'id': str(body.get('name') or '').strip(), 'kind': scheduler.KIND_INTERVAL,
+            'timezone': 'UTC', 'action': str(body.get('kind') or 'check')}
+        if 'name' in body:
+            payload['name'] = str(body['name']).strip()
+            if not payload['name']:
+                raise apiv1.field_error('name', 'must not be blank')
+        for key in ('interval_minutes', 'pool_id', 'collection_id'):
+            if key in body:
+                payload[key] = body[key]
         for field, key in (('window', 'windows'), ('quiet_hours', 'quiet_hours')):
             value = body.get(field)
-            if isinstance(value, dict) and value.get('from') and value.get('to'):
-                start, end = _hhmm(value['from']), _hhmm(value['to'])
-                if start == end:
-                    raise apiv1.field_error(field, tr('окно не может быть пустым',
-                                                      'the window may not be empty'))
-                payload[key] = [scheduler.Window(start, end).to_dict()]
+            if isinstance(value, dict):
+                if value.get('timezone'):
+                    payload['timezone'] = value['timezone']
+                if value.get('from') or value.get('to'):
+                    if not value.get('from') or not value.get('to'):
+                        raise apiv1.field_error(field, 'both from and to are required')
+                    start, end = _hhmm(value['from']), _hhmm(value['to'])
+                    if start == end:
+                        raise apiv1.field_error(field, tr('окно не может быть пустым',
+                                                          'the window may not be empty'))
+                    payload[key] = [scheduler.Window(start, end).to_dict()]
+                elif not value:
+                    payload[key] = []
         budgets = body.get('budgets')
         if isinstance(budgets, dict):
-            payload['budgets'] = {key: budgets[key] for key in
-                                  ('max_requests', 'max_bytes', 'max_seconds') if key in budgets}
+            payload['budgets'] = {**payload.get('budgets', {}),
+                                  **{key.removeprefix('max_'): budgets[key] for key in
+                                     ('max_requests', 'max_bytes', 'max_seconds') if key in budgets}}
         if body.get('enabled') is not None:
             payload['enabled'] = bool(body['enabled'])
         return payload
 
     def _op_schedules_update(self, call):
         def action(workbench):
-            import dataclasses
             from . import scheduler
+            workbench.conn.execute('BEGIN IMMEDIATE')
             current = next((item for item in self._scheduler(workbench).list()
-                            if item.id == call.params.get('id')), None)
+                            if item.id == call.params.get('id')
+                            and self._schedule_visible(item, call, workbench)), None)
             if current is None:
                 raise apiv1.ApiError('E_STATE_NOT_FOUND', status=404,
                                      details={'id': call.params.get('id')})
-            body = call.body or {}
             if call.expected_revision is not None and \
-                    int(call.expected_revision) != int(getattr(current, 'revision', 1) or 1):
+                    int(call.expected_revision) != current.revision:
                 raise apiv1.ApiError('E_CONFLICT_REVISION',
                                      details={'expected': call.expected_revision,
-                                              'stored': getattr(current, 'revision', 1)})
-            changes = {key: value for key, value in body.items()
-                       if key in ('name', 'interval_minutes', 'timezone', 'windows', 'budgets',
-                                  'pool_id', 'kind') and value is not None}
-            merged = scheduler.ScheduleSpec(**{**{field: getattr(current, field)
-                                                  for field in current.__dataclass_fields__
-                                                  if field in changes or field not in ('name', 'revision')},
-                                             **changes})
+                                              'stored': current.revision})
+            payload = self._schedule_payload(call, current)
+            payload['revision'] = current.revision + 1
+            merged = scheduler.ScheduleSpec.from_dict(payload)
             workbench.schedules().save_spec(merged)
             return _schedule_dict(merged)
         return self._with_workbench(action)
 
     def _op_schedules_delete(self, call):
+        self._find_schedule(call)
         def action(workbench):
             self._scheduler(workbench).remove(str(call.params.get('id')))
             return {'id': call.params.get('id'), 'deleted': True}
@@ -2127,14 +2194,15 @@ class WorkbenchService(apiv1.Service):
         import dataclasses
         engine = self._scheduler(workbench)
         current = next((item for item in engine.list() if item.id == call.params.get('id')), None)
-        if current is None:
+        if current is None or not self._schedule_visible(current, call, workbench):
             raise apiv1.ApiError('E_STATE_NOT_FOUND', status=404, details={'id': call.params.get('id')})
-        workbench.schedules().save_spec(dataclasses.replace(current, enabled=bool(enabled)))
+        current = dataclasses.replace(current, enabled=bool(enabled), revision=current.revision + 1)
+        workbench.schedules().save_spec(current)
         if enabled:
             engine.resume(current.id)
         else:
             engine.pause(current.id)
-        return _schedule_dict(dataclasses.replace(current, enabled=bool(enabled)))
+        return _schedule_dict(current)
 
     def _op_schedules_next_run(self, call):
         found = self._find_schedule(call)
@@ -2152,7 +2220,8 @@ class WorkbenchService(apiv1.Service):
         def action(workbench):
             runs = workbench.schedules().recent_runs(found.id, limit=50)
             return {'id': found.id,
-                    'runs': [run.as_dict() if hasattr(run, 'as_dict') else str(run) for run in runs]}
+                    'counters': self._scheduler(workbench).state(found.id).counters.to_dict(),
+                    'runs': [run.as_dict() if hasattr(run, 'as_dict') else dict(run) for run in runs]}
         return self._with_workbench(action)
 
     # -- sources ------------------------------------------------------------
@@ -2171,11 +2240,7 @@ class WorkbenchService(apiv1.Service):
         return settings
 
     def _catalog(self):
-        from . import source_catalog
-        try:
-            return source_catalog.load_catalog()
-        except Exception:
-            return {}
+        return proxytool.sources_catalog(self.data)
 
     def _op_sources_catalog(self, call):
         """The versioned source catalog with its honest evidence states.
@@ -2190,8 +2255,10 @@ class WorkbenchService(apiv1.Service):
         """
         view = self._source_view(call)
         rows = view.get('sources') or []
+        end = view.get('offset', 0) + len(rows)
         return {'items': self._guard_objects(rows, call, 'id', 'sources'),
-                'stream_id': 'sources-catalog', 'next_seq': None,
+                'stream_id': 'sources-catalog',
+                'next_seq': end if end < view.get('total', len(rows)) else None,
                 'total': view.get('total', len(rows)),
                 'offset': view.get('offset', 0),
                 'limit': view.get('limit', len(rows)),
@@ -2211,9 +2278,17 @@ class WorkbenchService(apiv1.Service):
         settings = source_management.selection_of(self._catalog_settings())
         runtime = source_management.runtime_snapshot(db, now=self.clock(), source_ids=source_ids)
         try:
+            filters = source_management.parse_query(query) if query else {}
+            filters.update({key: value for key, value in (call.query or {}).items()
+                            if key in ('q', 'set', 'category', 'protocol', 'format', 'access',
+                                       'state', 'sort', 'limit', 'offset')})
+            if call.query.get('cursor_seq') is not None:
+                filters['offset'] = call.query['cursor_seq']
+            if call.query.get('query') and not filters.get('q'):
+                filters['q'] = call.query['query']
             return source_management.build_view(
                 catalog, settings, runtime=runtime,
-                query=call.query.get('q') or call.query.get('query') or query or '',
+                query=filters,
                 redact=not self._principal_can_read_secrets(call), now=self.clock(), db=db)
         finally:
             _close(db)
@@ -2237,19 +2312,12 @@ class WorkbenchService(apiv1.Service):
         one product.  Both are migrated into one document here.
         """
         from . import source_catalog
-        settings = dict(self._source_settings())
-        selection = settings.get('source_selection')
-        if isinstance(selection, dict) and selection.get('selected_ids'):
-            return settings
-        # A tree that only has the legacy flat list becomes a selection once,
-        # keeping every URL and every pause (source_catalog.migrate_settings).
-        try:
-            merged = proxytool.source_catalog_for(self.data)
-        except ValueError:
-            return settings
-        if merged.get('source_selection', {}).get('selected_ids'):
-            proxytool.write_source_settings(self.data, merged)
-        return merged
+        if proxytool._source_settings_path(self.data).exists():
+            return proxytool.source_catalog_for(self.data)
+        settings = self._source_settings()
+        return source_catalog.migrate_settings(
+            {'sources': settings['sources'], 'download_disabled_ids': settings['disabled']},
+            self._catalog())
 
     def _write_catalog_settings(self, settings):
         return proxytool.write_source_settings(self.data, settings)
@@ -2272,8 +2340,11 @@ class WorkbenchService(apiv1.Service):
             item['last_attempt_at'] = runtime.get('last_attempt_at')
             items.append(item)
         selection = view.get('selection') or {}
+        end = view.get('offset', 0) + len(items)
         return {'items': self._guard_objects(items, call, 'id', 'sources'),
-                'stream_id': 'sources', 'next_seq': None, 'total': view.get('total', len(items)),
+                'stream_id': 'sources', 'next_seq': end if end < view.get('total', len(items)) else None,
+                'total': view.get('total', len(items)),
+                'offset': view.get('offset', 0), 'limit': view.get('limit'),
                 'selected': list(selection.get('selected_ids', ())),
                 'disabled': list(selection.get('download_disabled_ids', ())),
                 'custom': [item.get('id') for item in selection.get('custom_sources', ())]}
@@ -2298,24 +2369,26 @@ class WorkbenchService(apiv1.Service):
     def _op_sources_create(self, call):
         from . import source_catalog, source_management
         body = call.body or {}
+        self._source_override_fields(body)
         url = str(body.get('url') or '').strip()
         if not url:
             raise apiv1.field_error('url', tr('нужен URL источника', 'a source URL is required'))
         settings = self._catalog_settings()
         selection = settings.setdefault('source_selection', {})
         try:
-            custom = source_catalog.custom_source(url)
+            kind = SOURCE_FORMAT_ALIASES.get(body.get('format'), body.get('format') or 'http')
+            custom = source_catalog.custom_source(url, kind)
         except ValueError as exc:
             raise apiv1.field_error('url', str(exc)) from None
         if custom['id'] in set(selection.get('selected_ids', ())):
             raise apiv1.ApiError('E_CONFLICT_REVISION', status=409, details={'url': url},
                                  message=tr('источник уже добавлен', 'the source is already added'))
-        selection.setdefault('custom_sources', []).append(custom)
+        selection.setdefault('custom_sources', []).append(source_catalog.normalize_custom(custom))
         selection.setdefault('selected_ids', []).append(custom['id'])
         changed = source_management.select_ids(settings, [custom['id']], self._catalog())
         self._write_catalog_settings(changed)
         return {'id': custom['id'], 'url': custom['url'], 'enabled': True, 'created': True,
-                'custom': True,
+                'custom': True, 'format': kind,
                 'sources': len(changed.get('source_selection', {}).get('selected_ids', []))}
 
     def _op_sources_update(self, call):
@@ -2327,30 +2400,48 @@ class WorkbenchService(apiv1.Service):
         from . import source_catalog
         wanted = str(call.params.get('id') or '')
         body = call.body or {}
-        url = str(body.get('url') or '').strip()
-        if not url:
-            raise apiv1.field_error('url', tr('нужен URL источника', 'a source URL is required'))
+        self._source_override_fields(body)
         settings = self._catalog_settings()
         selection = settings.get('source_selection', {})
         customs = selection.get('custom_sources') or []
         for index, item in enumerate(customs):
             if isinstance(item, dict) and item.get('id') == wanted:
                 try:
-                    replacement = source_catalog.custom_source(url)
+                    url = str(body.get('url') or item.get('url') or '').strip()
+                    adapter = item.get('adapter') or {}
+                    kind = (SOURCE_FORMAT_ALIASES.get(body.get('format'), body.get('format'))
+                            if body.get('format') else
+                            (adapter.get('config') or {}).get('legacy_kind') or adapter.get('kind') or 'http')
+                    replacement = source_catalog.custom_source(url, kind)
+                    if item.get('name'):
+                        replacement['name'] = item['name']
                 except ValueError as exc:
                     raise apiv1.field_error('url', str(exc)) from None
-                customs[index] = replacement
+                customs[index] = source_catalog.normalize_custom(replacement)
                 selection['selected_ids'] = [
                     replacement['id'] if value == wanted else value
                     for value in selection.get('selected_ids', [])]
+                selection['download_disabled_ids'] = [
+                    replacement['id'] if value == wanted else value
+                    for value in selection.get('download_disabled_ids', [])]
+                selection.get('specs', {}).pop(wanted, None)
                 self._write_catalog_settings(settings)
                 return {'id': replacement['id'], 'url': replacement['url'], 'updated': True,
-                        'custom': True}
+                        'custom': True, 'format': kind}
         raise apiv1.ApiError('E_STATE_NOT_FOUND', status=404, details={'id': wanted},
                              message=tr('изменить можно только свой источник; запись каталога '
                                         'описывает опубликованный список',
                                         'only your own source can be changed; a catalog record '
                                         'describes a published list'))
+
+    @staticmethod
+    def _source_override_fields(body):
+        """Reject knobs this selection document cannot persist or execute."""
+        for field in ('interval_minutes', 'max_bytes'):
+            if body.get(field) not in (None, 0):
+                raise apiv1.field_error(field, tr(
+                    'Переопределение не поддерживается для источника; используйте настройки задания сбора.',
+                    'This source override is unsupported; configure the collection job instead.'))
 
     def _op_sources_enable(self, call):
         return self._source_flag(call, enabled=True)
@@ -2906,6 +2997,8 @@ class WorkbenchService(apiv1.Service):
 #: Where the user's own source list lives.  It is a separate file from the
 #: bundled catalog so an update never rewrites a choice the user made.
 SOURCE_SETTINGS = 'sources.json'
+SOURCE_FORMAT_ALIASES = {'text': 'http', 'json': 'json-records', 'csv': 'fields',
+                         'page_json': 'page-json', 'html': 'html-table'}
 
 
 def read_source_settings(data):
@@ -2914,6 +3007,10 @@ def read_source_settings(data):
     try:
         stored = json.loads(path.read_text(encoding='utf-8'))
     except (OSError, UnicodeError, ValueError):
+        stored = {}
+    if isinstance(stored, list):
+        stored = {'sources': stored}
+    elif not isinstance(stored, dict):
         stored = {}
     sources = [str(item) for item in (stored.get('sources') or []) if isinstance(item, str)]
     disabled = [str(item) for item in (stored.get('disabled') or []) if isinstance(item, str)]
@@ -3164,9 +3261,10 @@ def _item_dict(item):
 
 
 def _schedule_dict(spec):
-    return {'id': spec.id, 'kind': spec.kind, 'enabled': spec.enabled,
+    return {'id': spec.id, 'name': spec.name or spec.id, 'revision': spec.revision,
+            'kind': spec.kind, 'action': spec.effective_action, 'enabled': spec.enabled,
             'interval_minutes': spec.interval_minutes, 'timezone': spec.timezone,
-            'pool_id': spec.pool_id,
+            'pool_id': spec.pool_id, 'collection_id': spec.collection_id,
             'windows': [window.to_dict() for window in spec.windows],
             'quiet_hours': [window.to_dict() for window in spec.quiet_hours],
             'budgets': spec.budgets.to_dict() if hasattr(spec.budgets, 'to_dict') else {},
@@ -3677,15 +3775,18 @@ def _is_migrated(conn):
     return version == schema.SCHEMA_VERSION and application == schema.APPLICATION_ID
 
 
-def make_control_api(data, host='127.0.0.1', port=V1_DEFAULT_PORT, token=None, **options):
+def make_control_api(data, host='127.0.0.1', port=V1_DEFAULT_PORT, token=None,
+                     execute_jobs=False, **options):
     """The versioned control API on its own port, next to the legacy reader."""
     manager = key_manager(data)
     service = WorkbenchService(data)
     keys = LegacyKeyStore(token, manager)
-    return apiv1.make_server(service=service, keys=keys, host=host, port=port, **options)
+    server = apiv1.make_server(service=service, keys=keys, host=host, port=port, **options)
+    return _with_job_runner(server, data) if execute_jobs else server
 
 
-def make_api_server(data, host='127.0.0.1', port=DEFAULT_PORT, token=None, v1=True):
+def make_api_server(data, host='127.0.0.1', port=DEFAULT_PORT, token=None, v1=True,
+                    execute_jobs=False):
     """The 2.x read-only server, with ``/v1`` served from the same socket.
 
     Both prefixes are answered by the same handler so a client never has to
@@ -3788,6 +3889,34 @@ def make_api_server(data, host='127.0.0.1', port=DEFAULT_PORT, token=None, v1=Tr
             allowed, notice = self.authorized(url.query)
             if not allowed:
                 return self.send_json(401, {'error': 'missing or wrong token'}, headers=notice)
+            if url.path == '/source-sets' or url.path == '/sources' or url.path.startswith('/sources/'):
+                if self.command not in ('GET', 'HEAD'):
+                    return self.send_json(405, {'error': 'read-only endpoint'},
+                                          headers=(('Allow', 'GET, HEAD'), *notice))
+                from . import source_management
+                source_id = url.path.removeprefix('/sources/') if url.path.startswith('/sources/') else None
+                if source_id is not None and (not source_id or '/' in source_id):
+                    return self.send_json(404, {'error': 'source not found'})
+                db = service.connection()
+                try:
+                    catalog = proxytool.sources_catalog(data)
+                    settings = service._catalog_settings()
+                    if url.path == '/source-sets':
+                        body = {'sets': source_management.sets_view(catalog, settings)}
+                    else:
+                        runtime = source_management.runtime_snapshot(
+                            db, now=service.clock(), source_ids=[source_id] if source_id else None)
+                        body = (source_management.detail_view(
+                            catalog, settings, source_id, runtime, db=db, now=service.clock()) if source_id else
+                            source_management.build_view(catalog, settings, runtime, query=url.query,
+                                                         db=db, now=service.clock()))
+                    if body is None:
+                        return self.send_json(404, {'error': 'source not found'})
+                    return self.send_json(200, body, headers=notice)
+                except (ValueError, OSError) as exc:
+                    return self.send_json(400, {'error': str(exc)})
+                finally:
+                    _close(db)
             rows, status = exports.load()
             if url.path in ('/', '/status'):
                 return self.send_json(200, _status_body(status, len(rows)), headers=notice)
@@ -3829,6 +3958,38 @@ def make_api_server(data, host='127.0.0.1', port=DEFAULT_PORT, token=None, v1=Tr
     server.control_api = control
     server.exports = exports
     server.workbench_service = service
+    return _with_job_runner(server, data) if execute_jobs else server
+
+
+def _with_job_runner(server, data):
+    """Tie queue execution to a real server lifecycle, not test construction."""
+    from . import jobrunner
+    worker = jobrunner.runner_for(data)
+    original_serve = server.serve_forever
+    original_close = server.server_close
+    state = {'started': False}
+
+    def stop_worker():
+        if state['started']:
+            state['started'] = False
+            worker.stop()
+
+    def serve_forever(*args, **kwargs):
+        if not state['started']:
+            worker.start()
+            state['started'] = True
+        try:
+            return original_serve(*args, **kwargs)
+        finally:
+            stop_worker()
+
+    def server_close():
+        stop_worker()
+        return original_close()
+
+    server.serve_forever = serve_forever
+    server.server_close = server_close
+    server.job_runner = worker
     return server
 
 

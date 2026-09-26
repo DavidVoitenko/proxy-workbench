@@ -64,10 +64,11 @@ class BuildDescriptorTests(unittest.TestCase):
 
     def test_every_spec_copies_the_interface_and_the_source_list(self):
         for name in ('proxy-workbench-macos.spec', 'proxy-workbench-windows-gui.spec',
-                     'proxy-workbench-windows-cli.spec'):
+                     'proxy-workbench-windows-cli.spec', 'proxy-workbench.spec'):
             text = self.spec(name)
             self.assertIn("'ui'), 'proxy_workbench/ui'", text, name)
-            self.assertIn("'sources.json'), 'proxy_workbench'", text, name)
+            for resource in ('sources.json', 'source-catalog.json', 'openapi.json'):
+                self.assertIn(f"'{resource}'), 'proxy_workbench'", text, name)
 
     def test_the_macos_bundle_declares_the_version_it_reads_from_the_package(self):
         text = self.spec('proxy-workbench-macos.spec')

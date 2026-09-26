@@ -16,6 +16,9 @@ on:
 permissions:
   contents: write
 
+env:
+  PYTHON_KEYRING_BACKEND: keyring.backends.null.Keyring
+
 jobs:
   source-archive:
     runs-on: ubuntu-latest
@@ -86,6 +89,7 @@ jobs:
         run: |
           python -m pip install --requirement requirements.txt
           python -m pip wheel --no-deps --wheel-dir dist .
+          python packaging/verify_wheel.py dist/*.whl
           python -m venv install-test
           install-test/bin/python -m pip install dist/*.whl
           python packaging/smoke.py install-test/bin/proxy-workbench
@@ -146,7 +150,15 @@ jobs:
   # say the same: an ad-hoc signature is not a publisher.
   macos-desktop:
     needs: source-archive
-    runs-on: macos-14
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            arch: arm64
+          - os: macos-15-intel
+            arch: x86_64
     env:
       TAG: ${{ github.event.inputs.tag || github.ref_name }}
       NO_PROXY: 127.0.0.1,localhost
@@ -178,7 +190,7 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
-          flags="--dist dist"
+          flags="--dist dist --arch ${{ matrix.arch }} --no-tray"
           if [ -n "$APPLE_ID" ]; then flags="$flags --sign --notarize"; fi
           # shellcheck disable=SC2086
           python packaging/build_macos.py $flags
@@ -186,16 +198,16 @@ jobs:
       - name: Checksum the artifacts
         run: |
           cd dist
-          shasum -a 256 proxy-workbench-*.zip proxy-workbench-*.dmg proxy-workbench-*.manifest.json > SHA256SUMS
+          shasum -a 256 proxy-workbench-*.zip proxy-workbench-*.dmg proxy-workbench-*.manifest.json > SHA256SUMS-macos-${{ matrix.arch }}
       - name: Attach the artifacts to the release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ env.TAG }}
           files: |
-            dist/proxy-workbench-*-macos-arm64.zip
-            dist/proxy-workbench-*-macos-arm64.dmg
+            dist/proxy-workbench-*-macos-${{ matrix.arch }}.zip
+            dist/proxy-workbench-*-macos-${{ matrix.arch }}.dmg
             dist/proxy-workbench-*.manifest.json
-            dist/SHA256SUMS
+            dist/SHA256SUMS-macos-${{ matrix.arch }}
 
   container-image:
     needs: source-archive

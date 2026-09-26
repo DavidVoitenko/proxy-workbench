@@ -20,6 +20,7 @@
 #     app without them starts and shows nothing.
 import os
 from pathlib import Path
+import platform
 import re
 import sys
 
@@ -48,9 +49,10 @@ analysis = Analysis(
     [str(root / 'packaging' / 'desktop_launcher.py')],
     pathex=[str(root)],
     datas=[(str(package / 'ui'), 'proxy_workbench/ui'),
-           (str(package / 'sources.json'), 'proxy_workbench'), (str(package / 'source-catalog.json'), 'proxy_workbench'),
+           (str(package / 'sources.json'), 'proxy_workbench'), (str(package / 'source-catalog.json'), 'proxy_workbench'), (str(package / 'openapi.json'), 'proxy_workbench'),
            (str(tray), tray_helper.BUNDLE_SUBFOLDER)],
-    hiddenimports=['socksio', 'proxy_workbench.desktop', 'proxy_workbench.gui', 'proxy_workbench.proxytool',
+    # PyInstaller's keyring hook collects the platform backends and entry-point metadata.
+    hiddenimports=['socksio', 'keyring', 'proxy_workbench.desktop', 'proxy_workbench.gui', 'proxy_workbench.proxytool',
                    'proxy_workbench.__main__'],
     excludes=['tkinter', 'unittest', 'pydoc'],
 )
@@ -64,6 +66,7 @@ exe = EXE(
     analysis.scripts,
     exclude_binaries=True,
     name='Proxy Workbench',
+    target_arch=os.environ.get('PROXY_WORKBENCH_BUILD_ARCH', platform.machine().lower()),
     console=False,
     upx=False,
 )

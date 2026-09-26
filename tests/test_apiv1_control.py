@@ -132,7 +132,8 @@ class Service(apiv1.Service):
             return {'items': [{'listener': 'l1', 'listen_host': '127.0.0.1', 'port': 8890}]}
         if operation == 'sources.catalog':
             return {'items': [{'id': 'src-1', 'support': 'supported'}, {'id': 'src-2',
-                                                                        'support': 'needs_adapter'}]}
+                                                                        'support': 'needs_adapter'}],
+                    'stream_id': 'sources-catalog', 'next_seq': None}
         if operation == 'profiles.presets':
             return {'items': [{'id': 'basic', 'version': 2, 'targets': ['https://example.invalid/']}]}
         if operation == 'collections.update' and call.expected_revision is not None:

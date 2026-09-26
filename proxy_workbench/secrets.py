@@ -28,6 +28,7 @@ import ipaddress
 import json
 import re
 import secrets as _secrets
+import threading
 import time
 from dataclasses import dataclass, field, replace
 from urllib.parse import quote, unquote, urlsplit
@@ -423,18 +424,29 @@ class OsVault(Vault):
 
     @staticmethod
     def available():
-        return _import_keyring() is not None
+        module = _import_keyring()
+        if module is None:
+            return False
+        try:
+            backend = module.get_keyring()
+            return backend.priority > 0
+        except Exception:
+            return False
 
     def stage(self, ref, payload):
         if not isinstance(payload, SecretPayload):
             raise SecretValidationError('payload must be a SecretPayload')
-        self._keyring.set_password(self.service, self.account(ref), json.dumps({
-            'username': payload.username,
-            'password': payload.password,
-            'verifier': payload.verifier,
-            'revision': payload.revision,
-            'previous_verifier': payload.previous_verifier,
-        }, ensure_ascii=False))
+        try:
+            self._keyring.set_password(self.service, self.account(ref), json.dumps({
+                'username': payload.username,
+                'password': payload.password,
+                'verifier': payload.verifier,
+                'revision': payload.revision,
+                'previous_verifier': payload.previous_verifier,
+            }, ensure_ascii=False))
+        except Exception as exc:
+            raise SecretVaultLocked('secret store refused the write: %s' % type(exc).__name__,
+                                    action='unlock the OS secret store and repeat') from exc
         return ref
 
     def mark_ready(self, ref):
@@ -461,7 +473,10 @@ class OsVault(Vault):
                                     action='re-enter the credential for this access') from exc
 
     def state(self, ref):
-        self.get(ref)
+        try:
+            self.get(ref)
+        except SecretNotProvided:
+            return None
         return 'ready'
 
     def delete(self, ref):
@@ -493,6 +508,30 @@ def open_vault(preference='auto', *, service='proxy-workbench', session_id=None,
             'no OS secret store is available in this installation',
             action='install the optional "keyring" dependency or use a session secret')
     return SessionVault(session_id, lifetime_s=lifetime_s)
+
+
+_DATABASE_VAULTS = {}
+_DATABASE_VAULT_LOCK = threading.RLock()
+
+
+def vault_for_database(conn, *, preference='auto'):
+    """Share a runtime vault between consumers of the same database.
+
+    Persistent OS storage is used when available. A session fallback belongs
+    to the database in this process, so opening another Workbench does not
+    discard imported credentials. It is never written to a plaintext file.
+    """
+    rows = conn.execute('PRAGMA database_list').fetchall()
+    path = next((row[2] for row in rows if row[1] == 'main'), '')
+    identity = path or ('memory', id(conn))
+    key = (identity, preference)
+    with _DATABASE_VAULT_LOCK:
+        vault = _DATABASE_VAULTS.get(key)
+        if vault is None or (isinstance(vault, SessionVault)
+                             and _SESSIONS.get(vault.session_id) is not vault):
+            vault = open_vault(preference)
+            _DATABASE_VAULTS[key] = vault
+        return vault
 
 
 def new_reference():
@@ -947,11 +986,13 @@ class AccessStore:
     `reconcile()`, which is safe to run repeatedly.
     """
 
-    def __init__(self, conn, vault, *, now=None, id_factory=None):
+    def __init__(self, conn, vault, *, now=None, id_factory=None, commit=True):
         self.conn = conn
         self.vault = vault
         self._now = now or time.time
         self._new_id = id_factory or (lambda: 'acc_%s' % _secrets.token_hex(12))
+        self._autocommit = commit
+        self._pending = []
 
     # -- reads -------------------------------------------------------------- #
     def get(self, access_id):
@@ -1030,7 +1071,8 @@ class AccessStore:
         try:
             self.conn.execute(
                 'INSERT INTO accesses (%s) VALUES (?,?,?,?,?,?,?)' % COLUMNS, stored.as_row())
-            self.conn.commit()
+            if self._autocommit:
+                self.conn.commit()
         except Exception:
             # The vault is the only other writer here: drop the staged entry so a
             # failed create leaves no reference that nobody owns.
@@ -1042,6 +1084,9 @@ class AccessStore:
             raise
         if ref is None:
             return stored
+        if not self._autocommit:
+            self._pending.append(ref)
+            return stored
         try:
             self.vault.mark_ready(ref)
         except SecretError as exc:
@@ -1049,6 +1094,18 @@ class AccessStore:
                           'next': 'run reconcile() to finish or drop this access'}
             raise
         return stored
+
+    def finish_pending(self):
+        """Finalize staged creates after the caller committed its transaction."""
+        for ref in tuple(self._pending):
+            self.vault.mark_ready(ref)
+            self._pending.remove(ref)
+
+    def rollback_pending(self):
+        """Remove only this transaction's staged secrets after a rollback."""
+        for ref in tuple(self._pending):
+            self.vault.delete(ref)
+            self._pending.remove(ref)
 
     def rotate(self, access_id, *, password=None, username=None, expect_revision=None):
         """Replace the credential of an access and bump `access_revision`.

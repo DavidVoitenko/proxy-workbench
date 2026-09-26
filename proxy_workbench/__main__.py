@@ -32,7 +32,7 @@ DESKTOP_ARGS = frozenset({
     '--background', '--no-tray',
     # interface flags, forwarded to proxy_workbench.gui
     '--data', '--port', '--api-port', '--no-api', '--no-browser',
-    '--gateway-port', '--gateway-host', '--gateway-token', '--no-gateway', '--lan',
+    '--gateway-port', '--gateway-host', '--gateway-interface', '--gateway-token', '--no-gateway', '--lan',
 })
 
 #: The word that asks for the interface and nothing else.
@@ -43,6 +43,7 @@ INTERFACE_ONLY = 'gui'
 NO_DESKTOP = '--no-desktop'
 
 _CLI_COMMANDS = None
+_CLI_VALUE_OPTIONS = frozenset()
 
 
 def cli_commands():
@@ -52,16 +53,35 @@ def cli_commands():
     ``proxytool`` must reach the CLI on its own, and a frozen build runs the
     same entry point - its worker is this program with ``scan`` in front of it.
     """
-    global _CLI_COMMANDS
+    global _CLI_COMMANDS, _CLI_VALUE_OPTIONS
     if _CLI_COMMANDS is None:
         from .proxytool import parser
-        for action in parser()._actions:
+        actions = parser()._actions
+        _CLI_VALUE_OPTIONS = frozenset(option for action in actions if action.nargs != 0
+                                       for option in action.option_strings)
+        for action in actions:
             if getattr(action, 'dest', '') == 'command' and action.choices:
-                _CLI_COMMANDS = frozenset(action.choices)
+                _CLI_COMMANDS = frozenset(action.choices) | {'sources'}
                 break
         else:
             _CLI_COMMANDS = frozenset()
     return _CLI_COMMANDS
+
+
+def _has_cli_command(argv):
+    """Find the verb without mistaking an option's value for a command."""
+    commands = cli_commands()
+    values = _CLI_VALUE_OPTIONS | {'--api-port', '--gateway-port', '--gateway-host', '--gateway-interface'}
+    index = 0
+    while index < len(argv):
+        token = argv[index]
+        if token in values:
+            index += 2
+            continue
+        if not token.startswith('-'):
+            return token in commands
+        index += 1
+    return False
 
 
 def resolve(argv):
@@ -74,13 +94,13 @@ def resolve(argv):
     argv = list(argv)
     if argv and argv[0] == INTERFACE_ONLY:
         return 'interface', argv[1:]
-    if any(token in cli_commands() for token in argv):
+    if _has_cli_command(argv):
         return 'cli', argv
     if not argv:
         return 'desktop', argv
     if NO_DESKTOP in argv:
         return 'interface', [token for token in argv if token != NO_DESKTOP]
-    if argv[0] in DESKTOP_ARGS:
+    if argv[0].split('=', 1)[0] in DESKTOP_ARGS:
         return 'desktop', argv
     return 'cli', argv
 

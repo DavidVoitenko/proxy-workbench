@@ -157,6 +157,27 @@ class ApplyTests(unittest.TestCase):
         with closing(sqlite3.connect(Path(result.backup) / 'proxies.sqlite3')) as db:
             self.assertEqual(db.execute('SELECT count(*) FROM candidates').fetchone()[0], 3)
 
+    def test_live_wal_transactions_reach_both_backup_and_migrated_database(self):
+        # '#' exercises SQLite URI escaping too. The writer remains open so
+        # the fourth row exists only in the live WAL when migration begins.
+        folder = self.root / 'legacy # snapshot'
+        folder.mkdir()
+        database = make_database(folder / 'proxies.sqlite3')
+        with closing(sqlite3.connect(database)) as writer:
+            writer.execute('PRAGMA journal_mode=WAL')
+            writer.execute('PRAGMA wal_autocheckpoint=0')
+            writer.execute("INSERT INTO candidates VALUES ('http://127.0.0.9:9090')")
+            writer.commit()
+            self.assertTrue(Path(str(database) + '-wal').is_file())
+            plan = desktop.plan_migration(self.layout, source=folder)
+            result = desktop.apply_migration(plan, execute=True)
+            self.assertTrue(result.ok, result.errors)
+            for root in (self.layout.data, Path(result.backup)):
+                self.assertFalse((root / 'proxies.sqlite3-wal').exists())
+                self.assertFalse((root / 'proxies.sqlite3-shm').exists())
+                with closing(sqlite3.connect(root / 'proxies.sqlite3')) as restored:
+                    self.assertEqual(restored.execute('SELECT count(*) FROM candidates').fetchone()[0], 4)
+
     def test_a_conflicted_file_is_reported_and_left_alone(self):
         self.layout.data.mkdir(parents=True)
         (self.layout.data / 'gui-settings.json').write_text('{"mine": true}', encoding='utf-8')

@@ -20,6 +20,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import httpx
+from verify_delivery import child_environment
 
 
 class MockProxy(BaseHTTPRequestHandler):
@@ -60,7 +61,7 @@ def read_json(path):
 def main(command):
     if not command:
         raise SystemExit('pass an installed proxy-workbench command or executable')
-    command = [shutil.which(command[0]) or command[0], *command[1:]]
+    command = [str(Path(shutil.which(command[0]) or command[0]).resolve()), *command[1:]]
     try:
         version = subprocess.run([*command, '--version'], capture_output=True, text=True, timeout=120)
     except OSError as exc:
@@ -70,6 +71,9 @@ def main(command):
     mock = ThreadingHTTPServer(('127.0.0.1', 0), MockProxy)
     threading.Thread(target=mock.serve_forever, daemon=True).start()
     data = Path(tempfile.mkdtemp())
+    env = child_environment(data / 'home', {'PROXY_WORKBENCH_DATA': str(data),
+                                         'HTTP_PROXY': '', 'HTTPS_PROXY': '', 'ALL_PROXY': '',
+                                         'NO_PROXY': '127.0.0.1,localhost'})
     gui = None
     client = None
     try:
@@ -84,17 +88,18 @@ def main(command):
         listing.write_text(f'http://127.0.0.1:{mock.server_port}\n', encoding='utf-8')
         subprocess.run([*command, 'collect', '--no-sources', '--data', str(data),
                         '--input', str(listing), '--allow-private-endpoints'],
-                       check=True, timeout=120, capture_output=True)
+                       check=True, timeout=120, capture_output=True, cwd=data, env=env)
         # Let the OS choose every port. Fixed CI ports made this smoke test fail
         # whenever another local test or a developer's service happened to use one.
-        gui = subprocess.Popen([*command, 'gui', '--no-browser', '--port', '0', '--data', str(data),
+        gui = subprocess.Popen([*command, '--no-browser', '--no-tray', '--port', '0', '--data', str(data),
                                 '--api-port', '0', '--gateway-port', '0'],
-                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, cwd=data, env=env)
 
         def process_check(callback, timeout=60):
             def checked():
                 if gui.poll() is not None:
-                    raise RuntimeError(f'GUI exited with code {gui.returncode}')
+                    detail = gui.stdout.read().decode('utf-8', errors='replace')
+                    raise RuntimeError(f'GUI exited with code {gui.returncode}: {detail[-4000:]}')
                 return callback()
             return wait_for(checked, timeout=timeout)
 
@@ -103,6 +108,19 @@ def main(command):
         page = process_check(lambda: httpx.get(base + '/', trust_env=False).text)
         token = re.search(r'workbench-token" content="([^"]+)"', page).group(1)
         client = httpx.Client(base_url=base, headers={'X-Workbench-Token': token}, trust_env=False, timeout=15)
+        second = subprocess.run([*command, '--data', str(data), '--no-browser', '--no-tray'],
+                                cwd=data, env=env, capture_output=True, text=True, timeout=30)
+        assert second.returncode == 0, second.stdout + second.stderr
+        assert 'already running' in second.stdout, 'a second start did not reach the desktop host'
+        # A package can boot with the catalog or nested translations absent.
+        # Exercise the served product, including resources older wheels lost.
+        catalog = client.get('/api/source-catalog')
+        catalog.raise_for_status()
+        assert catalog.json().get('sources'), 'the installed source catalog is empty'
+        for language in ('de', 'es', 'fr', 'it', 'ja', 'pl', 'pt', 'tr', 'uk', 'zh'):
+            pack = client.get(f'/i18n/{language}.js')
+            pack.raise_for_status()
+            assert pack.text.strip(), f'the {language} translation is empty'
         settings = client.get('/api/defaults').json()
         settings.update(targets=[dict(name='mock', url='http://service.invalid/health', contains='healthy',
                                       statuses=[200], headers={}, method='GET')],
@@ -140,6 +158,23 @@ def main(command):
                 break
             time.sleep(0.5)
         assert answer == 'healthy', answer
+        # A schedule must reach the durable worker while the application is
+        # awake; recording a requested slot alone used to look like success.
+        client.post('/api/schedules/action', json={'action': 'add', 'id': 'package-smoke',
+                                                   'interval_minutes': 60,
+                                                   'budgets': {'requests': 5}}).raise_for_status()
+        requested = client.post('/api/schedules/action', json={'action': 'run-now', 'id': 'package-smoke'})
+        requested.raise_for_status()
+        run_id = requested.json()['run_id']
+        def schedule_finished():
+            response = client.get('/api/schedules')
+            response.raise_for_status()
+            for schedule in response.json()['schedules']:
+                for run in schedule['recent']:
+                    if run['id'] == run_id and run['state'] not in ('requested', 'queued', 'running'):
+                        return run
+        scheduled = process_check(schedule_finished, timeout=60)
+        assert scheduled['state'] == 'succeeded', scheduled
         print('smoke test passed')
     finally:
         if client is not None:

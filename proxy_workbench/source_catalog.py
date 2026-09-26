@@ -236,7 +236,7 @@ def _adapter(value, raw):
         result["legacy_kind"] = kind
         kind = "line"
     if kind is None:
-        result["kind"] = "unsupported"
+        kind = "unsupported"
         result.setdefault("profile", "none")
     elif kind not in ADAPTERS:
         raise CatalogError(f"adapter.kind: неизвестное значение {kind!r}")
@@ -638,17 +638,14 @@ def accept_catalog(current, incoming):
     if current and candidate["revision"] < current.get("revision", 0):
         raise CatalogError("catalog: revision ниже уже принятого")
     if current and candidate["revision"] == current.get("revision"):
-        try:
-            if catalog_digest(candidate) != catalog_digest(current):
-                raise CatalogError("catalog: тот же revision с другим содержимым")
-        except (TypeError, ValueError):
-            pass
+        if catalog_digest(candidate) != catalog_digest(current):
+            raise CatalogError("catalog: тот же revision с другим содержимым")
     return candidate
 
 
 def _canonical_legacy(value):
     parts = str(value).strip().split(None, 1)
-    if len(parts) == 2 and parts[0] in (LEGACY_KINDS | NEW_ADAPTERS):
+    if len(parts) == 2 and parts[0] in USER_SOURCE_FORMATS:
         return parts[0], parts[1].strip()
     return "http", str(value).strip()
 
@@ -822,7 +819,7 @@ def eligible_sources(catalog, *, require_rights=False):
     """Public proxy-list records allowed by the collection gate."""
     result = []
     for source in catalog.get('sources', []):
-        if source.get('payload_role') != 'proxy_list' or not source.get('collection_allowed', True):
+        if not collectable_source(source):
             continue
         if require_rights and not source.get('rights_approved', False):
             continue
@@ -866,7 +863,7 @@ def _plan_with_spec(source_id, item, spec):
     falls back to the catalog's own declaration.
     """
     kind, url = _canonical_legacy(spec)
-    if kind not in LEGACY_KINDS and kind not in NEW_ADAPTERS:
+    if kind not in USER_SOURCE_FORMATS:
         return None
     if not any(endpoint.get("url") == url for endpoint in item.get("endpoints") or []):
         return None
@@ -1018,7 +1015,7 @@ def custom_spec(url, adapter):
     kind = (adapter or {}).get("kind")
     if legacy in LEGACY_KINDS:
         prefix = "" if legacy in ("http", "https") else f"{legacy} "
-    elif kind in NEW_ADAPTERS:
+    elif kind in NEW_ADAPTERS or kind == "line":
         prefix = f"{kind} "
     else:
         prefix = ""
@@ -1052,6 +1049,8 @@ def _custom_plan(source_id, item, custom_sources):
     if not spec or not (item or {}).get("url"):
         return None
     record = _custom_record(source_id, spec)
+    if item.get('name'):
+        record['name'] = item['name']
     record["adapter"] = deepcopy(adapter)
     record["data_urls"] = [item["url"]]
     record["endpoints"] = [{"id": "primary", "url": item["url"], "role": "primary", "relation": "custom"}]
@@ -1105,9 +1104,14 @@ def resolve_specs(specs, catalog=None, *, include_disabled=True):
             continue
         if not isinstance(value, str):
             raise ValueError("Источник должен быть строкой URL или формата.")
-        source_id = aliases.get(value.strip())
-        if source_id:
+        value = value.strip()
+        item = source_by_id(catalog, value, custom_specs)
+        source_id = aliases.get(value)
+        if item is not None:
+            pass
+        elif source_id:
             item = source_by_id(catalog, source_id)
+            item = _plan_with_spec(source_id, item, value) or item
         else:
             item = _custom_record(custom_id(value), value)
             custom_specs.append(item)

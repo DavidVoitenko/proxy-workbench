@@ -1063,6 +1063,12 @@ def error_response():
 
 PAGE_QUERY = (Field('cursor', 'string', max_len=512),
               Field('limit', 'int', minimum=1, maximum=MAX_PAGE_LIMIT))
+SOURCE_QUERY = (Field('cursor', 'string', max_len=512),
+                Field('limit', 'int', minimum=1, maximum=500),
+                Field('offset', 'int', minimum=0, maximum=100000),
+                Field('q', 'string', max_len=200),
+                *(Field(name, 'string', max_len=100) for name in
+                  ('set', 'category', 'protocol', 'format', 'access', 'state', 'sort')))
 COLLECTION_FIELD = Field('collection_id', 'string', max_len=128)
 
 
@@ -1259,9 +1265,10 @@ ROUTES = (
 
     # --- sources ------------------------------------------------------------
     Route('GET', '/v1/sources/catalog', 'sources.catalog', 'sources.read',
-          'catalog with an honest support status per entry', tags=('sources',)),
+          'catalog with an honest support status per entry', paginated=True,
+          query=SOURCE_QUERY, tags=('sources',)),
     Route('GET', '/v1/sources', 'sources.list', 'sources.read', 'configured sources',
-          paginated=True, query=PAGE_QUERY, tags=('sources',)),
+          paginated=True, query=SOURCE_QUERY, tags=('sources',)),
     Route('GET', '/v1/sources/{id}', 'sources.get', 'sources.read', 'one source with provenance',
           tags=('sources',)),
     Route('POST', '/v1/sources', 'sources.create', 'sources.write', 'define a custom source',
@@ -2071,8 +2078,9 @@ class ApiV1:
         # The key's own slot is taken after the server-wide one and released in
         # the same `finally`, so a refusal by either limiter cannot leak the
         # other: `key_slot` is only bound once both have answered.
-        key_slot = self.key_quota.acquire(principal)
+        key_slot = None
         try:
+            key_slot = self.key_quota.acquire(principal)
             if route.async_job:
                 self._check_queue()
             result = self._key_call(route, call, principal) \

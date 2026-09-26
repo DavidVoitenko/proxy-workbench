@@ -15,6 +15,7 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from proxy_workbench import api
+from proxy_workbench import apiv1
 from proxy_workbench import gui
 from proxy_workbench import i18n
 from proxy_workbench import proxytool as p
@@ -124,6 +125,10 @@ class CatalogViewTests(unittest.TestCase):
         self.assertTrue(all('githubusercontent.com' in endpoint['url']
                             for row in text['sources'] for endpoint in row['endpoints']))
         self.assertEqual(base['source_selection']['selected_ids'], ['cur-01', 'cur-02'])
+        category = CATALOG['sources'][0]['category']
+        narrowed = sm.build_view(CATALOG, base, {}, {'category': category})
+        self.assertTrue(narrowed['sources'])
+        self.assertTrue(all(row['category'] == category for row in narrowed['sources']))
 
     def test_sets_report_new_members_without_adding_them(self):
         settings = settings_with(['cur-01'])
@@ -422,7 +427,7 @@ class SourceGuiTests(unittest.TestCase):
         (self.home / 'exports' / 'status.json').write_text(
             json.dumps({'source_quality': {p.source_key(url): {'checked': 500, 'passed': 0}}}), encoding='utf-8')
         body = self.client.post('/api/sources/prune', json=self.stored()).json()
-        self.assertEqual(body['removed'], ['https://remote.example/'])
+        self.assertEqual(body['removed'], [gui.public_source(REMOTE_ONLY['data_urls'][0])])
         self.assertNotIn('new-999', body['settings']['source_selection']['selected_ids'])
         self.assertNotIn('new-999', self.stored()['source_selection']['selected_ids'])
         self.assertNotIn(url, self.stored()['sources'])
@@ -509,27 +514,48 @@ class SourceGuiTests(unittest.TestCase):
                                                                     'allow_private': True}).json()
         self.assertEqual(preview['accepted'], 1)
         self.assertEqual(preview['http_state'], 'http_2xx_nonempty')
-        self.assertEqual(preview['parse_state'], 'confirmed')
+        self.assertEqual(preview['parse_state'], 'complete')
         self.assertEqual(preview['proxies_checked'], 0)
         # One source already in the set: the button reports a reason, not a verdict.
         descriptor = source_catalog.custom_source('https://offline.invalid/list.txt', 'http')
         gui.save_settings(self.home, settings_with([descriptor['id']],
                                                    custom=[{'id': descriptor['id'], 'url': descriptor['url'],
                                                             'adapter': descriptor['adapter']}]))
-        reported = self.client.post('/api/sources/check', json={'id': descriptor['id']}).json()
+        with mock.patch.object(p, '_validate_source_destination',
+                               side_effect=p.SourceFetchError('SOURCE_DNS_ERROR')):
+            reported = self.client.post('/api/sources/check', json={'id': descriptor['id']}).json()
         self.assertTrue(reported['error'])
         self.assertEqual(reported['accepted'], 0)
         response = self.client.post('/api/sources/check', json={'id': 'new-073', 'allow_private': True})
         self.assertEqual(response.status_code, 400)
         self.assertIn('не список прокси-адресов', response.json()['error'])
 
+    def test_private_custom_source_requires_boolean_opt_in_for_every_preview(self):
+        with MockSourceService(b'11.3.3.3:8080\n127.0.0.1:80\n') as service:
+            url = service.base + '/private-source'
+            for opt_in in (None, False, 'true'):
+                payload = {'url': url, 'kind': 'http', 'allow_private': opt_in}
+                self.assertEqual(self.client.post('/api/sources/add', json=payload).status_code, 400)
+            added = self.client.post('/api/sources/add', json={
+                'url': url, 'kind': 'http', 'allow_private': True})
+            self.assertEqual(added.status_code, 200, added.text)
+            source_id = added.json()['id']
+            refused = self.client.post('/api/sources/check', json={'id': source_id}).json()
+            self.assertEqual(refused['accepted'], 0)
+            self.assertIsNotNone(refused['error'])
+            checked = self.client.post('/api/sources/check', json={
+                'id': source_id, 'allow_private': True}).json()
+            self.assertEqual(checked['accepted'], 1)
+            self.assertEqual(checked['sample'], ['http://11.3.3.3:8080'])
+            self.assertEqual(checked['proxies_checked'], 0)
+
     def test_exclude_scope_keeps_the_data_and_can_be_undone(self):
         db = p.open_db(self.home / 'proxies.sqlite3')
         try:
             for proxy, source in (('http://11.1.1.1:80', 'cur-01'), ('http://11.1.1.2:80', 'cur-01'),
                                   ('http://11.1.1.3:80', 'cur-01'), ('http://11.1.1.3:80', 'cur-02')):
-                db.execute('INSERT OR IGNORE INTO candidates VALUES (?)', (proxy,))
-                db.execute('INSERT INTO candidate_seen VALUES (?,?)', (proxy, source))
+                db.execute('INSERT OR IGNORE INTO candidates(proxy) VALUES (?)', (proxy,))
+                db.execute('INSERT INTO candidate_seen(proxy,source) VALUES (?,?)', (proxy, source))
             db.execute('INSERT INTO source_identity(source_id,family_id,publisher_id) VALUES (?,?,?)',
                        ('cur-01', 'family-a', 'p'))
             db.execute('INSERT INTO source_identity(source_id,family_id,publisher_id) VALUES (?,?,?)',
@@ -537,13 +563,12 @@ class SourceGuiTests(unittest.TestCase):
             db.commit()
         finally:
             db.close()
-        self.assertEqual(self.client.post('/api/sources/exclude-scope', json={'id': 'cur-01'}).status_code, 400)
         result = self.client.post('/api/sources/exclude-scope', json={'id': 'cur-01', 'confirm': True}).json()
         self.assertEqual(result['excluded'], 2)
         self.assertEqual(result['delivered'], 3)
         self.assertEqual(result['shared'], 1)
         scope = self.client.get('/api/sources/scope').json()
-        self.assertEqual(scope['proxies'], ['http://11.1.1.1:80', 'http://11.1.1.2:80'])
+        self.assertEqual([row['proxy'] for row in scope['proxies']], ['http://11.1.1.1:80', 'http://11.1.1.2:80'])
         db = p.open_db(self.home / 'proxies.sqlite3')
         try:
             self.assertEqual(db.execute('SELECT count(*) FROM candidates').fetchone()[0], 3)
@@ -552,7 +577,8 @@ class SourceGuiTests(unittest.TestCase):
             db.close()
         both = self.client.post('/api/sources/exclude-scope',
                                 json={'id': 'cur-01', 'confirm': True, 'include_shared': True}).json()
-        self.assertEqual(both['excluded'], 3)
+        self.assertEqual(both['excluded'], 1)
+        self.assertEqual(both['already_excluded'], 2)
         self.assertEqual(self.client.post('/api/sources/scope/clear', json={}).json()['removed'], 3)
         self.assertEqual(self.client.get('/api/sources/scope').json()['count'], 0)
 
@@ -571,11 +597,16 @@ class SourceGuiTests(unittest.TestCase):
         self.assertEqual(row['state'], 'quarantined')
         self.assertEqual(row['runtime']['error'], 'SOURCE_TIMEOUT')
         self.assertEqual(row['cache']['last_good']['record_count'], 3)
-        self.assertEqual(self.client.post('/api/sources/recover', json={'id': 'cur-01'}).json()['cleared'], 1)
+        with mock.patch.object(self.server.app, 'preview_source', return_value={
+                'accepted': 0, 'complete': False, 'error': 'SOURCE_TIMEOUT'}):
+            self.assertEqual(self.client.post('/api/sources/recover', json={'id': 'cur-01'}).json()['cleared'], 1)
         row = self.client.get('/api/source-catalog/cur-01').json()
         self.assertNotEqual(row['state'], 'quarantined')
         self.assertEqual(row['cache']['last_good']['record_count'], 3)
-        self.assertEqual(self.client.post('/api/sources/recover', json={'id': 'nope'}).status_code, 400)
+        unknown = self.client.post('/api/sources/recover', json={'id': 'nope'})
+        self.assertEqual(unknown.status_code, 200)
+        self.assertFalse(unknown.json()['known'])
+        self.assertEqual(unknown.json()['cleared'], 0)
 
     def test_update_reports_progress_and_never_selects_anything(self):
         incoming = dict(source_catalog.validate_catalog(dict(CATALOG), allow_unsafe=True), revision=CATALOG['revision'] + 1)
@@ -666,10 +697,8 @@ class SourceCliTests(unittest.TestCase):
         code, _, _ = self.run_cli(['sources', 'list', '--source-query', 'zzz-no-such-source',
                                    '--source-limit', '1'])
         self.assertEqual(code, 1)
-        with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
-            self.run_cli(['sources', 'frobnicate'])
-        with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
-            self.run_cli(['sources', 'list', '--format', 'hostport'])
+        self.assertEqual(self.run_cli(['sources', 'frobnicate'])[0], 2)
+        self.assertEqual(self.run_cli(['sources', 'list', '--format', 'hostport'])[0], 2)
 
     def test_set_enable_disable_remove_and_add_change_one_selection(self):
         self.db.close()
@@ -694,8 +723,7 @@ class SourceCliTests(unittest.TestCase):
                                      '--source-format', 'page-json'])
         self.assertEqual(code, 0)
         self.assertIn('page-json https://mine.example/rows.csv', self.stored()['sources'])
-        with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
-            self.run_cli(['sources', 'disable', 'not-a-source'])
+        self.assertEqual(self.run_cli(['sources', 'disable', 'not-a-source'])[0], 2)
         self.assertEqual(self.stored()['sources'][-1], 'page-json https://mine.example/rows.csv')
 
     def test_cli_changes_keep_a_source_only_the_accepted_catalog_lists(self):
@@ -746,21 +774,73 @@ class SourceCliTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual([item['id'] for item in json.loads(out)][0], 'quick')
 
+    def test_json_preview_is_one_document_and_add_keeps_the_name(self):
+        with MockSourceService(b'11.4.4.4:8080\n') as service:
+            code, out, err = self.run_cli([
+                'source', 'add', service.base + '/list', '--source-name', 'Local fixture',
+                '--source-format', 'socks5', '--allow-private-sources', '--format', 'json'])
+            self.assertEqual(code, 0, err)
+            source_id = json.loads(out)['id']
+            custom = next(row for row in self.stored()['source_selection']['custom_sources']
+                          if row['id'] == source_id)
+            self.assertEqual(custom['name'], 'Local fixture')
+            code, out, err = self.run_cli(['source', 'check', '--id', source_id,
+                                         '--allow-private-sources', '--format', 'json'])
+            self.assertEqual(code, 0, err)
+            self.assertEqual(json.loads(out)['sample'], ['socks5://11.4.4.4:8080'])
+
+    def test_update_accepts_a_new_revision_and_refuses_same_revision_changes(self):
+        raw = json.loads(source_catalog.bundled_path().read_text(encoding='utf-8'))
+        raw['sources'] = [row for row in raw['sources'] if row['id'] != 'new-082']
+        raw['sets'] = []
+        raw['revision'] = CATALOG['revision'] + 1
+        incoming = self.home / 'incoming.json'
+        incoming.write_text(json.dumps(raw), encoding='utf-8')
+        gui.save_settings(self.home, settings_with(['cur-01']))
+        selected = self.stored()['source_selection']['selected_ids']
+        code, out, err = self.run_cli(['source', 'update', str(incoming), '--json'])
+        self.assertEqual(code, 0, err)
+        self.assertTrue(json.loads(out)['accepted'])
+        target = self.home / 'source-catalog.json'
+        accepted = target.read_bytes()
+        self.assertEqual(json.loads(accepted)['revision'], raw['revision'])
+        self.assertEqual(self.stored()['source_selection']['selected_ids'], selected)
+        raw['sources'][0]['name'] = 'Changed without a new revision'
+        incoming.write_text(json.dumps(raw), encoding='utf-8')
+        self.assertEqual(self.run_cli(['source', 'update', '--path', str(incoming)])[0], 2)
+        self.assertEqual(target.read_bytes(), accepted)
+
+    def test_recover_clears_every_endpoint_and_preserves_cached_state(self):
+        for endpoint in ('primary', 'mirror'):
+            self.db.execute('INSERT INTO source_state(source_id,endpoint_id,etag,consecutive_failures,'
+                            'quarantine_until,backoff_until) VALUES (?,?,?,?,?,?)',
+                            ('cur-01', endpoint, 'saved-etag', 3, time.time() + 300, time.time() + 300))
+        self.db.commit()
+        code, out, err = self.run_cli(['source', 'recover', '--id', 'cur-01', '--json'])
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out)['cleared'], 2)
+        rows = self.db.execute('SELECT etag,consecutive_failures,quarantine_until,backoff_until '
+                               'FROM source_state WHERE source_id=?', ('cur-01',)).fetchall()
+        self.assertEqual([tuple(row) for row in rows], [('saved-etag', 0, None, None)] * 2)
+        unknown = json.loads(self.run_cli(['source', 'recover', 'unknown', '--json'])[1])
+        self.assertFalse(unknown['known'])
+        self.assertEqual(unknown['cleared'], 0)
+
 
 class SourceApiTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.home = Path(self.temp.name)
         db = p.open_db(self.home / 'proxies.sqlite3')
-        db.execute('INSERT INTO candidates VALUES (?)', ('http://11.4.4.4:80',))
-        db.execute('INSERT INTO candidate_seen VALUES (?,?)', ('http://11.4.4.4:80', 'cur-01'))
+        db.execute('INSERT INTO candidates(proxy) VALUES (?)', ('http://11.4.4.4:80',))
+        db.execute('INSERT INTO candidate_seen(proxy,source) VALUES (?,?)', ('http://11.4.4.4:80', 'cur-01'))
         db.execute('INSERT INTO source_identity(source_id,family_id,publisher_id) VALUES (?,?,?)',
                    ('cur-01', 'family-a', 'p'))
         db.execute("INSERT INTO source_generation(source_id,state,active,last_good,created_at,record_count)"
                    " VALUES ('cur-01','complete',1,1,?,1)", (time.time(),))
         generation = db.execute('SELECT last_insert_rowid()').fetchone()[0]
-        db.execute('INSERT INTO source_generation_entry(generation_id,proxy) VALUES (?,?)',
-                   (generation, 'http://11.4.4.4:80'))
+        db.execute('INSERT INTO source_generation_entry(generation_id,endpoint_id) VALUES (?,?)',
+                   (generation, p.schema.endpoint_id('http://11.4.4.4:80')))
         db.execute("INSERT INTO source_observation(run_id,source_id,endpoint_id,started_at,http_state,parse_state,"
                    "cache_state,outcome,recognized,accepted,rejected) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                    ('run-1', 'cur-01', 'primary', time.time(), 'http_2xx_nonempty', 'confirmed',
@@ -816,6 +896,100 @@ class SourceApiTests(unittest.TestCase):
         self.assertTrue((self.home / 'gui-settings.json').is_file())
         self.assertEqual(json.loads((self.home / 'gui-settings.json').read_text(encoding='utf-8'))
                          ['source_selection']['selected_ids'], ['cur-01'])
+
+
+class SourceV1Tests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.home = Path(self.temp.name)
+        p.open_db(self.home / 'proxies.sqlite3').close()
+
+        class Keys(apiv1.KeyStore):
+            def verify(self, secret):
+                if secret == 'local-source-test':
+                    return apiv1.Principal(key_id='source-test', kind='api_key',
+                                           permissions=frozenset(apiv1.PERMISSIONS))
+
+            def audit(self, record):
+                pass
+
+        self.control = apiv1.ApiV1(api.WorkbenchService(self.home), Keys(),
+                                   apiv1.ApiConfig(host='127.0.0.1'))
+        self.request_number = 0
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def request(self, method, path, query='', body=None):
+        self.request_number += 1
+        return self.control.handle(apiv1.Request(
+            method=method, path=path, query=query,
+            headers={'Host': '127.0.0.1', 'Authorization': 'Bearer local-source-test',
+                     'Content-Type': 'application/json',
+                     'Idempotency-Key': f'source-test-{self.request_number}'},
+            body=json.dumps(body).encode() if body is not None else b'', client_host='127.0.0.1'))
+
+    def test_filter_pagination_and_accepted_catalog_are_shared_with_the_cli(self):
+        catalog = accepted_catalog()
+        (self.home / 'source-catalog.json').write_text(json.dumps(catalog), encoding='utf-8')
+        gui.save_settings(self.home, settings_with(['new-999'], catalog=catalog))
+        original = (self.home / 'gui-settings.json').read_bytes()
+        found = self.request('GET', '/v1/sources/catalog', 'q=new-999&limit=1')
+        self.assertEqual(found.status, 200, found.text)
+        self.assertEqual(found.json()['revision'], catalog['revision'])
+        self.assertEqual([row['id'] for row in found.json()['items']], ['new-999'])
+        first = self.request('GET', '/v1/sources', 'limit=2')
+        self.assertEqual(first.status, 200, first.text)
+        self.assertEqual(len(first.json()['items']), 2)
+        cursor = first.json()['next_cursor']
+        self.assertTrue(cursor)
+        from urllib.parse import urlencode
+        second = self.request('GET', '/v1/sources', urlencode({'limit': 2, 'cursor': cursor}))
+        self.assertEqual(second.status, 200, second.text)
+        self.assertEqual(len(second.json()['items']), 2)
+        self.assertTrue({row['id'] for row in first.json()['items']}.isdisjoint(
+            row['id'] for row in second.json()['items']))
+        self.assertEqual((self.home / 'gui-settings.json').read_bytes(), original)
+        self.assertEqual(self.request('GET', '/v1/sources', 'limit=0').status, 400)
+
+    def test_custom_source_format_survives_create_update_and_pause(self):
+        created = self.request('POST', '/v1/sources', body={
+            'url': 'https://mine.example/rows.json', 'format': 'json'})
+        self.assertIn(created.status, (200, 201), created.text)
+        source_id = created.json()['id']
+        custom = self.request('GET', '/v1/sources/' + source_id)
+        self.assertEqual(custom.status, 200, custom.text)
+        self.assertEqual(custom.json()['adapter'], 'json-records')
+        paused = self.request('POST', '/v1/sources/' + source_id + '/disable', body={})
+        self.assertEqual(paused.status, 200, paused.text)
+        updated = self.request('PATCH', '/v1/sources/' + source_id,
+                               body={'url': 'https://mine.example/updated.json', 'revision': 1})
+        self.assertEqual(updated.status, 200, updated.text)
+        replacement_id = updated.json()['id']
+        stored = json.loads((self.home / 'gui-settings.json').read_text(encoding='utf-8'))
+        self.assertIn(replacement_id, stored['source_selection']['download_disabled_ids'])
+        self.assertNotIn(source_id, stored['source_selection']['download_disabled_ids'])
+        item = self.request('GET', '/v1/sources/' + replacement_id).json()
+        self.assertEqual(item['adapter'], 'json-records')
+        self.assertTrue(item['download_disabled'])
+
+    def test_unsupported_source_overrides_are_refused_without_changing_settings(self):
+        for field, value in (('interval_minutes', 10), ('max_bytes', 1024)):
+            denied = self.request('POST', '/v1/sources', body={
+                'url': 'https://mine.example/rows.json', 'format': 'json', field: value})
+            self.assertEqual(denied.status, 400, denied.text)
+            self.assertEqual(denied.json()['error']['details']['field'], field)
+            self.assertFalse((self.home / 'gui-settings.json').exists())
+        created = self.request('POST', '/v1/sources', body={
+            'url': 'https://mine.example/rows.json', 'format': 'json'})
+        source_id = created.json()['id']
+        original = (self.home / 'gui-settings.json').read_bytes()
+        for field, value in (('interval_minutes', 10), ('max_bytes', 1024)):
+            denied = self.request('PATCH', '/v1/sources/' + source_id,
+                                  body={'revision': 1, field: value})
+            self.assertEqual(denied.status, 400, denied.text)
+            self.assertEqual(denied.json()['error']['details']['field'], field)
+            self.assertEqual((self.home / 'gui-settings.json').read_bytes(), original)
 
 
 if __name__ == '__main__':

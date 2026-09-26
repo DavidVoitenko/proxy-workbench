@@ -22,6 +22,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import platform
 import shutil
 import subprocess
 import sys
@@ -32,10 +33,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from proxy_workbench import desktop
 from release_manifest import build_manifest, write_manifest
+from verify_delivery import child_environment
 import tray_helper
 
 APP_NAME = 'Proxy Workbench'
-SUPPORTED_ARCHES = ('arm64',)
+SUPPORTED_ARCHES = ('arm64', 'x86_64')
 TRAY_READY_TIMEOUT_S = 40
 
 
@@ -88,10 +90,13 @@ def build_app(root, dist, *, arch, pyinstaller=None):
             f'{arch} is not a supported target here. Build a separate artifact per architecture; '
             f'supported: {", ".join(SUPPORTED_ARCHES)}. A universal2 build needs both slices built '
             f'and merged, which this script does not pretend to do.')
+    if sys.platform != 'darwin' or platform.machine().lower() != arch:
+        raise BuildError(f'Build {arch} on a macOS {arch} runner so the application and Swift helper '
+                         'have the same native architecture.')
     command = [*pyinstaller_command(pyinstaller), '--noconfirm', '--clean',
                '--distpath', str(dist), '--workpath', str(Path(root) / 'build' / f'pyinstaller-{arch}'),
                str(Path(root) / 'packaging' / 'proxy-workbench-macos.spec')]
-    env = dict(os.environ, ARCHFLAGS=f'-arch {arch}')
+    env = dict(os.environ, ARCHFLAGS=f'-arch {arch}', PROXY_WORKBENCH_BUILD_ARCH=arch)
     run(command, cwd=root, env=env)
     bundle = app_bundle(dist)
     if not bundle_executable(bundle).is_file():
@@ -204,6 +209,11 @@ def verify_bundle(bundle):
         # the kind of quiet breakage this check exists to refuse.
         raise BuildError('source-catalog.json is not inside the bundle; the Sources tab would '
                          'show no catalog at all. The spec must copy it into the app.')
+    if not _bundled_resource(bundle, 'openapi.json'):
+        raise BuildError('openapi.json is not inside the bundle; API documentation would be unavailable.')
+    for translation in (Path(__file__).resolve().parents[1] / 'proxy_workbench' / 'ui' / 'i18n').glob('*.js'):
+        if not _bundled_resource(bundle, translation.name):
+            raise BuildError(f'ui/i18n/{translation.name} is not inside the bundle.')
     helper = tray_helper.in_bundle(bundle)
     if helper is None:
         raise BuildError('the menu bar helper is not inside the bundle. The spec must compile it '
@@ -237,7 +247,7 @@ def verify_launch(bundle, *, timeout=120, want_tray=True):
     # BROWSER keeps a launch check from taking over the build machine's browser:
     # a second start of the app asks the running one to show its page, and
     # that is a real user action even when a build script triggered it.
-    env = dict(os.environ, HOME=str(home), PROXY_WORKBENCH_LANG='en', BROWSER='true')
+    env = child_environment(home)
     before = _bundle_state(bundle)
     command = [str(bundle_executable(bundle)), '--no-browser', '--port', '0',
                '--api-port', '0', '--no-gateway']
@@ -286,11 +296,8 @@ def _short_home():
     product instead of an impossible test environment.  ``/tmp`` is short and
     is the folder the socket limit is designed around.
     """
-    home = Path('/tmp') / f'pw-launch-{os.getpid()}'
-    if home.exists():
-        shutil.rmtree(home, ignore_errors=True)
-    home.mkdir(parents=True)
-    return home
+    import tempfile
+    return Path(tempfile.mkdtemp(prefix='pw-launch-', dir='/tmp'))
 
 
 def _second_launch(bundle, env, timeout):
@@ -306,10 +313,12 @@ def _second_launch(bundle, env, timeout):
     second = subprocess.run([str(bundle_executable(bundle)), '--no-browser', '--port', '0'],
                             env=env, capture_output=True, text=True, timeout=timeout)
     after = _instances(bundle)
+    if second.returncode != 0 or before < 1 or after != before:
+        raise BuildError(f'second launch failed: exit={second.returncode}, instances={before}->{after}')
     said = [line.strip() for line in (second.stdout or '').splitlines() if line.strip()]
     return dict(exit_code=second.returncode, said=said[-1:] if said else [],
                 instances_before=before, instances_after=after,
-                one_instance=after <= before)
+                one_instance=True)
 
 
 def _instances(bundle):
@@ -425,7 +434,7 @@ def _fetch(url):
 def main(argv=None):
     root = Path(__file__).resolve().parents[1]
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument('--arch', default='arm64', choices=list(SUPPORTED_ARCHES))
+    parser.add_argument('--arch', default=platform.machine().lower(), choices=list(SUPPORTED_ARCHES))
     parser.add_argument('--dist', default=str(root / 'dist'))
     parser.add_argument('--sign', action='store_true', help='sign with the identity found in the keychain')
     parser.add_argument('--notarize', action='store_true', help='submit to Apple notary service')

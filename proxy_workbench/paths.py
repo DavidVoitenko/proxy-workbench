@@ -10,22 +10,10 @@ FROZEN = bool(getattr(sys, 'frozen', False))
 
 
 def default_data(environ=None):
-    """The data folder: next to a source checkout or the .exe, otherwise a per-user folder."""
-    environ = os.environ if environ is None else environ
-    if environ.get('PROXY_WORKBENCH_DATA'):
-        return Path(environ['PROXY_WORKBENCH_DATA']).expanduser()
-    if FROZEN:
-        return Path(sys.executable).resolve().parent / 'data'
-    checkout = PACKAGE.parent
-    if (checkout / 'pyproject.toml').is_file() and (checkout / 'Start.bat').is_file():
-        return checkout / 'data'
-    if os.name == 'nt':
-        base = Path(environ.get('LOCALAPPDATA') or Path.home() / 'AppData' / 'Local')
-    elif sys.platform == 'darwin':
-        base = Path.home() / 'Library' / 'Application Support'
-    else:
-        base = Path(environ.get('XDG_DATA_HOME') or Path.home() / '.local' / 'share')
-    return base / 'proxy-workbench'
+    """Use the same writable data folder for the CLI, GUI and desktop host."""
+    # Lazy import: desktop uses PACKAGE, while command parsers call this helper.
+    from .desktop import resolve_layout
+    return resolve_layout(environ=environ, frozen_=FROZEN, package=PACKAGE).data
 
 
 def worker_command(*args):

@@ -17,7 +17,7 @@ from proxy_workbench import desktop
 
 
 def temp(*parts):
-    return Path(tempfile.mkdtemp(prefix='pw-layout-')) .joinpath(*parts)
+    return Path(tempfile.mkdtemp(prefix='pw-layout-')).resolve().joinpath(*parts)
 
 
 class ResolutionOrderTests(unittest.TestCase):
@@ -93,7 +93,8 @@ class ResolutionOrderTests(unittest.TestCase):
         try:
             if os.access(program, os.W_OK):
                 self.skipTest('this user can write to a 0o500 folder; the fallback cannot be observed')
-            result = self.layout({}, frozen_=False, executable=str(program / 'app'), home=temp('home'))
+            result = self.layout({}, frozen_=False, executable=str(program / 'app'),
+                                 package=program / 'proxy_workbench', home=temp('home'))
             self.assertEqual(result.mode, 'per-user')
         finally:
             program.chmod(0o700)

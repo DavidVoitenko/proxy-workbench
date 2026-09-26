@@ -1,4 +1,4 @@
-"""Migrations 16..18 as migrations: the version sequence, the old file, the backup.
+"""Migrations 16 onward: the version sequence, the old file, the backup.
 
 Everything here runs `db.migrate()` on a real temporary file.  The properties
 under test are the ones a user only finds out about when they are broken:
@@ -53,12 +53,11 @@ class MigrationSequenceTests(unittest.TestCase):
 
     def test_the_new_migrations_continue_the_sequence_rather_than_reusing_one(self):
         # "does not skip and does not reuse" -- the previous head was 15, so the
-        # new versions are exactly 16, 17, 18.
-        self.assertEqual([item.version for item in db.MIGRATIONS[-3:]],
-                         [FIRST_NEW_MIGRATION, FIRST_NEW_MIGRATION + 1,
-                          FIRST_NEW_MIGRATION + 2])
+        # All additions follow it, including schedule runtime migration 19.
+        self.assertEqual([item.version for item in db.MIGRATIONS if item.version >= FIRST_NEW_MIGRATION],
+                         list(range(FIRST_NEW_MIGRATION, db.SCHEMA_VERSION + 1)))
         self.assertEqual(PREVIOUS_HEAD, FIRST_NEW_MIGRATION - 1)
-        self.assertEqual(db.SCHEMA_VERSION, FIRST_NEW_MIGRATION + 2)
+        self.assertGreaterEqual(db.SCHEMA_VERSION, 19)
 
     def test_a_fresh_file_runs_every_migration_in_one_go(self):
         report = db.migrate(self.path, app_version="test")
@@ -97,7 +96,7 @@ class MigrationSequenceTests(unittest.TestCase):
         # migration is written knowing it will be applied at least twice.
         migrate_upto(self.path, PREVIOUS_HEAD, app_version="old")
         first = db.migrate(self.path, app_version="test")
-        self.assertEqual([item[0] for item in first.applied], [PREVIOUS_HEAD, 16, 17, 18])
+        self.assertEqual([item[0] for item in first.applied], list(range(PREVIOUS_HEAD, db.SCHEMA_VERSION + 1)))
         before = db.describe(db.connect(self.path))
         second = db.migrate(self.path, app_version="test")
         self.assertEqual(second.applied, ())
@@ -111,7 +110,7 @@ class MigrationSequenceTests(unittest.TestCase):
         conn = db.connect(self.path)
         self.addCleanup(conn.close)
         expected = db.describe(conn)
-        for version in (FIRST_NEW_MIGRATION, FIRST_NEW_MIGRATION + 1, FIRST_NEW_MIGRATION + 2):
+        for version in range(FIRST_NEW_MIGRATION, db.SCHEMA_VERSION + 1):
             migration = db.MIGRATIONS[version]
             with self.subTest(version=version, name=migration.name):
                 conn.execute("BEGIN IMMEDIATE")
@@ -173,7 +172,7 @@ class OldDatabaseUpgradeTests(unittest.TestCase):
         report = db.migrate(self.path, app_version="test")
         self.assertEqual(report.status, "migrated")
         self.assertEqual(report.previous_version, PREVIOUS_HEAD)
-        self.assertEqual([item[0] for item in report.applied], [15, 16, 17, 18])
+        self.assertEqual([item[0] for item in report.applied], list(range(PREVIOUS_HEAD, db.SCHEMA_VERSION + 1)))
         conn = db.connect(self.path)
         self.addCleanup(conn.close)
         self.assertIn("source_feed", db.tables(conn))
@@ -311,7 +310,7 @@ class BackupTriggerTests(unittest.TestCase):
         migrate_upto(target, FIRST_NEW_MIGRATION, app_version="old")
         report = db.migrate(target, app_version="test")
         self.assertIsNone(report.backup)
-        self.assertEqual([item[0] for item in report.applied], [16, 17, 18])
+        self.assertEqual([item[0] for item in report.applied], list(range(FIRST_NEW_MIGRATION, db.SCHEMA_VERSION + 1)))
         self.assertEqual(db.list_backups(target.parent / db.BACKUP_DIRNAME), [])
 
     def test_the_new_migrations_are_not_in_the_destructive_set(self):
@@ -330,7 +329,7 @@ class BackupTriggerTests(unittest.TestCase):
 class LargeDatabaseMigrationTests(unittest.TestCase):
     """The cost of the new migrations must not depend on the size of the file.
 
-    Migrations 16..18 only `CREATE ... IF NOT EXISTS` and `ALTER TABLE ADD
+    Migrations 16 onward only `CREATE ... IF NOT EXISTS` and `ALTER TABLE ADD
     COLUMN`, so no row of an existing table is read.  This measures that on a
     file big enough that a rewriting migration would have shown up.
     """
@@ -360,8 +359,8 @@ class LargeDatabaseMigrationTests(unittest.TestCase):
         _current, peak = tracemalloc.get_traced_memory()
         tracemalloc.stop()
 
-        self.assertEqual([item[0] for item in report.applied], [15, 16, 17, 18])
-        # Migrations 16..18 only issue DDL, so the cost cannot scale with the file.
+        self.assertEqual([item[0] for item in report.applied], list(range(PREVIOUS_HEAD, db.SCHEMA_VERSION + 1)))
+        # These migrations only issue DDL, so the cost cannot scale with the file.
         # Measured on this fixture: a ~35 MB file peaks in the low megabytes, well
         # under a tenth of it.  A migration that read or rewrote a table would be
         # several times the file size.

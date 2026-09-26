@@ -85,7 +85,7 @@ __all__ = [
 # version identity
 # ---------------------------------------------------------------------------
 
-SCHEMA_VERSION = 18
+SCHEMA_VERSION = 19
 #: Magic number of this package. 0 means "no application id yet" (pre-versioning file).
 APPLICATION_ID = 0x50574231
 DB_FILENAME = "proxies.sqlite3"
@@ -505,7 +505,19 @@ def _table_exists(conn, name):
 
 
 def columns(conn, table):
-    return [row[1] for row in conn.execute(f"PRAGMA table_info({_ident(table)})")]
+    quoted = _ident(table)
+    cache = getattr(conn, '_column_cache', None)
+    if cache is None:
+        return [row[1] for row in conn.execute(f"PRAGMA table_info({quoted})")]
+    # SQLite's schema cookie also sees ALTER/DROP from other connections and
+    # transactional rollbacks. Never keep columns based only on a file name.
+    version = conn.execute('PRAGMA schema_version').fetchone()[0]
+    if version != conn._column_cache_version:
+        cache.clear()
+        conn._column_cache_version = version
+    if table not in cache:
+        cache[table] = tuple(row[1] for row in conn.execute(f"PRAGMA table_info({quoted})"))
+    return list(cache[table])
 
 
 def primary_key(conn, table):
@@ -1343,6 +1355,17 @@ def _m18(conn, context):
         conn.execute(statement)
 
 
+def _m19(conn, context):
+    """Keep schedule runtime, execution scope and editable metadata."""
+    _add_column(conn, "schedules", "activated_at", "REAL")
+    _add_column(conn, "schedules", "skipped", "INTEGER NOT NULL DEFAULT 0")
+    _add_column(conn, "schedules", "catch_up_grace_s", "REAL NOT NULL DEFAULT 0")
+    _add_column(conn, "schedules", "name", "TEXT NOT NULL DEFAULT ''")
+    _add_column(conn, "schedules", "revision", "INTEGER NOT NULL DEFAULT 1")
+    _add_column(conn, "schedules", "action", "TEXT NOT NULL DEFAULT ''")
+    _add_column(conn, "schedules", "collection_id", "TEXT")
+
+
 MIGRATIONS = (
     Migration(0, "application_id_and_journal", _m0),
     Migration(1, "endpoints", _m1),
@@ -1363,6 +1386,7 @@ MIGRATIONS = (
     Migration(16, "source_tables", _m16),
     Migration(17, "schedule_runtime_columns", _m17),
     Migration(18, "candidate_scope_exclusion", _m18),
+    Migration(19, "schedule_activation_and_catch_up", _m19),
 )
 
 #: Migrations that rewrite data they did not create: a `DROP TABLE` plus a copy, so
@@ -1388,6 +1412,15 @@ class _MigrationContext:
     legacy_candidates: int = 0
 
 
+class _Connection(sqlite3.Connection):
+    """Schema metadata belongs to the connection and dies when it is closed."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._column_cache = {}
+        self._column_cache_version = None
+
+
 def connect(path, *, read_only=False):
     """Open a connection with this package's settings and no implicit transactions.
 
@@ -1399,10 +1432,11 @@ def connect(path, *, read_only=False):
     if read_only:
         if not path.is_file():
             raise DbError(E_FOREIGN_DB, "database file does not exist", path=path)
-        conn = sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True, isolation_level=None)
+        conn = sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True, isolation_level=None,
+                               factory=_Connection)
     else:
         path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(path, isolation_level=None)
+        conn = sqlite3.connect(path, isolation_level=None, factory=_Connection)
     try:
         conn.row_factory = sqlite3.Row
         # The same id function the Python API uses, registered on *every* connection
@@ -2218,7 +2252,7 @@ def upsert_endpoint(conn, canonical, **fields):
     columns, so a later migration cannot break this call.
     """
     identifier = endpoint_id(canonical)
-    known = set(columns(conn, "endpoints")) - {"id", "canonical"}
+    known = set(columns(conn, "endpoints")) - {"id", "canonical"} if fields else set()
     written = {name: value for name, value in fields.items() if name in known}
     conn.execute("INSERT OR IGNORE INTO endpoints(id, canonical) VALUES (?,?)",
                  (identifier, canonical))

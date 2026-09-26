@@ -18,7 +18,7 @@ PROJECT_URL = "https://github.com/DavidVoitenko/proxy-workbench"
 # the flat list of URLs the app has always read; the catalog below is a
 # different document and has its own name, so neither can be mistaken for the
 # other.
-SOURCES_URL = "https://raw.githubusercontent.com/DavidVoitenko/proxy-workbench/main/sources.json"
+SOURCES_URL = "https://raw.githubusercontent.com/DavidVoitenko/proxy-workbench/main/proxy_workbench/sources.json"
 #: The source *catalog*: the versioned object of researched sources with roles,
 #: access conditions and adapters.  It is a different file from the flat list
 #: and must be published under its own name -- pointing the catalog update at

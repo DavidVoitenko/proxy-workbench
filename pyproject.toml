@@ -30,6 +30,7 @@ classifiers = [
 ]
 dependencies = [
   "httpx[socks]==0.28.1",
+  "keyring==25.7.0",
 ]
 
 [project.urls]
@@ -45,4 +46,4 @@ proxy-workbench = "proxy_workbench.__main__:main"
 packages = ["proxy_workbench"]
 
 [tool.setuptools.package-data]
-proxy_workbench = ["sources.json", "ui/*"]
+proxy_workbench = ["*.json", "ui/*", "ui/i18n/*"]

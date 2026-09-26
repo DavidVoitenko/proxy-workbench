@@ -10,11 +10,14 @@ from proxy_workbench import paths
 
 class PathTests(unittest.TestCase):
     def test_data_folder_choice(self):
-        self.assertEqual(paths.default_data({'PROXY_WORKBENCH_DATA': '/srv/pw'}), Path('/srv/pw'))
+        self.assertEqual(paths.default_data({'PROXY_WORKBENCH_DATA': '/srv/pw'}), Path('/srv/pw').resolve())
         # This test runs from a source checkout, which keeps its data next to the code.
         self.assertEqual(paths.default_data({}), paths.PACKAGE.parent / 'data')
-        with mock.patch.object(paths, 'FROZEN', True), mock.patch.object(paths.sys, 'executable', '/opt/pw/proxy-workbench'):
-            self.assertEqual(paths.default_data({}), Path('/opt/pw/proxy-workbench').resolve().parent / 'data')
+        with mock.patch.object(paths, 'FROZEN', True), mock.patch.object(paths.sys, 'executable', '/opt/pw/proxy-workbench'), \
+                mock.patch.object(paths.sys, 'platform', 'darwin'):
+            self.assertEqual(paths.default_data({}), Path.home() / 'Library/Application Support/proxy-workbench')
+            self.assertEqual(paths.default_data({'PROXY_WORKBENCH_PORTABLE': '1'}),
+                             Path('/opt/pw/proxy-workbench').resolve().parent / 'data')
             self.assertEqual(paths.worker_command('scan', '--data', 'x'), ['/opt/pw/proxy-workbench', 'scan', '--data', 'x'])
         # An installed package has no checkout around it and uses the per-user folder.
         with mock.patch.object(paths, 'PACKAGE', Path(self.id()) / 'site-packages' / 'proxy_workbench'):

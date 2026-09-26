@@ -1,11 +1,13 @@
 import argparse
 import asyncio
+from contextlib import asynccontextmanager
 import json
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
+import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from proxy_workbench import proxytool as p
@@ -83,21 +85,49 @@ class SelectionDrivesCollectionTest(unittest.TestCase):
         values = p.resolve_collect_sources(args_for(self.data))
 
         seen = []
+        by_url = {value['endpoints'][0]['url']: value for value in values}
 
-        async def fake_rich(db, plans, inputs, timeout, on_progress, denylist, **kwargs):
-            seen.extend(plan.get('id') for plan in plans)
-            return {'sources': [{'source': index, 'source_id': plan.get('id'),
-                                 'rows': 1, 'invalid': 0, 'blocked': 0, 'pages': 1,
-                                 'attempts': 1, 'complete': True, 'error': None,
-                                 'format': (plan.get('adapter') or {}).get('kind')}
-                                for index, plan in enumerate(plans, 1)],
-                    'raw_rows': len(plans), 'blocked': 0, 'unique': len(plans)}
+        @asynccontextmanager
+        async def source_response(client, url, *args, **kwargs):
+            source = by_url[url]
+            seen.append(source['id'])
+            kind = source['adapter']['kind']
+            rows = [{'ip': '11.1.1.1', 'port': 8080, 'protocol': 'http', 'protocols': ['http']}]
+            body = (b'11.1.1.1:8080\n' if kind == 'line' else
+                    json.dumps({'data': rows, 'page': 1, 'total': 1} if kind == 'page-json' else rows).encode())
+            yield httpx.Response(200, content=body, request=httpx.Request('GET', url))
 
-        with mock.patch.object(p, '_collect_rich_sources', side_effect=fake_rich):
-            report = asyncio.run(p.collect(p.open_db(self.data / 'test.sqlite3'), values, [],
-                                           on_progress=None))
+        db = p.open_db(self.data / 'test.sqlite3')
+        try:
+            with mock.patch.object(p, '_source_stream', source_response):
+                report = asyncio.run(p.collect(db, values, [], on_progress=None, quiet=True))
+            self.assertTrue(all(row['accepted'] for row in report['sources']))
+            self.assertEqual({row[0] for row in db.execute('SELECT DISTINCT source FROM candidate_seen')},
+                             self.quick)
+        finally:
+            db.close()
         self.assertEqual(set(seen), self.quick)
         self.assertEqual({item['source_id'] for item in report['sources']}, self.quick)
+
+    def test_an_explicitly_empty_selection_fetches_nothing(self):
+        settings = source_management.read_settings(self.data)
+        selection = settings['source_selection']
+        selection['selected_ids'] = []
+        source_management.write_settings(self.data, settings)
+        self.assertEqual(p.resolve_collect_sources(args_for(self.data)), [])
+
+    def test_custom_format_and_name_survive_collection_resolution(self):
+        descriptor = source_catalog.custom_source('https://mine.example/list.json', 'json-records')
+        settings = source_catalog.migrate_settings({'sources': []})
+        settings['source_selection'].update(selected_ids=[descriptor['id']],
+                                            custom_sources=[dict(descriptor, name='My list')])
+        source_management.write_settings(self.data, settings)
+        values = p.resolve_collect_sources(args_for(self.data))
+        self.assertEqual(len(values), 1)
+        self.assertEqual(values[0]['id'], descriptor['id'])
+        self.assertEqual(values[0]['adapter']['kind'], 'json-records')
+        self.assertEqual(values[0]['endpoints'][0]['url'], descriptor['url'])
+        self.assertEqual(values[0]['name'], 'My list')
 
 
 class RecordLimitIsReportedAsPartialTest(unittest.TestCase):

@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import subprocess
 import sys
 import time
@@ -1095,6 +1096,29 @@ def _macos_power(runner: Callable[..., object]) -> PowerSignal:
                        battery_supported=True, metered_supported=False, source='pmset')
 
 
+def _windows_power() -> PowerSignal:
+    """Read Kernel32's SYSTEM_POWER_STATUS without an optional dependency."""
+    import ctypes
+
+    class SystemPowerStatus(ctypes.Structure):
+        _fields_ = [('ACLineStatus', ctypes.c_ubyte), ('BatteryFlag', ctypes.c_ubyte),
+                    ('BatteryLifePercent', ctypes.c_ubyte), ('SystemStatusFlag', ctypes.c_ubyte),
+                    ('BatteryLifeTime', ctypes.c_uint32), ('BatteryFullLifeTime', ctypes.c_uint32)]
+
+    status = SystemPowerStatus()
+    read = ctypes.windll.kernel32.GetSystemPowerStatus
+    read.argtypes = [ctypes.POINTER(SystemPowerStatus)]
+    read.restype = ctypes.c_int
+    if not read(ctypes.byref(status)):
+        return PowerSignal()
+    on_battery = status.ACLineStatus == 0 if status.ACLineStatus in (0, 1) else None
+    percent = status.BatteryLifePercent if status.BatteryLifePercent <= 100 else None
+    if status.BatteryFlag != 255 and status.BatteryFlag & 128:
+        on_battery, percent = False, None
+    return PowerSignal(on_battery=on_battery, battery_percent=percent,
+                       battery_supported=True, metered_supported=False, source='kernel32')
+
+
 def read_system_signal(platform: str = sys.platform, sysfs: Path = Path('/sys/class/power_supply'),
                        runner: Callable[..., object] = subprocess.run) -> PowerSignal:
     """Ask the OS. Unknown everywhere else; never raises."""
@@ -1103,6 +1127,8 @@ def read_system_signal(platform: str = sys.platform, sysfs: Path = Path('/sys/cl
             return _linux_power(sysfs)
         if platform == 'darwin':
             return _macos_power(runner)
+        if platform == 'win32':
+            return _windows_power()
     except Exception:  # noqa: BLE001 - an OS probe must never break the scheduler
         return PowerSignal()
     return PowerSignal()
@@ -1490,6 +1516,14 @@ class ScheduleSpec:
     wake_gap_s: float = 0.0
     dst_policy: str = DST_SKIP
     pool_id: Optional[str] = None
+    name: str = ''
+    revision: int = 1
+    action: str = ''
+    collection_id: Optional[str] = None
+
+    @property
+    def effective_action(self) -> str:
+        return self.action or ('refill' if self.pool_id else 'check')
 
     @property
     def effective_wake_gap_s(self) -> float:
@@ -1510,6 +1544,11 @@ class ScheduleSpec:
         if self.kind not in SCHEDULE_KINDS:
             raise ScheduleError('E_VALIDATION_FIELD', 'kind',
                                 f'неизвестный вид расписания {self.kind!r}', f'unknown schedule kind {self.kind!r}')
+        if self.action not in ('', 'check', 'refill', 'recheck', 'export', 'source'):
+            raise ScheduleError('E_VALIDATION_FIELD', 'action',
+                                f'неизвестное действие {self.action!r}', f'unknown action {self.action!r}')
+        if isinstance(self.revision, bool) or not isinstance(self.revision, int) or self.revision < 1:
+            raise ScheduleError('E_VALIDATION_FIELD', 'revision', 'ожидалось целое >= 1', 'expected an integer >= 1')
         if self.kind == KIND_INTERVAL:
             if self.interval_minutes is None or self.interval_minutes <= 0 or self.interval_minutes > 1440:
                 raise ScheduleError('E_VALIDATION_FIELD', 'interval_minutes',
@@ -1544,6 +1583,8 @@ class ScheduleSpec:
             'catch_up': self.catch_up, 'max_catch_up': self.max_catch_up,
             'catch_up_grace_s': self.catch_up_grace_s, 'wake_gap_s': self.wake_gap_s,
             'dst_policy': self.dst_policy, 'pool_id': self.pool_id,
+            'name': self.name, 'revision': self.revision, 'action': self.action,
+            'collection_id': self.collection_id,
         }
 
     @classmethod
@@ -1576,6 +1617,8 @@ class ScheduleSpec:
             wake_gap_s=float(data.get('wake_gap_s') or 0.0),
             dst_policy=str(data.get('dst_policy') or DST_SKIP),
             pool_id=data.get('pool_id'),
+            name=str(data.get('name') or ''), revision=data.get('revision', 1),
+            action=str(data.get('action') or ''), collection_id=data.get('collection_id'),
         )
 
 
@@ -1626,12 +1669,15 @@ class RunRequest:
     pool_id: Optional[str] = None
     stages: tuple[str, ...] = WORKBENCH_CLASSES
     budgets: Budgets = field(default_factory=Budgets)
+    action: str = ''
+    collection_id: Optional[str] = None
 
     def to_dict(self) -> dict:
         return {'schedule_id': self.schedule_id, 'run_id': self.run_id, 'reason': self.reason,
                 'scheduled_for': self.scheduled_for, 'requested_at': self.requested_at, 'missed': self.missed,
                 'coalesced': self.coalesced, 'pool_id': self.pool_id, 'stages': list(self.stages),
-                'budgets': self.budgets.to_dict()}
+                'budgets': self.budgets.to_dict(), 'action': self.action,
+                'collection_id': self.collection_id}
 
 
 @dataclass(frozen=True)
@@ -1816,6 +1862,13 @@ class SqliteScheduleStore:
         if 'wake_gap_s' in self.available:
             columns.append('wake_gap_s')
             values.append(spec.wake_gap_s)
+        if 'catch_up_grace_s' in self.available:
+            columns.append('catch_up_grace_s')
+            values.append(spec.catch_up_grace_s)
+        for column in ('name', 'revision', 'action', 'collection_id'):
+            if column in self.available:
+                columns.append(column)
+                values.append(getattr(spec, column))
         if 'power_json' in self.available:
             columns.append('power_json')
             values.append(json.dumps(spec.power.to_dict(), sort_keys=True))
@@ -1834,7 +1887,7 @@ class SqliteScheduleStore:
         # `save_spec` -- the moment the user edited the interval.  An upsert
         # that only names the columns it writes keeps the rest.
         assignments = ', '.join(f'"{column}"=excluded."{column}"' for column in columns
-                                if column != 'id')
+                                if column not in ('id', 'next_run_at'))
         self.connection.execute(
             f'INSERT INTO {name} ({", ".join(columns)}) VALUES ({placeholders})'
             f' ON CONFLICT(id) DO UPDATE SET {assignments}', values)
@@ -1845,7 +1898,7 @@ class SqliteScheduleStore:
         if not self._column_names('schedules'):
             return []
         rows = self.connection.execute(f'SELECT * FROM {name} ORDER BY id').fetchall()
-        columns = self._column_names(name)
+        columns = self._column_names('schedules')
         return [self._spec_from_row(dict(zip(columns, row))) for row in rows]
 
     def _column_names(self, table: str) -> list[str]:
@@ -1866,7 +1919,10 @@ class SqliteScheduleStore:
         for column in ('power_json', 'notify_json', 'notifications_json'):
             if record.get(column):
                 data[column[:-5]] = json.loads(record[column])
-        for column in ('dst_policy', 'max_catch_up', 'wake_gap_s'):
+        for column in ('dst_policy', 'max_catch_up', 'wake_gap_s', 'catch_up_grace_s'):
+            if record.get(column) is not None:
+                data[column] = record[column]
+        for column in ('name', 'revision', 'action', 'collection_id'):
             if record.get(column) is not None:
                 data[column] = record[column]
         if record.get('catch_up') is not None:
@@ -1884,6 +1940,10 @@ class SqliteScheduleStore:
         name = self._table('schedules')
         columns: list[str] = []
         values: list[object] = []
+        for column in ('activated_at', 'skipped'):
+            if column in self.available:
+                columns.append(column)
+                values.append(getattr(state, column))
         if 'last_run_at' in self.available:
             columns.append('last_run_at')
             values.append(state.last_run_at)
@@ -1911,7 +1971,8 @@ class SqliteScheduleStore:
 
     def load_state(self, schedule_id: str) -> Optional[ScheduleState]:
         name = self._table('schedules')
-        wanted = ('last_run_at', 'next_run_at', 'paused', 'pause_reason', 'resume_at', 'counters_json')
+        wanted = ('last_run_at', 'next_run_at', 'activated_at', 'skipped',
+                  'paused', 'pause_reason', 'resume_at', 'counters_json')
         columns = [column for column in wanted if column in self.available]
         if not columns or 'id' not in self.available:
             return None
@@ -1931,6 +1992,7 @@ class SqliteScheduleStore:
             (schedule_id,)).fetchone()[0]
         return ScheduleState(
             last_run_at=last_run_at, next_run_at=record.get('next_run_at'),
+            activated_at=record.get('activated_at'), skipped=int(record.get('skipped') or 0),
             paused=bool(record.get('paused') or False), pause_reason=record.get('pause_reason'),
             resume_at=record.get('resume_at'), runs=int(total),
             counters=BudgetCounters.from_dict(json.loads(record.get('counters_json') or '{}')))
@@ -2032,7 +2094,9 @@ class Scheduler:
         now = self.clock() if now is None else now
         decision = power_decision(spec.power, self.power_reader())
         state = self.state(schedule_id)
-        return BudgetLedger(spec.budgets, state.counters, now, decision.stages)
+        ledger = BudgetLedger(spec.budgets, state.counters, now, decision.stages)
+        state.counters = ledger.counters
+        return ledger
 
     # -- manual control ---------------------------------------------------
 
@@ -2055,7 +2119,8 @@ class Scheduler:
         power = power_decision(spec.power, self.power_reader())
         run = RunRequest(schedule_id=spec.id, run_id=make_run_id(spec.id, now), reason=REASON_MANUAL,
                          scheduled_for=now, requested_at=now, missed=0, coalesced=False,
-                         pool_id=spec.pool_id, stages=power.stages, budgets=spec.budgets)
+                         pool_id=spec.pool_id, stages=power.stages, budgets=spec.budgets,
+                         action=spec.effective_action, collection_id=spec.collection_id)
         state.last_run_at = now
         step = spec.interval_s or 0.0
         state.next_run_at = now + step if step else None
@@ -2113,13 +2178,14 @@ class Scheduler:
         at = self.clock() if at is None else at
         state = self.state(schedule_id)
         was_paused = state.paused
+        reason = state.pause_reason
         state.paused = False
         state.pause_reason = None
         state.resume_at = None
         if was_paused:
             self.store.save_state(schedule_id, state)
             notification = Notification(subject=schedule_id, code=NOTIFY_RESUMED, at=at,
-                                        data=(('reason', state.pause_reason or 'auto'),))
+                                        data=(('reason', reason or 'auto'),))
             self.notifier.emit(notification, self._policy(schedule_id))
         return Decision(schedule_id, 'resume', REASON_DUE if was_paused else REASON_NOT_DUE, at,
                         next_run_at=state.next_run_at)
@@ -2238,7 +2304,7 @@ class Scheduler:
     def tick(self, at: Optional[float] = None) -> TickReport:
         """Decide what may run now. No job is started here."""
         now = self.clock() if at is None else at
-        if not isinstance(now, (int, float)) or isinstance(now, bool) or now != now:
+        if not isinstance(now, (int, float)) or isinstance(now, bool) or not math.isfinite(now):
             raise ScheduleError('E_TIME_UNKNOWN', 'at', f'время {now!r} непригодно', f'time {now!r} is not usable')
         signal = self.power_reader()
         specs = self.store.load_specs()
@@ -2268,10 +2334,19 @@ class Scheduler:
         tz = _tz(spec.timezone)
         if state.activated_at is None:
             state.activated_at = now
+            self.store.save_state(spec.id, state)
 
         if not spec.enabled:
             return Decision(spec.id, 'skip', REASON_DISABLED, now, next_run_at=state.next_run_at), []
 
+        # Power pauses are conditional, not user pauses. Re-evaluate the OS
+        # signal even while paused, so plugging in or changing networks resumes.
+        if state.paused and state.pause_reason in (REASON_PAUSED_BATTERY, REASON_PAUSED_METERED):
+            if not power_decision(spec.power, signal).restricted:
+                state.paused = False
+                state.pause_reason = None
+                state.resume_at = None
+                self.store.save_state(spec.id, state)
         # A pause that expired on its own (quiet hours, budget reset) is lifted here.
         if state.paused and state.resume_at is not None and now >= state.resume_at:
             state.paused = False
@@ -2313,6 +2388,9 @@ class Scheduler:
 
         plan = self.plan(spec, state, now)
         if not plan.moments:
+            state.next_run_at = plan.next_at
+            state.counters = ledger.counters
+            self.store.save_state(spec.id, state)
             if plan.dst_skipped and plan.reason == REASON_NO_SLOT:
                 self.notifier.emit(Notification(subject=spec.id, code=NOTIFY_SKIPPED, at=now,
                                                 data=(('reason', REASON_DST_SKIPPED),
@@ -2332,7 +2410,8 @@ class Scheduler:
             requests.append(RunRequest(schedule_id=spec.id, run_id=make_run_id(spec.id, stamp),
                                        reason=reason, scheduled_for=stamp, requested_at=now,
                                        missed=missed, coalesced=coalesced, pool_id=spec.pool_id,
-                                       stages=power.stages, budgets=spec.budgets))
+                                       stages=power.stages, budgets=spec.budgets,
+                                       action=spec.effective_action, collection_id=spec.collection_id))
             self.store.append_run(spec.id, requests[-1])
         step = spec.interval_s or 0.0
         state.last_run_at = stamps[-1]

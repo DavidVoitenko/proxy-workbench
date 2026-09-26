@@ -356,7 +356,8 @@ class PageReachesTheComparison(unittest.TestCase):
         self.assertLess(served.index('id="source-compare-card"'), served.index('id="page-pools"'))
 
     def test_the_section_uses_the_designs_own_classes(self):
-        section = self.served[self.served.index('id="source-compare-card"'):][:4000]
+        start = self.served.rfind('<section', 0, self.served.index('id="source-compare-card"'))
+        section = self.served[start:][:4000]
         for token in ('class="card"', 'class="card-title"', 'class="badge subtle"',
                       'class="table-wrap"', 'class="field-grid"', 'class="button primary chip"'):
             self.assertIn(token, section, token)
@@ -379,6 +380,8 @@ class PageReachesTheComparison(unittest.TestCase):
 
     def test_injection_is_idempotent_and_survives_a_reshuffled_page(self):
         again = gui.append_source_compare_script(gui.inject_source_compare(self.served))
+        self.assertEqual(again.count('id="source-compare-card"'), 1)
+        self.assertEqual(again.count('id="source-compare-run"'), 1)
         self.assertEqual(again, self.served)
         # A page whose anchor is gone is served unchanged rather than broken.
         without_anchor = self.page.replace(gui.SOURCE_COMPARE_ANCHOR, '</section>')
