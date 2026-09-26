@@ -553,6 +553,9 @@ class ProfileSpec:
             return self._verdict(item, target, 'disabled', 'E_TARGET_DISABLED', None)
         if item.fingerprint != target.fingerprint():
             return self._verdict(item, target, 'unmeasured', 'E_TARGET_STALE_EVIDENCE', None)
+        # ``unknown`` is checked before the attempt count: a probe that ran and
+        # returned an unknown outcome carries no counts, and reporting it as
+        # "skipped" would claim the probe never happened.
         if item.unknown:
             return self._verdict(item, target, 'unknown', 'E_TARGET_UNKNOWN', None)
         if item.attempts <= 0:
@@ -1038,6 +1041,18 @@ class ProfileStore:
         if verify:
             verify_schema(conn)
         self.conn = conn
+        self._owned = False
+
+    def close(self) -> None:
+        """Close the connection, but only when :func:`open_store` opened it.
+
+        A store built by a caller around a connection it shares with the rest of
+        the workbench must not close a handle it does not own; ``open_store`` opens
+        a connection of its own, and something has to release it.
+        """
+        if self._owned:
+            self.conn.close()
+            self._owned = False
 
     @contextlib.contextmanager
     def _write(self):
@@ -1279,10 +1294,13 @@ def open_store(path: Any) -> ProfileStore:
 
     ``db.migrate()`` brings the file to the contract schema and ``db.connect()``
     opens it with this package's settings.  This module adds no DDL of its own, so
-    the table it uses is always the one migration 9 produced.
+    the table it uses is always the one migration 9 produced.  The store owns the
+    connection it opens; :meth:`ProfileStore.close` releases it.
     """
     db.migrate(path)
-    return ProfileStore(db.connect(path))
+    store = ProfileStore(db.connect(path))
+    store._owned = True
+    return store
 
 
 # --------------------------------------------------------------------------- #

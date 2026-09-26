@@ -165,12 +165,53 @@ class UnknownCollection(ImportProblem):
 
 
 # --- secrets ----------------------------------------------------------------
-def redact(value: str) -> str:
+def _field_separators(authority: str) -> list:
+    """Positions of the colons that separate fields, ignoring the ones in ``[]``.
+
+    A bracketed IPv6 literal carries its own colons; they are part of the
+    address, not field separators.
+    """
+    positions, depth = [], 0
+    for index, char in enumerate(authority):
+        if char == '[':
+            depth += 1
+        elif char == ']':
+            depth = max(depth - 1, 0)
+        elif char == ':' and depth == 0:
+            positions.append(index)
+    return positions
+
+
+def _redact_fields(authority: str) -> str:
+    """Cut everything a plain ``host:port`` authority cannot contain.
+
+    Dropping the userinfo at ``@`` is not enough.  ``45.33.32.156:8080:secret``
+    and ``user:secret`` are the same leak without a scheme and without an
+    ``@``, and neither is a valid endpoint, so the address part is kept for the
+    user and every following field goes.
+    """
+    positions = _field_separators(authority)
+    if not positions:
+        return authority
+    if len(positions) == 1 and authority[positions[0] + 1:].isdigit():
+        return authority  # a plain host:port, or ``[v6]:port``
+    return authority[:positions[0]] + ' …'
+
+
+def redact(value: str, *, whole: bool = True) -> str:
     """Reduce a rejected cell to a sample that is safe to log and to store.
 
     Everything but the scheme and the credential-free authority is dropped: a
-    password in `user:pass@host`, in a query string or simply trailing on the
-    line must not survive into a report, a log line or provenance.
+    password in `user:pass@host`, in a query string, in a `host:port:password`
+    triple or simply trailing on the line must not survive into a report, a log
+    line or provenance (F03, F04).
+
+    `whole` says that `value` is a complete record rather than one cell of a
+    row.  A record keeps a token that carries a dot (a hostname or an address);
+    a cell additionally keeps a pure number, so the ``8080`` of a CSV row stays
+    next to the host the user has to look for.  Everything else is an opaque
+    ``***``: it is not an address in either reading, and a pasted password line
+    is the realistic way it gets there.
     """
     text = ' '.join(value.split())
     if not text:
@@ -187,8 +228,11 @@ def redact(value: str) -> str:
     at = authority.rfind('@')
     if at != -1:
         authority = '***@' + authority[at + 1:]
+    bare = not _field_separators(authority) and not any(char in authority for char in '.[')
+    if bare and not (not whole and authority.isdigit()):
+        return '***'
     dropped = ' …' if rest.strip() else ''
-    return (head + separator + authority + dropped)[:MAX_SAMPLE]
+    return (head + separator + _redact_fields(authority) + dropped)[:MAX_SAMPLE]
 
 
 def _has_credentials(value: str) -> bool:
@@ -376,6 +420,22 @@ def _credential_columns(columns: Sequence) -> tuple:
     return tuple(str(column) for column in columns if _fold(column) in CREDENTIAL_COLUMNS)
 
 
+def _names_the_header(mapping: ColumnMapping, record: Sequence) -> bool:
+    """True when every column *name* of a mapping is a cell of the first record.
+
+    `_is_header_record` only recognises a header that spells a role (``host``,
+    ``ip``, ``port``…).  A perfectly ordinary ``a,b,c`` header is therefore
+    data to the guesser: the wizard could only map positionally, and the header
+    line itself became a rejected row that blocked the commit.  When the caller
+    names columns, those names can only refer to a header, so the first record
+    is treated as one.
+    """
+    names = [mapping.role(role) for role in ROLES]
+    names = [str(name).strip() for name in names
+             if isinstance(name, str) and not isinstance(name, bool) and name.strip()]
+    return bool(names) and all(name in record for name in names)
+
+
 # --- endpoint model ---------------------------------------------------------
 @dataclass(frozen=True)
 class EndpointPolicy:
@@ -499,6 +559,11 @@ def detect_format(source: ImportSource) -> str:
 
     The wizard may always pass the format explicitly; detection only exists so
     that a dropped file without a useful extension is still readable.
+
+    ``uri`` is chosen only when *every* meaningful line carries a scheme.  A
+    list whose first line reads ``http://1.2.3.4:8080`` and whose remaining
+    lines are bare addresses is an address list, not a URI list, and reading it
+    as one rejected all but the first line - while ``txt`` accepts both.
     """
     text = source.text.lstrip()
     if not text:
@@ -507,8 +572,9 @@ def detect_format(source: ImportSource) -> str:
         return 'json'
     if text[0] == '[' and _is_json(text):
         return 'json'
-    first = next((line.strip() for line in text.splitlines()
-                  if line.strip() and not line.strip().startswith('#')), '')
+    lines = [line.strip() for line in text.splitlines()
+             if line.strip() and not line.strip().startswith('#')]
+    first = lines[0] if lines else ''
     if not first:
         raise ImportFormatError(f'Импорт «{source.name}» не содержит данных.',
                                 detail={'name': source.name})
@@ -516,7 +582,9 @@ def detect_format(source: ImportSource) -> str:
         return 'csv'
     if '\t' in first or first.count(',') >= 2 or first.count(';') >= 2:
         return 'csv'
-    return 'uri' if '://' in first else 'txt'
+    if '://' not in first:
+        return 'txt'
+    return 'uri' if all('://' in line for line in lines) else 'txt'
 
 
 def _looks_like_header(line: str) -> bool:
@@ -568,7 +636,13 @@ def _parse_txt(text: str, require_scheme: bool, policy: EndpointPolicy) -> list:
 
 def _cell_row(number: int, cells: dict, credentials: tuple, columns: Sequence,
               policy: EndpointPolicy) -> ImportRow:
-    """One CSV record or one JSON object, whatever the transport."""
+    """One CSV record or one JSON object, whatever the transport.
+
+    `credentials` names the credential-shaped columns the *file* offers, not the
+    ones this row fills in.  A file that carries a ``password`` column is refused
+    as a whole even where the cell is empty, because accepting the row and
+    dropping the field is the "приняли форму и молча выбросили" case.
+    """
     sample = _cells_sample(cells)
     host, port = cells.get('host', ''), cells.get('port', '')
     if credentials or (host and _has_credentials(host)):
@@ -595,12 +669,17 @@ def _cell_row(number: int, cells: dict, credentials: tuple, columns: Sequence,
 
 
 def _cells_sample(cells: dict) -> str:
-    """Redact every cell on its own: a cell is never allowed to hide in a join."""
-    return ' '.join(redact(cells[role]) for role in ('host', 'port', 'scheme')
+    """Redact every cell on its own: a cell is never allowed to hide in a join.
+
+    Each cell is redacted as a cell, not as a whole record, so the port stays
+    visible next to the host the user has to look for.
+    """
+    return ' '.join(redact(cells[role], whole=False) for role in ('host', 'port', 'scheme')
                     if cells.get(role))[:MAX_SAMPLE]
 
 
-def _parse_csv(text: str, mapping: ColumnMapping | None, policy: EndpointPolicy) -> tuple:
+def _parse_csv(text: str, mapping: ColumnMapping | None, policy: EndpointPolicy,
+               header_row: bool | None = None) -> tuple:
     lines = text.splitlines()
     delimiter = _delimiter(next((line for line in lines if line.strip()), ''))
     reader = csv.reader(io.StringIO(text, newline=''), delimiter=delimiter)
@@ -610,9 +689,21 @@ def _parse_csv(text: str, mapping: ColumnMapping | None, policy: EndpointPolicy)
             records.append((start + 1, record))
         start = reader.line_num
     if not records:
-        return [], None, ((), ()), False, None
-    has_header = _is_header_record(records[0][1])
-    header = [cell.strip() for cell in records[0][1]] if has_header else None
+        return [], None, ((), ()), False, None, ()
+    first = [cell.strip() for cell in records[0][1]]
+    # `header` is the caller's own answer, and it wins: a user who says the first
+    # row is a header is believed, and a user who says it is data is believed too.
+    # Without an answer the adapter guesses: a record that spells a role, or one
+    # that carries every name of an explicit mapping - a mapping names a header by
+    # definition, so "a,b,c" can be mapped instead of refused for a missing column.
+    if header_row is True:
+        has_header = True
+    elif header_row is False:
+        has_header = False
+    else:
+        has_header = _is_header_record(records[0][1]) or (
+            mapping is not None and _names_the_header(mapping, first))
+    header = first if has_header else None
     body = records[1:] if has_header else records
     columns = header if header is not None else [str(index) for index in range(len(records[0][1]))]
     suggestion = None
@@ -622,14 +713,14 @@ def _parse_csv(text: str, mapping: ColumnMapping | None, policy: EndpointPolicy)
         else:
             suggestion = suggest_mapping(header)
             if not suggestion.usable:
-                return [], None, (suggestion.missing, suggestion.ambiguous), True, suggestion
+                return [], None, (suggestion.missing, suggestion.ambiguous), True, suggestion, tuple(header or ())
             mapping = suggestion.mapping
     resolved = _resolve(mapping, columns)
     credentials = _credential_columns(header or ())
     rows = [_cell_row(line, {role: (record[index].strip() if index < len(record) else '')
                              for role, index in resolved.items()}, credentials, columns, policy)
             for line, record in body]
-    return _mark_duplicates(rows), mapping, ((), ()), False, suggestion
+    return _mark_duplicates(rows), mapping, ((), ()), False, suggestion, tuple(header or ())
 
 
 def _json_items(text: str) -> list:
@@ -654,9 +745,9 @@ def _json_items(text: str) -> list:
 def _parse_json(text: str, mapping: ColumnMapping | None, policy: EndpointPolicy) -> tuple:
     items = _json_items(text)
     if not items:
-        return [], None, ((), ()), False, None
+        return [], None, ((), ()), False, None, ()
     if all(isinstance(item, str) for item in items):
-        return _parse_txt('\n'.join(items), False, policy), None, ((), ()), False, None
+        return _parse_txt('\n'.join(items), False, policy), None, ((), ()), False, None, ()
     columns = []
     for item in items:
         if isinstance(item, dict):
@@ -671,7 +762,7 @@ def _parse_json(text: str, mapping: ColumnMapping | None, policy: EndpointPolicy
     if mapping is None:
         suggestion = suggest_mapping(columns)
         if not suggestion.usable:
-            return [], None, (suggestion.missing, suggestion.ambiguous), True, suggestion
+            return [], None, (suggestion.missing, suggestion.ambiguous), True, suggestion, ()
         mapping = suggestion.mapping
     resolved = _resolve(mapping, columns)
     rows = []
@@ -686,7 +777,7 @@ def _parse_json(text: str, mapping: ColumnMapping | None, policy: EndpointPolicy
         cells = {role: str(item.get(columns[position], '')).strip()
                  for role, position in resolved.items()}
         rows.append(_cell_row(index, cells, credentials, columns, policy))
-    return _mark_duplicates(rows), mapping, ((), ()), False, suggestion
+    return _mark_duplicates(rows), mapping, ((), ()), False, suggestion, ()
 
 
 def _mark_duplicates(rows: list) -> list:
@@ -706,8 +797,8 @@ def _mark_duplicates(rows: list) -> list:
 
 # --- parse entry point ------------------------------------------------------
 def _parse(source: ImportSource, fmt: str | None, mapping: ColumnMapping | None,
-           policy: EndpointPolicy) -> tuple:
-    """Return (rows, mapping, (missing, ambiguous), needs_mapping, format, suggestion)."""
+           policy: EndpointPolicy, header: bool | None = None) -> tuple:
+    """Return (rows, mapping, (missing, ambiguous), needs_mapping, format, suggestion, header)."""
     if len(source.text.splitlines()) > MAX_IMPORT_ROWS:
         raise ImportTooLarge(f'В импорте больше {MAX_IMPORT_ROWS} строк.',
                              detail={'name': source.name, 'limit': MAX_IMPORT_ROWS})
@@ -716,12 +807,14 @@ def _parse(source: ImportSource, fmt: str | None, mapping: ColumnMapping | None,
         raise ImportFormatError(f'Неизвестный формат импорта: {chosen}.',
                                 detail={'format': chosen, 'formats': list(FORMATS)})
     if chosen in ('txt', 'uri'):
-        return _parse_txt(source.text, chosen == 'uri', policy), None, ((), ()), False, chosen, None
+        return _parse_txt(source.text, chosen == 'uri', policy), None, ((), ()), False, chosen, None, ()
     if chosen == 'csv':
-        rows, used, problem, needs, suggestion = _parse_csv(source.text, mapping, policy)
+        rows, used, problem, needs, suggestion, found_header = _parse_csv(
+            source.text, mapping, policy, header)
     else:
-        rows, used, problem, needs, suggestion = _parse_json(source.text, mapping, policy)
-    return rows, used, problem, needs, chosen, suggestion
+        rows, used, problem, needs, suggestion, found_header = _parse_json(source.text, mapping,
+                                                                          policy)
+    return rows, used, problem, needs, chosen, suggestion, found_header
 
 
 # --- collections ------------------------------------------------------------
@@ -792,6 +885,12 @@ class Preview:
     mapping_suggestion: MappingSuggestion | None = None
     skipped: int = 0
     created_at: float = 0.0
+    header: tuple = ()
+    """The first record the adapter consumed as a column header, if any.
+
+    A surface shows it so the user can see that row 1 was consumed as names and
+    not as data, instead of wondering where a record went.
+    """
 
     # --- counters
     @property
@@ -854,6 +953,7 @@ class Preview:
                 'source': {'name': self.source_name, 'digest': self.source_digest},
                 'policy': {'public_only': self.policy.public_only},
                 'mapping': self.mapping.to_dict() if self.mapping else None,
+                'header': list(self.header),
                 'needs_mapping': self.needs_mapping,
                 'mapping_problem': {'missing': list(self.mapping_problem[0]),
                                     'ambiguous': list(self.mapping_problem[1])},
@@ -866,8 +966,14 @@ class Preview:
 def preview(conn: sqlite3.Connection, source: ImportSource, *, collection_id: str,
             mode: str = 'merge', mapping: ColumnMapping | None = None,
             policy: EndpointPolicy | None = None, fmt: str | None = None,
-            idempotency_key: str | None = None, now: float | None = None) -> Preview:
-    """Read an import and say what it would do.  Writes nothing at all."""
+            header: bool | None = None, idempotency_key: str | None = None,
+            now: float | None = None) -> Preview:
+    """Read an import and say what it would do.  Writes nothing at all.
+
+    `header` is the caller's answer for a CSV: `True` makes the first record a
+    column header, `False` makes it data, and `None` (the default) lets the
+    adapter decide.  JSON objects carry their own keys, so it applies to CSV only.
+    """
     if not isinstance(source, ImportSource):
         raise ImportProblem('Нужен ImportSource.', code=CODE_FIELD)
     if mode not in MODES:
@@ -880,7 +986,8 @@ def preview(conn: sqlite3.Connection, source: ImportSource, *, collection_id: st
         raise UnknownCollection(f'Коллекция {collection_id} не найдена.',
                                 detail={'collection_id': collection_id})
     revision = collection_revision(conn, collection_id)
-    rows, used, problem, needs, chosen, suggestion = _parse(source, fmt, mapping, policy)
+    rows, used, problem, needs, chosen, suggestion, found_header = _parse(source, fmt, mapping,
+                                                                        policy, header)
     present = _members(conn, collection_id)
     result = []
     for row in rows:
@@ -902,7 +1009,7 @@ def preview(conn: sqlite3.Connection, source: ImportSource, *, collection_id: st
         format=chosen, mode=mode, mapping=used, policy=policy, rows=tuple(result),
         added=added, unchanged=unchanged, removed=removed, removed_ids=tuple(gone),
         needs_mapping=needs, mapping_suggestion=suggestion, mapping_problem=problem,
-        skipped=skipped, created_at=time.time() if now is None else now)
+        skipped=skipped, created_at=time.time() if now is None else now, header=found_header)
 
 
 def _sorted(present: dict, identifiers) -> list:
