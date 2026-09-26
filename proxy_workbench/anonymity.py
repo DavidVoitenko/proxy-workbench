@@ -10,10 +10,16 @@ each working proxy and classifies the echo:
 ``anonymous``    no IP leak, but proxy-revealing headers (``Via``,
                  ``X-Forwarded-For``, ...) are present;
 ``elite``        neither the IP nor proxy headers are visible;
-``unknown``      the judge request through the proxy failed.
+``unknown``      the judge request through the proxy failed, or the answer
+                 cannot prove anything (empty body, CAPTCHA page, no address).
 
 The machine's own IPs are kept in memory only and never written to the
 database or exports.
+
+Defect 13: this module delegates the verdict to :func:`probes.classify_echo`,
+so ``elite`` is reachable only through an answer that actually proves
+something.  The rules live in one place (``probes.py``) and this file keeps
+the historical call shape for ``proxytool.py`` / ``api.py`` / ``gui.py``.
 """
 from __future__ import annotations
 
@@ -21,6 +27,8 @@ import ipaddress
 import re
 import time
 from urllib.parse import urlsplit
+
+from . import probes
 
 LEVELS = ("transparent", "anonymous", "elite")
 MIN_LEVELS = ("any", "anonymous", "elite")
@@ -82,46 +90,76 @@ def validate_min_level(value):
     return value
 
 
-def extract_public_ips(text):
-    """Global IPv4/IPv6 addresses mentioned in a judge response."""
+def extract_public_ips(text, *, global_only=True):
+    """IPv4/IPv6 addresses mentioned in a judge response.
+
+    ``global_only=True`` keeps the historical behaviour the public judge needs.
+    A self-hosted judge echoes loopback or LAN addresses, so the caller can
+    pass ``global_only=False``; :func:`probes.extract_addresses` is the same
+    thing without a filter and is what :func:`classify` uses.
+    """
+    addresses = probes.extract_addresses(text)
+    if not global_only:
+        return set(addresses)
     found = set()
-    for pattern in (_IPV4, _IPV6):
-        for match in pattern.findall(text):
-            try:
-                ip = ipaddress.ip_address(match)
-            except ValueError:
-                continue
-            if ip.is_global:
-                found.add(ip.compressed)
+    for item in addresses:
+        try:
+            if ipaddress.ip_address(item).is_global:
+                found.add(item)
+        except ValueError:
+            continue
     return found
 
 
-def classify(body, own_ips):
-    """Classify one judge echo. ``own_ips`` must be non-empty."""
-    text = body.decode("utf-8", errors="replace") if isinstance(body, (bytes, bytearray)) else str(body)
-    seen = extract_public_ips(text)
-    if seen & set(own_ips):
-        return {"level": "transparent", "signals": ["real_ip"]}
-    normalized = text.lower().replace("_", "-")
-    signals = [name for name, pattern in _HEADER_PATTERNS if pattern.search(normalized)]
-    if signals:
-        return {"level": "anonymous", "signals": signals}
-    return {"level": "elite", "signals": []}
+def classify_detail(body, own_ips, *, judge_verified=True, spec=None):
+    """Classify one judge echo through the one classifier (defect 13).
+
+    ``own_ips`` is the bootstrap set from the direct judge request.
+    ``judge_verified`` must be ``False`` whenever that direct request did not
+    actually show one of our addresses: an answer that does not leak is then
+    no evidence at all, and the level stays ``unknown`` instead of ``elite``.
+
+    Returns the level, the signals, the ``code`` that explains a non-verdict
+    (``JUDGE_INVALID`` / ``JUDGE_CHALLENGE`` / ``JUDGE_UNVERIFIED``), whether
+    the level is confirmed, and the exit address when the judge labelled one.
+    """
+    outcome = probes.classify_echo(body, own_ips, judge_verified=judge_verified, spec=spec)
+    value = {"level": outcome.level, "signals": list(outcome.signals), "code": outcome.code,
+             "confirmed": outcome.confirmed}
+    if outcome.exit_ip:
+        value["exit_ip"] = outcome.exit_ip
+    return value
+
+
+def classify(body, own_ips, *, judge_verified=True, spec=None):
+    """The historical two-key verdict, now produced by the one classifier.
+
+    ``classify`` keeps its old shape so every existing caller keeps working;
+    :func:`classify_detail` is the same verdict plus the code that explains an
+    ``unknown`` and the observed exit address.
+    """
+    detail = classify_detail(body, own_ips, judge_verified=judge_verified, spec=spec)
+    return {"level": detail["level"], "signals": detail["signals"]}
 
 
 _EXIT_IP = re.compile(r'(?:remote[-_ ]addr|client[-_ ]ip|"origin"|"ip")["\']?\s*(?:=>|[:=])\s*["\']?([0-9a-f:.]{3,45})', re.I)
 
 
-def exit_ip(body):
-    """The address the judge saw the request coming from, when it labels it."""
+def exit_ip(body, *, global_only=True):
+    """The address the judge saw the request coming from, when it labels it.
+
+    ``global_only=False`` is what a self-hosted judge needs: it sees and labels
+    a loopback or LAN address for the request it received.
+    """
     text = body.decode("utf-8", errors="replace") if isinstance(body, (bytes, bytearray)) else str(body)
     for match in _EXIT_IP.findall(text):
         try:
-            ip = ipaddress.ip_address(match.strip(".:"))
+            ip = ipaddress.ip_address(match.strip(".:" ))
         except ValueError:
             continue
-        if ip.is_global:
-            return ip.compressed
+        if global_only and not ip.is_global:
+            continue
+        return ip.compressed
     return None
 
 
@@ -129,11 +167,16 @@ def allows(row, minimum):
     """True when a result meets the minimum anonymity level."""
     if minimum in (None, "any"):
         return True
-    level = (row.get("anonymity") or {}).get("level", "unknown")
+    level = (row.get("anonymity") or row).get("level", "unknown")
     return LEVEL_RANK.get(level, -1) >= LEVEL_RANK[minimum]
 
 
 async def fetch_judge(client, url, headers, max_bytes=MAX_JUDGE_BYTES):
+    """Stream a judge answer with a hard byte budget.
+
+    An answer over the budget is an error, not a truncated page: a partial
+    echo cannot prove that an address is missing from it.
+    """
     async with client.stream("GET", url, headers=headers) as response:
         if not 200 <= response.status_code < 300:
             raise ValueError(f"HTTP_{response.status_code}")
@@ -145,10 +188,12 @@ async def fetch_judge(client, url, headers, max_bytes=MAX_JUDGE_BYTES):
         return bytes(body)
 
 
-def result(level, signals=(), error=None, started=None, exit_address=None):
+def result(level, signals=(), error=None, started=None, exit_address=None, code=None):
     value = {"level": level, "signals": list(signals), "checked_at": time.time()}
     if exit_address:
         value["exit_ip"] = exit_address
+    if code:
+        value["code"] = code
     if error:
         value["error"] = error
     if started is not None:

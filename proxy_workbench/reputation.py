@@ -13,6 +13,8 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from .anonymity import allows as anonymity_allows
+from . import probes
+from .probes import DNSBL_ACCESS, DNSBL_ERROR, DNSBL_QUOTA, DNSBL_TIMEOUT
 
 MAX_ZONES = 12
 MAX_TIMEOUT = 30.0
@@ -178,75 +180,146 @@ def make_policy(settings=None, denylist=None, *, local_override=None, dnsbl_over
 
 
 def reverse_ip(address):
-    address = ipaddress.ip_address(address)
-    if address.version == 4:
-        return ".".join(reversed(str(address).split("."))) + "."
-    return "".join(reversed(address.exploded)) + "."
+    """DNSBL query prefix for one address.
 
-
-def _addresses(value):
-    if value is None:
-        return []
-    if isinstance(value, str):
-        return [value]
-    if isinstance(value, dict):
-        value = value.get("addresses", [])
-    if not isinstance(value, (list, tuple, set)):
-        return []
-    result = []
-    for item in value:
-        if isinstance(item, str):
-            result.append(item)
-        elif isinstance(item, (list, tuple)):
-            if item and isinstance(item[0], str):
-                result.append(item[0])
-            elif len(item) > 1 and isinstance(item[-1], str):
-                result.append(item[-1])
-            elif len(item) > 1 and isinstance(item[-1], (list, tuple)) and item[-1] and isinstance(item[-1][0], str):
-                result.append(item[-1][0])
-    return result
+    IPv4 is reversed octet by octet.  IPv6 is reversed nibble by nibble into
+    the 32 dotted labels ``ip6.arpa`` expects (defect 14): the previous code
+    reversed ``IPv6Address.exploded`` with the colons still inside it, which
+    produces ``0:0`` labels no zone can ever answer, so every IPv6 lookup came
+    back as a false "clean".  The single implementation lives in ``probes``.
+    """
+    return probes.reverse_ip(address)
 
 
 async def _lookup_dnsbl(query, timeout):
+    """System resolver.  A missing name is NXDOMAIN, not an error."""
     try:
         return await asyncio.wait_for(asyncio.to_thread(
             socket.getaddrinfo, query, None, type=socket.SOCK_STREAM), timeout)
     except socket.gaierror as exc:
         if exc.errno in (getattr(socket, 'EAI_NONAME', None), getattr(socket, 'EAI_NODATA', None)):
             return []
-        raise OSError('DNS_ERROR') from None
+        raise probes.DnsQueryError(_dnsbl_error_code(exc)) from None
     except (TimeoutError, asyncio.TimeoutError):
-        raise TimeoutError('DNS_TIMEOUT') from None
-    except OSError:
-        raise OSError('DNS_ERROR') from None
+        raise probes.DnsQueryError(DNSBL_TIMEOUT) from None
+    except OSError as exc:
+        raise probes.DnsQueryError(_dnsbl_error_code(exc)) from None
 
 
-async def check_dnsbl(address, zones, timeout, resolver=None):
-    results = []
-    address = ipaddress.ip_address(address)
+def _dnsbl_error_code(exc):
+    """Tell a quota/access refusal from a plain resolver failure (defect 14).
+
+    A resolver that answers "no such name" is NXDOMAIN and proves the address
+    is not listed.  A resolver that answers "too many queries", "refused" or
+    "not authorised" has told us nothing about the address, and the honest
+    result is ``unknown`` with a code that says which case it was.
+    """
+    message = str(exc).lower()
+    for needle, code in (('quota', DNSBL_QUOTA), ('rate limit', DNSBL_QUOTA), ('ratelimit', DNSBL_QUOTA),
+                         ('too many', DNSBL_QUOTA), ('refused', DNSBL_ACCESS), ('not authori', DNSBL_ACCESS),
+                         ('unauthori', DNSBL_ACCESS), ('denied', DNSBL_ACCESS), ('denied by', DNSBL_ACCESS),
+                         ('blocked', DNSBL_ACCESS), ('refused by', DNSBL_ACCESS), ('forbidden', DNSBL_ACCESS)):
+        if needle in message:
+            return code
+    if isinstance(exc, socket.gaierror):
+        err = getattr(exc, 'errno', None)
+        if err in (getattr(socket, 'EAI_AGAIN', None), getattr(socket, 'EAI_FAIL', None)):
+            return DNSBL_ERROR
+    return DNSBL_ERROR
+
+
+def _legacy_records(value):
+    """Pull address strings out of a ``getaddrinfo``-shaped answer."""
+    found = []
+    stack = list(value)
+    while stack:
+        item = stack.pop(0)
+        if isinstance(item, str):
+            found.append(item)
+        elif isinstance(item, (list, tuple)):
+            stack.extend(item)
+    return tuple(dict.fromkeys(found))
+
+
+def _legacy_answer(value):
+    """Adapt a legacy resolver seam to :class:`probes.DnsAnswer`.
+
+    The historical seam (``socket.getaddrinfo`` results) carries no rcode, so
+    an *empty* answer means "the resolver has no such name" — NXDOMAIN, which
+    is the zone's ``clear``.  A seam that speaks the explicit ``{'rcode': …}``
+    form is passed through unchanged, and there an empty ``NOERROR`` is the
+    unknown it really is.
+    """
+    if value is None:
+        return probes.DnsAnswer('NXDOMAIN', ())
+    if isinstance(value, (list, tuple, set)):
+        if not value:
+            return probes.DnsAnswer('NXDOMAIN', ())
+        return probes.DnsAnswer('NOERROR', _legacy_records(value))
+    return probes.DnsAnswer.coerce(value)
+
+
+def _zone_dict(outcome):
+    value = {"zone": outcome.zone, "status": outcome.status, "address": outcome.address}
+    if outcome.code:
+        value["error"] = outcome.code
+    if not outcome.queried:
+        value["queried"] = False
+    return value
+
+
+def _zone_contracts(zones):
+    """Normalize the policy's zone names into full zone contracts.
+
+    ``make_policy`` stores zone *names*; the answer contract (which 127/8 range
+    means "blocked", whether NXDOMAIN means "clear") is declared per zone in
+    :class:`probes.DnsblZone`.  Callers that know a zone's codes pass
+    :class:`probes.DnsblZone` objects straight through.
+    """
+    contracts = []
     for zone in zones:
-        query = reverse_ip(address) + zone
-        try:
-            if resolver is None:
-                value = await _lookup_dnsbl(query, timeout)
-            else:
-                value = resolver(query)
-                if inspect.isawaitable(value):
-                    value = await value
-            addresses = _addresses(value)
-            listed = any(item.startswith("127.") for item in addresses)
-            results.append({"zone": zone, "status": "listed" if listed else "clear",
-                            "address": addresses[0] if listed and addresses else None})
-        except TimeoutError:
-            results.append({"zone": zone, "status": "unknown", "error": "DNS_TIMEOUT"})
-        except (OSError, ValueError):
-            results.append({"zone": zone, "status": "unknown", "error": "DNS_ERROR"})
-        except Exception:
-            results.append({"zone": zone, "status": "unknown", "error": "DNS_ERROR"})
-    return results
+        contracts.append(zone if isinstance(zone, probes.DnsblZone) else probes.generic_zone(zone))
+    return tuple(contracts)
 
 
-async def screen_proxy(proxy, policy, denylist, resolver=None):
+async def check_dnsbl(address, zones, timeout, resolver=None, *, max_queries=None):
+    """Query every zone and report a distinct outcome per zone (defect 14).
+
+    Each zone answers one of ``listed`` / ``clear`` / ``unknown``, and every
+    ``unknown`` carries the code that explains it: ``DNSBL_ACCESS`` for a zone
+    that refused the query, ``DNSBL_QUOTA`` for an exhausted resolver quota,
+    ``DNSBL_ERROR`` for a broken answer, ``DNSBL_TIMEOUT`` for a resolver that
+    did not answer, ``BUDGET_EXHAUSTED`` for a zone we never asked.  Only a
+    zone that really answered can be ``listed`` or ``clear``; nothing is
+    silently "clean".
+    """
+    ipaddress.ip_address(str(address).strip())
+
+    async def resolve(query):
+        if resolver is None:
+            return _legacy_answer(await _lookup_dnsbl(query, timeout))
+        value = resolver(query)
+        if inspect.isawaitable(value):
+            value = await value
+        return _legacy_answer(value)
+
+    try:
+        report = await probes.check_dnsbl(address, _zone_contracts(zones), resolve=resolve,
+                                           max_queries=max_queries)
+    except ValueError:
+        return [{"zone": zone if isinstance(zone, str) else zone.name, "status": "unknown",
+                 "error": "INVALID_PROXY"} for zone in zones]
+    return [_zone_dict(item) for item in report.zones]
+
+
+async def screen_proxy(proxy, policy, denylist, resolver=None, *, max_queries=None):
+    """Local rules first, then the zones, then one honest rolled-up status.
+
+    ``clean`` is reachable only when *every* configured zone really answered
+    ``clear``: one zone that said "access denied" or "quota exhausted" leaves
+    the address ``unknown``, because the address was never actually looked up
+    (defect 14).  The roll-up code names the first reason.
+    """
     denylist = denylist or Denylist.empty()
     verdict = {
         # A clean verdict means an actual DNSBL check succeeded.  With DNSBL
@@ -274,15 +347,24 @@ async def screen_proxy(proxy, policy, denylist, resolver=None):
         return verdict
     try:
         address = ipaddress.ip_address(urlsplit(proxy).hostname)
-        verdict["dnsbl"] = await check_dnsbl(address, zones, float(policy.get("timeout", 2.5)), resolver=resolver)
+        verdict["dnsbl"] = await check_dnsbl(address, zones, float(policy.get("timeout", 2.5)),
+                                             resolver=resolver, max_queries=max_queries)
     except (TypeError, ValueError):
         verdict.update(status="unknown", error="INVALID_PROXY")
+        return verdict
+    if not verdict["dnsbl"]:
+        verdict.update(status="unknown", error="NO_DNSBL_ZONES")
         return verdict
     statuses = {item["status"] for item in verdict["dnsbl"]}
     if "listed" in statuses:
         verdict["status"] = "listed"
     elif "unknown" in statuses:
         verdict["status"] = "unknown"
+        # The first reason, so the row says why "clean" was not granted.
+        for item in verdict["dnsbl"]:
+            if item["status"] == "unknown":
+                verdict["error"] = item.get("error") or "DNSBL_ERROR"
+                break
     return verdict
 
 

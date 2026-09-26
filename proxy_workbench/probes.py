@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import inspect
 import ipaddress
 import json
 import math
@@ -29,7 +30,7 @@ import re
 import ssl
 import time
 from dataclasses import dataclass, replace
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import parse_qs, urljoin, urlsplit
 
 __all__ = [
     # errors
@@ -40,7 +41,8 @@ __all__ = [
     # modes
     'MODES', 'EVIDENCE', 'Mode', 'resolve_mode', 'evidence_for', 'is_working', 'evidence_at_least',
     # options and targets
-    'Limit', 'LIMITS', 'ProbeOptions', 'validate_options', 'TimeBudget', 'plan_attempts',
+    'Limit', 'LIMITS', 'ProbeOptions', 'validate_options', 'TimeBudget', 'plan_attempts', 'body_budget',
+    'PRESETS', 'PRESET_NAMES', 'PRESET_ALIASES', 'resolve_preset', 'presets_manifest',
     'SecretRef', 'TargetProfile', 'validate_target', 'MAX_TARGETS', 'SAFE_HEADERS',
     'DNS_MODES', 'build_ssl_context', 'SpeedTarget', 'validate_speed_target',
     # basic probes
@@ -52,7 +54,7 @@ __all__ = [
     'target_failure_signal', 'evaluate_response', 'check_json_assertions', 'plan_digest',
     # speed
     'SpeedLimits', 'SPEED_LIMITS', 'TransferTrace', 'SpeedMeasurement', 'measure_speed',
-    'run_speed_test',
+    'run_speed_test', 'comparable_speed', 'mixed_speed_connections',
     # anonymity
     'JudgeSpec', 'validate_judge_spec', 'AnonymityOutcome', 'classify_echo', 'require_anonymity',
     'validate_min_level', 'anonymity_allows', 'ANONYMITY_LEVELS', 'extract_addresses',
@@ -65,6 +67,13 @@ __all__ = [
     # capability matrix and the self-hosted reference probe (F20)
     'CAPABILITIES', 'capability_matrix', 'serve_reference_probe',
     'REFERENCE_PROBE_MAX_BYTES', 'reference_probe_targets', 'time_budget',
+    # bounded capabilities (F20)
+    'CAPABILITY_KINDS', 'CAPABILITY_LIMITS', 'CAPABILITY_DEFAULTS', 'CAPABILITY_STATES',
+    'CapabilitySpec', 'validate_capability', 'validate_capabilities', 'capabilities_manifest',
+    'CapabilityOutcome', 'WsTrace', 'HoldTrace', 'parse_media_manifest',
+    'summarize_websocket', 'summarize_duration',
+    'run_capability', 'run_capabilities', 'run_websocket', 'run_duration', 'run_media',
+    'TRANSPORT_MISSING', 'reference_probe_capabilities',
 ]
 
 
@@ -113,6 +122,20 @@ DNSBL_ACCESS = 'DNSBL_ACCESS'
 INSUFFICIENT_SAMPLE = 'INSUFFICIENT_SAMPLE'
 BUDGET_EXHAUSTED = 'BUDGET_EXHAUSTED'
 TARGET_UNAVAILABLE = 'TARGET_UNAVAILABLE'
+# F20 bounded capabilities: every one of these says what failed, so a service
+# that merely answers HTTP is never mistaken for one that holds a socket.
+WS_HANDSHAKE = 'WS_HANDSHAKE'
+WS_NOT_UPGRADED = 'WS_NOT_UPGRADED'
+WS_PONG_MISSING = 'WS_PONG_MISSING'
+WS_CLOSED = 'WS_CLOSED'
+CONNECTION_SHORT = 'CONNECTION_SHORT'
+CONNECTION_CLOSED = 'CONNECTION_CLOSED'
+MEDIA_MANIFEST_FAILED = 'MEDIA_MANIFEST_FAILED'
+MEDIA_NO_MANIFEST = 'MEDIA_NO_MANIFEST'
+MEDIA_SEGMENT_FAILED = 'MEDIA_SEGMENT_FAILED'
+MEDIA_SEGMENT_SHORT = 'MEDIA_SEGMENT_SHORT'
+
+TRANSPORT_MISSING = 'TRANSPORT_MISSING'
 
 MEASUREMENT_CODES = frozenset({
     UNREACHABLE, CONNECT_TIMEOUT, HANDSHAKE_TIMEOUT, HANDSHAKE_PROTOCOL, READ_TIMEOUT,
@@ -121,7 +144,14 @@ MEASUREMENT_CODES = frozenset({
     REDIRECT_TOO_MANY, JUDGE_INVALID, JUDGE_CHALLENGE, JUDGE_UNVERIFIED, NO_DNSBL_ZONES,
     DNSBL_TIMEOUT, DNSBL_ERROR, DNSBL_QUOTA, DNSBL_ACCESS, INSUFFICIENT_SAMPLE,
     BUDGET_EXHAUSTED, TARGET_UNAVAILABLE,
+    WS_HANDSHAKE, WS_NOT_UPGRADED, WS_PONG_MISSING, WS_CLOSED,
+    CONNECTION_SHORT, CONNECTION_CLOSED,
+    MEDIA_MANIFEST_FAILED, MEDIA_NO_MANIFEST, MEDIA_SEGMENT_FAILED, MEDIA_SEGMENT_SHORT,
+    TRANSPORT_MISSING,
 })
+
+# Stages a capability can fail at, for the F10 funnel.
+CAPABILITY_STAGES = ('cap_ws', 'cap_hold', 'cap_manifest', 'cap_segment')
 
 # Stages are per F10 ("разделять сеть, DNS, TCP, handshake, TLS, ответ цели…").
 STAGES = ('tcp', 'handshake', 'target', 'assert', 'judge', 'dnsbl', 'speed')
@@ -202,6 +232,10 @@ class Mode:
     monitoring: bool = False
     base: str | None = None
     description: str = ''
+    # What the user actually picked.  ``monitor`` and ``recheck`` resolve to
+    # their base mode, so without this a row could not say which job mode ran
+    # it (F01: мониторинг — режим задания, а не новый вердикт).
+    requested: str = ''
 
     @property
     def collects_only(self) -> bool:
@@ -214,7 +248,8 @@ class Mode:
     def to_public(self) -> dict:
         return {'name': self.name, 'evidence': self.evidence, 'network': self.network,
                 'needs_targets': self.needs_targets, 'checks_transfer': self.checks_transfer,
-                'monitoring': self.monitoring, 'base': self.base, 'description': self.description}
+                'monitoring': self.monitoring, 'base': self.base,
+                'requested': self.requested or self.name, 'description': self.description}
 
 
 _MODE_SPECS = {
@@ -253,7 +288,8 @@ def resolve_mode(name, *, base=None, monitoring=False) -> Mode:
             raise ProbeError(E_VALIDATION_FIELD,
                              'Повторная проверка измеряет, а не собирает: нужен базовый режим из '
                              f'{", ".join(_MEASURING_MODES)}.')
-        return Mode(name=RECHECK, base=base_key, monitoring=False, **_MODE_SPECS[base_key])
+        return Mode(name=RECHECK, base=base_key, monitoring=False, requested=RECHECK,
+                    **_MODE_SPECS[base_key])
     if key == MONITOR:
         if not monitoring:
             # ``monitor`` without a base is the pool controller itself: it
@@ -265,7 +301,7 @@ def resolve_mode(name, *, base=None, monitoring=False) -> Mode:
                              'Мониторинг — режим задания или пула: укажите базовый режим из '
                              f'{", ".join(_MEASURING_MODES)}, иначе нечем измерять.')
         spec = _MODE_SPECS[base_key]
-        return Mode(name=base_key, base=base_key, monitoring=True, **spec)
+        return Mode(name=base_key, base=base_key, monitoring=True, requested=MONITOR, **spec)
     if base not in (None, '', key):
         raise ProbeError(E_VALIDATION_FIELD, f'Режим {key} не принимает базовый режим.')
     if monitoring:
@@ -277,6 +313,20 @@ def evidence_at_least(evidence, minimum) -> bool:
     return _EVIDENCE_RANK.get(evidence, -1) >= _EVIDENCE_RANK.get(minimum, 0)
 
 
+def _effective_mode(outcome) -> str | None:
+    """The mode whose evidence ladder applies to a finished outcome.
+
+    ``recheck`` and ``monitor`` are wrappers: the evidence comes from the base
+    mode they re-run.  Reading them as their own name would find no spec and
+    report ``none`` even for a completed transfer.
+    """
+    name = getattr(outcome, 'mode', None)
+    if name in (RECHECK, MONITOR):
+        base = getattr(outcome, 'base', None) or getattr(outcome, 'mode_base', None)
+        return base if base in _MEASURING_MODES else None
+    return name
+
+
 def evidence_for(outcome) -> str:
     """Evidence a finished probe actually earned, never more than its mode allows.
 
@@ -286,7 +336,7 @@ def evidence_for(outcome) -> str:
     """
     if not getattr(outcome, 'ok', False):
         return 'none'
-    spec = _MODE_SPECS.get(getattr(outcome, 'mode', None))
+    spec = _MODE_SPECS.get(_effective_mode(outcome))
     if spec is None:
         return 'none'
     if not spec['checks_transfer']:
@@ -353,6 +403,72 @@ DEFAULT_OPTIONS = {
     'max_redirects': 0,
 }
 
+# F07 presets: "быстро / баланс / тщательно / экономно".  A preset is a full
+# set of values, not a patch: switching from "тщательно" to "быстро" cannot
+# leave a previous scenario's backoff or redirect limit behind (defect 24).
+# Explicit keys always win over the preset and are reported in ``overrides``.
+PRESETS = {
+    'fast': {
+        'connect_timeout_s': 2.0, 'handshake_timeout_s': 3.0, 'read_timeout_s': 4.0,
+        'whole_probe_timeout_s': 12.0, 'attempts': 1, 'backoff_s': 0.0,
+        'backoff_factor': 1.0, 'backoff_max_s': 0.0, 'max_body_bytes': 65_536,
+        'max_redirects': 0,
+    },
+    'balanced': dict(DEFAULT_OPTIONS),
+    'thorough': {
+        'connect_timeout_s': 6.0, 'handshake_timeout_s': 10.0, 'read_timeout_s': 20.0,
+        'whole_probe_timeout_s': 90.0, 'attempts': 3, 'backoff_s': 1.0,
+        'backoff_factor': 2.0, 'backoff_max_s': 10.0, 'max_body_bytes': 1_048_576,
+        'max_redirects': 2,
+    },
+    # "экономно": the least traffic and time a pass/fail answer needs, which
+    # is what matters when the target is somebody else's server.
+    'frugal': {
+        'connect_timeout_s': 3.0, 'handshake_timeout_s': 4.0, 'read_timeout_s': 6.0,
+        'whole_probe_timeout_s': 20.0, 'attempts': 1, 'backoff_s': 0.0,
+        'backoff_factor': 1.0, 'backoff_max_s': 0.0, 'max_body_bytes': 32_768,
+        'max_redirects': 0,
+    },
+}
+
+PRESET_ALIASES = {
+    'fast': 'fast', 'быстро': 'fast', 'quick': 'fast', 'быстрый': 'fast',
+    'balanced': 'balanced', 'баланс': 'balanced', 'normal': 'balanced', 'обычный': 'balanced',
+    'thorough': 'thorough', 'тщательно': 'thorough', 'detailed': 'thorough', 'полный': 'thorough',
+    'frugal': 'frugal', 'экономно': 'frugal', 'economy': 'frugal', 'экономный': 'frugal',
+    'light': 'frugal',
+}
+
+PRESET_NAMES = ('fast', 'balanced', 'thorough', 'frugal')
+
+
+def resolve_preset(name):
+    """Normalize a preset name; an unknown one is an error, never a silent default."""
+    if not isinstance(name, str) or not name.strip():
+        raise ProbeError(E_VALIDATION_FIELD,
+                         f'Пресет проверки: ожидается одно из {", ".join(PRESET_NAMES)}.')
+    key = PRESET_ALIASES.get(name.strip().lower().replace(' ', '_'))
+    if key is None:
+        raise ProbeError(E_VALIDATION_FIELD,
+                         f'Неизвестный пресет проверки: {name}. Доступно: {", ".join(PRESET_NAMES)}.')
+    return key
+
+
+def presets_manifest():
+    """The four presets with their units and limits, for every client."""
+    limits = {name: LIMITS[name].describe() for name in DEFAULT_OPTIONS}
+    items = []
+    for name in PRESET_NAMES:
+        values = PRESETS[name]
+        budget = TimeBudget(values['connect_timeout_s'], values['handshake_timeout_s'],
+                            values['read_timeout_s'], values['whole_probe_timeout_s'])
+        items.append({
+            'name': name, 'values': dict(values), 'limits': limits,
+            'worst_case_s': round(budget.worst_case_s, 3), 'fits': budget.worst_case_s <= values['whole_probe_timeout_s'],
+            'attempts': values['attempts'],
+        })
+    return {'presets': items, 'fields': limits, 'aliases': dict(sorted(PRESET_ALIASES.items()))}
+
 
 def _number(value, name, limit, *, integer=False, default=None, required=False):
     if value is None:
@@ -402,12 +518,18 @@ class ProbeOptions:
     backoff_max_s: float = DEFAULT_OPTIONS['backoff_max_s']
     max_body_bytes: int = DEFAULT_OPTIONS['max_body_bytes']
     max_redirects: int = DEFAULT_OPTIONS['max_redirects']
+    preset: str = 'balanced'
 
     def to_public(self) -> dict:
+        """Only the values that are measured, so a preset name never mints identity."""
         return {name: getattr(self, name) for name in DEFAULT_OPTIONS}
 
     def describe(self) -> dict:
         return {name: LIMITS[name].describe() for name in DEFAULT_OPTIONS}
+
+    def visible_overrides(self, supplied=()) -> dict:
+        """What the user set on top of the preset, so nothing is applied invisibly."""
+        return {name: getattr(self, name) for name in DEFAULT_OPTIONS if name in set(supplied)}
 
 
 def validate_options(data=None) -> ProbeOptions:
@@ -416,30 +538,14 @@ def validate_options(data=None) -> ProbeOptions:
         data = {}
     if not isinstance(data, dict):
         raise ProbeError(E_VALIDATION_SCHEMA, 'Параметры проверки: ожидается объект.')
-    _reject_unknown(data, DEFAULT_OPTIONS, 'Параметры проверки')
+    _reject_unknown(data, DEFAULT_OPTIONS.keys() | {'preset'}, 'Параметры проверки')
+    preset = resolve_preset(data['preset']) if data.get('preset') is not None else 'balanced'
+    base = dict(PRESETS[preset])
     values = {}
-    values['connect_timeout_s'] = _number(data.get('connect_timeout_s'), 'connect_timeout_s',
-                                          LIMITS['connect_timeout_s'], default=DEFAULT_OPTIONS['connect_timeout_s'])
-    values['handshake_timeout_s'] = _number(data.get('handshake_timeout_s'), 'handshake_timeout_s',
-                                            LIMITS['handshake_timeout_s'], default=DEFAULT_OPTIONS['handshake_timeout_s'])
-    values['read_timeout_s'] = _number(data.get('read_timeout_s'), 'read_timeout_s', LIMITS['read_timeout_s'],
-                                       default=DEFAULT_OPTIONS['read_timeout_s'])
-    values['whole_probe_timeout_s'] = _number(data.get('whole_probe_timeout_s'), 'whole_probe_timeout_s',
-                                              LIMITS['whole_probe_timeout_s'],
-                                              default=DEFAULT_OPTIONS['whole_probe_timeout_s'])
-    values['attempts'] = _number(data.get('attempts'), 'attempts', LIMITS['attempts'], integer=True,
-                                 default=DEFAULT_OPTIONS['attempts'])
-    values['backoff_s'] = _number(data.get('backoff_s'), 'backoff_s', LIMITS['backoff_s'],
-                                  default=DEFAULT_OPTIONS['backoff_s'])
-    values['backoff_factor'] = _number(data.get('backoff_factor'), 'backoff_factor', LIMITS['backoff_factor'],
-                                       default=DEFAULT_OPTIONS['backoff_factor'])
-    values['backoff_max_s'] = _number(data.get('backoff_max_s'), 'backoff_max_s', LIMITS['backoff_max_s'],
-                                      default=DEFAULT_OPTIONS['backoff_max_s'])
-    values['max_body_bytes'] = _number(data.get('max_body_bytes'), 'max_body_bytes', LIMITS['max_body_bytes'],
-                                       integer=True, default=DEFAULT_OPTIONS['max_body_bytes'])
-    values['max_redirects'] = _number(data.get('max_redirects'), 'max_redirects', LIMITS['max_redirects'],
-                                      integer=True, default=DEFAULT_OPTIONS['max_redirects'])
-    options = ProbeOptions(**values)
+    for name, default in ((name, base[name]) for name in DEFAULT_OPTIONS):
+        values[name] = _number(data.get(name), name, LIMITS[name],
+                                integer=LIMITS[name].kind == 'int', default=default)
+    options = ProbeOptions(preset=preset, **values)
     time_budget(options)
     return options
 
@@ -483,6 +589,21 @@ def plan_attempts(options: ProbeOptions) -> tuple[float, ...]:
         waits.append(round(min(delay, float(options.backoff_max_s)), 3))
         delay *= float(options.backoff_factor)
     return tuple(waits)
+
+
+def body_budget(target: TargetProfile | None, options: ProbeOptions) -> int:
+    """The body limit that actually applies to one target.
+
+    ``max_body_bytes`` is a budget, not a suggestion: the options value is the
+    ceiling for every request and a target may only lower it.  Before this
+    function existed the options value was validated, shown in the plan and
+    then thrown away — the request always used the target's own number, so
+    setting the option changed nothing (F07: "непредусмотренные параметры не
+    игнорируются молча").
+    """
+    if target is None:
+        return int(options.max_body_bytes)
+    return min(int(target.max_body_bytes), int(options.max_body_bytes))
 
 
 # --------------------------------------------------------------------------
@@ -633,7 +754,11 @@ def validate_target(data, *, own_profile=False) -> TargetProfile:
         raise ProbeError(E_VALIDATION_SCHEMA, 'Цель проверки: ожидается объект.')
     allowed = ('id', 'name', 'url', 'method', 'statuses', 'headers', 'contains', 'not_contains', 'sha256',
                'json_assertions', 'content_type', 'min_body_bytes', 'max_body_bytes', 'max_redirects',
-               'dns_mode', 'scope', 'own', 'body', 'auth', 'kind', 'definition_version', 'verified_at')
+               'dns_mode', 'scope', 'own', 'body', 'auth', 'kind', 'definition_version', 'verified_at',
+               # Derived read-only view fields, so a stored or exported target
+               # can be fed back in.  A value that contradicts the real profile
+               # is refused rather than quietly dropped (F07).
+               'body_bytes', 'auth_configured')
     _reject_unknown(data, allowed, 'Цель проверки')
     url = _validate_url(data.get('url'), 'Цель: url')
     method = _choice(str(data.get('method', 'GET')).upper(), 'Цель: method', METHODS)
@@ -690,6 +815,20 @@ def validate_target(data, *, own_profile=False) -> TargetProfile:
     if method not in IDEMPOTENT_METHODS and not own:
         raise ProbeError(E_VALIDATION_TARGET_UNSAFE,
                          f'Цель: метод {method} изменяет состояние и доступен только в собственном профиле цели.')
+    if 'body_bytes' in data and type(data['body_bytes']) is not int:
+        raise ProbeError(E_VALIDATION_FIELD, 'Цель: body_bytes должен быть целым числом.')
+    # ``body`` itself is redacted from :meth:`TargetProfile.to_public`, so a
+    # public view carries ``body_bytes`` without the bytes.  The consistency
+    # check therefore only applies when the body is actually present.
+    if 'body' in data and 'body_bytes' in data and data['body_bytes'] != len(body or b''):
+        raise ProbeError(E_VALIDATION_FIELD,
+                         f'Цель: body_bytes={data["body_bytes"]} не совпадает с телом запроса '
+                         f'({len(body or b"")} байт). Поле только для чтения.')
+    if 'auth_configured' in data and type(data['auth_configured']) is not bool:
+        raise ProbeError(E_VALIDATION_FIELD, 'Цель: auth_configured должен быть логическим.')
+    if 'auth_configured' in data and data['auth_configured'] != (auth is not None):
+        raise ProbeError(E_VALIDATION_FIELD,
+                         'Цель: auth_configured противоречит auth. Поле только для чтения.')
     statuses = data.get('statuses', [200])
     if not isinstance(statuses, (list, tuple)) or not statuses:
         raise ProbeError(E_VALIDATION_FIELD, 'Цель: statuses: непустой список HTTP-кодов.')
@@ -882,6 +1021,13 @@ class ProbeRequest:
     handshake_timeout_s: float = 6.0
     stage: str = 'target'
     hop: int = 0
+    # F20: a reused connection makes the same URL cheaper, so the kind of
+    # connection is part of what was measured and travels with the request.
+    reuse: bool = False
+
+    @property
+    def connection(self) -> str:
+        return 'reused' if self.reuse else 'cold'
 
     def header_map(self) -> dict:
         return dict(self.headers)
@@ -929,12 +1075,15 @@ class TargetOutcome:
     connect_ms: float | None = None
     handshake_ms: float | None = None
     detail: str | None = None
+    body_limit: int | None = None
+    connection: str = 'cold'
 
     def to_public(self) -> dict:
         return {'target_id': self.target_id, 'ok': self.ok, 'code': self.code, 'stage': self.stage,
                 'status': self.status, 'bytes': self.bytes, 'attempts': self.attempts, 'url': self.url,
                 'ttfb_ms': self.ttfb_ms, 'transfer_ms': self.transfer_ms, 'total_ms': self.total_ms,
-                'connect_ms': self.connect_ms, 'handshake_ms': self.handshake_ms, 'detail': self.detail}
+                'connect_ms': self.connect_ms, 'handshake_ms': self.handshake_ms, 'detail': self.detail,
+                'body_limit': self.body_limit, 'connection': self.connection}
 
 
 @dataclass(frozen=True)
@@ -949,6 +1098,8 @@ class PlanOutcome:
     code: str | None = None
     stage: str | None = None
     monitoring: bool = False
+    requested_mode: str = ''
+    base: str | None = None
     started_at: float = 0.0
     finished_at: float = 0.0
     whole_probe_timeout_s: float = 0.0
@@ -964,6 +1115,7 @@ class PlanOutcome:
     def to_public(self) -> dict:
         return {'endpoint': self.endpoint, 'mode': self.mode, 'evidence': self.evidence, 'ok': self.ok,
                 'code': self.code, 'stage': self.stage, 'monitoring': self.monitoring,
+                'requested_mode': self.requested_mode or self.mode, 'base': self.base or self.mode,
                 'successes': self.successes, 'bytes': self.bytes,
                 'duration_ms': round((self.finished_at - self.started_at) * 1000, 2),
                 'whole_probe_timeout_s': self.whole_probe_timeout_s,
@@ -1060,12 +1212,18 @@ def check_json_assertions(body, assertions):
     return True, None
 
 
-def evaluate_response(target: TargetProfile, response: ProbeResponse) -> TargetOutcome:
-    """Assert one answer.  The order is fixed so a failure is reproducible."""
+def evaluate_response(target: TargetProfile, response: ProbeResponse, *, body_limit=None) -> TargetOutcome:
+    """Assert one answer.  The order is fixed so a failure is reproducible.
+
+    ``body_limit`` is the effective budget (:func:`body_budget`); without it a
+    direct call uses the target's own limit.
+    """
+    limit = target.max_body_bytes if body_limit is None else int(body_limit)
     common = dict(target_id=target.id, status=response.status, url=response.url or target.url,
                   bytes=len(response.body or b''), connect_ms=response.connect_ms,
                   handshake_ms=response.handshake_ms, ttfb_ms=response.ttfb_ms,
-                  transfer_ms=response.transfer_ms, total_ms=response.total_ms)
+                  transfer_ms=response.transfer_ms, total_ms=response.total_ms,
+                  body_limit=limit)
     if response.code:
         return TargetOutcome(ok=False, code=response.code, stage=response.stage or 'target', **common)
     if response.status not in target.statuses:
@@ -1074,9 +1232,9 @@ def evaluate_response(target: TargetProfile, response: ProbeResponse) -> TargetO
     if target.content_type and not _header_matches(response.header('content-type'), target.content_type):
         return TargetOutcome(ok=False, code=CONTENT_TYPE, stage='assert',
                              detail=f"ожидался {target.content_type}, получен {response.header('content-type')!r}", **common)
-    if len(body) > target.max_body_bytes:
+    if len(body) > limit:
         return TargetOutcome(ok=False, code=BODY_TOO_LARGE, stage='assert',
-                             detail=f"тело {len(body)} байт при лимите {target.max_body_bytes}", **common)
+                             detail=f"тело {len(body)} байт при лимите {limit}", **common)
     if len(body) < target.min_body_bytes:
         return TargetOutcome(ok=False, code=BODY_TOO_SMALL, stage='assert',
                              detail=f"тело {len(body)} байт при минимуме {target.min_body_bytes}", **common)
@@ -1104,9 +1262,10 @@ async def run_probe(target: TargetProfile, options: ProbeOptions, transport, *, 
     """
     clock = clock or SystemClock()
     time_budget(options)
+    limit = body_budget(target, options)
     request = ProbeRequest(
         url=target.url, method=target.method, headers=target.headers, body=target.body,
-        max_bytes=target.max_body_bytes, dns_mode=target.dns_mode, read_timeout_s=options.read_timeout_s,
+        max_bytes=limit, dns_mode=target.dns_mode, read_timeout_s=options.read_timeout_s,
         connect_timeout_s=options.connect_timeout_s, handshake_timeout_s=options.handshake_timeout_s)
     started = clock.monotonic()
     delays = plan_attempts(options)
@@ -1122,16 +1281,16 @@ async def run_probe(target: TargetProfile, options: ProbeOptions, transport, *, 
             remaining -= delay
         try:
             async with asyncio.timeout(max(remaining, 0.001)):
-                outcome = await _attempt(target, request, options, transport, attempt)
+                outcome = await _attempt(target, request, options, transport, attempt, limit)
         except (TimeoutError, asyncio.TimeoutError):
             return TargetOutcome(target_id=target.id, ok=False, code=WHOLE_PROBE_TIMEOUT, stage='target',
-                                 attempts=attempt, url=target.url,
+                                 attempts=attempt, url=target.url, body_limit=limit,
                                  detail=f"весь срок {options.whole_probe_timeout_s:g} с исчерпан")
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # a broken proxy raises more than httpx errors
             outcome = TargetOutcome(target_id=target.id, ok=False, code=type(exc).__name__, stage='target',
-                                    attempts=attempt, url=target.url,
+                                    attempts=attempt, url=target.url, body_limit=limit,
                                     detail=f'транспорт бросил {type(exc).__name__}')
         if outcome.ok or outcome.code not in RETRYABLE_CODES:
             break
@@ -1190,7 +1349,7 @@ async def run_stage(stage, address, options: ProbeOptions, transport, *, clock=N
     return replace(outcome, attempts=attempt)
 
 
-async def _attempt(target, request, options, transport, attempt):
+async def _attempt(target, request, options, transport, attempt, body_limit=None):
     current = request
     seen = [current.url]
     limit = options.max_redirects if target.max_redirects is None else target.max_redirects
@@ -1200,17 +1359,20 @@ async def _attempt(target, request, options, transport, attempt):
         if response.code:
             return TargetOutcome(target_id=target.id, ok=False, code=response.code,
                                  stage=response.stage or 'target', status=response.status, attempts=attempt,
-                                 url=current.url, bytes=len(response.body or b''))
+                                 url=current.url, bytes=len(response.body or b''), body_limit=body_limit,
+                                 connection=current.connection)
         if response.status in _REDIRECT_STATUSES and hop < limit:
             location = response.header('location')
             if not location:
                 return TargetOutcome(target_id=target.id, ok=False, code=CONTENT_MISMATCH, stage='assert',
                                      status=response.status, attempts=attempt, url=current.url,
+                                     body_limit=body_limit, connection=current.connection,
                                      detail=f'редирект {response.status} без заголовка Location')
             nxt = urljoin(current.url, location.strip())
             if nxt in seen:
                 return TargetOutcome(target_id=target.id, ok=False, code=REDIRECT_LOOP, stage='target',
-                                     status=response.status, attempts=attempt, url=nxt, detail='цикл редиректов')
+                                     status=response.status, attempts=attempt, url=nxt, body_limit=body_limit,
+                                     connection=current.connection, detail='цикл редиректов')
             seen.append(nxt)
             current = replace(current, url=nxt)
             continue
@@ -1218,8 +1380,9 @@ async def _attempt(target, request, options, transport, attempt):
             detail = ('редиректы для этой цели не разрешены' if not limit
                       else f'цепочка длиннее {limit} переходов')
             return TargetOutcome(target_id=target.id, ok=False, code=REDIRECT_TOO_MANY, stage='target',
-                                 status=response.status, attempts=attempt, url=current.url, detail=detail)
-        return replace(evaluate_response(target, response), attempts=attempt)
+                                 status=response.status, attempts=attempt, url=current.url, body_limit=body_limit,
+                                 connection=current.connection, detail=detail)
+        return replace(evaluate_response(target, response, body_limit=body_limit), attempts=attempt)
     raise AssertionError('unreachable')
 
 
@@ -1245,6 +1408,7 @@ class ProbePlan:
     min_anonymity: str = 'any'
     zones: tuple[DnsblZone, ...] = ()
     speed: SpeedTarget | None = None
+    capabilities: tuple[CapabilitySpec, ...] = ()
 
     def identity(self) -> dict:
         """What is actually measured, without the derived mode wrappers.
@@ -1263,17 +1427,23 @@ class ProbePlan:
             'min_anonymity': self.min_anonymity,
             'dnsbl_zones': [zone.name for zone in self.zones],
             'speed': self.speed.to_public() if self.speed else None,
+            'capabilities': [item.to_public() for item in self.capabilities],
         }
 
     def to_public(self) -> dict:
         return {
             'mode': self.mode.to_public(),
+            # The preset is what the user picked, shown next to the values it
+            # produced; it is deliberately not part of ``identity()``.
+            'preset': self.options.preset,
             'options': self.options.to_public(),
+            'option_limits': self.options.describe(),
             'targets': [item.to_public() for item in self.targets],
             'judge': self.judge.to_public() if self.judge else None,
             'min_anonymity': self.min_anonymity,
             'dnsbl_zones': [zone.name for zone in self.zones],
             'speed': self.speed.to_public() if self.speed else None,
+            'capabilities': [item.to_public() for item in self.capabilities],
         }
 
 
@@ -1293,7 +1463,8 @@ def build_plan(settings) -> ProbePlan:
     if not isinstance(settings, dict):
         raise ProbeError(E_VALIDATION_SCHEMA, 'Настройки проверки: ожидается объект.')
     _reject_unknown(settings, ('mode', 'base_mode', 'monitor', 'options', 'targets', 'anonymity',
-                               'min_anonymity', 'dnsbl', 'speed', 'services'), 'Настройки проверки')
+                               'min_anonymity', 'dnsbl', 'speed', 'services', 'capabilities'),
+                    'Настройки проверки')
     mode = resolve_mode(settings.get('mode'), base=settings.get('base_mode'),
                         monitoring=bool(settings.get('monitor', False)))
     options = validate_options(settings.get('options'))
@@ -1329,8 +1500,9 @@ def build_plan(settings) -> ProbePlan:
     require_anonymity(min_anonymity, judge)
     zones = validate_dnsbl_zones(settings.get('dnsbl'))
     speed = validate_speed_target(settings.get('speed'))
+    capabilities = validate_capabilities(settings.get('capabilities'))
     return ProbePlan(mode=mode, options=options, targets=targets, judge=judge,
-                     min_anonymity=min_anonymity, zones=zones, speed=speed)
+                     min_anonymity=min_anonymity, zones=zones, speed=speed, capabilities=capabilities)
 
 
 async def run_plan(plan: ProbePlan, transport, *, endpoint='', fail_fast=True, clock=None) -> PlanOutcome:
@@ -1357,8 +1529,13 @@ async def run_plan(plan: ProbePlan, transport, *, endpoint='', fail_fast=True, c
     failed = [item for item in outcomes if not item.ok]
     code = None if ok else (failed[0].code if failed else None)
     stage = None if ok else (failed[0].stage if failed else None)
-    outcome = PlanOutcome(endpoint=endpoint, mode=plan.mode.name, evidence='none', ok=ok,
+    # ``mode`` says what the user picked, ``base`` says which ladder produced
+    # the evidence.  A ``recheck`` therefore never files a row it cannot back
+    # up, and ``monitor`` stays a job mode (F01).
+    outcome = PlanOutcome(endpoint=endpoint, mode=plan.mode.name, base=plan.mode.base or plan.mode.name,
+                          evidence='none', ok=ok,
                           targets=tuple(outcomes), code=code, stage=stage, monitoring=plan.mode.monitoring,
+                          requested_mode=plan.mode.requested or plan.mode.name,
                           started_at=started_at, finished_at=started_at + (finished - started),
                           whole_probe_timeout_s=plan.options.whole_probe_timeout_s)
     return replace(outcome, evidence=evidence_for(outcome))
@@ -1477,7 +1654,10 @@ class TransferTrace:
 
     The window is measured from the first byte to the last byte of the body, so
     the old "start counting after the first chunk" bug cannot produce a
-    plausible-looking number out of a single chunk.
+    plausible-looking number out of a single chunk.  ``connection`` says whether
+    the bytes travelled over a connection that was opened for this transfer or
+    over a reused one: a reused connection has no connect or handshake in its
+    timings, so the two kinds are never averaged together (F20).
     """
 
     url: str = ''
@@ -1489,6 +1669,9 @@ class TransferTrace:
     code: str | None = None
     status: int | None = None
     detail: str | None = None
+    connection: str = 'cold'
+    connect_ms: float | None = None
+    handshake_ms: float | None = None
 
     def begin(self, at):
         self.started_at = at
@@ -1521,7 +1704,9 @@ class TransferTrace:
 
     def to_public(self) -> dict:
         return {'url': self.url, 'bytes': self.bytes, 'chunks': self.chunks, 'status': self.status,
-                'code': self.code, 'complete': self.complete, 'detail': self.detail}
+                'code': self.code, 'complete': self.complete, 'detail': self.detail,
+                'connection': self.connection, 'connect_ms': self.connect_ms,
+                'handshake_ms': self.handshake_ms}
 
 
 @dataclass(frozen=True)
@@ -1537,6 +1722,9 @@ class SpeedMeasurement:
     total_ms: float | None = None
     code: str | None = None
     detail: str | None = None
+    connection: str = 'cold'
+    connect_ms: float | None = None
+    handshake_ms: float | None = None
 
     @property
     def measured(self) -> bool:
@@ -1545,7 +1733,8 @@ class SpeedMeasurement:
     def to_public(self) -> dict:
         return {'state': self.state, 'mbps': self.mbps, 'bytes': self.bytes, 'chunks': self.chunks,
                 'ttfb_ms': self.ttfb_ms, 'transfer_ms': self.transfer_ms, 'total_ms': self.total_ms,
-                'code': self.code, 'detail': self.detail}
+                'code': self.code, 'detail': self.detail, 'connection': self.connection,
+                'connect_ms': self.connect_ms, 'handshake_ms': self.handshake_ms}
 
 
 def measure_speed(trace: TransferTrace, limits: SpeedLimits = SPEED_LIMITS) -> SpeedMeasurement:
@@ -1553,23 +1742,26 @@ def measure_speed(trace: TransferTrace, limits: SpeedLimits = SPEED_LIMITS) -> S
 
     A failed or unfinished transfer is ``error``/``insufficient``; a finished
     but too small, too short or single-chunk transfer is ``insufficient``.  A
-    number appears only when all minimums hold (defect 15, R10).
+    number appears only when all minimums hold (defect 15, R10).  The window
+    is first byte to last byte, so the first chunk's arrival time never leaks
+    into the divisor.
     """
+    base = dict(bytes=trace.bytes, chunks=trace.chunks, connection=trace.connection,
+                connect_ms=trace.connect_ms, handshake_ms=trace.handshake_ms)
     if trace.code:
-        return SpeedMeasurement(state='error', bytes=trace.bytes, chunks=trace.chunks, code=trace.code,
-                                detail=trace.detail or f'замер прерван: {trace.code}')
+        return SpeedMeasurement(state='error', code=trace.code,
+                                detail=trace.detail or f'замер прерван: {trace.code}', **base)
     if not trace.complete:
         missing = 'замер не завершён' if trace.finished_at is None else 'нет отметки первого байта'
-        return SpeedMeasurement(state='insufficient', bytes=trace.bytes, chunks=trace.chunks,
-                                code=INSUFFICIENT_SAMPLE, detail=f'{missing}: {trace.bytes} байт, {trace.chunks} чанков')
+        return SpeedMeasurement(state='insufficient', code=INSUFFICIENT_SAMPLE,
+                                detail=f'{missing}: {trace.bytes} байт, {trace.chunks} чанков', **base)
     ttfb_ms = round((trace.first_byte_at - trace.started_at) * 1000, 2)
     transfer_s = trace.finished_at - trace.first_byte_at
     total_ms = round((trace.finished_at - trace.started_at) * 1000, 2)
     transfer_ms = round(transfer_s * 1000, 2)
     def insufficient(reason):
-        return SpeedMeasurement(state='insufficient', bytes=trace.bytes, chunks=trace.chunks,
-                                ttfb_ms=ttfb_ms, transfer_ms=transfer_ms, total_ms=total_ms,
-                                code=INSUFFICIENT_SAMPLE, detail=reason)
+        return SpeedMeasurement(state='insufficient', ttfb_ms=ttfb_ms, transfer_ms=transfer_ms,
+                                total_ms=total_ms, code=INSUFFICIENT_SAMPLE, detail=reason, **base)
     if trace.chunks < max(1, limits.min_chunks):
         return insufficient(f'одного чанка недостаточно: нужно минимум {limits.min_chunks} (окно {transfer_s:.3f} с)')
     if trace.bytes < limits.min_bytes:
@@ -1579,32 +1771,77 @@ def measure_speed(trace: TransferTrace, limits: SpeedLimits = SPEED_LIMITS) -> S
     if trace.bytes > limits.max_bytes:
         return insufficient(f'превышен лимит замера: {trace.bytes} байт при максимуме {limits.max_bytes}')
     mbps = round(trace.bytes * 8 / transfer_s / 1e6, 2)
-    return SpeedMeasurement(state='ok', mbps=mbps, bytes=trace.bytes, chunks=trace.chunks, ttfb_ms=ttfb_ms,
-                            transfer_ms=transfer_ms, total_ms=total_ms)
+    return SpeedMeasurement(state='ok', mbps=mbps, ttfb_ms=ttfb_ms,
+                            transfer_ms=transfer_ms, total_ms=total_ms, **base)
 
 
-async def run_speed_test(target: SpeedTarget, options: ProbeOptions, transport, *, limits=SPEED_LIMITS) -> SpeedMeasurement:
+def comparable_speed(measurements, connection='cold'):
+    """Only the measurements made on one kind of connection.
+
+    F20 forbids mixing them: a reused connection has no connect or handshake in
+    its timings, so averaging it with a cold one would invent a number that no
+    connection actually produced.
+    """
+    return tuple(item for item in measurements
+                 if isinstance(item, SpeedMeasurement) and item.connection == connection)
+
+
+def mixed_speed_connections(measurements) -> bool:
+    """True when a set of measurements cannot be compared with one another."""
+    kinds = {getattr(item, 'connection', None) for item in measurements or ()}
+    return len(kinds - {None}) > 1
+
+
+def _accepts_reuse(transport) -> bool:
+    """Whether the transport's ``download`` takes the ``reuse`` keyword.
+
+    A transport written before this seam existed still measures honestly, so
+    it is called without the keyword rather than being rejected.
+    """
+    try:
+        parameters = inspect.signature(transport.download).parameters
+    except (TypeError, ValueError, AttributeError):
+        return False
+    if any(item.kind is inspect.Parameter.VAR_KEYWORD for item in parameters.values()):
+        return True
+    return 'reuse' in parameters
+
+
+async def run_speed_test(target: SpeedTarget, options: ProbeOptions, transport, *, limits=SPEED_LIMITS,
+                         reuse=False) -> SpeedMeasurement:
     """Run a bounded download through the transport and measure it.
 
     The transport provides ``download(target, options=options) -> TransferTrace``
     and owns the socket, mirroring how ``proxytool.measure_speed`` is wired.
+    ``reuse=True`` asks for a kept-alive connection; the measurement then says
+    so, and must not be compared with cold ones (F20).
     """
     if target is None:
         raise ProbeError(E_VALIDATION_FIELD, 'Нужна цель измерения скорости.')
     time_budget(options)
     started = time.perf_counter()
+    extra = {'reuse': True} if reuse and _accepts_reuse(transport) else {}
     try:
         async with asyncio.timeout(options.whole_probe_timeout_s):
-            trace = await transport.download(target, options=options)
+            trace = await transport.download(target, options=options, **extra)
     except (TimeoutError, asyncio.TimeoutError):
-        return SpeedMeasurement(state='error', code=WHOLE_PROBE_TIMEOUT,
+        return SpeedMeasurement(state='error', code=WHOLE_PROBE_TIMEOUT, connection=extra and 'reused' or 'cold',
                                 detail=f'весь срок {options.whole_probe_timeout_s:g} с исчерпан')
+    except asyncio.CancelledError:
+        raise
     except Exception as exc:  # a broken proxy raises more than httpx errors
         return SpeedMeasurement(state='error', code=type(exc).__name__,
+                                connection='reused' if extra else 'cold',
                                 detail=f'замер прерван: {type(exc).__name__}')
     if trace is None:
-        return SpeedMeasurement(state='error', code=DNS_ERROR, detail='транспорт не вернул замер')
+        return SpeedMeasurement(state='error', code=DNS_ERROR, connection='reused' if extra else 'cold',
+                                detail='транспорт не вернул замер')
     measurement = measure_speed(trace, limits)
+    if extra and measurement.connection == 'cold':
+        # The transport ignored the request; do not let the label lie.
+        measurement = replace(measurement, connection='cold',
+                              detail=((measurement.detail + '; ') if measurement.detail else '')
+                              + 'транспорт открыл новое соединение вместо повторного')
     if measurement.total_ms is None:
         elapsed = round((time.perf_counter() - started) * 1000, 2)
         return replace(measurement, total_ms=elapsed)
@@ -2181,6 +2418,472 @@ def plan_recheck(rows, *, now, max_age_s, limit=0, remeasure_passing=False, pass
 
 
 # --------------------------------------------------------------------------
+# bounded capabilities (F20)
+# --------------------------------------------------------------------------
+#
+# Each of these has a controlled endpoint, an explicit budget, and its own
+# outcome vocabulary, so "the endpoint answered" is never reported as "the
+# service works".  None of them shares the HTTP-GET path: a WebSocket needs an
+# upgrade and a pong, a long-lived check needs the socket to stay open, and a
+# media check needs a manifest that actually names a segment.
+#
+#   kind        state vocabulary
+#   websocket   ok | not_upgraded | no_pong | closed | error
+#   duration    ok | short | error
+#   media       ok | no_manifest | manifest_failed | segment_failed | error
+#
+# ``connection`` says whether the socket was opened for this measurement or
+# reused; the two kinds are never averaged together.
+
+WEBSOCKET_LIMITS = {
+    'handshake_timeout_s': Limit('с', 0.1, 30.0),
+    'ping_timeout_s': Limit('с', 0.1, 60.0),
+    'max_pings': Limit('ping/pong', 0, 10, 'int'),
+    'max_frame_bytes': Limit('байт', 1, 1_048_576, 'int'),
+}
+DURATION_LIMITS = {
+    'hold_s': Limit('с', 0.1, 300.0),
+    'min_sustained_s': Limit('с', 0.0, 300.0),
+    'min_bytes': Limit('байт', 0, 64 * 1024 * 1024, 'int'),
+}
+MEDIA_LIMITS = {
+    'manifest_max_bytes': Limit('байт', 64, 1_048_576, 'int'),
+    'max_segments': Limit('сегментов', 1, 5, 'int'),
+    'segment_max_bytes': Limit('байт', 1024, 8 * 1024 * 1024, 'int'),
+    'min_segment_bytes': Limit('байт', 0, 8 * 1024 * 1024, 'int'),
+}
+
+CAPABILITY_KINDS = ('websocket', 'duration', 'media')
+CAPABILITY_LIMITS = {'websocket': WEBSOCKET_LIMITS, 'duration': DURATION_LIMITS, 'media': MEDIA_LIMITS}
+CAPABILITY_DEFAULTS = {
+    'websocket': {'handshake_timeout_s': 6.0, 'ping_timeout_s': 8.0, 'max_pings': 1, 'max_frame_bytes': 4096},
+    'duration': {'hold_s': 5.0, 'min_sustained_s': 4.0, 'min_bytes': 1},
+    'media': {'manifest_max_bytes': 65_536, 'max_segments': 1, 'segment_max_bytes': 524_288, 'min_segment_bytes': 1},
+}
+CAPABILITY_STATES = {
+    'websocket': ('ok', 'not_upgraded', 'no_pong', 'closed', 'error'),
+    'duration': ('ok', 'short', 'error'),
+    'media': ('ok', 'no_manifest', 'manifest_failed', 'segment_failed', 'error'),
+}
+
+
+@dataclass(frozen=True)
+class CapabilitySpec:
+    """One bounded capability check with its own budget."""
+
+    kind: str
+    id: str
+    url: str
+    budget: dict
+    dns_mode: str = 'proxy'
+    scope: str = 'public'
+    reuse: bool = False
+
+    def to_public(self) -> dict:
+        return {'kind': self.kind, 'id': self.id, 'url': self.url, 'budget': dict(self.budget),
+                'dns_mode': self.dns_mode, 'scope': self.scope, 'connection': self.connection,
+                'limits': {name: CAPABILITY_LIMITS[self.kind][name].describe() for name in self.budget}}
+
+    @property
+    def connection(self) -> str:
+        return 'reused' if self.reuse else 'cold'
+
+
+def validate_capability(data) -> CapabilitySpec:
+    """Validate one capability check; unknown keys and unknown kinds are errors."""
+    if not isinstance(data, dict):
+        raise ProbeError(E_VALIDATION_SCHEMA, 'Проверка возможности: ожидается объект.')
+    _reject_unknown(data, ('kind', 'id', 'url', 'dns_mode', 'scope', 'reuse', 'budget'),
+                    'Проверка возможности')
+    kind = _choice(data.get('kind'), 'Проверка возможности: kind', CAPABILITY_KINDS, required=True)
+    url = _validate_url(data.get('url'), f'Проверка возможности ({kind}): url')
+    limits = CAPABILITY_LIMITS[kind]
+    raw = data.get('budget') or {}
+    if not isinstance(raw, dict):
+        raise ProbeError(E_VALIDATION_FIELD, f'Проверка возможности ({kind}): budget должен быть объектом.')
+    _reject_unknown(raw, limits, f'Проверка возможности ({kind}): budget')
+    budget = {}
+    for name, default in CAPABILITY_DEFAULTS[kind].items():
+        budget[name] = _number(raw.get(name), f'{kind}.{name}', limits[name],
+                                integer=limits[name].kind == 'int', default=default)
+    if kind == 'duration' and budget['min_sustained_s'] > budget['hold_s']:
+        raise ProbeError(E_VALIDATION_FIELD,
+                         f'duration.min_sustained_s ({budget["min_sustained_s"]:g} с) больше duration.hold_s '
+                         f'({budget["hold_s"]:g} с): замер всегда будет "short".')
+    if kind == 'media' and budget['min_segment_bytes'] > budget['segment_max_bytes']:
+        raise ProbeError(E_VALIDATION_FIELD,
+                         'media.min_segment_bytes не может превышать media.segment_max_bytes.')
+    dns_mode = _choice(data.get('dns_mode'), f'Проверка возможности ({kind}): dns_mode', DNS_MODES, default='proxy')
+    scope = _choice(data.get('scope'), f'Проверка возможности ({kind}): scope', SCOPES, default='public')
+    reuse = data.get('reuse', False)
+    if type(reuse) is not bool:
+        raise ProbeError(E_VALIDATION_FIELD, f'Проверка возможности ({kind}): reuse должен быть логическим.')
+    name = data.get('id') or f'{kind}:{url}'
+    if not isinstance(name, str) or len(name) > 160:
+        raise ProbeError(E_VALIDATION_FIELD, f'Проверка возможности ({kind}): id — до 160 символов.')
+    return CapabilitySpec(kind=kind, id=name, url=url, budget=budget, dns_mode=dns_mode,
+                          scope=scope, reuse=reuse)
+
+
+def validate_capabilities(data) -> tuple[CapabilitySpec, ...]:
+    if data is None:
+        return ()
+    if not isinstance(data, (list, tuple)):
+        raise ProbeError(E_VALIDATION_FIELD, 'Проверки возможностей: ожидается список.')
+    if len(data) > 12:
+        raise ProbeError(E_VALIDATION_FIELD, 'Проверки возможностей: максимум 12.')
+    specs = []
+    for item in data:
+        spec = validate_capability(item)
+        if spec.kind in [value.kind for value in specs]:
+            raise ProbeError(E_VALIDATION_FIELD,
+                             f'Проверки возможностей: вид {spec.kind} уже задан; '
+                             'один вид — один контролируемый endpoint с одним бюджетом.')
+        specs.append(spec)
+    return tuple(specs)
+
+
+def capabilities_manifest() -> dict:
+    """Every kind with its units, defaults and distinct outcomes (F20)."""
+    items = []
+    for kind in CAPABILITY_KINDS:
+        items.append({
+            'kind': kind,
+            'limits': {name: limit.describe() for name, limit in CAPABILITY_LIMITS[kind].items()},
+            'defaults': dict(CAPABILITY_DEFAULTS[kind]),
+            'states': list(CAPABILITY_STATES[kind]),
+        })
+    return {'kinds': items}
+
+
+@dataclass(frozen=True)
+class CapabilityOutcome:
+    """The verdict of one capability check.  ``state`` is the outcome, not a number."""
+
+    kind: str
+    id: str
+    state: str
+    code: str | None = None
+    detail: str | None = None
+    connection: str = 'cold'
+    metrics: dict = ()
+
+    @property
+    def ok(self) -> bool:
+        return self.state == 'ok'
+
+    def to_public(self) -> dict:
+        return {'kind': self.kind, 'id': self.id, 'state': self.state, 'code': self.code,
+                'detail': self.detail, 'connection': self.connection, 'metrics': dict(self.metrics)}
+
+
+@dataclass
+class WsTrace:
+    """What the transport saw during a WebSocket check."""
+
+    status: int | None = None
+    upgrade: str | None = None
+    subprotocol: str | None = None
+    extensions: str | None = None
+    pings_sent: int = 0
+    pongs: int = 0
+    frames: int = 0
+    bytes_in: int = 0
+    handshake_ms: float | None = None
+    rtt_ms: float | None = None
+    closed_by_peer: bool = False
+    error: str | None = None
+    detail: str | None = None
+    connection: str = 'cold'
+
+    def to_public(self) -> dict:
+        return {'status': self.status, 'upgrade': self.upgrade, 'subprotocol': self.subprotocol,
+                'extensions': self.extensions, 'pings_sent': self.pings_sent, 'pongs': self.pongs,
+                'frames': self.frames, 'bytes_in': self.bytes_in, 'handshake_ms': self.handshake_ms,
+                'rtt_ms': self.rtt_ms, 'closed_by_peer': self.closed_by_peer, 'error': self.error,
+                'connection': self.connection}
+
+
+@dataclass
+class HoldTrace:
+    """Chunk-level timing of a connection that is supposed to stay open."""
+
+    status: int | None = None
+    bytes: int = 0
+    chunks: int = 0
+    opened_at: float | None = None
+    first_byte_at: float | None = None
+    last_byte_at: float | None = None
+    closed_at: float | None = None
+    closed_by_peer: bool = False
+    error: str | None = None
+    detail: str | None = None
+    connection: str = 'cold'
+
+    @property
+    def sustained_s(self) -> float | None:
+        if self.opened_at is None or self.closed_at is None:
+            return None
+        return max(0.0, self.closed_at - self.opened_at)
+
+    def to_public(self) -> dict:
+        return {'status': self.status, 'bytes': self.bytes, 'chunks': self.chunks,
+                'sustained_s': self.sustained_s, 'closed_by_peer': self.closed_by_peer,
+                'error': self.error, 'connection': self.connection}
+
+
+def summarize_websocket(spec: CapabilitySpec, trace: WsTrace | None) -> CapabilityOutcome:
+    """Handshake alone is not a WebSocket; a pong is."""
+    metrics = (trace.to_public() if trace else {})
+    if trace is None or trace.error:
+        code = (trace.error if trace and trace.error else 'NO_TRACE')
+        return CapabilityOutcome(kind='websocket', id=spec.id, state='error', code=code,
+                                 detail=f'соединение не установлено: {code}',
+                                 connection=spec.connection, metrics=metrics)
+    if trace.status != 101 or (trace.upgrade or '').lower() != 'websocket':
+        return CapabilityOutcome(kind='websocket', id=spec.id, state='not_upgraded', code=WS_NOT_UPGRADED,
+                                 detail=f'ответ {trace.status}, Upgrade={trace.upgrade!r}: это не WebSocket',
+                                 connection=trace.connection or spec.connection, metrics=metrics)
+    wanted = int(spec.budget['max_pings'])
+    if wanted and trace.pongs < wanted:
+        code = WS_CLOSED if trace.closed_by_peer else WS_PONG_MISSING
+        return CapabilityOutcome(kind='websocket', id=spec.id, state=('closed' if trace.closed_by_peer else 'no_pong'),
+                                 code=code, detail=f'ожидалось {wanted} pong, получено {trace.pongs}',
+                                 connection=trace.connection or spec.connection, metrics=metrics)
+    if trace.bytes_in > int(spec.budget['max_frame_bytes']):
+        return CapabilityOutcome(kind='websocket', id=spec.id, state='error', code=BODY_TOO_LARGE,
+                                 detail=f"кадр {trace.bytes_in} байт при лимите {spec.budget['max_frame_bytes']}",
+                                 connection=trace.connection or spec.connection, metrics=metrics)
+    return CapabilityOutcome(kind='websocket', id=spec.id, state='ok',
+                             detail=f'101 Upgrade, pong {trace.pongs}/{wanted}',
+                             connection=trace.connection or spec.connection, metrics=metrics)
+
+
+def summarize_duration(spec: CapabilitySpec, trace: HoldTrace | None) -> CapabilityOutcome:
+    """A connection that closes early is its own outcome, not a pass."""
+    metrics = (trace.to_public() if trace else {})
+    if trace is None or trace.error:
+        code = (trace.error if trace and trace.error else 'NO_TRACE')
+        return CapabilityOutcome(kind='duration', id=spec.id, state='error', code=code,
+                                 detail=f'соединение не установлено: {code}',
+                                 connection=spec.connection, metrics=metrics)
+    held = trace.sustained_s
+    want = float(spec.budget['min_sustained_s'])
+    if held is None:
+        return CapabilityOutcome(kind='duration', id=spec.id, state='error', code=CONNECTION_CLOSED,
+                                 detail='соединение не зафиксировало ни открытия, ни закрытия',
+                                 connection=trace.connection or spec.connection, metrics=metrics)
+    if trace.closed_by_peer and held < want:
+        return CapabilityOutcome(kind='duration', id=spec.id, state='short', code=CONNECTION_CLOSED,
+                                 detail=f'удалённая сторона закрыла соединение через {held:.2f} с '
+                                        f'при требуемых {want:g} с',
+                                 connection=trace.connection or spec.connection, metrics=metrics)
+    if held < want:
+        return CapabilityOutcome(kind='duration', id=spec.id, state='short', code=CONNECTION_SHORT,
+                                 detail=f'длительность {held:.2f} с короче требуемых {want:g} с',
+                                 connection=trace.connection or spec.connection, metrics=metrics)
+    if trace.bytes < int(spec.budget['min_bytes']):
+        return CapabilityOutcome(kind='duration', id=spec.id, state='short', code=INSUFFICIENT_SAMPLE,
+                                 detail=f'{trace.bytes} байт при минимуме {spec.budget["min_bytes"]}',
+                                 connection=trace.connection or spec.connection, metrics=metrics)
+    return CapabilityOutcome(kind='duration', id=spec.id, state='ok',
+                             detail=f'соединение держалось {held:.2f} с, {trace.bytes} байт',
+                             connection=trace.connection or spec.connection, metrics=metrics)
+
+
+_HLS_SEGMENT = re.compile(r'^(?!#)(?!$)\S+', re.M)
+
+
+def parse_media_manifest(body, *, max_segments=1) -> tuple[str, ...]:
+    """Segment URLs named by an HLS/DASH-style manifest, bounded.
+
+    Only the first ``max_segments`` non-comment lines are considered, so a huge
+    playlist cannot turn one probe into a crawl.  A JSON manifest may name them
+    under ``segments`` as a list of strings or of ``{'url': …}`` objects.
+    """
+    try:
+        text = body.decode('utf-8', 'replace')
+    except AttributeError:
+        text = str(body)
+    text = text.lstrip()
+    if text.startswith('{'):
+        try:
+            document = json.loads(text)
+        except json.JSONDecodeError:
+            return ()
+        items = document.get('segments') if isinstance(document, dict) else None
+        if not isinstance(items, (list, tuple)):
+            return ()
+        found = []
+        for item in items:
+            value = item.get('url') if isinstance(item, dict) else item
+            if isinstance(value, str) and value.strip():
+                found.append(value.strip())
+        return tuple(found[:max_segments])
+    return tuple(_HLS_SEGMENT.findall(text)[:max_segments])
+
+
+async def run_websocket(spec: CapabilitySpec, options: ProbeOptions, transport) -> CapabilityOutcome:
+    """Handshake + ping/pong over a real upgrade, inside the spec's budget."""
+    request = ProbeRequest(url=spec.url, stage='cap_ws', dns_mode=spec.dns_mode, reuse=spec.reuse,
+                           max_bytes=int(spec.budget['max_frame_bytes']),
+                           connect_timeout_s=options.connect_timeout_s,
+                           handshake_timeout_s=float(spec.budget['handshake_timeout_s']),
+                           read_timeout_s=float(spec.budget['ping_timeout_s']))
+    try:
+        async with asyncio.timeout(options.whole_probe_timeout_s):
+            trace = await transport.websocket(request, options=options, spec=spec)
+    except (TimeoutError, asyncio.TimeoutError):
+        return CapabilityOutcome(kind='websocket', id=spec.id, state='error', code=WHOLE_PROBE_TIMEOUT,
+                                 detail=f'весь срок {options.whole_probe_timeout_s:g} с исчерпан',
+                                 connection=spec.connection)
+    except asyncio.CancelledError:
+        raise
+    except AttributeError:
+        return CapabilityOutcome(kind='websocket', id=spec.id, state='error', code='TRANSPORT_MISSING',
+                                 detail='транспорт не реализует websocket()',
+                                 connection=spec.connection)
+    except Exception as exc:
+        return CapabilityOutcome(kind='websocket', id=spec.id, state='error', code=type(exc).__name__,
+                                 detail=f'транспорт бросил {type(exc).__name__}', connection=spec.connection)
+    return summarize_websocket(spec, trace)
+
+
+async def run_duration(spec: CapabilitySpec, options: ProbeOptions, transport) -> CapabilityOutcome:
+    """Hold one connection open for the configured time and report how long it lasted."""
+    hold = float(spec.budget['hold_s'])
+    if hold > options.whole_probe_timeout_s:
+        raise ProbeError(E_VALIDATION_FIELD,
+                         f'duration.hold_s ({hold:g} с) больше общего срока пробы '
+                         f'({options.whole_probe_timeout_s:g} с): замер не успеет завершиться.')
+    request = ProbeRequest(url=spec.url, stage='cap_hold', dns_mode=spec.dns_mode, reuse=spec.reuse,
+                           max_bytes=0, connect_timeout_s=options.connect_timeout_s,
+                           handshake_timeout_s=options.handshake_timeout_s,
+                           read_timeout_s=options.read_timeout_s)
+    try:
+        async with asyncio.timeout(options.whole_probe_timeout_s):
+            trace = await transport.hold(request, options=options, spec=spec)
+    except (TimeoutError, asyncio.TimeoutError):
+        return CapabilityOutcome(kind='duration', id=spec.id, state='error', code=WHOLE_PROBE_TIMEOUT,
+                                 detail=f'весь срок {options.whole_probe_timeout_s:g} с исчерпан',
+                                 connection=spec.connection)
+    except asyncio.CancelledError:
+        raise
+    except AttributeError:
+        return CapabilityOutcome(kind='duration', id=spec.id, state='error', code='TRANSPORT_MISSING',
+                                 detail='транспорт не реализует hold()', connection=spec.connection)
+    except Exception as exc:
+        return CapabilityOutcome(kind='duration', id=spec.id, state='error', code=type(exc).__name__,
+                                 detail=f'транспорт бросил {type(exc).__name__}', connection=spec.connection)
+    return summarize_duration(spec, trace)
+
+
+async def run_media(spec: CapabilitySpec, options: ProbeOptions, transport) -> CapabilityOutcome:
+    """Fetch a manifest, take the first bounded segment, and read part of it.
+
+    Two ordinary requests, not a player: a manifest that names nothing playable
+    and a segment that cannot be read are separate outcomes.
+    """
+    limit = int(spec.budget['manifest_max_bytes'])
+    request = ProbeRequest(url=spec.url, stage='cap_manifest', dns_mode=spec.dns_mode, reuse=spec.reuse,
+                           max_bytes=limit, connect_timeout_s=options.connect_timeout_s,
+                           handshake_timeout_s=options.handshake_timeout_s,
+                           read_timeout_s=options.read_timeout_s)
+    try:
+        async with asyncio.timeout(options.whole_probe_timeout_s):
+            response = await transport.send(request, options=options)
+    except (TimeoutError, asyncio.TimeoutError):
+        return CapabilityOutcome(kind='media', id=spec.id, state='error', code=WHOLE_PROBE_TIMEOUT,
+                                 detail=f'весь срок {options.whole_probe_timeout_s:g} с исчерпан',
+                                 connection=spec.connection)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        return CapabilityOutcome(kind='media', id=spec.id, state='error', code=type(exc).__name__,
+                                 detail=f'транспорт бросил {type(exc).__name__}', connection=spec.connection)
+    metrics = {'manifest_status': response.status, 'manifest_bytes': len(response.body or b'')}
+    if response.code:
+        return CapabilityOutcome(kind='media', id=spec.id, state='manifest_failed', code=response.code,
+                                 detail=f'манифест недоступен: {response.code}',
+                                 connection=request.connection, metrics=metrics)
+    if response.status != 200:
+        metrics['manifest_code'] = f'HTTP_{response.status}'
+        return CapabilityOutcome(kind='media', id=spec.id, state='manifest_failed', code=response.code
+                                 or f'HTTP_{response.status}', detail=f'манифест ответил {response.status}',
+                                 connection=request.connection, metrics=metrics)
+    if len(response.body or b'') > limit:
+        return CapabilityOutcome(kind='media', id=spec.id, state='manifest_failed', code=BODY_TOO_LARGE,
+                                 detail=f'манифест больше {limit} байт', connection=request.connection,
+                                 metrics=metrics)
+    segments = parse_media_manifest(response.body, max_segments=int(spec.budget['max_segments']))
+    if not segments:
+        return CapabilityOutcome(kind='media', id=spec.id, state='no_manifest', code=MEDIA_NO_MANIFEST,
+                                 detail='манифест получен, но не называет ни одного сегмента',
+                                 connection=request.connection, metrics=metrics)
+    segment_url = urljoin(request.url, segments[0])
+    metrics['segment_url'] = segment_url
+    metrics['segments_seen'] = len(segments)
+    budget = int(spec.budget['segment_max_bytes'])
+    segment_request = replace(request, url=segment_url, stage='cap_segment', max_bytes=budget,
+                              hop=request.hop + 1)
+    try:
+        async with asyncio.timeout(options.whole_probe_timeout_s):
+            segment = await transport.send(segment_request, options=options)
+    except (TimeoutError, asyncio.TimeoutError):
+        return CapabilityOutcome(kind='media', id=spec.id, state='segment_failed', code=WHOLE_PROBE_TIMEOUT,
+                                 detail='чтение сегмента исчерпало общий срок', connection=spec.connection,
+                                 metrics=metrics)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        return CapabilityOutcome(kind='media', id=spec.id, state='segment_failed', code=type(exc).__name__,
+                                 detail=f'транспорт бросил {type(exc).__name__}', connection=spec.connection,
+                                 metrics=metrics)
+    metrics['segment_status'] = segment.status
+    metrics['segment_bytes'] = len(segment.body or b'')
+    if segment.code:
+        return CapabilityOutcome(kind='media', id=spec.id, state='segment_failed', code=segment.code,
+                                 detail=f'сегмент недоступен: {segment.code}', connection=spec.connection,
+                                 metrics=metrics)
+    if segment.status not in (200, 206):
+        metrics['segment_code'] = f'HTTP_{segment.status}'
+        return CapabilityOutcome(kind='media', id=spec.id, state='segment_failed', code=f'HTTP_{segment.status}',
+                                 detail=f'сегмент ответил {segment.status}', connection=spec.connection,
+                                 metrics=metrics)
+    if len(segment.body or b'') < int(spec.budget['min_segment_bytes']):
+        return CapabilityOutcome(kind='media', id=spec.id, state='segment_failed', code=MEDIA_SEGMENT_SHORT,
+                                 detail=f'{len(segment.body or b"")} байт сегмента при минимуме '
+                                        f'{spec.budget["min_segment_bytes"]}',
+                                 connection=spec.connection, metrics=metrics)
+    return CapabilityOutcome(kind='media', id=spec.id, state='ok',
+                             detail=f'манифест {metrics["manifest_bytes"]} байт, сегмент '
+                                    f'{metrics["segment_bytes"]}/{budget} байт',
+                             connection=spec.connection, metrics=metrics)
+
+
+async def run_capability(spec: CapabilitySpec, options: ProbeOptions, transport) -> CapabilityOutcome:
+    """Dispatch one capability to its runner; each has a distinct vocabulary."""
+    if spec.kind == 'websocket':
+        return await run_websocket(spec, options, transport)
+    if spec.kind == 'duration':
+        return await run_duration(spec, options, transport)
+    if spec.kind == 'media':
+        return await run_media(spec, options, transport)
+    raise ProbeError(E_VALIDATION_FIELD, f'Неизвестный вид измерения: {spec.kind}.')
+
+
+async def run_capabilities(specs, options: ProbeOptions, transport, *, fail_fast=True):
+    """Run every configured capability and stop at the first failure on request."""
+    outcomes = []
+    for spec in specs or ():
+        outcome = await run_capability(spec, options, transport)
+        outcomes.append(outcome)
+        if fail_fast and not outcome.ok:
+            break
+    return tuple(outcomes)
+
+
+# --------------------------------------------------------------------------
 # capability matrix and the self-hosted reference probe (F20)
 # --------------------------------------------------------------------------
 
@@ -2207,16 +2910,35 @@ CAPABILITIES = (
     {'id': 'tcp_and_handshake', 'supported': True, 'kind': 'stage',
      'endpoint': 'the proxy address itself', 'budget': 'connect_timeout_s, attempts',
      'outcome': 'TargetOutcome with stage tcp/handshake, never a transfer claim'},
-    {'id': 'websocket_handshake', 'supported': False, 'kind': 'target',
-     'endpoint': '—', 'budget': '—', 'outcome': 'нет: объявление без измерения запрещено (F20)'},
-    {'id': 'long_lived_connection', 'supported': False, 'kind': 'target',
-     'endpoint': '—', 'budget': '—', 'outcome': 'нет: нет собственного измерителя длительности соединения'},
-    {'id': 'media_manifest_segment', 'supported': False, 'kind': 'target',
-     'endpoint': '—', 'budget': '—', 'outcome': 'нет: нужен отдельный контракт и адаптер каталога сервисов'},
-    {'id': 'udp_transport', 'supported': False, 'kind': 'stage',
+    {'id': 'http_api_assertions', 'supported': True, 'kind': 'target',
+     'capability': 'http_api',
+     'endpoint': 'a target with json_assertions (self-hosted reference probe /api/status)',
+     'budget': 'max_body_bytes, whole_probe_timeout_s',
+     'outcome': "TargetOutcome ok or JSON_ASSERT with the failing path"},
+    {'id': 'websocket_handshake', 'supported': True, 'kind': 'target',
+     'capability': 'websocket',
+     'endpoint': 'a ws:// or wss:// endpoint that answers 101 and a ping (reference probe /ws)',
+     'budget': 'handshake_timeout_s, ping_timeout_s, max_pings, max_frame_bytes',
+     'outcome': 'CapabilityOutcome ok | not_upgraded | no_pong | closed | error'},
+    {'id': 'long_lived_connection', 'supported': True, 'kind': 'target',
+     'capability': 'duration',
+     'endpoint': 'an endpoint that holds the socket (reference probe /hold)',
+     'budget': 'hold_s, min_sustained_s, min_bytes',
+     'outcome': 'CapabilityOutcome ok | short | error'},
+    {'id': 'media_manifest_segment', 'supported': True, 'kind': 'target',
+     'capability': 'media',
+     'endpoint': 'a manifest that names a segment (reference probe /manifest.m3u8 + /segment/1)',
+     'budget': 'manifest_max_bytes, max_segments, segment_max_bytes, min_segment_bytes',
+     'outcome': 'CapabilityOutcome ok | no_manifest | manifest_failed | segment_failed | error'},
+    {'id': 'udp_transport', 'supported': False, 'kind': 'stage', 'capability': 'udp',
      'endpoint': '—', 'budget': '—', 'outcome': 'нет: HTTP GET не доказывает поддержку UDP'},
-    {'id': 'http2_or_http3', 'supported': False, 'kind': 'stage',
-     'endpoint': '—', 'budget': '—', 'outcome': 'нет: версия протокола не измеряется этим модулем'},
+    {'id': 'http2_or_http3', 'supported': False, 'kind': 'stage', 'capability': 'http_version',
+     'endpoint': '—', 'budget': '—',
+     'outcome': 'нет: версия протокола не измеряется этим модулем'},
+    {'id': 'calls_video_any_service', 'supported': False, 'kind': 'target',
+     'capability': 'claim',
+     'endpoint': '—', 'budget': '—',
+     'outcome': 'нет: измерения выше — отдельные bounded-проверки; общее обещание запрещено (F20)'},
 )
 
 
@@ -2227,6 +2949,7 @@ def capability_matrix():
 
 REFERENCE_PROBE_MAX_BYTES = 8 * 1024 * 1024
 _REFERENCE_CHUNK = 64 * 1024
+_REFERENCE_HOLD_MAX_S = 30.0
 
 
 def _reference_targets(base_url: str) -> tuple[dict, ...]:
@@ -2247,6 +2970,106 @@ def _reference_targets(base_url: str) -> tuple[dict, ...]:
 
 def reference_probe_targets(base_url: str) -> tuple[TargetProfile, ...]:
     return tuple(validate_target(item) for item in _reference_targets(base_url.rstrip('/')))
+
+
+def reference_probe_capabilities(base_url: str) -> tuple[CapabilitySpec, ...]:
+    """The three bounded capabilities against a running reference probe.
+
+    Every one of them is a local endpoint this module serves, with a budget
+    small enough for a laptop, and a negative twin (``/ws-none``,
+    ``/hold-flaky``, ``/manifest-empty.m3u8``) for the other side of the check.
+    """
+    base = base_url.rstrip('/')
+    return (
+        validate_capability({'kind': 'websocket', 'id': 'reference-ws', 'url': f'{base}/ws',
+                             'budget': {'handshake_timeout_s': 3.0, 'ping_timeout_s': 3.0,
+                                        'max_pings': 2, 'max_frame_bytes': 4096}}),
+        validate_capability({'kind': 'duration', 'id': 'reference-hold', 'url': f'{base}/hold?seconds=2',
+                             'budget': {'hold_s': 3.0, 'min_sustained_s': 1.5, 'min_bytes': 1}}),
+        validate_capability({'kind': 'media', 'id': 'reference-media', 'url': f'{base}/manifest.m3u8',
+                             'budget': {'manifest_max_bytes': 65_536, 'max_segments': 1,
+                                        'segment_max_bytes': 131_072, 'min_segment_bytes': 16}}),
+    )
+
+
+# Negative twins: same kinds, deliberately broken endpoints, so the local
+# scenarios can prove that each measurement really discriminates.
+REFERENCE_PROBE_NEGATIVE = {
+    'websocket_no_upgrade': '/ws-none',
+    'websocket_no_pong': '/ws-silent',
+    'duration_closed_early': '/hold-flaky',
+    'media_no_manifest': '/manifest-empty.m3u8',
+    'media_manifest_missing': '/manifest-missing.m3u8',
+    'media_bad_segment': '/manifest-bad-segment.m3u8',
+    'api_broken_json': '/api/broken',
+    'judge_challenge': '/challenge',
+    'speed_truncated': '/bytes/2048',
+}
+
+
+# --------------------------------------------------------------------------
+# a minimal RFC 6455 endpoint, enough to prove an upgrade and a pong
+# --------------------------------------------------------------------------
+
+_WS_GUID = b'258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
+
+
+def _ws_accept(key: str) -> str:
+    import base64
+    import hashlib
+    digest = hashlib.sha1(key.encode('ascii') + _WS_GUID).digest()
+    return base64.b64encode(digest).decode('ascii')
+
+
+def _ws_frame(opcode: int, payload: bytes) -> bytes:
+    """A server-to-client frame; unmasked, which is what RFC 6455 requires."""
+    header = bytes([0x80 | opcode])
+    size = len(payload)
+    if size < 126:
+        header += bytes([size])
+    elif size < 65536:
+        header += bytes([126]) + size.to_bytes(2, 'big')
+    else:
+        header += bytes([127]) + size.to_bytes(8, 'big')
+    return header + payload
+
+
+def _ws_read_frame(handle) -> tuple[int, bytes] | None:
+    """One client frame, or None when the peer went away."""
+    def read_exact(count):
+        data = b''
+        while len(data) < count:
+            part = handle.read(count - len(data))
+            if not part:
+                return None
+            data += part
+        return data
+
+    head = read_exact(2)
+    if head is None:
+        return None
+    opcode = head[0] & 0x0F
+    masked = bool(head[1] & 0x80)
+    size = head[1] & 0x7F
+    if size == 126:
+        raw = read_exact(2)
+        if raw is None:
+            return None
+        size = int.from_bytes(raw, 'big')
+    elif size == 127:
+        raw = read_exact(8)
+        if raw is None:
+            return None
+        size = int.from_bytes(raw, 'big')
+    mask = read_exact(4) if masked else None
+    if size > REFERENCE_PROBE_MAX_BYTES:
+        return None
+    payload = read_exact(size) if size else b''
+    if payload is None:
+        return None
+    if mask:
+        payload = bytes(byte ^ mask[index % 4] for index, byte in enumerate(payload))
+    return opcode, payload
 
 
 def _reference_handler_class(version: str):
@@ -2281,7 +3104,9 @@ def _reference_handler_class(version: str):
             self._route(body=True)
 
         def _route(self, body):
-            path = urlsplit(self.path).path
+            parsed = urlsplit(self.path)
+            path = parsed.path
+            query = parse_qs(parsed.query)
             if path == '/health':
                 payload = json.dumps({'service': service, 'status': 'ok',
                                       'reference_probe': {'version': version}})
@@ -2291,21 +3116,53 @@ def _reference_handler_class(version: str):
                 payload = json.dumps({'service': service, 'origin': origin, 'path': path,
                                       'headers': {name: value for name, value in self.headers.items()}})
                 return self._send(200, payload.encode())
+            if path == '/challenge':
+                # A judge answer that proves nothing: a JS challenge page.
+                page = ('<html><head><title>Just a moment...</title></head><body>'
+                        '<div id="cf-challenge">Checking your browser before accessing.</div>'
+                        '</body></html>')
+                return self._send(503, page.encode(), 'text/html; charset=utf-8')
+            if path.startswith('/api/'):
+                return self._route_api(path, query)
+            if path.startswith('/ws'):
+                return self._route_ws(path, query)
+            if path.startswith('/hold'):
+                return self._route_hold(query, body)
+            if path.startswith('/manifest'):
+                return self._route_manifest(path, query, body)
+            if path.startswith('/segment/'):
+                return self._route_segment(path, query, body)
             if path.startswith('/bytes/'):
-                raw = path[len('/bytes/'):]
+                raw = path[len('/bytes/'):].replace('_', '')
                 if not raw.isdigit():
                     return self._send(400, b'{"error":"size"}')
                 size = min(int(raw), REFERENCE_PROBE_MAX_BYTES)
+                # ``rate`` throttles the stream so a local scenario can have a
+                # transfer window long enough for an honest number; without it
+                # loopback finishes in milliseconds and the measurement says
+                # ``insufficient``, which is the correct answer for a window
+                # that short.
+                try:
+                    rate = int((query.get('rate') or ['0'])[0].replace('_', ''))
+                except ValueError:
+                    return self._send(400, b'{"error":"rate"}')
                 self.send_response(200)
                 self.send_header('Content-Type', 'application/octet-stream')
                 self.send_header('Content-Length', str(size))
                 self.end_headers()
                 if body:
                     block = b'0' * _REFERENCE_CHUNK
-                    left = size
-                    while left > 0:
-                        self.wfile.write(block[:min(left, _REFERENCE_CHUNK)])
-                        left -= _REFERENCE_CHUNK
+                    sent = 0
+                    started = time.monotonic()
+                    while sent < size:
+                        if rate > 0:
+                            due = started + sent / rate
+                            delay = due - time.monotonic()
+                            if delay > 0:
+                                time.sleep(min(delay, 1.0))
+                        piece = block[:min(_REFERENCE_CHUNK, size - sent)]
+                        self.wfile.write(piece)
+                        sent += len(piece)
                 return None
             if path.startswith('/redirect/'):
                 raw = path[len('/redirect/'):]
@@ -2313,6 +3170,148 @@ def _reference_handler_class(version: str):
                     return self._send(302, b'', 'text/plain', (('Location', f'/redirect/{int(raw) - 1}'),))
                 return self._send(302, b'', 'text/plain', (('Location', '/health'),))
             return self._send(404, b'{"error":"not_found"}')
+
+        # -- HTTP API assertions: one nested, typed JSON document -------------
+        def _route_api(self, path, query):
+            if path == '/api/broken':
+                return self._send(200, b'{"status": "ok", ', 'application/json')
+            if path == '/api/empty':
+                return self._send(200, b'', 'application/json')
+            document = {
+                'service': service,
+                'status': 'ok',
+                'quota': {'requests_per_minute': 60, 'used': 12, 'exhausted': False},
+                'regions': [{'code': 'eu', 'latency_ms': 12.5}, {'code': 'us', 'latency_ms': 41.0}],
+                'limits': {'bandwidth_mbps': 100, 'slots': None},
+                'build': 'reference',
+            }
+            if query.get('status') == ['degraded']:
+                document['status'] = 'degraded'
+                document['quota']['exhausted'] = True
+            return self._send(200, json.dumps(document).encode(), 'application/json')
+
+        # -- WebSocket: a real 101 upgrade, a real pong, or neither ------------
+        def _route_ws(self, path, query):
+            key = self.headers.get('Sec-WebSocket-Key')
+            if path == '/ws-none' or not key or 'websocket' not in (self.headers.get('Upgrade') or '').lower():
+                # Deliberately refuses to upgrade: a plain HTTP answer.
+                return self._send(400, b'{"error":"expected_websocket_upgrade"}')
+            silent = path == '/ws-silent'
+            self.send_response(101, 'Switching Protocols')
+            self.send_header('Upgrade', 'websocket')
+            self.send_header('Connection', 'Upgrade')
+            self.send_header('Sec-WebSocket-Accept', _ws_accept(key))
+            protocol = self.headers.get('Sec-WebSocket-Protocol')
+            if protocol:
+                self.send_header('Sec-WebSocket-Protocol', protocol.split(',')[0].strip())
+            self.end_headers()
+            self.close_connection = True
+            if silent:
+                # Upgrades, then never answers a ping: proves that a handshake
+                # alone must not be reported as a working socket.
+                return None
+            try:
+                self.wfile.write(_ws_frame(0x1, json.dumps(
+                    {'service': service, 'kind': 'reference-ws', 'origin': self.client_address[0]}
+                ).encode()))
+                self.wfile.flush()
+                while True:
+                    frame = _ws_read_frame(self.rfile)
+                    if frame is None:
+                        break
+                    opcode, payload = frame
+                    if opcode == 0x8:
+                        self.wfile.write(_ws_frame(0x8, payload[:2]))
+                        break
+                    if opcode == 0x9:
+                        self.wfile.write(_ws_frame(0xA, payload))
+                    elif opcode == 0x1:
+                        self.wfile.write(_ws_frame(0x1, payload))
+                    self.wfile.flush()
+            except OSError:
+                pass
+            return None
+
+        # -- long-lived connection: holds the socket, or closes it early -------
+        def _route_hold(self, query, body):
+            try:
+                seconds = float((query.get('seconds') or ['2'])[0])
+            except ValueError:
+                return self._send(400, b'{"error":"seconds"}')
+            flaky = (query.get('flaky') or ['0'])[0] not in ('', '0')
+            seconds = max(0.0, min(seconds, _REFERENCE_HOLD_MAX_S))
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/octet-stream')
+            self.send_header('Cache-Control', 'no-store')
+            self.end_headers()
+            if not body:
+                return None
+            deadline = time.monotonic() + seconds
+            try:
+                while time.monotonic() < deadline:
+                    self.wfile.write(b'.' * 1024)
+                    self.wfile.flush()
+                    if flaky:
+                        # Closes after the first burst: a real "short" answer.
+                        return None
+                    time.sleep(0.05)
+            except OSError:
+                pass
+            return None
+
+        # -- media: a manifest that names a segment, or one that does not -----
+        def _route_manifest(self, path, query, body):
+            if path == '/manifest-missing.m3u8':
+                return self._send(404, b'not found', 'text/plain')
+            if path == '/manifest-empty.m3u8':
+                return self._send(200, b'#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:4\n',
+                                  'application/vnd.apple.mpegurl')
+            if path == '/manifest-bad-segment.m3u8':
+                return self._send(200, ('#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:4\n'
+                                        '#EXTINF:4.0,\n/no-such-segment/1\n#EXT-X-ENDLIST\n').encode(),
+                                  'application/vnd.apple.mpegurl')
+            try:
+                count = max(1, min(int((query.get('segments') or ['2'])[0]), 5))
+            except ValueError:
+                return self._send(400, b'{"error":"segments"}')
+            lines = ['#EXTM3U', '#EXT-X-VERSION:3', '#EXT-X-TARGETDURATION:4', '#EXT-X-MEDIA-SEQUENCE:0']
+            for index in range(count):
+                lines.append('#EXTINF:4.0,')
+                lines.append(f'/segment/{index}?bytes=65536')
+            lines.append('#EXT-X-ENDLIST')
+            return self._send(200, ('\n'.join(lines) + '\n').encode(),
+                              'application/vnd.apple.mpegurl')
+
+        def _route_segment(self, path, query, body):
+            raw = path[len('/segment/'):]
+            if not raw.isdigit():
+                return self._send(404, b'{"error":"no_such_segment"}')
+            try:
+                size = min(int((query.get('bytes') or ['65536'])[0]), REFERENCE_PROBE_MAX_BYTES)
+            except ValueError:
+                return self._send(400, b'{"error":"bytes"}')
+            start = 0
+            header = self.headers.get('Range')
+            if header and header.startswith('bytes=') and '-' in header:
+                head = header.split('=', 1)[1].split('-', 1)[0]
+                if head.isdigit():
+                    start = min(int(head), max(0, size - 1))
+            length = max(0, size - start)
+            status = 206 if header else 200
+            self.send_response(status)
+            self.send_header('Content-Type', 'video/mp4')
+            self.send_header('Content-Length', str(length))
+            if status == 206:
+                self.send_header('Content-Range', f'bytes {start}-{size - 1}/{size}')
+            self.end_headers()
+            if not body:
+                return None
+            block = b'\x00' * _REFERENCE_CHUNK
+            left = length
+            while left > 0:
+                self.wfile.write(block[:min(left, _REFERENCE_CHUNK)])
+                left -= _REFERENCE_CHUNK
+            return None
 
     return Handler
 

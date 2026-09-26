@@ -47,8 +47,29 @@ def parse_countries(value):
 
 
 def proxy_host(proxy):
-    host = str(proxy).partition('://')[2].rpartition(':')[0]
-    return host[1:-1] if host.startswith('[') else host
+    """Host part of a proxy, in a URL or in a bare ``host:port`` form.
+
+    A row that lost its scheme (``5.9.1.2:8080``, ``[2001:db8::1]:1080``)
+    used to produce an empty host and therefore a silent ``unknown`` country,
+    which is the one thing a country filter must never do.  The bracketed IPv6
+    form keeps its brackets off.
+    """
+    text = str(proxy or '').strip()
+    if '://' in text:
+        text = text.partition('://')[2]
+    # Credentials before the host must not become the host.
+    if '@' in text:
+        text = text.rpartition('@')[2]
+    if text.startswith('['):
+        end = text.find(']')
+        return text[1:end] if end > 0 else text.lstrip('[')
+    if ':' in text:
+        head, _, tail = text.rpartition(':')
+        # A bare IPv6 literal has more than one colon and no port.
+        if head.count(':') or not tail.isdigit():
+            return text
+        return head
+    return text
 
 
 class CountryDB:
