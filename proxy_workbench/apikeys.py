@@ -13,6 +13,9 @@ upstream credential can never be used as an API key.
 Boundary with ``api.py``/``apiv1.py``: this module authenticates and authorises.
 It does not serve HTTP, does not own a listener and never puts a secret into a
 query string; the new managing keys travel in the ``Authorization`` header.
+:func:`carries_one_shot` and :func:`without_one_shot` are the other half of that
+boundary: the body of an issuance is a :class:`OneShotBody`, and whoever keeps
+the answer -- an idempotency cache, a retry log -- has to ask before storing it.
 """
 from __future__ import annotations
 
@@ -56,6 +59,22 @@ MAX_PURPOSE_LENGTH = 400
 DEFAULT_TOUCH_INTERVAL_S = 60.0
 AUDIT_RETENTION = 5000
 STREAM_RECHECK_INTERVAL_S = 30.0
+GRACE_SWEEP_INTERVAL_S = 60.0
+
+# --- one-shot delivery (CONTRACTS §5.1) -------------------------------------
+
+#: A response body may carry a value that is shown exactly once and is never
+#: stored anywhere else.  :meth:`IssuedKey.as_json` puts the full secret in the
+#: body of ``POST /v1/keys`` and ``POST /v1/keys/{id}/rotate``; if an
+#: idempotency cache keeps that whole response, the *same* secret comes back a
+#: second time to whoever repeats the request, long after the one moment the
+#: contract allows.  This module owns the field names and the stripper; the cache
+#: is in ``apiv1.py`` and has to ask before it keeps an answer -- see
+#: docs/integration/HANDOFF/fix-keys.md.
+ONE_SHOT_FIELDS = ('secret',)
+#: The flag a body that no longer carries the value answers with, so a caller
+#: reads "already delivered, rotate" instead of "this key has no secret".
+ONE_SHOT_NOTE_FIELD = 'secret_already_shown'
 
 # --- permissions (CONTRACTS §5.2) --------------------------------------------
 
@@ -518,6 +537,57 @@ class KeyInfo:
         return f'KeyInfo(id={self.id!r}, prefix={self.prefix!r}, state={self.state!r})'
 
 
+class OneShotBody(dict):
+    """A response body that carries a value which may be shown only once.
+
+    It is an ordinary ``dict`` -- everything that serialises, compares or
+    redacts a body keeps working -- with one addition: it says so.  A caller that
+    is about to *keep* the answer (an idempotency cache, a retry log, a trace)
+    asks :func:`carries_one_shot` and stores :func:`without_one_shot` instead, so
+    the secret is delivered to the one request that asked for it and to nobody
+    after it.
+    """
+
+    __slots__ = ('one_shot_fields',)
+
+    def __init__(self, mapping=(), one_shot_fields=()):
+        super().__init__(mapping)
+        self.one_shot_fields = tuple(one_shot_fields)
+
+
+def carries_one_shot(body):
+    """True when a response body is one that must not be stored and served again.
+
+    Only an explicit :class:`OneShotBody` answers True.  A plain mapping that
+    happens to have a ``secret`` field is *not* one: an export with
+    ``include_secrets`` is downloadable again by its artifact id, and treating it
+    as once-only would silently change that route.  The question this function
+    answers is "may this answer be kept and replayed", and only the module that
+    issued the value may say yes.
+    """
+    fields = getattr(body, 'one_shot_fields', None)
+    return bool(fields) and any(body.get(name) for name in fields)
+
+
+def without_one_shot(body, *, note=True):
+    """A copy of a body that may be kept, with every once-only value removed.
+
+    The value itself comes back unchanged when it carries nothing, so the common
+    path costs one pass over a short field list.  A body that did carry one comes
+    back with the field dropped and, unless ``note=False``, a
+    ``secret_already_shown`` flag: an answer that quietly omits a field reads as
+    "this key has no secret", while an answer that says the secret was already
+    handed over tells the caller to rotate instead of to wait.
+    """
+    fields = getattr(body, 'one_shot_fields', None) or ONE_SHOT_FIELDS
+    if not isinstance(body, dict) or not any(name in body for name in fields):
+        return body
+    stripped = {name: value for name, value in body.items() if name not in fields}
+    if note:
+        stripped[ONE_SHOT_NOTE_FIELD] = True
+    return stripped
+
+
 class IssuedKey:
     """The one and only moment a full secret exists outside the caller's memory."""
 
@@ -537,7 +607,7 @@ class IssuedKey:
         body = self.info.as_dict()
         body['secret'] = self.secret
         body['warnings'] = list(self.warnings)
-        return body
+        return OneShotBody(body, ONE_SHOT_FIELDS)
 
     def __repr__(self):
         return f'IssuedKey(key_id={self.info.id!r}, prefix={self.info.prefix!r})'
@@ -718,14 +788,17 @@ class ApiKeyManager:
     """
 
     def __init__(self, conn, *, now=time.time, iterations=PBKDF2_ITERATIONS,
-                 touch_interval_s=DEFAULT_TOUCH_INTERVAL_S, audit_retention=AUDIT_RETENTION):
+                 touch_interval_s=DEFAULT_TOUCH_INTERVAL_S, audit_retention=AUDIT_RETENTION,
+                 grace_sweep_interval_s=GRACE_SWEEP_INTERVAL_S):
         self.conn = conn
         self._now = now
         self.iterations = int(iterations)
         self.touch_interval_s = float(touch_interval_s)
         self.audit_retention = int(audit_retention)
+        self.grace_sweep_interval_s = float(grace_sweep_interval_s)
         self._lock = threading.RLock()
         self._touched = {}
+        self._grace_swept_at = None
         conn.row_factory = sqlite3.Row
         self._columns = {row[1] for row in conn.execute('PRAGMA table_info(api_keys)')}
         if 'id' not in self._columns:
@@ -936,6 +1009,9 @@ class ApiKeyManager:
                 ('rotation_grace_until', None), ('previous_verifier', None),
                 ('previous_verifier_salt', None), ('previous_verifier_algo', None)]))
             self.conn.commit()
+        # Revoking one key is also the moment the windows of the others are
+        # collected, so a cleanup call exists on a path a server really walks.
+        self._sweep_grace(now)
         self._audit(principal.key_id, 'key.revoke', object_kind='api_key', object_id=key_id,
                     result='ok')
         return self.get_key(key_id)
@@ -976,6 +1052,9 @@ class ApiKeyManager:
             raise ApiKeyError(E_FIELD, detail='grace_s must be a number >= 0',
                               action='pass grace_s = 0 to end the old secret at once')
         now = self.now()
+        # A rotation is the moment windows that already ran out are collected, so
+        # the table does not accumulate superseded verifiers key after key.
+        self._sweep_grace(now)
         # The public handle belongs to the key, not to the secret, so the superseded
         # secret stays findable by prefix for the whole rotation window.
         secret, verifier, salt, algo = self._new_secret(row['prefix'])
@@ -1003,17 +1082,51 @@ class ApiKeyManager:
         return IssuedKey(info, secret, warnings)
 
     def purge_expired_grace(self, now=None):
-        """Drop the superseded verifier of windows that have closed."""
+        """Drop the superseded verifier of every window that has closed.
+
+        This is the explicit call, and it always runs.  The production paths
+        (authentication, rotation, revocation) reach the same cleanup through
+        :meth:`_sweep_grace`, which is throttled so that a busy server does not
+        run the update on every request.
+        """
         self._require_columns('previous_verifier', 'previous_verifier_salt',
                               'previous_verifier_algo')
         moment = self._time(now)
         with self._lock:
-            cursor = self.conn.execute(
-                'UPDATE api_keys SET previous_verifier = NULL, previous_verifier_salt = NULL,'
-                ' previous_verifier_algo = NULL, rotation_grace_until = NULL'
-                ' WHERE rotation_grace_until IS NOT NULL AND rotation_grace_until <= ?', (moment,))
-            self.conn.commit()
-            return cursor.rowcount
+            return self._purge_grace(moment)
+
+    def _purge_grace(self, moment):
+        cursor = self.conn.execute(
+            'UPDATE api_keys SET previous_verifier = NULL, previous_verifier_salt = NULL,'
+            ' previous_verifier_algo = NULL, rotation_grace_until = NULL'
+            ' WHERE rotation_grace_until IS NOT NULL AND rotation_grace_until <= ?', (moment,))
+        self.conn.commit()
+        return cursor.rowcount
+
+    def _sweep_grace(self, moment):
+        """Close the windows that have run out, at most once per interval.
+
+        A closed window is dead weight, not a risk: the superseded secret stops
+        matching in :meth:`authenticate` the moment the window shuts.  It is still
+        a PBKDF2 hash of a secret the user believes they threw away, sitting in
+        the table forever because nothing ever called the sweeper.
+
+        The call is throttled and silent on a database that has not taken the
+        additive columns, so it can be put on the hot path: at most one indexed
+        UPDATE per ``grace_sweep_interval_s``.
+        """
+        if not {'previous_verifier', 'previous_verifier_salt', 'previous_verifier_algo',
+                'rotation_grace_until'} <= self._columns:
+            return 0
+        if self._grace_swept_at is not None and \
+                moment - self._grace_swept_at < self.grace_sweep_interval_s:
+            return 0
+        self._grace_swept_at = moment
+        with self._lock:
+            try:
+                return self._purge_grace(moment)
+            except sqlite3.Error:
+                return 0
 
     # -- authentication -------------------------------------------------------
 
@@ -1028,6 +1141,9 @@ class ApiKeyManager:
         if not secret or not isinstance(secret, str):
             raise ApiKeyError(E_MISSING, detail='no key presented',
                               action='send Authorization: Bearer <key>')
+        # The only path a live server walks on every request: this is where a
+        # rotation window that ran out stops leaving its verifier behind.
+        self._sweep_grace(moment)
         if len(secret) > MAX_SECRET_LENGTH:
             self._reject(secret, E_INVALID)
             raise ApiKeyError(E_INVALID, detail='key is not recognised',
@@ -1071,6 +1187,9 @@ class ApiKeyManager:
     def assert_active(self, key_id, *, operation='request', now=None):
         """Re-read the state of a key. Used by leases and by open event streams."""
         moment = self._time(now)
+        # A long-lived stream authenticates once and revalidates here, so this is
+        # where a window that closed while it was open gets collected.
+        self._sweep_grace(moment)
         row = self._row(key_id)
         if row is None:
             raise ApiKeyError(E_INVALID, detail='key is not recognised',

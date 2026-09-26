@@ -317,12 +317,34 @@ class RetentionPreview:
     total_rows: int = 0
     database_bytes: int = 0
     target_bytes: int = 0
+    blocked: tuple = ()                 # ((table, (blocker, ...), rows), ...)
 
     def rows_for(self, table):
+        """The rows retention can actually remove. Blocked rows are not counted."""
         for name, _column, rows, _oldest, _newest in self.targets:
             if name == table:
                 return rows
         return 0
+
+    def blocked_by(self, table):
+        """The referrers holding the rows of ``table`` back, or an empty tuple."""
+        for name, blockers, _rows in self.blocked:
+            if name == table:
+                return tuple(blockers)
+        return ()
+
+    def blocked_rows(self, table=None):
+        """Rows the policy matches that a referrer keeps alive."""
+        if table is None:
+            return sum(rows for _name, _blockers, rows in self.blocked)
+        for name, _blockers, rows in self.blocked:
+            if name == table:
+                return rows
+        return 0
+
+    def runnable(self):
+        """True when every matched row can actually be removed."""
+        return not self.blocked
 
     def to_dict(self):
         return {
@@ -331,8 +353,12 @@ class RetentionPreview:
             "expired_only": self.policy.expired_only,
             "keep_newest": self.policy.keep_newest,
             "total_rows": self.total_rows,
+            "blocked_rows": self.blocked_rows(),
             "database_bytes": self.database_bytes,
             "target_bytes": self.target_bytes,
+            "runnable": self.runnable(),
+            "blocked": [{"table": name, "by": list(blockers), "rows": rows}
+                        for name, blockers, rows in self.blocked],
             "targets": [
                 {"table": name, "time_column": column, "rows": rows,
                  "oldest": oldest, "newest": newest}
@@ -403,6 +429,7 @@ class RebindReport:
     changed: tuple = ()                 # ((access_id, old_ref, new_ref), ...)
     unresolved: tuple = ()              # refs offered for remapping that no access uses
     skipped: tuple = ()                 # ((access_id, reason), ...)
+    revisions: tuple = ()               # ((access_id, from_revision, to_revision, at), ...)
 
     def to_dict(self):
         return {
@@ -410,6 +437,8 @@ class RebindReport:
             "changed": [{"access_id": a, "from": o, "to": n} for a, o, n in self.changed],
             "unresolved": list(self.unresolved),
             "skipped": [{"access_id": a, "reason": r} for a, r in self.skipped],
+            "revisions": [{"access_id": a, "from": old, "to": new, "rotated_at": at}
+                          for a, old, new, at in self.revisions],
         }
 
 
@@ -561,7 +590,9 @@ def _m0(conn, context):
     writes into three of them (§3.5.2).
     """
     conn.execute(f"PRAGMA application_id={APPLICATION_ID}")
-    # The same id function the Python API uses, so migration 13 can backfill
+    # Idempotent on purpose: :func:`connect` already registers it for every
+    # connection, and this line only matters for a caller that built its own
+    # sqlite3 connection and applies migrations by hand.  Migration 13 backfills
     # `results.endpoint_id` with one set-based statement instead of a row loop.
     conn.create_function("endpoint_id", 1, endpoint_id, deterministic=True)
     conn.execute("""CREATE TABLE IF NOT EXISTS schema_migrations(
@@ -1107,6 +1138,14 @@ def connect(path, *, read_only=False):
         conn = sqlite3.connect(path, isolation_level=None)
     try:
         conn.row_factory = sqlite3.Row
+        # The same id function the Python API uses, registered on *every* connection
+        # and not only in migration 0.  Migration 13 backfills `results.endpoint_id`
+        # with one set-based statement, so it needs the function -- and a file left by
+        # an intermediate build of this branch (user_version 1..14) starts above
+        # migration 0 and never runs it.  With the registration here, such a file
+        # migrates; with it only in `_m0`, the same file died at
+        # "no such function: endpoint_id" before a single row was written.
+        conn.create_function("endpoint_id", 1, endpoint_id, deterministic=True)
         # A read-only open does not touch the file, so the header is read once here:
         # a file that is not a database has to fail at the open, not at the first query.
         conn.execute("SELECT count(*) FROM sqlite_master").fetchone()
@@ -1590,8 +1629,29 @@ def _retention_order(conn, tables):
 
 
 def _retention_targets(conn, policy, now):
-    targets, total = [], 0
+    """The one executable plan both the preview and the apply read.
+
+    Returns ``(targets, blocked, total)``.  ``targets`` is in delete order -- a
+    referrer before what it points at -- and ``blocked`` names, per table, the
+    referrers that are still going to hold rows when its own delete comes.
+
+    Counting the blockers *here* is what makes the preview honest.  A policy that
+    names ``observations`` but not the ``results`` pointing at it cannot be run;
+    SQLite refuses the delete, rolls the transaction back and removes nothing.  If
+    the preview counted those rows anyway, the caller would be told about a
+    deletion that :func:`apply_retention` then refuses to perform -- the exact
+    disagreement between "what is reported" and "what is removed" this module
+    promises never to have.  So the preview reports the block and the apply
+    refuses on the same computed fact (F24).
+
+    The blockers are read against the tables the plan has already *scheduled*,
+    not against the tables that happened to delete a row: a referrer that the
+    policy already emptied is not an obstacle, and a referrer with nothing to
+    delete never blocked anything to begin with.
+    """
+    targets, blocked, total = [], {}, 0
     present = [name for name in policy.include if _table_exists(conn, name)]
+    scheduled = set()
     for table in _retention_order(conn, present):
         _delete, where = _retention_sql(table, policy, now)
         column = RETENTION_TIME_COLUMN[table]
@@ -1604,49 +1664,66 @@ def _retention_targets(conn, policy, now):
                 f"SELECT min({_ident(column)}), max({_ident(column)}) FROM {_ident(table)}"
                 f" WHERE {where}").fetchone()
             oldest, newest = bounds[0], bounds[1]
+        blockers = tuple(sorted(_referrers(conn, table) - scheduled))
+        if rows and blockers:
+            # A referrer the policy did not empty still holds these rows, so the
+            # plan cannot remove them.  Count them as zero -- the number the preview
+            # reports is the number the delete removes -- and report what is being
+            # held back, and by whom, in `blocked`.
+            blocked[table] = (blockers, int(rows))
+            rows, oldest, newest = 0, None, None
         targets.append((table, column, int(rows), oldest, newest))
+        scheduled.add(table)
         total += int(rows)
-    return tuple(targets), total
+    return tuple(targets), tuple((table, blockers, rows)
+                                 for table, (blockers, rows) in blocked.items()), total
 
 
 def retention_preview(conn, policy=None, *, now=None):
     """Count what retention would delete, plus the data size behind it.
 
     No writes: the call is safe to repeat and safe on a read-only connection.
+    ``blocked`` names the tables whose rows the plan cannot remove, with the
+    referrers that hold them, so the caller learns it here instead of from a
+    failed cleanup.
     """
     policy = policy or RetentionPolicy()
     now = _now(now)
-    targets, total = _retention_targets(conn, policy, now)
+    targets, blocked, total = _retention_targets(conn, policy, now)
     return RetentionPreview(policy, now, targets, total,
                             database_bytes(_database_file(conn)),
-                            sum(table_bytes(conn, target[0]) or 0 for target in targets))
+                            sum(table_bytes(conn, target[0]) or 0 for target in targets),
+                            blocked)
 
 
 def apply_retention(conn, policy=None, *, now=None, vacuum=False):
     """Delete what :func:`retention_preview` reported, one transaction per table.
 
     Row counts and the size before/after come back in the report, so a caller can
-    show what happened instead of a promise made before the fact.
+    show what happened instead of a promise made before the fact.  The refusal
+    comes from the preview's own ``blocked`` map, so what this function removes and
+    what the preview promised are the same two lists read from one computation.
     """
     policy = policy or RetentionPolicy()
     now = _now(now)
     before = database_bytes(_database_file(conn))
     preview = retention_preview(conn, policy, now=now)
+    blocked = {name: blockers for name, blockers, _rows in preview.blocked}
     deleted, freed = [], 0
     for table, _column, rows, _oldest, _newest in preview.targets:
+        # A table the plan could not free is refused before anything is deleted, and
+        # the refusal comes from the preview's own map -- the same computed fact the
+        # caller already saw, so a cleanup never fails on something the preview did
+        # not warn about (F24).
+        blockers = blocked.get(table)
+        if blockers and preview.blocked_rows(table):
+            raise RetentionError(
+                E_MIGRATION_FAILED,
+                f"cannot delete from {table}: {', '.join(blockers)} still point at it;"
+                f" add {' or '.join(blockers)} to include")
         delete, where = _retention_sql(table, policy, now)
         if where is None or not rows:
             continue
-        # A policy that names a parent table but not the child pointing at it cannot be
-        # executed: SQLite refuses the delete, rolls back and removes nothing.  Name
-        # the blocking table and the remedy instead of surfacing a bare "FOREIGN KEY
-        # constraint failed" (F24).
-        blocked = sorted(_referrers(conn, table) - {item[0] for item in deleted})
-        if blocked:
-            raise RetentionError(
-                E_MIGRATION_FAILED,
-                f"cannot delete from {table}: {', '.join(blocked)} still point at it;"
-                f" add {' or '.join(blocked)} to include")
         freed += table_bytes(conn, table) or 0
         conn.execute("BEGIN IMMEDIATE")
         try:
@@ -1774,12 +1851,42 @@ def _looks_like_credential(value):
     return "@" in text and "://" in text.split("@", 1)[0]
 
 
-def rebind_secrets(source, mapping, *, dry_run=True):
+def _access_rows(conn):
+    """(access_id, secret_ref, access_revision) for every bound access, in id order."""
+    if not _table_exists(conn, "accesses"):
+        return ()
+    return tuple((row["id"], row["secret_ref"], row["access_revision"]) for row in conn.execute(
+        "SELECT id, secret_ref, access_revision FROM accesses"
+        " WHERE secret_ref IS NOT NULL AND secret_ref != '' ORDER BY id"))
+
+
+def rebind_secrets(source, mapping, *, dry_run=True, now=None):
     """Point access identities at another vault reference. Data and secrets stay apart.
 
     ``mapping`` is ``{old_secret_ref: new_secret_ref}``; both sides are references. A
     value that looks like a credential is refused, so a secret cannot reach the
     database through this door (§5.1).
+
+    A rebind is a rotation in meaning, and it moves the row the same way
+    :meth:`secrets.Coordinator.rotate` does: ``access_revision`` goes up by one and
+    ``rotated_at`` gets the moment.  Admission is keyed on the exact
+    ``(access_id, access_revision)`` pair (F09), so without the bump every result
+    measured with the credential the access used *before* the rebind stayed
+    admissible afterwards -- the restored password inherited a successful check it
+    had never earned.  A restore that pointed an access back at a different vault
+    entry is exactly that case, and nothing else in this module could have caught
+    it: a rebind rewrites no measurement, so nothing but the revision says the
+    evidence is stale.
+
+    The new vault entry has to carry the revision this returns
+    (``report.revisions``), or ``secrets.Coordinator.resolve()`` refuses the access
+    with ``E_CONFLICT`` and it stays unusable until that entry is re-staged at the
+    reported revision.  That is the intended direction: an access that cannot be
+    resolved is visibly broken, while an access that resolves against a superseded
+    revision silently keeps trusting measurements taken with a password the user
+    has replaced.  Note that ``reconcile()`` does not fix it -- it finalises a
+    *staged* entry and leaves a ready one at its own revision alone; see
+    docs/integration/HANDOFF/fix-keys.md.
     """
     mapping = dict(mapping)
     for old_ref, new_ref in mapping.items():
@@ -1788,28 +1895,47 @@ def rebind_secrets(source, mapping, *, dry_run=True):
         if _looks_like_credential(new_ref):
             raise DbError(E_PATH_CONFLICT,
                           "refusing to store a credential value; pass a vault reference")
-    bindings = secret_bindings(source)
-    known = {binding.secret_ref for binding in bindings}
-    changed = [(binding.access_id, binding.secret_ref, mapping[binding.secret_ref])
-               for binding in bindings
-               if mapping.get(binding.secret_ref) not in (None, binding.secret_ref)]
-    if not dry_run and changed:
-        conn = connect(source) if isinstance(source, (str, Path)) else source
-        owned = isinstance(source, (str, Path))
-        try:
-            conn.execute("BEGIN IMMEDIATE")
-            for access_id, old_ref, new_ref in changed:
-                conn.execute("UPDATE accesses SET secret_ref = ? WHERE id = ? AND secret_ref = ?",
-                             (new_ref, access_id, old_ref))
-            conn.execute("COMMIT")
-        except sqlite3.Error as exc:
-            conn.execute("ROLLBACK")
-            raise DbError(E_MIGRATION_FAILED, str(exc)) from exc
-        finally:
-            if owned:
-                conn.close()
-    return RebindReport(dry_run, tuple(changed),
-                        tuple(ref for ref in mapping if ref not in known), ())
+    conn = connect(source) if isinstance(source, (str, Path)) else source
+    owned = isinstance(source, (str, Path))
+    try:
+        rows = _access_rows(conn)
+        known = {secret_ref for _id, secret_ref, _revision in rows}
+        changed = [(access_id, secret_ref, mapping[secret_ref], revision)
+                   for access_id, secret_ref, revision in rows
+                   if mapping.get(secret_ref) not in (None, secret_ref)]
+        moment = _now(now)
+        revisions = tuple((access_id, revision, revision + 1, moment)
+                          for access_id, _old, _new, revision in changed)
+        if not dry_run and changed:
+            if not {"access_revision", "rotated_at"} <= set(columns(conn, "accesses")):
+                raise DbError(E_MIGRATION_FAILED,
+                              "table accesses has no access_revision/rotated_at to rotate")
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                for access_id, old_ref, new_ref, revision in changed:
+                    moved = conn.execute(
+                        "UPDATE accesses SET secret_ref = ?, access_revision = ?,"
+                        " rotated_at = ? WHERE id = ? AND secret_ref = ? AND access_revision = ?",
+                        (new_ref, revision + 1, moment, access_id, old_ref, revision)).rowcount
+                    if not moved:
+                        # Somebody rotated or rebound the row between the read and the
+                        # write.  Half a rotation -- a new reference at the old revision --
+                        # is the one outcome that is worse than not doing it at all.
+                        conn.execute("ROLLBACK")
+                        raise DbError(
+                            E_MIGRATION_FAILED,
+                            f"access {access_id!r} was changed by someone else;"
+                            f" re-read the bindings and repeat the rebind")
+                conn.execute("COMMIT")
+            except sqlite3.Error as exc:
+                conn.execute("ROLLBACK")
+                raise DbError(E_MIGRATION_FAILED, str(exc)) from exc
+        return RebindReport(dry_run,
+                            tuple((access_id, old_ref, new_ref) for access_id, old_ref, new_ref, _r in changed),
+                            tuple(ref for ref in mapping if ref not in known), (), revisions)
+    finally:
+        if owned:
+            conn.close()
 
 
 # ---------------------------------------------------------------------------
