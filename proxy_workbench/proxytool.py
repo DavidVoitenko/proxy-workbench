@@ -1568,6 +1568,13 @@ def measurement_bytes(row):
 #: cursor of the corpus.
 CANDIDATE_PAGE = 4096
 
+#: One page of the scope, as an ordered range over the address index with
+#: membership as a test — see :func:`candidate_pages` for why it is not a join.
+_CANDIDATE_PAGE_SQL = (
+    'SELECT e.canonical FROM endpoints e WHERE e.canonical > ? '
+    'AND EXISTS (SELECT 1 FROM membership m WHERE m.endpoint_id = e.id AND m.collection_id = ?) '
+    'ORDER BY e.canonical LIMIT ?')
+
 #: What one in-flight measurement really holds open: the socket, the TLS session
 #: and the connection a redirect chain may still open.
 FDS_PER_REQUEST = 3
@@ -1636,13 +1643,16 @@ def candidate_pages(conn, collection_id, *, page=CANDIDATE_PAGE):
     order, which is also the order that makes inserting the results cheapest.
     Pagination is by address, not by offset, so a page stays correct however many
     rows the sweep has written since.
+
+    The page is read as an ordered range over ``endpoints`` with membership as a
+    membership *test*.  Joining from ``membership`` instead would satisfy the
+    collection filter first and then sort every remaining row to apply
+    ``ORDER BY`` — once per page, so a half-million addresses would be sorted
+    thirty times over.
     """
     last = ''
     while True:
-        rows = conn.execute(
-            'SELECT e.canonical FROM membership m JOIN endpoints e ON e.id = m.endpoint_id '
-            'WHERE m.collection_id = ? AND e.canonical > ? ORDER BY e.canonical LIMIT ?',
-            (collection_id, last, page)).fetchall()
+        rows = conn.execute(_CANDIDATE_PAGE_SQL, (last, collection_id, page)).fetchall()
         if not rows:
             return
         last = rows[-1][0]
@@ -1677,6 +1687,21 @@ def open_fd_budget(requested):
     chain derives its worker count from this (F12, resources not workers).
     """
     return max(FDS_PER_REQUEST * 4, _raise_open_fds(requested) - RESERVED_FDS)
+
+
+def ip_literal(host):
+    """The compressed IP a host really is, or ``None`` for a hostname.
+
+    "N unique IPs" is a number about addresses, so an endpoint named by a
+    hostname is not one of them — and the chain's own counters refuse to count
+    it, which is what makes the two agree.
+    """
+    if not host:
+        return None
+    try:
+        return ipaddress.ip_address(host).compressed
+    except ValueError:
+        return None
 
 
 def _worked(row):
@@ -1827,9 +1852,13 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
         chain counts everything this run measures.  The two never overlap: a row
         that is already confirmed is not measured again, and a row this run
         measures is not in the store yet.
+
+        ``ip`` counts an address that really is one.  A hostname endpoint has an
+        address and no IP, so reporting it as an IP — here or in the counter the
+        chain keeps — would make "N unique IPs" a number nothing can satisfy.
         """
         host = str(row.get('proxy') or '').partition('://')[2].rpartition(':')[0]
-        host = host.strip('[]').lower()
+        host = ip_literal(host.strip('[]').lower())
         fresh_ip = bool(host) and host not in unique_ips
         if host:
             unique_ips.add(host)
@@ -1972,7 +2001,14 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
     # first new verdict is written.
     completed = initial
 
-    def store(proxy, row):
+    def store(proxy, row, passed_ok):
+        """Write one measurement, and count it.
+
+        ``passed_ok`` is the verdict the stage that decided this item already
+        made.  It is passed in rather than recomputed so that the stored row, the
+        ``--want`` count and the pass counter cannot disagree about the same
+        measurement: one decision, one number, three places.
+        """
         nonlocal completed, last_commit, passed
         observation_id[0] = None
         country = country_of(proxy)
@@ -2013,7 +2049,7 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
         # host of every address that passed and the exit address the judge
         # confirmed.  A proxy nobody measured through a target has no exit IP,
         # and "no exit IP" is not "the exit is the proxy's own address".
-        if counts_as_passed(merged):
+        if passed_ok:
             passed += 1
             counted(merged)
         if completed % 100 == 0 or time.monotonic() - last_commit >= 1:
@@ -2042,9 +2078,7 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
             last = ''
             while True:
                 page = [proxy for (proxy,) in db.execute(
-                    'SELECT e.canonical FROM membership m JOIN endpoints e ON e.id = m.endpoint_id '
-                    'WHERE m.collection_id = ? AND e.canonical > ? ORDER BY e.canonical LIMIT ?',
-                    (collection_id, last, CANDIDATE_PAGE))]
+                    _CANDIDATE_PAGE_SQL, (last, collection_id, CANDIDATE_PAGE))]
                 if not page:
                     break
                 last = page[-1]
@@ -2072,7 +2106,7 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
     rows: dict[str, dict] = {}
     store_failures: list[str] = []
 
-    def finish(proxy):
+    def finish(proxy, passed_ok):
         """Write the verdict the chain has just decided, before the next item.
 
         Durability belongs here, inside the chain, and not in the consumer of
@@ -2086,7 +2120,7 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
         if row is None:
             return
         try:
-            store(proxy, row)
+            store(proxy, row, passed_ok)
         except Exception as exc:  # noqa: BLE001 - one row must not end the run
             store_failures.append(type(exc).__name__)
 
@@ -2104,29 +2138,31 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
             return chain.StageOutcome(stage, True)
         unreachable += 1
         rows[proxy] = unreachable_result(proxy)
-        finish(proxy)
+        finish(proxy, False)
         return chain.StageOutcome(stage, False, code='UNREACHABLE', failed_stage='tcp')
 
     def _verdict(stage, row, *, final):
-        """One stage's own answer: what it measured, and what the run makes of it.
+        """One stage's own answer, and the verdict the whole run will record.
 
         ``final`` is the stage that applies the run's own policy (denylist,
-        anonymity level, latency) and therefore the last word; earlier stages only
-        report whether the measurement itself worked.
+        anonymity level, latency) and therefore the last word; an earlier stage
+        only reports whether the measurement itself worked.  The verdict is
+        returned as well as the stage outcome, because it is the one number the
+        store and the chain's find-N must agree on — decided once, here.
         """
         ok = counts_as_passed(row) if final else _worked(row)
         if ok:
             return chain.StageOutcome(stage, True, exit_ip=exit_address_of(row) or None,
                                       latency_ms=_number(row.get('latency_ms')) or None,
-                                      requests=measurement_requests(row), bytes=measurement_bytes(row))
+                                      requests=measurement_requests(row), bytes=measurement_bytes(row)), True
         if row.get('error'):
             return chain.StageOutcome(stage, False, code=row.get('error') or 'PROBE_FAILED',
                                       failed_stage=row.get('error_stage') or 'target',
                                       latency_ms=_number(row.get('latency_ms')) or None,
-                                      requests=measurement_requests(row), bytes=measurement_bytes(row))
+                                      requests=measurement_requests(row), bytes=measurement_bytes(row)), False
         return chain.StageOutcome(stage, False, code='POLICY_REJECTED', failed_stage='policy',
                                   exit_ip=exit_address_of(row) or None,
-                                  requests=measurement_requests(row), bytes=measurement_bytes(row))
+                                  requests=measurement_requests(row), bytes=measurement_bytes(row)), False
 
     async def basic_stage(item, *, stage, limit):
         """The basic stage: the reputation screen, then one request per target.
@@ -2144,7 +2180,9 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
                            'local_rule': None, 'dnsbl': []}
             if verdict_blocks(verdict, strict):
                 rows[proxy] = blocked_result(proxy, verdict)
-                return chain.StageOutcome(stage, False, code=str(verdict.get('status') or 'BLOCKED').upper(),
+                finish(proxy, False)
+                return chain.StageOutcome(stage, False,
+                                          code=str(verdict.get('status') or 'BLOCKED').upper(),
                                           failed_stage='reputation')
         try:
             row = await probe(proxy, config, limiter)
@@ -2159,9 +2197,10 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
             row = unreachable_result(proxy)
             row['error'] = 'BAD_PROBE_RESULT'
         rows[proxy] = row
+        outcome, ok = _verdict(stage, row, final=expensive_probe is None)
         if expensive_probe is None:
-            finish(proxy)
-        return _verdict(stage, row, final=expensive_probe is None)
+            finish(proxy, ok)
+        return outcome
 
     async def expensive_stage(item, *, stage, limit):
         """The expensive stage: what only a proxy that already works may cost.
@@ -2178,15 +2217,16 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
             row = await expensive_probe(proxy, config, limiter, row)
         except Exception as exc:
             # A judge that failed is unknown, never a pass, and it must not throw
-            # away a working measurement: the basic verdict stays and the reason
+            # away a working measurement: the basic verdict stands and the reason
             # is recorded on the row.
             row = dict(row)
             row['expensive_error'] = type(exc).__name__
         if not isinstance(row, dict):
             row = dict(rows.get(proxy) or unreachable_result(proxy))
         rows[proxy] = row
-        finish(proxy)
-        return _verdict(stage, row, final=True)
+        outcome, ok = _verdict(stage, row, final=True)
+        finish(proxy, ok)
+        return outcome
 
     config_chain = chain.PipelineConfig(
         sources=(chain.SourceSpec(source_id=f'collection:{collection_id}', fetch=candidates),),
@@ -2287,12 +2327,17 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
         """Whether a result is a measurement the run must not record as one.
 
         A spent budget ends the run; it does not make the addresses it did not
-        reach dead.  Such an item is never handed to a runner at all — the gate
-        refuses the stage before the socket is opened — so this only guards the
-        rare case where a stage failed for a budget reason after it started.
+        reach dead.  Such an item never reaches a runner at all — the gate
+        refuses the stage before the socket is opened — so nothing was written
+        for it and nothing has to be taken back.  The check stays as the one place
+        that says so, in case a stage ever fails for a budget reason after it
+        started.
         """
         codes = {outcome.code for outcome in result.stages if not outcome.ok}
-        return bool(codes & {chain.E_LIMIT_BUDGET, chain.DEADLINE_EXCEEDED, chain.E_LIMIT_BODY})
+        if codes & {chain.E_LIMIT_BUDGET, chain.DEADLINE_EXCEEDED, chain.E_LIMIT_BODY}:
+            rows.pop(result.endpoint, None)
+            return True
+        return False
 
     reporter_task = None
 
@@ -2301,14 +2346,13 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
             """Drain the result stream; the verdicts are already written.
 
             Each item is written the moment the chain decides it, inside the
-            stage that decided it, so an interrupted run keeps what it measured.
-            The stream is still read here, because a chain whose results nobody
-            takes blocks once its queue is full.
+            stage that decided it, so an interrupted run keeps what it measured
+            and never writes it twice.  The stream is still read here, because a
+            chain whose results nobody takes blocks once its queue is full.
             """
             try:
                 async for result in engine.stream():
-                    if unmeasured(result) and result.endpoint in rows:
-                        rows.pop(result.endpoint, None)
+                    unmeasured(result)
             finally:
                 # The chain is over, so the live report is over with it.  Left
                 # running it would keep the run alive after the last result.
@@ -2323,6 +2367,11 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
         db.commit()
         rows.clear()
         publish()
+    if store_failures and run_state is not None:
+        # A verdict the run decided and could not write is not a verdict the user
+        # can rely on, so it is named rather than counted away.
+        run_state['store_failures'] = len(store_failures)
+        run_state['store_failure_kinds'] = sorted(set(store_failures))
     return profile
 
 
@@ -4899,6 +4948,9 @@ def main(argv=None):
                         row['speed'] = await measure_speed(proxy, scan_config, limiter)
                     return row
 
+            # Whether the cheap stage runs at all.  Its size used to be this
+            # number of connections; it is now the chain's derived worker count,
+            # like everything else (F12, resources not workers).
             prefilter = fit_prefilter(workers, args.prefilter)
 
             def run_scan(**options):
