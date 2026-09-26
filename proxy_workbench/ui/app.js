@@ -1168,6 +1168,149 @@ const messages = {
     'imp.proxy': 'Address',
     'error.fileTooLarge': 'The file is larger than 32 MB.',
     'gateway.restarted': 'The rotating proxy was restarted with it.',
+    // Pools, schedules, jobs: what is in service and what is not.
+    'pool.unit.endpoint': 'addresses',
+    'pool.unit.exit': 'distinct exits',
+    'pool.unit.ip': 'IP addresses',
+    'pool.phase.active': 'in service',
+    'pool.phase.reserve': 'reserve',
+    'pool.phase.probation': 'on probation',
+    'pool.phase.cooldown': 'resting',
+    'pool.phase.prefiltered': 'prefiltered',
+    'pool.phase.blocked': 'blocked',
+    'pool.reasonAction': 'Top up the pool, or lower the target if this is expected.',
+    'pool.noDeficit': 'The pool is at its target: nothing is missing.',
+    'pool.onTarget': 'At target: {served} in service of {desired}.',
+    'sched.resume': 'Resume',
+    'sched.pause': 'Pause',
+    'sched.runBlocked': 'A paused or disabled schedule does not run by hand.',
+    'sched.overdue': 'missed',
+    'sched.pauseReason': 'paused because',
+    'sched.lostOnRestart': 'This database cannot hold {names}: a restart brings them back to their defaults. Everything else is kept.',
+    'sched.keepsRuntime': 'Pause and daily budget survive a restart of the application.',
+    'sched.pausedNow': 'Paused. The pause is kept across a restart.',
+    'sched.resumedNow': 'Resumed.',
+    'cat.support.supported': 'supported',
+    'cat.support.needs-auth': 'needs an account',
+    'cat.support.needs-adapter': 'no reader yet',
+    'cat.support.unsupported': 'not a proxy list',
+    'cat.support.experimental': 'experimental',
+    'cat.supportHint': 'What this application can do with this record. Only "supported" records are collected.',
+    'cat.filterSupport': 'Support',
+    'cat.partial': 'partial',
+    'cat.last304': 'Last-Modified/ETag answered 304: the saved body was kept',
+    'cat.lastGood': 'last good',
+    'cat.lastGoodHint': 'The generation that is still usable, with how many records it holds.',
+    'cat.backoff': 'retry after',
+    'gwb.rows': 'the listener can serve {count} rows now',
+    'gwb.empty': 'the chosen pool is empty, so clients get nothing until it is filled',
+    'gwb.emptyNote': 'Applied without a restart. The chosen pool serves nothing right now — the listener is fine, the pool is empty.',
+    'gwb.appliedNote': 'Applied without a restart. The listener can serve {rows} rows now.',
+    'connect.lanOn': 'LAN is on: listening on {host}, published as {published}',
+    'connect.lanNoToken': 'LAN is on ({host}) but there is no password, so it is not offered as a phone connection',
+    'jobs.title': 'Jobs and their progress',
+    'jobs.lead': 'A job is the durable record of one run: its queue, its state and its events survive a restart. The counters below are read from that record, not cut out of the log text, and a button is only enabled when the job is in a state the action is legal from.',
+    'jobs.empty': 'No jobs yet. A check or a pool re-check creates one.',
+    'jobs.detail': 'Progress',
+    'jobs.detailTitle': 'Progress and events of the selected job',
+    'jobs.progressLabel': 'Items finished',
+    'jobs.noSelection': 'Choose a job to see its progress and events.',
+    'jobs.noEvents': 'No events yet.',
+    'jobs.action.pause': 'Pause',
+    'jobs.action.resume': 'Resume',
+    'jobs.action.cancel': 'Cancel',
+    'jobs.action.retry': 'Retry',
+    'jobs.actionBlocked': 'Not available while the job is {state}.',
+    'jobs.confirmCancel': 'Cancel job {id}? Finished measurements are kept.',
+    'jobs.recovered': 'Requeued {jobs} job(s); {kept} finished measurements were kept.',
+    'jobs.recover': 'Find interrupted jobs',
+    'jobs.state': 'State',
+    'jobs.total': 'In the queue',
+    'jobs.finished': 'Finished',
+    'jobs.unfinished': 'Left',
+    'jobs.elapsed': 'Elapsed',
+    'jobs.remaining': 'Left to go',
+    'jobs.slept': 'Asleep for',
+    'jobs.lastSeq': 'Last event',
+    'jobs.done.pause': 'Job {id} paused: {state}',
+    'jobs.done.resume': 'Job {id} resumed: {state}',
+    'jobs.done.cancel': 'Job {id} cancelled: {state}',
+    'jobs.done.retry': 'Job {id} queued again: {state}',
+    'diag.title': 'Why there is nothing to show',
+    'diag.lead': 'Every address that entered the check and did not reach the result is counted here, with the stage it was lost at. Each line carries the one action that recovers it.',
+    'diag.loading': 'Reading the last run…',
+    'diag.lossesTitle': 'Where addresses are lost, with an action for each reason',
+    'diag.healthTitle': 'Health of this installation',
+    'diag.ok': 'ok',
+    'diag.failing': 'problem',
+    'diag.noRun': 'Nothing has been measured yet, so there is no funnel to show. Start a check first.',
+    'diag.noLosses': 'Nothing was lost: every address that entered the check reached the end.',
+    'diag.entered': 'entered',
+    'diag.lostAt': 'lost here',
+    'diag.kept': 'kept',
+    'diag.keptOf': 'Kept {kept} of {entered}',
+    'diag.codeHint': 'The code is stable; the sentence is what the page shows.',
+    'diag.stage.source': 'Sources',
+    'diag.stage.download': 'Download',
+    'diag.stage.parser': 'Reading the format',
+    'diag.stage.scope': 'Your scope',
+    'diag.stage.freshness': 'How fresh the proof is',
+    'diag.stage.reputation': 'Reputation',
+    'diag.stage.target': 'The service answered',
+    'diag.stage.measurement': 'Measured',
+    'diag.stage.budget': 'Budget',
+    'diag.stage.export': 'Export',
+    'diag.stage.device_network': 'Your network',
+    'diag.stage.dns': 'Name resolution',
+    'diag.stage.tcp': 'Connection',
+    'diag.stage.handshake': 'Handshake',
+    'diag.stage.tls': 'TLS',
+    'diag.stage.assertion': 'The answer matched',
+    'diag.stage.auth': 'Upstream authentication',
+    'diag.stage.rate_limit': 'Rate limit',
+    'diag.stage.environment': 'Environment',
+    'diag.bundleTitle': 'Diagnostic package for a bug report',
+    'diag.bundleLead': 'The package holds versions, the check scope, the job state, the funnel counters and a sample of rows. Passwords, tokens and authorization headers are replaced with "***", and the finished text is swept against the live secrets of this process before anything is written. You can delete anything in the preview before saving; the file is written into the data folder and sent nowhere.',
+    'diag.bundleName': 'File name',
+    'diag.bundlePreview': 'Preview',
+    'diag.bundleSave': 'Save',
+    'diag.bundleEdit': 'Let me remove lines before saving',
+    'diag.bundleReady': 'Ready: {sample} of {total} rows, {redactions} secret(s) replaced, {canary} live secret(s) checked against.',
+    'diag.bundleSaved': 'Saved to {path} as {name}.',
+    'diag.bundleSavedShort': 'Saved {name} into the data folder.',
+    'diag.bundleText': 'Package text, editable',
+    'desk.title': 'The background layer',
+    'desk.lead': 'The menu bar, the single instance, start at login and sleep/wake live in the background layer, not in this page. What it did is written to its own journal and shown here.',
+    'desk.autostart': 'Start at login',
+    'desk.autostartApply': 'Apply',
+    'desk.autostartNote': 'What the login item says, and where its file is.',
+    'desk.autostartUnavailable': 'Start at login is not configured for this platform.',
+    'desk.autostartOn': 'Start when I log in',
+    'desk.autostartOff': 'Do not start',
+    'desk.autostartDone': 'Changed.',
+    'desk.journalTitle': 'Journal of the background layer',
+    'desk.journalEmpty': 'The background layer has written nothing yet.',
+    'desk.state.on': 'background layer is running',
+    'desk.state.off': 'background layer is not available',
+    'desk.instance': 'Running instance',
+    'desk.instanceNone': 'Not running under the background layer; this window is the interface on its own.',
+    'desk.pid': 'process',
+    'desk.tray': 'Menu bar',
+    'desk.trayOn': 'drawn (process {pid})',
+    'desk.trayOff': 'not drawn',
+    'desk.version': 'Version',
+    'desk.versionUnknown': 'unknown',
+    'desk.data': 'Data folder',
+    'desk.logs': 'Logs',
+    'desk.mode': 'Why this folder',
+    'desk.folderMismatch': 'Different data folder',
+    'desk.folderMismatchNote': 'The background layer resolves another folder than this window uses. Its journal and login item belong to that one.',
+    'desk.power': 'Power',
+    'desk.onBattery': 'on battery',
+    'desk.onMains': 'on mains',
+    'desk.powerUnknown': 'the system reports nothing, so no power policy is applied',
+    'desk.network': 'Network addresses',
+    'desk.networkNone': 'none found',
   },
   ru: {
     'lang.currentName': 'Русский язык',
@@ -2316,6 +2459,149 @@ const messages = {
     'imp.proxy': 'Адрес',
     'error.fileTooLarge': 'Файл больше 32 МБ.',
     'gateway.restarted': 'Ротирующий прокси перезапущен с новой привязкой.',
+    // Pools, schedules, jobs: what is in service and what is not.
+    'pool.unit.endpoint': 'адресов',
+    'pool.unit.exit': 'выходов',
+    'pool.unit.ip': 'IP-адресов',
+    'pool.phase.active': 'в обслуживании',
+    'pool.phase.reserve': 'в резерве',
+    'pool.phase.probation': 'на испытательном',
+    'pool.phase.cooldown': 'отдыхает',
+    'pool.phase.prefiltered': 'отсеян заранее',
+    'pool.phase.blocked': 'заблокирован',
+    'pool.reasonAction': 'Пополните пул или снизьте цель, если это ожидаемо.',
+    'pool.noDeficit': 'Пул на цели: не хватает ничего.',
+    'pool.onTarget': 'Цель достигнута: {served} в обслуживании из {desired}.',
+    'sched.resume': 'Продолжить',
+    'sched.pause': 'Пауза',
+    'sched.runBlocked': 'Расписание на паузе или выключено — ручной запуск не выполняется.',
+    'sched.overdue': 'пропущено',
+    'sched.pauseReason': 'пауза потому что',
+    'sched.lostOnRestart': 'Эта база не умеет хранить {names}: после перезапуска они вернутся к значениям по умолчанию. Всё остальное сохраняется.',
+    'sched.keepsRuntime': 'Пауза и дневной бюджет переживают перезапуск приложения.',
+    'sched.pausedNow': 'Пауза включена. Она сохранится после перезапуска.',
+    'sched.resumedNow': 'Пауза снята.',
+    'cat.support.supported': 'поддерживается',
+    'cat.support.needs-auth': 'нужен аккаунт',
+    'cat.support.needs-adapter': 'нет чтения формата',
+    'cat.support.unsupported': 'не список прокси',
+    'cat.support.experimental': 'экспериментальный',
+    'cat.supportHint': 'Что это приложение умеет с этой записью. Собираются только записи со статусом «поддерживается».',
+    'cat.filterSupport': 'Поддержка',
+    'cat.partial': 'частично',
+    'cat.last304': 'Last-Modified/ETag ответил 304: сохранённое тело оставлено как есть',
+    'cat.lastGood': 'последнее годное',
+    'cat.lastGoodHint': 'Поколение, которым ещё можно пользоваться, и сколько адресов в нём.',
+    'cat.backoff': 'повтор после',
+    'gwb.rows': 'слушатель отдаёт сейчас {count} строк',
+    'gwb.empty': 'выбранный пуст, клиенты не получат ничего, пока он не наполнен',
+    'gwb.emptyNote': 'Применено без перезапуска. Выбранный пул сейчас ничего не отдаёт — слушатель в порядке, пул пуст.',
+    'gwb.appliedNote': 'Применено без перезапуска. Слушатель отдаёт сейчас {rows} строк.',
+    'connect.lanOn': 'LAN включён: слушает на {host}, публикуется как {published}',
+    'connect.lanNoToken': 'LAN включён ({host}), но пароля нет, поэтому подключение с телефона не предлагается',
+    'jobs.title': 'Задания и их прогресс',
+    'jobs.lead': 'Задание — это постоянная запись одного прогона: очередь, состояние и события переживают перезапуск. Счётчики ниже читаются из этой записи, а не вырезаны из текста журнала, а кнопка включена только из того состояния, из которого действие разрешено.',
+    'jobs.empty': 'Заданий пока нет. Их создаёт проверка или перепроверка пула.',
+    'jobs.detail': 'Прогресс',
+    'jobs.detailTitle': 'Прогресс и события выбранного задания',
+    'jobs.progressLabel': 'Завершено элементов',
+    'jobs.noSelection': 'Выберите задание, чтобы увидеть его прогресс и события.',
+    'jobs.noEvents': 'Событий пока нет.',
+    'jobs.action.pause': 'Пауза',
+    'jobs.action.resume': 'Продолжить',
+    'jobs.action.cancel': 'Отменить',
+    'jobs.action.retry': 'Повторить',
+    'jobs.actionBlocked': 'Недоступно, пока задание в состоянии {state}.',
+    'jobs.confirmCancel': 'Отменить задание {id}? Уже измеренное сохранится.',
+    'jobs.recovered': 'В очередь возвращено заданий: {jobs}; сохранено завершённых измерений: {kept}.',
+    'jobs.recover': 'Найти прерванные задания',
+    'jobs.state': 'Состояние',
+    'jobs.total': 'В очереди',
+    'jobs.finished': 'Завершено',
+    'jobs.unfinished': 'Осталось',
+    'jobs.elapsed': 'Прошло',
+    'jobs.remaining': 'Осталось примерно',
+    'jobs.slept': 'Сон',
+    'jobs.lastSeq': 'Последнее событие',
+    'jobs.done.pause': 'Задание {id} на паузе: {state}',
+    'jobs.done.resume': 'Задание {id} продолжено: {state}',
+    'jobs.done.cancel': 'Задание {id} отменено: {state}',
+    'jobs.done.retry': 'Задание {id} снова в очереди: {state}',
+    'diag.title': 'Почему результатов нет',
+    'diag.lead': 'Каждый адрес, который вошёл в проверку и не дошёл до результата, посчитан здесь вместе с этапом, на котором он потерян. У каждой строки есть одно действие, которое это исправляет.',
+    'diag.loading': 'Читаем последний прогон…',
+    'diag.lossesTitle': 'Где теряются адреса, с действием по каждой причине',
+    'diag.healthTitle': 'Состояние этой установки',
+    'diag.ok': 'в порядке',
+    'diag.failing': 'проблема',
+    'diag.noRun': 'Ещё ничего не измерено, поэтому воронки нет. Сначала запустите проверку.',
+    'diag.noLosses': 'Ничего не потеряно: каждый адрес, вошедший в проверку, дошёл до конца.',
+    'diag.entered': 'вошло',
+    'diag.lostAt': 'потеряно здесь',
+    'diag.kept': 'осталось',
+    'diag.keptOf': 'Осталось {kept} из {entered}',
+    'diag.codeHint': 'Код постоянен; страница показывает предложение.',
+    'diag.stage.source': 'Источники',
+    'diag.stage.download': 'Загрузка',
+    'diag.stage.parser': 'Разбор формата',
+    'diag.stage.scope': 'Ваша область',
+    'diag.stage.freshness': 'Свежесть доказательства',
+    'diag.stage.reputation': 'Репутация',
+    'diag.stage.target': 'Ответ сервиса',
+    'diag.stage.measurement': 'Измерено',
+    'diag.stage.budget': 'Бюджет',
+    'diag.stage.export': 'Экспорт',
+    'diag.stage.device_network': 'Ваша сеть',
+    'diag.stage.dns': 'Разрешение имени',
+    'diag.stage.tcp': 'Соединение',
+    'diag.stage.handshake': 'Рукопожатие',
+    'diag.stage.tls': 'TLS',
+    'diag.stage.assertion': 'Ответ подошёл',
+    'diag.stage.auth': 'Аутентификация у апстрима',
+    'diag.stage.rate_limit': 'Ограничение частоты',
+    'diag.stage.environment': 'Окружение',
+    'diag.bundleTitle': 'Диагностический пакет для отчёта об ошибке',
+    'diag.bundleLead': 'Пакет содержит версии, область проверки, состояние задания, счётчики воронки и выборку строк. Пароли, токены и заголовки авторизации заменяются на «***», а готовый текст проверяется на живые секреты этого процесса до записи на диск. В предпросмотре можно удалить любые строки перед сохранением; файл пишется в папку данных и никуда не отправляется.',
+    'diag.bundleName': 'Имя файла',
+    'diag.bundlePreview': 'Предпросмотр',
+    'diag.bundleSave': 'Сохранить',
+    'diag.bundleEdit': 'Разрешить мне убрать строки перед сохранением',
+    'diag.bundleReady': 'Готово: строк в выборке {sample} из {total}, заменено секретов {redactions}, проверено живых секретов {canary}.',
+    'diag.bundleSaved': 'Сохранено в {path} как {name}.',
+    'diag.bundleSavedShort': 'Файл {name} сохранён в папку данных.',
+    'diag.bundleText': 'Текст пакета, его можно править',
+    'desk.title': 'Фоновый слой',
+    'desk.lead': 'Меню-бар, один экземпляр, автозапуск и сон/пробуждение живут в фоновом слое, а не на этой странице. Всё, что он делал, записано в его собственный журнал и показано здесь.',
+    'desk.autostart': 'Запуск при входе',
+    'desk.autostartApply': 'Применить',
+    'desk.autostartNote': 'Что говорит элемент автозапуска и где лежит его файл.',
+    'desk.autostartUnavailable': 'Запуск при входе на этой платформе не настроен.',
+    'desk.autostartOn': 'Запускать при входе',
+    'desk.autostartOff': 'Не запускать',
+    'desk.autostartDone': 'Изменено.',
+    'desk.journalTitle': 'Журнал фонового слоя',
+    'desk.journalEmpty': 'Фоновый слой пока ничего не записал.',
+    'desk.state.on': 'фоновый слой работает',
+    'desk.state.off': 'фоновый слой недоступен',
+    'desk.instance': 'Работающий экземпляр',
+    'desk.instanceNone': 'Сейчас работает не фоновый слой, а сам интерфейс.',
+    'desk.pid': 'процесс',
+    'desk.tray': 'Меню-бар',
+    'desk.trayOn': 'нарисован (процесс {pid})',
+    'desk.trayOff': 'не нарисован',
+    'desk.version': 'Версия',
+    'desk.versionUnknown': 'неизвестна',
+    'desk.data': 'Папка данных',
+    'desk.logs': 'Журналы',
+    'desk.mode': 'Почему эта папка',
+    'desk.folderMismatch': 'Другая папка данных',
+    'desk.folderMismatchNote': 'Фоновый слой выбирает папку, отличную от папки этого окна. Его журнал и автозапуск относятся к той.',
+    'desk.power': 'Питание',
+    'desk.onBattery': 'от батареи',
+    'desk.onMains': 'от сети',
+    'desk.powerUnknown': 'система ничего не сообщает, поэтому политика питания не применяется',
+    'desk.network': 'Адреса сети',
+    'desk.networkNone': 'не найдены',
   }
 };
 
@@ -2774,7 +3060,12 @@ function showTab(name) {
   if (name === 'pools') {
     if (typeof loadPools === 'function') loadPools();
     if (typeof loadSchedules === 'function') loadSchedules();
+    if (typeof loadJobs === 'function') loadJobs();
     if (typeof loadGatewayOptions === 'function') loadGatewayOptions();
+  }
+  if (name === 'help') {
+    if (typeof loadDiagnostics === 'function') loadDiagnostics();
+    if (typeof loadDesktop === 'function') loadDesktop();
   }
   if (name === 'keys' && typeof loadKeys === 'function') loadKeys();
   if (window.location.hash !== '#' + name) {
@@ -6530,9 +6821,14 @@ function renderConnectPath(value) {
   }
   const lan = $('connect-lan');
   if (lan && gateway) {
+    // The socket address and the published address are two different facts
+    // under `--lan`: the listener takes the wildcard (or one chosen adapter)
+    // while the printed address stays the one a phone should dial.  Showing
+    // only the requested host made a LAN listener look local.
+    const listen = gateway.listen_host || gateway.bind_host;
     lan.textContent = gateway.mobile_ready
-      ? (lang === 'ru' ? `LAN включён: ${gateway.bind_host}` : `LAN is on: ${gateway.bind_host}`)
-      : t('connect.lanOptIn');
+      ? t('connect.lanOn', {host: listen, published: parts.host || gateway.address})
+      : (gateway.lan ? t('connect.lanNoToken', {host: listen}) : t('connect.lanOptIn'));
     lan.classList.toggle('warn', Boolean(gateway.mobile_ready));
   }
   const note = $('connect-probe-note');
@@ -7067,6 +7363,11 @@ bindLangMenu();
 const CATALOG_PAGE = 50;
 const ACCESS_GROUPS = ['public_free', 'permanent_free_quota', 'free_with_key', 'trial', 'paid',
                        'own_infrastructure', 'snapshot_unavailable', 'unknown'];
+// The five support statuses of a catalog record, in the words F13 uses.  A
+// record is either readable as a proxy list, or it is not: `supported`,
+// `needs-auth`, `needs-adapter`, `unsupported`, `experimental`.  Paid and
+// trial providers are visible under `needs-auth` and are never collected.
+const SUPPORT_STATUSES = ['supported', 'needs-auth', 'needs-adapter', 'unsupported', 'experimental'];
 const SOURCE_FORMATS = ['http', 'https', 'socks4', 'socks5', 'socks5h', 'auto', 'text', 'geonode',
                         'http-fields', 'line', 'json-records', 'fields', 'page-json', 'html-table'];
 let catalogData = null;
@@ -7081,6 +7382,7 @@ const catalogFilters = () => ({
   protocol: $('catalog-protocol') ? $('catalog-protocol').value : '',
   format: $('catalog-format') ? $('catalog-format').value : '',
   access: $('catalog-access') ? $('catalog-access').value : '',
+  support: $('catalog-support') ? $('catalog-support').value : '',
   set: $('catalog-set-filter') ? $('catalog-set-filter').value : ''
 });
 
@@ -7120,6 +7422,11 @@ function renderCatalogFacets(view) {
     const set = (view && view.sets || []).find(entry => entry.id === item);
     return set ? `${set.id} (${set.members})` : item;
   });
+  // The support counts come from the server (`App.support_facets`) so the
+  // number next to a status is the number of records that really carry it.
+  fillCatalogSelect('catalog-support', SUPPORT_STATUSES.filter(
+      status => (view && view.supports || {})[status]),
+    status => `${t(`cat.support.${status}`)} (${(view && view.supports || {})[status]})`);
   const states = (view && view.facets && view.facets.states) || {};
   const node = $('catalog-state');
   if (!node) return;
@@ -7190,6 +7497,12 @@ function relativeAge(seconds) {
   return `${Math.floor(seconds / 86400)} d`;
 }
 
+function supportBadge(row) {
+  const status = String((row && row.support) || '').replace(/_/g, '-');
+  const cls = status === 'supported' ? 'pass' : status === 'experimental' ? 'warn' : 'subtle';
+  return `<span class="badge ${cls}" title="${esc(t('cat.supportHint'))}">${esc(t(`cat.support.${status}`))}</span>`;
+}
+
 function runtimeCell(runtime) {
   if (!runtime || !runtime.observed_at) {
     return runtime && runtime.error
@@ -7211,6 +7524,40 @@ function runtimeCell(runtime) {
   if (runtime.cache_state && runtime.cache_state !== 'none') parts.push(`<span class="badge subtle">${esc(runtime.cache_state)}</span>`);
   if (runtime.error) parts.push(`<span class="catalog-err" title="${esc(t('cat.error'))}">${esc(runtime.error)}</span>`);
   if (runtime.quarantine_until) parts.push(`<span class="badge warn">${esc(t('cat.quarantineUntil'))} ${esc(new Date(runtime.quarantine_until * 1000).toLocaleString())}</span>`);
+  return parts.join(' ');
+}
+
+// What the last download actually was: 200, 304, 429, partial, empty.  The
+// four are not the same thing and a user reading "checked" alone cannot tell
+// a 304 (a saved answer, nothing new) from a 429 (refused, try later) or from
+// a partial read (kept what it got).  So the HTTP state, the validators the
+// server sent and the last good body are each on their own line.
+function transportCell(runtime) {
+  if (!runtime || (!runtime.observed_at && !runtime.last_attempt_at)) {
+    return '<span class="text-muted">—</span>';
+  }
+  const parts = [];
+  const http = runtime.http_state || 'not_run';
+  const status = runtime.status;
+  // `source_management.FETCH_STATES` names the outcomes: a 2xx with a body is
+  // the only one that produced data, a 304 kept the saved answer, and a 429 /
+  // timeout / error / redirect block all refused without producing one.
+  const tone = http === 'http_2xx_nonempty' ? 'pass'
+    : ['http_429', 'timeout', 'http_error', 'blocked_destination', 'redirect_blocked'].includes(http) ? 'warn'
+    : 'subtle';
+  parts.push(`<span class="badge ${tone}">${esc(http)}${status ? ' ' + esc(status) : ''}</span>`);
+  if (runtime.partial) parts.push(`<span class="badge warn">${esc(t('cat.partial'))}</span>`);
+  if (runtime.outcome) parts.push(`<span class="text-muted">${esc(runtime.outcome)}</span>`);
+  if (runtime.state_etag) parts.push(`<span class="text-muted" title="ETag">ETag ${esc(String(runtime.state_etag).slice(0, 18))}</span>`);
+  if (runtime.state_last_modified) parts.push(`<span class="text-muted" title="Last-Modified">LM ${esc(String(runtime.state_last_modified).slice(0, 24))}</span>`);
+  if (runtime.last_304_at) parts.push(`<span class="text-muted" title="${esc(t('cat.last304'))}">304 ${esc(humanWhen(runtime.last_304_at))}</span>`);
+  if (runtime.last_good_at) {
+    parts.push(`<span class="text-muted" title="${esc(t('cat.lastGoodHint'))}">${esc(t('cat.lastGood'))}: ${
+      esc(fmt(runtime.last_good_records || 0))} · ${esc(humanWhen(runtime.last_good_at))}</span>`);
+  }
+  if (runtime.backoff_until && runtime.backoff_until > Date.now() / 1000) {
+    parts.push(`<span class="badge subtle">${esc(t('cat.backoff'))} ${esc(humanWhen(runtime.backoff_until))}</span>`);
+  }
   return parts.join(' ');
 }
 
@@ -7246,10 +7593,11 @@ function catalogRowHtml(row) {
     </div>
     <div class="catalog-cell catalog-cell-state">
       <span class="badge status-badge ${stateClass}" title="${esc(accessNote || '')}">${esc(stateLabel)}</span>
+      <div>${supportBadge(row)}</div>
       <div class="text-muted">${esc(t('cat.age'))}: ${esc(age === null || age === undefined ? t('cat.ageNone') : relativeAge(age))}</div>
       ${!row.collectable ? `<div class="text-muted-warn">${esc(row.not_proxy_source_reason || row.access_blocked_reason || '')}</div>` : ''}
     </div>
-    <div class="catalog-cell catalog-cell-data">${runtimeCell(runtime)}</div>
+    <div class="catalog-cell catalog-cell-data">${runtimeCell(runtime)}<div class="text-muted">${transportCell(runtime)}</div></div>
     <div class="catalog-cell catalog-cell-choice">
       <span class="badge ${choiceClass}">${esc(t(`cat.choice.${row.selection_state}`))}</span>
       <div class="catalog-actions">
@@ -7475,7 +7823,7 @@ function setupCatalogListeners() {
     };
   }
 
-  for (const id of ['catalog-q', 'catalog-state', 'catalog-category', 'catalog-protocol', 'catalog-format', 'catalog-access', 'catalog-set-filter']) {
+  for (const id of ['catalog-q', 'catalog-state', 'catalog-category', 'catalog-protocol', 'catalog-format', 'catalog-access', 'catalog-support', 'catalog-set-filter']) {
     const node = $(id);
     if (!node) continue;
     node.oninput = () => { catalogLimit = CATALOG_PAGE; clearTimeout(catalogTimer); catalogTimer = setTimeout(reloadCatalog, 250); };
@@ -8244,11 +8592,15 @@ function renderImportPreview(plan) {
       rejected: fmt(counts.rejected || 0), removed: fmt(counts.removed || 0)
     });
     const rejected = (plan.rows || []).filter(row => row.state === 'rejected').slice(0, 60);
+    // `plan.rejected` is not a field of the answer: the refused lines are the
+    // rows whose state says so, and `counts.rejected` is how many there are.
+    // Reading a field that is always absent made this counter read 0 while the
+    // table right below it listed the very lines it claimed there were none of.
     const groups = [
       ['imp.added', (plan.added || []).length],
       ['imp.unchanged', (plan.unchanged || []).length],
       ['imp.removed', (plan.removed || []).length],
-      ['imp.rejectedLines', (plan.rejected || []).length]
+      ['imp.rejectedLines', counts.rejected || 0]
     ];
     const head = `<div class="imp-summary">
         <p class="imp-summary-line">${esc(summary)}</p>
@@ -8267,8 +8619,8 @@ function renderImportPreview(plan) {
           <td>${esc(importReasonText(row.reason))}</td>
           <td class="mono">${esc(row.sample || '')}</td>
         </tr>`).join('')}</tbody></table>
-        ${(plan.rejected || []).length > rejected.length
-          ? `<p class="hint">${esc(fmt(plan.rejected.length - rejected.length))} …</p>` : ''}
+        ${(counts.rejected || 0) > rejected.length
+          ? `<p class="hint">${esc(fmt(counts.rejected - rejected.length))} …</p>` : ''}
       </div>` : '';
     body.innerHTML = head + table;
   }
@@ -8353,8 +8705,10 @@ async function runImportCommit() {
             added: fmt(counts.added || 0), removed: fmt(counts.removed || 0),
             rejected: fmt(counts.rejected || 0)}))}</p>
           <p class="hint">${esc(report.replayed ? t('imp.replayed') : t('imp.batch') + ': ' + report.batch_id)}</p>
-          ${(report.rejected || []).length ? `<p class="hint">${esc(t('imp.rejectedLines'))}: ${
-            esc((report.rejected || []).map(row => row.line).join(', '))}</p>` : ''}
+          ${((report.rows || []).filter(row => row.state === 'rejected')).length
+            ? `<p class="hint">${esc(t('imp.rejectedLines'))}: ${
+              esc((report.rows || []).filter(row => row.state === 'rejected')
+                .map(row => row.line).join(', '))}</p>` : ''}
         </div>`;
     }
     toast(t('imp.applied', {
@@ -8447,6 +8801,37 @@ function poolStateBadge(state) {
   return `<span class="badge ${cls}">${esc(state || '—')}</span>`;
 }
 
+// `served` is what a client is actually served from and is the only number
+// that may be compared with `desired`.  Everything else -- members resting,
+// members waiting for a measurement, members out of service -- is a different
+// thing and is shown as itself; adding them up once produced `served=7` next
+// to `desired=3`, which reads as a pool three times too big.  The unit says
+// what one of them is: five addresses in one pool, five distinct exit
+// addresses in another, and the number alone cannot tell them apart.
+const POOL_PHASES = ['active', 'reserve', 'probation', 'cooldown', 'prefiltered', 'blocked'];
+
+// The three helpers below build a key and fall back to the raw value when the
+// module names something this dictionary has not heard of, so a new phase or
+// a new counting unit shows its own name instead of the key.
+function poolUnit(row) {
+  const key = `pool.unit.${(row && row.count_unit) || 'endpoint'}`;
+  const label = t(key);
+  return label === key ? String((row && row.count_unit) || 'endpoint') : label;
+}
+
+function poolPhases(row) {
+  const counts = (row && row.counts) || {};
+  return POOL_PHASES
+    .filter(phase => counts[phase])
+    .map(phase => {
+      const key = `pool.phase.${phase}`;
+      const label = t(key);
+      const text = label === key ? phase : label;
+      return `<span class="badge subtle" title="${esc(text)}">${esc(text)} ${fmt(counts[phase])}</span>`;
+    })
+    .join(' ');
+}
+
 function renderPools(view) {
   poolsState.pools = view.pools || [];
   poolsState.collections = view.collections || [];
@@ -8462,9 +8847,11 @@ function renderPools(view) {
           <div class="catalog-id">${esc(row.collection_id)} · ${esc(row.profile_id)} r${esc(row.profile_revision)}</div>
         </div>
         <div class="catalog-cell catalog-cell-state">
-          <span class="badge subtle">${esc(fmt(row.served))} / ${esc(fmt(row.desired))} ${esc(t('pool.count'))}</span>
+          <span class="badge ${row.served >= row.desired ? 'pass' : (row.ready_for_clients ? 'warn' : 'fail')}">${
+            esc(fmt(row.served))} / ${esc(fmt(row.desired))} ${esc(poolUnit(row))}</span>
           ${poolStateBadge(row.state)}
           ${row.ready_for_clients ? `<span class="badge pass">${esc(t('pool.ready'))}</span>` : ''}
+          <div>${poolPhases(row)}</div>
         </div>
         <div class="catalog-cell catalog-cell-choice">
           <div class="catalog-actions">
@@ -8536,10 +8923,25 @@ async function selectPool(poolId) {
         button.onclick = () => runPoolAction(poolId, 'member-remove', button, button.dataset.poolMember);
       });
     }
+    // The counts a user compares with the target are: in service, in reserve,
+    // on probation, resting.  A shortfall is a number and a reason, and the
+    // reason is the actionable part, so it gets its own line per code.
+    const reasons = $('pool-reasons');
+    if (reasons) {
+      const list = status.deficit_reasons || [];
+      reasons.innerHTML = list.length
+        ? list.map(item => `<div class="pool-reason"><span class="badge warn">${esc(item.code)}</span>
+            <span>${esc(fmt(item.count))}</span>
+            <span class="text-muted">${esc(t('pool.reasonAction'))}</span></div>`).join('')
+        : `<p class="hint">${esc(t('pool.noDeficit'))}</p>`;
+    }
+    const counts = $('pool-counts');
+    if (counts) counts.innerHTML = poolPhases(status);
     const note = $('pool-note');
     if (note) {
-      const reasons = (status.deficit_reasons || []).map(item => `${item.code} (${item.count})`).join(', ');
-      note.textContent = [status.deficit_reason, reasons].filter(Boolean).join(' · ');
+      const summary = (status.deficit_reasons || []).map(item => `${item.code} (${item.count})`).join(', ');
+      note.textContent = [status.deficit_reason, summary].filter(Boolean).join(' · ')
+        || t('pool.onTarget', {served: fmt(status.served || 0), desired: fmt(status.desired || 0)});
     }
   } catch (error) {
     toast(error.message, true);
@@ -8631,6 +9033,7 @@ function renderSchedules(view) {
           <div class="catalog-id">${esc(t('sched.runs'))}: ${esc(fmt(row.runs))} ·
             ${esc(t('sched.skipped'))}: ${esc(fmt(row.skipped))} ·
             ${esc(t('sched.last'))}: ${esc(row.last_run_at ? humanWhen(row.last_run_at) : t('keys.never'))}</div>
+          <div class="catalog-id">${esc(schedCounters(row))}</div>
         </div>
         <div class="catalog-cell catalog-cell-state">
           <span class="badge ${row.enabled ? 'pass' : 'subtle'}">${esc(row.enabled ? t('sched.enabled') : t('sched.disabled'))}</span>
@@ -8639,7 +9042,8 @@ function renderSchedules(view) {
         <div class="catalog-cell catalog-cell-choice">
           <div class="catalog-actions">
             <button class="button chip" data-sched-action="${row.enabled ? 'disable' : 'enable'}" data-sched-id="${esc(row.id)}">${esc(row.enabled ? t('sched.disable') : t('sched.enable'))}</button>
-            <button class="button chip" data-sched-action="run-now" data-sched-id="${esc(row.id)}">${esc(t('sched.runNow'))}</button>
+            <button class="button chip" data-sched-action="${row.paused ? 'resume' : 'pause'}" data-sched-id="${esc(row.id)}">${esc(row.paused ? t('sched.resume') : t('sched.pause'))}</button>
+            <button class="button chip" data-sched-action="run-now" data-sched-id="${esc(row.id)}"${row.paused || !row.enabled ? ' disabled title="' + esc(t('sched.runBlocked')) + '"' : ''}>${esc(t('sched.runNow'))}</button>
             <button class="button danger chip" data-sched-action="remove" data-sched-id="${esc(row.id)}">${esc(t('sched.remove'))}</button>
           </div>
         </div>
@@ -8650,6 +9054,27 @@ function renderSchedules(view) {
   }
   const count = $('sched-count');
   if (count) count.textContent = fmt(rows.length);
+  // A pause and a daily budget that vanish on the next launch are worse than
+  // an absent limit: the user reads the counter and trusts it.  The store says
+  // which of the two it can hold, and the page says so in words.
+  const persistence = $('sched-persistence');
+  if (persistence) {
+    const kept = view.persistence || {};
+    const lost = kept.lost_on_restart || [];
+    persistence.textContent = lost.length
+      ? t('sched.lostOnRestart', {names: lost.join(', ')})
+      : t('sched.keepsRuntime');
+  }
+}
+
+function schedCounters(row) {
+  const counters = row.counters || {};
+  const parts = Object.keys(counters)
+    .filter(key => typeof counters[key] === 'number' && counters[key])
+    .map(key => `${key} ${fmt(counters[key])}`);
+  parts.push(`${t('sched.overdue')} ${fmt(row.overdue || 0)}`);
+  if (row.pause_reason) parts.push(`${t('sched.pauseReason')}: ${row.pause_reason}`);
+  return parts.join(' · ');
 }
 
 async function runScheduleAction(scheduleId, action, button) {
@@ -8659,6 +9084,8 @@ async function runScheduleAction(scheduleId, action, button) {
     const result = await api('/api/schedules/action', {id: scheduleId, action});
     if (action === 'remove') toast(t('sched.removed'));
     else if (action === 'run-now') toast(t('sched.runQueued', {id: result.run_id || scheduleId}));
+    else if (action === 'pause') toast(t('sched.pausedNow'));
+    else if (action === 'resume') toast(t('sched.resumedNow'));
     await loadSchedules();
   } catch (error) {
     toast(error.message, true);
@@ -8699,6 +9126,188 @@ function setupScheduleListeners() {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Jobs (F11): the durable record of a run
+// ---------------------------------------------------------------------------
+//
+// A button is enabled only from a state the action is legal from, so the page
+// cannot offer "pause" to a finished job and then have to explain the refusal.
+// The legality is the store's transition table, not a guess: `states` in the
+// answer names the vocabularies, and the map below is the same one the CLI
+// follows.
+
+const JOB_ACTIONS = {
+  pause:   {from: ['created', 'queued', 'running'], to: 'paused'},
+  resume:  {from: ['paused', 'failed', 'timed_out', 'partial'], to: 'queued'},
+  cancel:  {from: ['created', 'queued', 'running', 'paused'], to: 'cancelled'},
+  retry:   {from: ['partial', 'failed', 'cancelled', 'timed_out'], to: 'queued'}
+};
+
+let jobsState = {view: null, selected: '', cursor: 0};
+
+function jobStateBadge(state) {
+  const cls = ['succeeded'].includes(state) ? 'pass'
+    : ['failed', 'timed_out', 'cancelled'].includes(state) ? 'fail'
+    : ['partial', 'paused'].includes(state) ? 'warn'
+    : ['running', 'queued'].includes(state) ? 'pass' : 'subtle';
+  return `<span class="badge ${cls}">${esc(state || '—')}</span>`;
+}
+
+function jobProgressBar(progress) {
+  if (!progress || !progress.total) return '';
+  const done = progress.finished || 0;
+  const pct = Math.max(0, Math.min(100, 100 * done / progress.total));
+  // A real progressbar: the value is the count, the bounds are known and the
+  // accessible name says what is being counted.
+  return `<div class="job-progress" role="progressbar" aria-valuemin="0" aria-valuemax="${esc(progress.total)}"
+    aria-valuenow="${esc(done)}" aria-label="${esc(t('jobs.progressLabel'))}">
+    <div class="job-progress-fill" style="width:${pct.toFixed(1)}%"></div></div>`;
+}
+
+function jobActionButtons(row) {
+  return Object.entries(JOB_ACTIONS).map(([action, rule]) => {
+    const legal = rule.from.includes(row.state);
+    const title = legal ? t(`jobs.action.${action}`) : t('jobs.actionBlocked', {state: row.state});
+    return `<button class="button chip" data-job-action="${action}" data-job-id="${esc(row.id)}"${
+      legal ? '' : ' disabled'} title="${esc(title)}">${esc(t(`jobs.action.${action}`))}</button>`;
+  }).join('');
+}
+
+function renderJobs(view) {
+  jobsState.view = view;
+  const rows = view.jobs || [];
+  const list = $('jobs-list');
+  if (list) {
+    list.innerHTML = rows.length ? rows.map(row => {
+      const progress = row.progress || {};
+      const byState = Object.entries(progress.by_state || {})
+        .map(([key, value]) => `<span class="badge subtle">${esc(key)} ${fmt(value)}</span>`).join(' ');
+      return `<div class="catalog-row job-row" data-job-id="${esc(row.id)}">
+        <div class="catalog-cell catalog-cell-source">
+          <strong>${esc(row.kind)}</strong>
+          <div class="catalog-id">${esc(row.id)}</div>
+          <div class="catalog-id">${esc(humanWhen(row.created_at))}</div>
+        </div>
+        <div class="catalog-cell catalog-cell-state">
+          ${jobStateBadge(row.state)}
+          <div class="text-muted">${esc(fmt(progress.finished || 0))} / ${esc(fmt(progress.total || 0))}</div>
+          ${jobProgressBar(progress)}
+          <div>${byState}</div>
+        </div>
+        <div class="catalog-cell catalog-cell-choice">
+          <div class="catalog-actions">
+            <button class="button chip" data-job-select="${esc(row.id)}">${esc(t('jobs.detail'))}</button>
+            ${jobActionButtons(row)}
+          </div>
+        </div>
+      </div>`;
+    }).join('') : `<p class="hint">${esc(t('jobs.empty'))}</p>`;
+    list.querySelectorAll('[data-job-select]').forEach(button => {
+      button.onclick = () => selectJob(button.dataset.jobSelect);
+    });
+    list.querySelectorAll('[data-job-action]').forEach(button => {
+      button.onclick = () => runJobAction(button.dataset.jobId, button.dataset.jobAction, button);
+    });
+  }
+  const count = $('jobs-count');
+  if (count) count.textContent = fmt(rows.length);
+  if (jobsState.selected) renderJobDetail(jobsState.view);
+}
+
+function renderJobDetail(view) {
+  const progress = (view && view.detail) || null;
+  const box = $('jobs-progress');
+  if (box) {
+    if (!progress) {
+      box.innerHTML = `<p class="hint">${esc(t('jobs.noSelection'))}</p>`;
+    } else {
+      const parts = [
+        [t('jobs.state'), progress.state],
+        [t('jobs.total'), fmt(progress.total)],
+        [t('jobs.finished'), fmt(progress.finished)],
+        [t('jobs.unfinished'), fmt(progress.unfinished)],
+        [t('jobs.elapsed'), duration(progress.elapsed_s)],
+        [t('jobs.remaining'), progress.remaining_s === null || progress.remaining_s === undefined
+          ? '—' : duration(progress.remaining_s)],
+        [t('jobs.slept'), duration(progress.slept_s || 0)],
+        [t('jobs.lastSeq'), fmt(progress.last_seq || 0)]
+      ];
+      // A `label` around a read-only value announces nothing useful, so this
+      // is a description list instead: the term is the counter's name and the
+      // value is what it currently reads.
+      box.innerHTML = `<dl class="job-progress-grid">${parts.map(([label, value]) => `
+        <div><dt>${esc(label)}</dt><dd class="mono">${esc(value)}</dd></div>`).join('')}</dl>`
+        + jobProgressBar(progress);
+    }
+  }
+  const events = $('jobs-events');
+  if (events) {
+    const rows = (view && view.events) || [];
+    events.innerHTML = rows.length ? rows.map(event => `
+      <div class="job-event">
+        <span class="badge subtle mono">${esc(event.seq)}</span>
+        <span class="mono">${esc(event.type)}</span>
+        <span class="text-muted">${esc(event.code || '')}</span>
+        <span class="text-muted">${esc(event.item_id || '')}</span>
+        <span class="text-muted">${esc(humanWhen(event.at))}</span>
+      </div>`).join('') : `<p class="hint">${esc(t('jobs.noEvents'))}</p>`;
+  }
+}
+
+async function selectJob(jobId) {
+  jobsState.selected = jobId;
+  const box = $('jobs-detail-box');
+  if (box) box.open = true;
+  await loadJobs();
+}
+
+async function loadJobs() {
+  try {
+    const query = jobsState.selected ? '?id=' + encodeURIComponent(jobsState.selected) : '';
+    const view = await api('/api/jobs' + query);
+    if (jobsState.selected && view.jobs.length) {
+      jobsState.cursor = view.cursor || 0;
+    }
+    renderJobs(view);
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+async function runJobAction(jobId, action, button) {
+  if (action === 'cancel' && !confirm(t('jobs.confirmCancel', {id: jobId}))) return;
+  if (button) button.disabled = true;
+  try {
+    const result = await api('/api/jobs/action', {id: jobId, action});
+    toast(t(`jobs.done.${action}`, {id: jobId, state: result.state || '—'}));
+    await loadJobs();
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+function setupJobsListeners() {
+  if ($('jobs-refresh')) $('jobs-refresh').onclick = loadJobs;
+  const recover = $('jobs-recover');
+  if (recover) recover.onclick = async () => {
+    recover.disabled = true;
+    try {
+      const result = await api('/api/jobs/action', {action: 'recover'});
+      toast(t('jobs.recovered', {
+        jobs: fmt((result.recovery && result.recovery.jobs || []).length),
+        kept: fmt((result.recovery && result.recovery.observations_kept) || 0)
+      }));
+      await loadJobs();
+    } catch (error) {
+      toast(error.message, true);
+    } finally {
+      recover.disabled = false;
+    }
+  };
+}
+
 async function loadGatewayOptions() {
   const note = $('gwb-note');
   try {
@@ -8721,7 +9330,7 @@ async function loadGatewayOptions() {
     if (note) {
       const running = state && state.gateway;
       note.textContent = running
-        ? (bindings.pool_id ? t('gwb.applied', {restarted: ''}) : t('gwb.unbound'))
+        ? (bindings.pool_id ? t('gwb.applied', {restarted: '', rows: ''}) : t('gwb.unbound'))
         : t('gwb.needsRestart');
     }
   } catch (error) {
@@ -8740,9 +9349,20 @@ function setupGatewayBindingListeners() {
         profile_revision: Number(($('gwb-revision') || {}).value || 0) || null,
         generation: ($('gwb-generation') || {}).value || ''
       });
+      // The listener answered with how many rows the new binding can serve
+      // right now.  "0" is a real answer -- the chosen pool is empty -- and it
+      // is said as one instead of being a client that suddenly gets 502.
+      const applied = result.applied || null;
       toast(t('gwb.applied', {
-        restarted: result.restarted ? ' — ' + t('gateway.restarted') : ''
-      }));
+        restarted: result.restarted ? ' — ' + t('gateway.restarted') : '',
+        rows: applied ? ' — ' + t('gwb.rows', {count: fmt(applied.rows)}) : ''
+      }) + (result.empty ? ' — ' + t('gwb.empty') : ''));
+      const note = $('gwb-note');
+      if (note) {
+        note.textContent = result.empty
+          ? t('gwb.emptyNote')
+          : applied ? t('gwb.appliedNote', {rows: fmt(applied.rows)}) : t('gwb.applied');
+      }
       await poll();
       await loadGatewayOptions();
     } catch (error) {
@@ -9125,9 +9745,275 @@ try { setupResultList(); } catch (e) { console.error(e); }
 try { setupImportListeners(); } catch (e) { console.error(e); }
 try { setupPoolsListeners(); } catch (e) { console.error(e); }
 try { setupScheduleListeners(); } catch (e) { console.error(e); }
+try { setupJobsListeners(); } catch (e) { console.error(e); }
+try { setupDiagnosticsListeners(); } catch (e) { console.error(e); }
+try { setupDesktopListeners(); } catch (e) { console.error(e); }
 try { setupGatewayBindingListeners(); } catch (e) { console.error(e); }
 try { setupKeyListeners(); } catch (e) { console.error(e); }
 try { setupScopeDialog(); } catch (e) { console.error(e); }
+// ---------------------------------------------------------------------------
+// Diagnostics (F10): the funnel, the one reason, and the local bundle
+// ---------------------------------------------------------------------------
+
+let diagState = {view: null, bundleText: ''};
+
+const STAGE_ORDER = ['source', 'download', 'parser', 'scope', 'freshness', 'reputation', 'target',
+                     'measurement', 'budget', 'export'];
+
+function stageLabel(stage) {
+  const key = `diag.stage.${stage}`;
+  const label = t(key);
+  return label === key ? String(stage) : label;
+}
+
+function renderFunnel(view) {
+  const list = $('diag-funnel');
+  const stages = (view.stages || []).slice().sort((a, b) => {
+    const ia = STAGE_ORDER.indexOf(a.stage), ib = STAGE_ORDER.indexOf(b.stage);
+    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+  });
+  if (list) {
+    list.innerHTML = stages.length ? stages.map(item => {
+      const kept = (item.entered || 0) - (item.lost || 0);
+      const pct = item.entered ? Math.max(0, Math.min(100, 100 * kept / item.entered)) : 0;
+      return `<div class="catalog-row funnel-row" role="row">
+        <div class="catalog-cell catalog-cell-source" role="rowheader">
+          <strong>${esc(stageLabel(item.stage))}</strong>
+          <div class="catalog-id">${esc(t('diag.entered'))}: ${fmt(item.entered)} ·
+            ${esc(t('diag.lostAt'))}: ${fmt(item.lost)} · ${esc(t('diag.kept'))}: ${fmt(kept)}</div>
+        </div>
+        <div class="catalog-cell catalog-cell-state" role="cell">
+          <div class="funnel-bar" role="img" aria-label="${esc(t('diag.keptOf', {kept: fmt(kept), entered: fmt(item.entered)}))}">
+            <div class="funnel-bar-fill" style="width:${pct.toFixed(1)}%"></div></div>
+        </div>
+        <div class="catalog-cell catalog-cell-choice" role="cell">
+          ${Object.entries(item.reasons || {}).slice(0, 3).map(([code, count]) =>
+            `<span class="badge subtle" title="${esc(t('diag.codeHint'))}">${esc(code)} ${fmt(count)}</span>`).join(' ')}
+        </div>
+      </div>`;
+    }).join('') : `<p class="hint">${esc(t('diag.noRun'))}</p>`;
+  }
+
+  const zeroBox = $('diag-zero');
+  if (zeroBox) {
+    const zero = view.zero;
+    zeroBox.hidden = !zero;
+    if (zero) {
+      const code = $('diag-zero-code');
+      const summary = $('diag-zero-summary');
+      const action = $('diag-zero-action');
+      if (code) code.textContent = zero.code;
+      if (summary) summary.textContent = serverText(zero.summary || '');
+      if (action) action.textContent = serverText(zero.action || '');
+    }
+  }
+
+  const losses = $('diag-losses');
+  if (losses) {
+    const rows = view.losses || [];
+    losses.innerHTML = rows.length ? rows.map(item => `
+      <div class="diag-loss">
+        <div class="diag-loss-head">
+          <span class="badge ${item.count ? 'warn' : 'subtle'}">${esc(item.code)}</span>
+          <span class="text-muted">${esc(stageLabel(item.stage))}</span>
+          <strong>${fmt(item.count)}</strong>
+        </div>
+        <p class="hint">${esc(serverText(item.title || ''))}</p>
+        <p class="diag-action">${esc(serverText(item.action || ''))}</p>
+      </div>`).join('') : `<p class="hint">${esc(t('diag.noLosses'))}</p>`;
+  }
+
+  const health = $('diag-health');
+  if (health) {
+    const checks = (view.health && view.health.checks) || [];
+    health.innerHTML = checks.length ? checks.map(check => `
+      <div class="diag-health-row">
+        <span class="badge ${check.ok ? 'pass' : 'fail'}">${esc(check.ok ? t('diag.ok') : t('diag.failing'))}</span>
+        <div><strong>${esc(check.name)}</strong>
+          <div class="text-muted">${esc(serverText(check.detail || ''))}</div>
+          ${check.ok ? '' : `<div class="diag-action">${esc(serverText(check.action || ''))}</div>`}</div>
+      </div>`).join('') : `<p class="hint">${esc(t('diag.noRun'))}</p>`;
+  }
+}
+
+async function loadDiagnostics() {
+  try {
+    const view = await api('/api/diagnostics?lang=' + encodeURIComponent(lang));
+    diagState.view = view;
+    renderFunnel(view);
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+async function previewBundle() {
+  const button = $('diag-bundle');
+  const box = $('diag-bundle-box');
+  const note = $('diag-bundle-note');
+  button.disabled = true;
+  try {
+    const view = await api('/api/diagnostics/bundle', {action: 'preview'}, {timeoutMs: 60000});
+    diagState.bundleText = view.text || '';
+    if (box) box.hidden = false;
+    const text = $('diag-bundle-text');
+    if (text) text.value = diagState.bundleText;
+    if (note) {
+      note.textContent = t('diag.bundleReady', {
+        sample: fmt(view.sample || 0), total: fmt(view.total || 0),
+        redactions: fmt((view.redactions || []).length), canary: fmt(view.canary_checked || 0)
+      });
+    }
+    const save = $('diag-bundle-save');
+    if (save) save.disabled = false;
+  } catch (error) {
+    if (note) note.textContent = serverText(error.message);
+    toast(serverText(error.message), true);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function setupDiagnosticsListeners() {
+  if ($('diag-refresh')) $('diag-refresh').onclick = loadDiagnostics;
+  if ($('diag-bundle')) $('diag-bundle').onclick = previewBundle;
+  const edit = $('diag-bundle-edit');
+  if (edit) edit.onchange = () => {
+    const text = $('diag-bundle-text');
+    const label = $('diag-bundle-text-label');
+    if (text) text.hidden = !edit.checked;
+    // The label is hidden with the field, so the textarea never becomes an
+    // unlabelled one the moment the box is ticked.
+    if (label) label.hidden = !edit.checked;
+  };
+  if ($('diag-bundle-save')) $('diag-bundle-save').onclick = async () => {
+    const button = $('diag-bundle-save');
+    const note = $('diag-bundle-note');
+    button.disabled = true;
+    try {
+      const edited = ($('diag-bundle-edit') || {}).checked;
+      const result = await api('/api/diagnostics/bundle', {
+        action: 'save',
+        name: (($('diag-bundle-name') || {}).value || 'diagnostic.json').trim(),
+        text: edited ? (($('diag-bundle-text') || {}).value || '') : undefined
+      });
+      if (note) note.textContent = t('diag.bundleSaved', {name: result.name, path: result.path});
+      toast(t('diag.bundleSavedShort', {name: result.name}));
+    } catch (error) {
+      const message = serverText(error.message);
+      if (note) note.textContent = message;
+      toast(message, true);
+    } finally {
+      button.disabled = false;
+    }
+  };
+}
+
+// ---------------------------------------------------------------------------
+// The background layer (F22)
+// ---------------------------------------------------------------------------
+
+let deskState = {view: null};
+
+function renderDesktop(view) {
+  deskState.view = view;
+  const badge = $('desk-badge');
+  if (badge) {
+    badge.className = 'badge ' + (view.available ? (view.instance ? 'pass' : 'subtle') : 'fail');
+    badge.textContent = view.available ? t('desk.state.on') : t('desk.state.off');
+  }
+  const select = $('desk-autostart');
+  const note = $('desk-autostart-note');
+  const auto = view.autostart || null;
+  if (select) {
+    select.innerHTML = '';
+    if (!auto || !auto.supported) {
+      select.add(new Option(t('desk.autostartUnavailable'), ''));
+      select.disabled = true;
+    } else {
+      select.add(new Option(t('desk.autostartOn'), 'on'));
+      select.add(new Option(t('desk.autostartOff'), 'off'));
+      select.value = auto.enabled ? 'on' : 'off';
+      select.disabled = false;
+    }
+  }
+  if (note) {
+    note.textContent = auto
+      ? [serverText(auto.reason || ''), auto.path ? auto.path : ''].filter(Boolean).join(' · ')
+      : t('desk.autostartUnavailable');
+  }
+  const state = $('desk-state');
+  if (state) {
+    const rows = [];
+    rows.push([t('desk.instance'), view.instance
+      ? `${t('desk.pid')} ${fmt(view.instance.pid)} · ${view.instance.url || ''}`
+      : t('desk.instanceNone')]);
+    rows.push([t('desk.tray'), view.instance && view.instance.tray_pid
+      ? t('desk.trayOn', {pid: fmt(view.instance.tray_pid)})
+      : t('desk.trayOff')]);
+    rows.push([t('desk.version'), (view.instance && view.instance.version) || t('desk.versionUnknown')]);
+    if (view.layout) {
+      rows.push([t('desk.data'), view.layout.data]);
+      rows.push([t('desk.logs'), view.layout.logs]);
+      rows.push([t('desk.mode'), serverText(view.layout.reason || view.layout.mode)]);
+    }
+    if (view.layout_matches_interface === false) {
+      rows.push([t('desk.folderMismatch'), t('desk.folderMismatchNote')]);
+    }
+    if (view.power) {
+      rows.push([t('desk.power'), view.power.battery_supported
+        ? `${view.power.on_battery ? t('desk.onBattery') : t('desk.onMains')}${
+            view.power.battery_percent === null || view.power.battery_percent === undefined
+              ? '' : ' ' + fmt(view.power.battery_percent) + '%'}`
+        : t('desk.powerUnknown')]);
+    }
+    if (view.network) rows.push([t('desk.network'), view.network.join(', ') || t('desk.networkNone')]);
+    state.innerHTML = rows.map(([label, value]) => `
+      <div class="diag-health-row">
+        <span class="badge subtle">${esc(label)}</span>
+        <div class="mono">${esc(value)}</div>
+      </div>`).join('');
+  }
+  const journal = $('desk-journal');
+  if (journal) {
+    const rows = view.journal || [];
+    journal.innerHTML = rows.length ? rows.slice().reverse().map(item => `
+      <div class="job-event">
+        <span class="text-muted">${esc(humanWhen(item.at))}</span>
+        <span class="mono">${esc(item.event || '')}</span>
+        <span class="text-muted">${esc(Object.keys(item)
+          .filter(key => !['at', 'event', 'schema', 'control', 'token'].includes(key))
+          .map(key => `${key}=${item[key]}`).join(' '))}</span>
+      </div>`).join('') : `<p class="hint">${esc(t('desk.journalEmpty'))}</p>`;
+  }
+}
+
+async function loadDesktop() {
+  try {
+    renderDesktop(await api('/api/desktop'));
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+function setupDesktopListeners() {
+  if ($('desk-refresh')) $('desk-refresh').onclick = loadDesktop;
+  if ($('desk-autostart-apply')) $('desk-autostart-apply').onclick = async () => {
+    const button = $('desk-autostart-apply');
+    const wanted = (($('desk-autostart') || {}).value || '') === 'on';
+    button.disabled = true;
+    try {
+      const result = await api('/api/desktop/action', {action: wanted ? 'autostart-on' : 'autostart-off'});
+      toast(serverText((result.autostart || {}).reason || t('desk.autostartDone')));
+      await loadDesktop();
+    } catch (error) {
+      toast(serverText(error.message), true);
+    } finally {
+      button.disabled = false;
+    }
+  };
+}
+
+
 
 try { renderLang(); } catch (e) { console.error(e); }
 try { renderSavedViews(resultState.views); } catch (e) { console.error(e); }

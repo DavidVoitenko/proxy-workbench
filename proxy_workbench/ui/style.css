@@ -17930,3 +17930,151 @@ tbody tr:nth-child(even) td,
 [data-theme="light"] .source-summary.live-passed::before {
   opacity: 0.25;
 }
+
+/* ---------------------------------------------------------------------------
+   Diagnostics, jobs and the background layer.
+
+   Every rule here reuses the existing tokens and the existing components:
+   a card is `.card`, a row is `.catalog-row`, a count is `.badge`, a sentence
+   is `.hint`.  Nothing existing is overridden -- these are the new blocks the
+   new pages need, in the same voice as the rest of the file.
+   --------------------------------------------------------------------------- */
+
+.diag-zero {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 12px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--amber-border);
+  border-radius: var(--radius, 10px);
+  background: var(--amber-pale);
+}
+
+.diag-action {
+  margin: 2px 0 0;
+  font-weight: 600;
+  color: var(--text, inherit);
+}
+
+.funnel-bar {
+  position: relative;
+  height: 10px;
+  min-width: 120px;
+  border-radius: 999px;
+  background: var(--surface-2, rgba(127, 127, 127, 0.12));
+  overflow: hidden;
+}
+
+.funnel-bar-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--green, #059669), var(--green-bright, #10b981));
+}
+
+.job-progress {
+  position: relative;
+  height: 8px;
+  margin: 6px 0;
+  border-radius: 999px;
+  background: var(--surface-2, rgba(127, 127, 127, 0.12));
+  overflow: hidden;
+}
+
+.job-progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--green, #059669), var(--green-bright, #10b981));
+}
+
+.job-event {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border-soft, rgba(127, 127, 127, 0.12));
+  font-size: 0.9em;
+}
+
+.job-event:last-child { border-bottom: 0; }
+
+.pool-reason {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 4px 8px;
+}
+
+.diag-loss,
+.diag-health-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px;
+  border-bottom: 1px solid var(--border-soft, rgba(127, 127, 127, 0.12));
+}
+
+.diag-loss:last-child,
+.diag-health-row:last-child { border-bottom: 0; }
+
+.diag-loss-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.diag-health-row {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.diag-health-row > .badge { flex: 0 0 auto; }
+
+.diag-health-row > div { min-width: 0; }
+
+.funnel-row .catalog-cell-source { min-width: 0; }
+
+.mono { font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace); }
+
+/* The funnel and the job bar are width transitions, not decoration, and a
+   reader who asked for less motion must still see them change. */
+@media (prefers-reduced-motion: no-preference) {
+  .funnel-bar-fill,
+  .job-progress-fill { transition: width 220ms ease-out; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .funnel-bar-fill,
+  .job-progress-fill { transition: none; }
+}
+
+/* 200% zoom on a laptop: the new rows must wrap rather than scroll sideways. */
+@media (max-width: 900px) {
+  .funnel-row,
+  .job-row { flex-wrap: wrap; }
+  .funnel-row .catalog-cell,
+  .job-row .catalog-cell { min-width: 100%; }
+  .diag-health-row { flex-direction: column; }
+}
+
+.job-progress-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px;
+  margin: 0 0 8px;
+}
+
+.job-progress-grid > div { min-width: 0; }
+
+.job-progress-grid dt {
+  font-size: 0.85em;
+  color: var(--text-dim, inherit);
+  opacity: 0.75;
+}
+
+.job-progress-grid dd {
+  margin: 0;
+  font-weight: 600;
+}
