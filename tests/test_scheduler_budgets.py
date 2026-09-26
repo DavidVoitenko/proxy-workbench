@@ -4,6 +4,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from proxy_workbench import scheduler as sch
@@ -299,7 +300,8 @@ class SystemSignalTests(unittest.TestCase):
             raise FileNotFoundError('pmset')
 
         self.assertEqual(sch.read_system_signal('darwin', runner=runner), sch.PowerSignal())
-        self.assertEqual(sch.read_system_signal('win32'), sch.PowerSignal())
+        with mock.patch.object(sch, '_windows_power', side_effect=OSError('power API unavailable')):
+            self.assertEqual(sch.read_system_signal('win32'), sch.PowerSignal())
 
 
 if __name__ == '__main__':
