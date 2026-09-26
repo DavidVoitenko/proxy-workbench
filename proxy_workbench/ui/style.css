@@ -5892,14 +5892,14 @@ details[open] .target-accordion-chevron {
     font-size: 11px;
   }
 
-  /* Form inputs take 100% width on mobile */
+  /* Form inputs take 100% width on mobile. Buttons keep their natural width:
+     full-width buttons were crushing the hero headline and header controls. */
   input[type="text"],
   input[type="number"],
   input[type="search"],
   input[type="url"],
   input:not([type]),
   select,
-  .button,
   .form-field-card,
   .export-field-card,
   .input-unit-wrap,
@@ -5907,6 +5907,11 @@ details[open] .target-accordion-chevron {
   .smart-country-combobox {
     width: 100% !important;
     max-width: 100% !important;
+  }
+
+  .button {
+    width: auto;
+    max-width: 100%;
   }
 
   .results-tb-row-2 {
@@ -6087,17 +6092,17 @@ details[open] .target-accordion-chevron {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
 }
 .scenarios-grid.one-line-grid .scenario-card.active {
-  border-color: var(--teal) !important;
-  background: var(--teal-pale) !important;
-  box-shadow: 0 0 0 1px var(--teal), 0 0 12px var(--teal-glow) !important;
+  border-color: var(--teal-border);
+  background: var(--teal-pale);
+  box-shadow: 0 0 0 1px var(--teal-border), 0 0 0 3px rgba(16, 185, 129, 0.10);
 }
 .scenarios-grid.one-line-grid .scenario-card.active strong {
-  color: var(--ink) !important;
+  color: var(--ink);
 }
 .scenarios-grid.one-line-grid .scenario-card.active .scenario-tag {
-  background: var(--teal) !important;
-  color: #ffffff !important;
-  border-color: var(--teal) !important;
+  background: var(--teal);
+  color: #ffffff;
+  border-color: var(--teal);
 }
 
 /* 2. Workspace & Configuration Flow */
@@ -6950,8 +6955,8 @@ details[open] .target-accordion-chevron {
   height: 100%;
   width: 0%;
   background: linear-gradient(90deg, var(--teal) 0%, var(--cyan) 100%);
-  border-radius: 10px;
-  transition: width 0.3s ease;
+  border-radius: var(--radius-full, 999px);
+  transition: width var(--dur-fast, 120ms) var(--ease-out, ease-out);
   box-shadow: 0 0 8px var(--teal-glow);
 }
 .progress-meta {
@@ -12462,4 +12467,5466 @@ summary:focus-visible { outline: 2px solid var(--teal, #34d399); outline-offset:
 #keys-bootstrap-card .field-grid,
 #gwb-apply ~ .field-grid {
   align-items: end;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   DARK ATMOSPHERE LAYER — 2026-09-26 (round 4)
+   Dark theme is the hero: ambient depth, micro-interactions, state glow.
+   Produced by the Antigravity dark-wave agents; visually reviewed live.
+   Light theme adapts residually (nothing here is scoped to light).
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ═══════ a-atmosphere.css ═══════ */
+/* ==========================================================================
+   PROXY WORKBENCH — DARK AMBIENT DEPTH & ATMOSPHERE
+   Production-grade CSS overlay for Obsidian Dark UI (#090d13..#0f1622)
+   Linear / Raycast / Arc energy — Subtle, tactile, high-craftsmanship.
+
+   DELIVERABLE: /tmp/pw-design/dark/a-atmosphere.css
+   
+   SELECTOR VERIFICATION MANIFEST:
+   - .page-heading                     → index.html:183, 1093, 1292, 1407, 1759, 1886
+   - .page-heading-info                 → index.html:184
+   - .page-heading h1                  → index.html:186, style.css:682, 9569
+   - .results-compact-header           → index.html:785
+   - .help-hero-banner                 → index.html:2008, style.css:4512
+   - aside.sidebar nav button.nav      → index.html:51, 65, 78..., style.css:439, 10121
+   - aside.sidebar nav button.nav.active → index.html:51, style.css:10148, 11573
+   - .card.monitor                     → index.html:649, app.js:4456, style.css:650
+   - .card.monitor[data-phase="scanning"] → app.js:4458 (monitorCard.dataset.phase)
+   - .card.monitor.is-scanning         → app.js:4459 (monitorCard.classList.toggle('is-scanning'))
+   - .radial-gauge-wrap                → index.html:660, style.css:2170
+   - .radial-gauge-svg                 → index.html:661, style.css:2176
+   - .gauge-fill                       → index.html:663, style.css:2188, 11994
+   - .mac-terminal-card                → index.html:759, style.css:7233, 10654
+   - .mac-terminal                     → index.html:761, style.css:2537, 10682
+   - .mac-terminal-bar                 → index.html:762, style.css:2545, 10690
+   - pre#log                           → index.html:776, style.css:2594, 10707
+   - .card                             → index.html:277, 649, 759..., style.css:1226
+   - .scenario-card                    → index.html:202, 210, 218..., style.css:1241, 1661
+   - .metric-card                      → index.html:686, 693, style.css:1242
+   - .guide-step-card                  → index.html:1380, 1391, style.css:1243
+   - .browser-guide-card               → index.html:1254, style.css:1244
+   - .gateway-unified-card             → index.html:1106
+   - .eyebrow                          → index.html:185, 653, 1095, 1294..., style.css:673, 9665
+
+   NEW UTILITY CLASSES FOR APP.JS WIRING:
+   - .ambient-hero-glow : Adds the subtle radial teal glow backdrop to any custom header.
+   - .card-tactile      : Forces the 1px top inner specular highlight on custom cards/dialogs.
+   - .eyebrow-gradient  : Utility class applying the micro-gradient text fill to any label.
+   - .terminal-shimmer  : Explicit modifier on .mac-terminal to activate the ambient sweep.
+   ========================================================================== */
+
+/* ==========================================================================
+   1. HERO AREA — SUBTLE RADIAL TEAL GLOW
+   8% alpha, 60px blur, anchored behind headline elements.
+   Zero layout shift, pointer-events none, preserves text readability.
+   ========================================================================== */
+
+.page-heading,
+.results-compact-header,
+.help-hero-banner,
+.ambient-hero-glow {
+  position: relative;
+}
+
+/* Pseudo-element ambient aura */
+.page-heading::before,
+.results-compact-header::before,
+.help-hero-banner::before,
+.ambient-hero-glow::before {
+  content: "";
+  position: absolute;
+  top: -24px;
+  left: -24px;
+  width: 320px;
+  height: 120px;
+  background: radial-gradient(
+    ellipse 60% 50% at 40% 40%,
+    var(--accent-glow, rgba(52, 211, 153, 0.08)) 0%,
+    rgba(16, 185, 129, 0.03) 48%,
+    transparent 72%
+  );
+  filter: blur(60px);
+  pointer-events: none;
+  border-radius: var(--radius-full, 9999px);
+  z-index: 0;
+  opacity: 0.95;
+  transform: translateZ(0);
+}
+
+/* Ensure text and actions remain elevated crisply above the glow */
+.page-heading > *,
+.results-compact-header > *,
+.help-hero-banner > *,
+.ambient-hero-glow > * {
+  position: relative;
+  z-index: 1;
+}
+
+/* Help hero extra depth aura */
+.help-hero-banner::before {
+  width: 440px;
+  height: 160px;
+  top: -20px;
+  left: -20px;
+  background: radial-gradient(
+    ellipse 60% 50% at 40% 40%,
+    rgba(52, 211, 153, 0.09) 0%,
+    rgba(16, 185, 129, 0.03) 50%,
+    transparent 75%
+  );
+}
+
+
+/* ==========================================================================
+   2. SIDEBAR NAVIGATION — SOFT ACCENT BAR + GENTLE GLOW
+   Active state: precision left accent indicator + soft 8-12% radial wash.
+   Raycast-level spring transition on scale and opacity.
+   ========================================================================== */
+
+aside.sidebar nav button.nav {
+  position: relative;
+  overflow: hidden;
+  transition:
+    background var(--dur-fast, 120ms) ease,
+    color var(--dur-fast, 120ms) ease,
+    border-color var(--dur-fast, 120ms) ease,
+    box-shadow var(--dur-fast, 120ms) ease,
+    transform var(--dur-fast, 120ms) var(--ease-spring, cubic-bezier(0.16, 1, 0.3, 1));
+}
+
+/* Left accent bar (rendered via pseudo-element) */
+aside.sidebar nav button.nav::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 3px;
+  height: 20px;
+  border-radius: 0 2px 2px 0;
+  background: var(--teal, #10b981);
+  box-shadow:
+    0 0 8px rgba(52, 211, 153, 0.5),
+    0 0 2px rgba(52, 211, 153, 0.9);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-50%) scaleY(0.4);
+  transition:
+    opacity var(--dur-med, 220ms) ease,
+    transform var(--dur-med, 220ms) var(--ease-spring, cubic-bezier(0.16, 1, 0.3, 1));
+  z-index: 2;
+}
+
+/* Active indicator reveal */
+aside.sidebar nav button.nav.active::before {
+  opacity: 1;
+  transform: translateY(-50%) scaleY(1);
+}
+
+/* Active nav pill lighting */
+aside.sidebar nav button.nav.active {
+  background: linear-gradient(
+    95deg,
+    rgba(16, 185, 129, 0.12) 0%,
+    rgba(16, 185, 129, 0.05) 45%,
+    transparent 90%
+  );
+  border-color: rgba(52, 211, 153, 0.26);
+  color: var(--ink, #f8fafc);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    inset 0 0 14px rgba(16, 185, 129, 0.07),
+    0 1px 4px rgba(0, 0, 0, 0.35);
+}
+
+/* Subtle glow behind active nav item icon */
+aside.sidebar nav button.nav.active svg {
+  filter: drop-shadow(0 0 5px rgba(52, 211, 153, 0.35));
+}
+
+
+/* ==========================================================================
+   3. GAUGE / MONITOR CARD — AMBIENT BREATHING GLOW WHILE SCANNING
+   Hooks via [data-phase="scanning"], [data-phase="starting"],
+   [data-phase="collecting"] and .is-scanning (set by app.js:4458-4459).
+   ========================================================================== */
+
+.radial-gauge-wrap {
+  position: relative;
+}
+
+/* Ambient breathing aura behind the gauge circle */
+.radial-gauge-wrap::before {
+  content: "";
+  position: absolute;
+  inset: -6px;
+  border-radius: var(--radius-full, 9999px);
+  background: radial-gradient(
+    circle,
+    rgba(52, 211, 153, 0.09) 0%,
+    rgba(16, 185, 129, 0.03) 50%,
+    transparent 72%
+  );
+  opacity: 0;
+  pointer-events: none;
+  z-index: 0;
+  transform: scale(0.92);
+  transition:
+    opacity var(--dur-slow, 400ms) ease,
+    transform var(--dur-slow, 400ms) var(--ease-spring, cubic-bezier(0.16, 1, 0.3, 1));
+}
+
+/* Activate aura when monitor phase indicates active check */
+.card.monitor[data-phase="scanning"] .radial-gauge-wrap::before,
+.card.monitor[data-phase="starting"] .radial-gauge-wrap::before,
+.card.monitor[data-phase="collecting"] .radial-gauge-wrap::before,
+.card.monitor.is-scanning .radial-gauge-wrap::before {
+  opacity: 1;
+  animation: pw-gauge-ambient-pulse 2.6s ease-in-out infinite alternate;
+}
+
+/* Breathing glow on the progress ring path */
+.card.monitor[data-phase="scanning"] .gauge-fill,
+.card.monitor[data-phase="starting"] .gauge-fill,
+.card.monitor[data-phase="collecting"] .gauge-fill,
+.card.monitor.is-scanning .gauge-fill {
+  filter: drop-shadow(0 0 6px rgba(52, 211, 153, 0.40));
+  animation: pw-gauge-ring-breathe 2.6s ease-in-out infinite alternate;
+}
+
+/* Breathing card perimeter highlight during active scan */
+.card.monitor[data-phase="scanning"],
+.card.monitor[data-phase="starting"],
+.card.monitor[data-phase="collecting"],
+.card.monitor.is-scanning {
+  border-color: rgba(52, 211, 153, 0.28);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 0 20px -4px rgba(16, 185, 129, 0.12),
+    var(--shadow-sm, 0 1px 3px rgba(0, 0, 0, 0.5));
+  transition:
+    border-color var(--dur-slow, 400ms) ease,
+    box-shadow var(--dur-slow, 400ms) ease;
+}
+
+/* Keyframes: Gauge Ring Glow Pulse (filter only) */
+@keyframes pw-gauge-ring-breathe {
+  0% {
+    filter: drop-shadow(0 0 3px rgba(52, 211, 153, 0.25));
+  }
+  100% {
+    filter: drop-shadow(0 0 9px rgba(52, 211, 153, 0.55));
+  }
+}
+
+/* Keyframes: Ambient Aura Pulse (opacity and scale only) */
+@keyframes pw-gauge-ambient-pulse {
+  0% {
+    opacity: 0.45;
+    transform: scale(0.94);
+  }
+  100% {
+    opacity: 0.95;
+    transform: scale(1.05);
+  }
+}
+
+
+/* ==========================================================================
+   4. LOG TERMINAL — INNER TOP HIGHLIGHT & SLOW SHIMMER SWEEP
+   Crisp obsidian depth: 1px top highlight + subtle 8s beam sweep.
+   Zero interaction penalty: pointer-events none on pseudo-element.
+   ========================================================================== */
+
+.mac-terminal-card {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    var(--shadow-sm, 0 1px 3px rgba(0, 0, 0, 0.5));
+}
+
+.mac-terminal-card > summary {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.mac-terminal-bar {
+  position: relative;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.mac-terminal {
+  position: relative;
+  overflow: hidden;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.35);
+}
+
+/* Slow shimmer sweep across the terminal window */
+.mac-terminal::after,
+.mac-terminal.terminal-shimmer::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(
+    110deg,
+    transparent 0%,
+    transparent 42%,
+    rgba(52, 211, 153, 0.02) 48%,
+    rgba(52, 211, 153, 0.07) 50%,
+    rgba(52, 211, 153, 0.02) 52%,
+    transparent 58%,
+    transparent 100%
+  );
+  transform: translateX(-100%);
+  animation: pw-terminal-sweep 9s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+  z-index: 1;
+}
+
+/* Ensure text log remains crisp and above the background plane */
+.mac-terminal pre#log {
+  position: relative;
+  z-index: 2;
+}
+
+/* Keyframes: Terminal Shimmer Sweep (transform/opacity only) */
+@keyframes pw-terminal-sweep {
+  0% {
+    transform: translateX(-100%);
+    opacity: 0;
+  }
+  8% {
+    opacity: 1;
+  }
+  36% {
+    transform: translateX(100%);
+    opacity: 1;
+  }
+  36.001%, 100% {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+}
+
+
+/* ==========================================================================
+   5. CARDS — 1PX TOP INNER HIGHLIGHT (TACTILE DEPTH)
+   Gives obsidian surfaces physical presence and glass-like edge definition.
+   ========================================================================== */
+
+.card,
+.scenario-card,
+.metric-card,
+.gateway-unified-card,
+.guide-step-card,
+.browser-guide-card,
+.card-tactile {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    var(--shadow-sm, 0 1px 3px rgba(0, 0, 0, 0.5));
+  transition:
+    transform var(--dur-fast, 120ms) var(--ease-spring, cubic-bezier(0.16, 1, 0.3, 1)),
+    border-color var(--dur-fast, 120ms) ease,
+    box-shadow var(--dur-fast, 120ms) var(--ease-spring, cubic-bezier(0.16, 1, 0.3, 1));
+}
+
+.card:hover,
+.scenario-card:hover,
+.metric-card:hover,
+.gateway-unified-card:hover,
+.guide-step-card:hover,
+.browser-guide-card:hover,
+.card-tactile:hover {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    var(--shadow-md, 0 4px 16px rgba(0, 0, 0, 0.6));
+}
+
+/* Active scenario card gets tactile inner bevel + emerald focus rim */
+.scenario-card.active,
+.scenarios-grid.one-line-grid .scenario-card.active {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 0 0 1px var(--teal-border, rgba(16, 185, 129, 0.32)),
+    0 0 14px -2px rgba(16, 185, 129, 0.14);
+}
+
+
+/* ==========================================================================
+   6. SECTION HEADERS — GRADIENT TEXT ACCENT ON EYEBROW LABELS
+   Micro-gradient from light mint (#d1fae5 / #6ee7b7) to emerald (#10b981).
+   Progressive enhancement with fallback for maximum compatibility.
+   ========================================================================== */
+
+.eyebrow,
+.eyebrow-gradient {
+  color: var(--teal, #10b981); /* Standard fallback */
+  font-weight: 700;
+  letter-spacing: var(--pw-ls-eyebrow, 0.08em);
+}
+
+@supports ((-webkit-background-clip: text) or (background-clip: text)) {
+  .eyebrow,
+  .eyebrow-gradient {
+    background: linear-gradient(
+      135deg,
+      var(--accent-100, #d1fae5) 0%,
+      var(--accent-300, #34d399) 45%,
+      var(--accent-400, #10b981) 100%
+    );
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    display: inline-block;
+  }
+}
+
+/* Help badge eyebrow synergy */
+.help-hero-badge [data-i18n="help.eyebrow"] {
+  background: linear-gradient(
+    135deg,
+    var(--accent-100, #d1fae5) 0%,
+    var(--accent-300, #34d399) 50%,
+    var(--accent-400, #10b981) 100%
+  );
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  display: inline-block;
+}
+
+
+/* ==========================================================================
+   7. ACCESSIBILITY & PREFERS-REDUCED-MOTION GUARDS
+   Zero layout jumps; gracefully stops all continuous loops and sweeps.
+   ========================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  /* Eliminate shimmer sweep */
+  .mac-terminal::after,
+  .mac-terminal.terminal-shimmer::after {
+    animation: none !important;
+    display: none !important;
+  }
+
+  /* Freeze gauge breathing to static resting glow */
+  .card.monitor[data-phase="scanning"] .radial-gauge-wrap::before,
+  .card.monitor[data-phase="starting"] .radial-gauge-wrap::before,
+  .card.monitor[data-phase="collecting"] .radial-gauge-wrap::before,
+  .card.monitor.is-scanning .radial-gauge-wrap::before {
+    animation: none !important;
+    opacity: 0.65;
+    transform: none !important;
+  }
+
+  .card.monitor[data-phase="scanning"] .gauge-fill,
+  .card.monitor[data-phase="starting"] .gauge-fill,
+  .card.monitor[data-phase="collecting"] .gauge-fill,
+  .card.monitor.is-scanning .gauge-fill {
+    animation: none !important;
+    filter: drop-shadow(0 0 4px rgba(52, 211, 153, 0.35)) !important;
+  }
+
+  /* Simplify transitions on cards and sidebar */
+  .card,
+  .scenario-card,
+  .metric-card,
+  .gateway-unified-card,
+  .guide-step-card,
+  .browser-guide-card,
+  .card-tactile,
+  aside.sidebar nav button.nav,
+  aside.sidebar nav button.nav::before {
+    transition-duration: 0.01ms !important;
+    transform: none !important;
+  }
+}
+
+
+/* ═══════ b-interactions.css ═══════ */
+/* ═══════════════════════════════════════════════════════════════════════════
+   PROXY WORKBENCH — 02-B MICRO-INTERACTIONS (b-interactions.css)
+   Awwwards-Level Production Motion Design · Dark Theme Hero Tier
+   Linear / Raycast / Arc Kinetic Energy · Spring Physics · Zero Layout Shift
+   ═══════════════════════════════════════════════════════════════════════════
+
+   CLASSES INTRODUCED FOR app.js WIRING:
+   ─────────────────────────────────────────────────────────────────────────────
+   1. .dialog-closing
+      Apply to dialog[open] immediately before closing to trigger the smooth
+      scale/fade exit animation. In app.js:
+        function closeDialogWithAnimation(dlg) {
+          if (!dlg || !dlg.open) return;
+          dlg.classList.add('dialog-closing');
+          const onEnd = () => {
+            dlg.classList.remove('dialog-closing');
+            dlg.close();
+            dlg.removeEventListener('animationend', onEnd);
+          };
+          dlg.addEventListener('animationend', onEnd, { once: true });
+          setTimeout(() => {
+            if (dlg.open && dlg.classList.contains('dialog-closing')) {
+              dlg.classList.remove('dialog-closing');
+              dlg.close();
+            }
+          }, 200);
+        }
+
+   2. .count-bump / .count-pulse
+      Apply to #selection-count, .selection-pill, or #svc-selected-count
+      whenever their numeric text content updates to trigger a subtle spring pulse.
+      In app.js:
+        countEl.classList.remove('count-bump');
+        void countEl.offsetWidth; // re-flow trigger
+        countEl.classList.add('count-bump');
+
+   3. .chip-pop
+      Tactile pop keyframe utility (scale 0.95 -> 1.02 -> 1).
+      Automatically fires on .active toggle on chips, but can also be manually
+      triggered on any filter/region/service chip during quick keyboard shortcuts.
+
+   4. .copied / .copy-pop
+      Fires a refined emerald glow pulse (6-14% alpha, spring ease) on copy buttons.
+      Already wired with markCopied() in app.js.
+   ─────────────────────────────────────────────────────────────────────────────
+*/
+
+
+/* ==========================================================================
+   0. MASTER prefers-reduced-motion KILL SWITCH
+   Guarantees 100% compliance: cuts all durations and delays to near zero.
+   ========================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    transition-delay: 0ms !important;
+  }
+}
+
+
+/* ==========================================================================
+   1. SPRING & MICRO-INTERACTION KEYFRAME LIBRARY
+   Physical spring curve: cubic-bezier(0.16, 1, 0.3, 1)
+   Only transform, opacity, filter, box-shadow are animated.
+   ========================================================================== */
+
+/* 1a. Sheen sweep for primary buttons (light reflection across surface) */
+@keyframes pw-sheenSweep {
+  0% {
+    transform: translateX(-130%) skewX(-18deg);
+    opacity: 0;
+  }
+  15% {
+    opacity: 1;
+  }
+  85% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(240%) skewX(-18deg);
+    opacity: 0;
+  }
+}
+
+/* 1b. Staggered fadeUp entrance for table rows */
+@keyframes pw-rowFadeUp {
+  0% {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* 1c. Chip tactile pop on toggle */
+@keyframes pw-chipPop {
+  0% {
+    transform: scale(0.95);
+  }
+  55% {
+    transform: scale(1.025);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* 1d. Toast springier entrance with kinetic overshoot */
+@keyframes pw-toastSpringIn {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -24px) scale(0.90);
+  }
+  62% {
+    opacity: 1;
+    transform: translate(-50%, 4px) scale(1.022);
+  }
+  84% {
+    transform: translate(-50%, -1px) scale(0.996);
+  }
+  100% {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
+}
+
+/* 1e. Dialog scale-and-fade exit */
+@keyframes pw-dialogExit {
+  0% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.96) translateY(8px);
+  }
+}
+
+/* 1f. Dialog backdrop fade exit */
+@keyframes pw-backdropExit {
+  0% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+/* 1g. Copy button emerald glow pulse */
+@keyframes pw-copyGlowPulse {
+  0% {
+    transform: scale(0.98);
+    box-shadow: 0 0 0 0 rgba(52, 211, 153, 0);
+  }
+  38% {
+    transform: scale(1.025);
+    box-shadow:
+      0 0 0 3px rgba(52, 211, 153, 0.14),
+      0 0 16px rgba(52, 211, 153, 0.12);
+  }
+  100% {
+    transform: scale(1);
+    box-shadow:
+      0 0 0 1px rgba(52, 211, 153, 0.10),
+      0 0 8px rgba(52, 211, 153, 0.08);
+  }
+}
+
+/* 1h. Selection count tactile micro-bump */
+@keyframes pw-countPulse {
+  0% {
+    transform: scale(1);
+  }
+  35% {
+    transform: scale(1.12);
+    box-shadow:
+      0 0 0 3px rgba(52, 211, 153, 0.14),
+      0 0 10px rgba(52, 211, 153, 0.10);
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(52, 211, 153, 0);
+  }
+}
+
+
+/* ==========================================================================
+   2. PRIMARY BUTTONS: SHEEN SWEEP (600ms)
+   Linear gradient light reflection translating across the surface on hover.
+   ========================================================================== */
+
+.button.primary {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  transition:
+    transform var(--dur-fast, 120ms) var(--ease-spring, cubic-bezier(0.16, 1, 0.3, 1)),
+    box-shadow var(--dur-med, 220ms) var(--ease-spring, cubic-bezier(0.16, 1, 0.3, 1)),
+    background-color var(--dur-fast, 120ms) ease,
+    border-color var(--dur-fast, 120ms) ease;
+}
+
+/* Diagonal glass sheen element */
+.button.primary::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  background: linear-gradient(
+    108deg,
+    transparent 15%,
+    rgba(255, 255, 255, 0.06) 35%,
+    rgba(255, 255, 255, 0.22) 50%,
+    rgba(255, 255, 255, 0.06) 65%,
+    transparent 85%
+  );
+  transform: translateX(-130%) skewX(-18deg);
+  opacity: 0;
+  z-index: 2;
+}
+
+/* Trigger sheen sweep on hover */
+.button.primary:hover:not(:disabled)::after {
+  animation: pw-sheenSweep 600ms var(--ease-spring, cubic-bezier(0.16, 1, 0.3, 1)) forwards;
+}
+
+/* Hover elevation & emerald atmosphere */
+.button.primary:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow:
+    0 4px 16px -2px rgba(16, 185, 129, 0.24),
+    0 0 0 1px var(--teal-border, rgba(52, 211, 153, 0.32));
+}
+
+/* Press dampening */
+.button.primary:active:not(:disabled) {
+  transform: scale(0.982) !important;
+  transition-duration: 80ms !important;
+}
+
+/* Disabled buttons never trigger sheen */
+.button.primary:disabled::after,
+.button.primary[disabled]::after {
+  display: none !important;
+}
+
+
+/* ==========================================================================
+   3. RESULTS TABLE ROWS: STAGGERED FADE-UP ENTRANCE
+   Plays on table render. Delays staggered across the first 12 rows (max),
+   with row 13+ rendering with capped delay for maximum frame rate.
+   ========================================================================== */
+
+.results-table tbody tr {
+  will-change: transform, opacity;
+  animation: pw-rowFadeUp var(--dur-med, 220ms) var(--ease-spring, cubic-bezier(0.16, 1, 0.3, 1)) both;
+}
+
+.results-table tbody tr:nth-child(1)  { animation-delay: 20ms; }
+.results-table tbody tr:nth-child(2)  { animation-delay: 40ms; }
+.results-table tbody tr:nth-child(3)  { animation-delay: 60ms; }
+.results-table tbody tr:nth-child(4)  { animation-delay: 80ms; }
+.results-table tbody tr:nth-child(5)  { animation-delay: 100ms; }
+.results-table tbody tr:nth-child(6)  { animation-delay: 120ms; }
+.results-table tbody tr:nth-child(7)  { animation-delay: 140ms; }
+.results-table tbody tr:nth-child(8)  { animation-delay: 160ms; }
+.results-table tbody tr:nth-child(9)  { animation-delay: 180ms; }
+.results-table tbody tr:nth-child(10) { animation-delay: 200ms; }
+.results-table tbody tr:nth-child(11) { animation-delay: 220ms; }
+.results-table tbody tr:nth-child(12) { animation-delay: 240ms; }
+.results-table tbody tr:nth-child(n+13) { animation-delay: 240ms; }
+
+/* Ensure row hover retains smooth background transitions without jarring transforms */
+.results-table tbody tr {
+  transition: background-color var(--dur-fast, 120ms) ease;
+}
+
+
+/* ==========================================================================
+   4. CHIPS: QUICK POP ON TOGGLE
+   Applies to filter chips, region chips, country chips, quick service chips,
+   segmented buttons and generic chips when activated.
+   ========================================================================== */
+
+.chip.active,
+.button.chip.active,
+.filter-chip.active,
+.quick-service-chip.active,
+.region-chip.active,
+.country-chip.active,
+.segmented-btn.active,
+.chip-pop {
+  animation: pw-chipPop 160ms var(--ease-spring, cubic-bezier(0.16, 1, 0.3, 1));
+}
+
+/* Tactile press compression before release */
+.chip:active:not(:disabled),
+.filter-chip:active:not(:disabled),
+.quick-service-chip:active:not(:disabled),
+.region-chip:active:not(:disabled),
+.country-chip:active:not(:disabled),
+.segmented-btn:active:not(:disabled) {
+  transform: scale(0.96);
+  transition: transform 70ms ease;
+}
+
+
+/* ==========================================================================
+   5. TOASTS: SPRINGIER ENTRANCE WITH OVERSHOOT
+   Kinetic overshoot entrance (340ms) + smooth pulling exit transition.
+   ========================================================================== */
+
+#toast:not([hidden]):not(:empty) {
+  will-change: transform, opacity;
+  animation: pw-toastSpringIn 340ms var(--ease-spring, cubic-bezier(0.16, 1, 0.3, 1)) forwards;
+}
+
+/* Toast exit transition (app.js adds .toast-hiding before hiding) */
+#toast.toast-hiding {
+  opacity: 0 !important;
+  transform: translate(-50%, -12px) scale(0.95) !important;
+  transition:
+    opacity 180ms ease,
+    transform 180ms var(--ease-spring, cubic-bezier(0.16, 1, 0.3, 1)) !important;
+  pointer-events: none !important;
+}
+
+
+/* ==========================================================================
+   6. DIALOGS: EXIT ANIMATION HOOK (.dialog-closing)
+   Allows app.js to play a refined scale-and-fade exit before closing modal.
+   ========================================================================== */
+
+dialog[open].dialog-closing,
+dialog.dialog-closing {
+  will-change: transform, opacity;
+  animation: pw-dialogExit 180ms var(--ease-spring, cubic-bezier(0.16, 1, 0.3, 1)) forwards !important;
+  pointer-events: none !important;
+}
+
+dialog[open].dialog-closing::backdrop,
+dialog.dialog-closing::backdrop {
+  will-change: opacity;
+  animation: pw-backdropExit 180ms ease forwards !important;
+}
+
+
+/* ==========================================================================
+   7. COPY BUTTONS: GLOW PULSE ON .copied
+   Refined emerald halo (6-14% alpha) on click feedback.
+   ========================================================================== */
+
+.copied,
+.button.copied,
+.button.chip.copied,
+.copy-proxy-btn.copied,
+.copy-action-btn.copied,
+.copy-pop {
+  will-change: transform, box-shadow;
+  animation: pw-copyGlowPulse 320ms var(--ease-spring, cubic-bezier(0.16, 1, 0.3, 1)) forwards;
+}
+
+
+/* ==========================================================================
+   8. SELECTION COUNT: TINY PULSE ON NUMBER CHANGE (.count-bump)
+   Tactile badge feedback when rows or services are checked/unchecked.
+   ========================================================================== */
+
+.count-bump,
+.count-pulse,
+.selection-count-pulse,
+#selection-count.count-bump,
+#selection-count.count-pulse,
+.selection-pill.count-bump,
+.svc-selected-count.count-bump {
+  display: inline-block;
+  will-change: transform, box-shadow;
+  animation: pw-countPulse 220ms var(--ease-spring, cubic-bezier(0.16, 1, 0.3, 1));
+}
+
+
+/* ==========================================================================
+   9. SCENARIO CARDS: HOVER LIFT & SHADOW DEEPEN
+   Tactile depth elevation on obsidian dark surfaces with emerald boundary hint.
+   ========================================================================== */
+
+.scenario-card,
+.scenarios-grid.one-line-grid .scenario-card {
+  transition:
+    transform var(--dur-med, 220ms) var(--ease-spring, cubic-bezier(0.16, 1, 0.3, 1)),
+    box-shadow var(--dur-med, 220ms) var(--ease-spring, cubic-bezier(0.16, 1, 0.3, 1)),
+    border-color var(--dur-fast, 120ms) ease,
+    background-color var(--dur-fast, 120ms) ease;
+}
+
+/* Hover elevation: lift 2px and deepen layered ambient shadow */
+.scenario-card:hover,
+.scenarios-grid.one-line-grid .scenario-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--teal-border, rgba(52, 211, 153, 0.28));
+  box-shadow:
+    0 10px 28px -4px rgba(0, 0, 0, 0.65),
+    0 3px 8px -2px rgba(0, 0, 0, 0.45),
+    0 0 0 1px rgba(52, 211, 153, 0.12);
+}
+
+/* Active card hover: deeper ambient shadow + preserved selection halo */
+.scenario-card.active:hover,
+.scenarios-grid.one-line-grid .scenario-card.active:hover {
+  transform: translateY(-2px);
+  border-color: var(--teal, #34d399);
+  box-shadow:
+    0 10px 28px -4px rgba(0, 0, 0, 0.65),
+    0 0 0 1px var(--teal-border, rgba(52, 211, 153, 0.32)),
+    0 0 0 3px rgba(52, 211, 153, 0.12),
+    0 0 16px rgba(52, 211, 153, 0.10);
+}
+
+/* Card tactile press down */
+.scenario-card:active,
+.scenarios-grid.one-line-grid .scenario-card:active {
+  transform: translateY(0) scale(0.985);
+  transition-duration: 80ms;
+}
+
+
+/* ═══════ c-accents.css ═══════ */
+/*
+ * PROXY WORKBENCH — DARK ACCENTS & STATE GLOW (c-accents.css)
+ * ═══════════════════════════════════════════════════════════════════════════
+ * Production Dark-Theme Motion & Ambient Radiance Layer.
+ * Designed first & exclusively for the dark palette (Obsidian / Emerald / Slate).
+ *
+ * PALETTE SPECIFICATION:
+ *  - Background wells & surfaces: #080c12, #090d13, #0b111a, #0f1622, #121927, #151e2e
+ *  - Primary accents: Emerald #34d399 (accent-300), #10b981 (accent-400), #059669 (accent-500)
+ *  - Subtle glow radiance: 6% to 18% alpha bounds (no harsh light-leaks, pure tool precision)
+ *  - Motion curves: cubic-bezier(0.16, 1, 0.3, 1) spring physics, 120ms..400ms timings
+ *  - Performance guarantee: Animates transform, opacity, filter, box-shadow only
+ *  - Accessibility: Full prefers-reduced-motion safety guard
+ *
+ * CLASSES INTRODUCED FOR app.js / MARKUP WIRING:
+ * ─────────────────────────────────────────────────────────────────────────
+ *  .live-badge         — Pill badge container with soft emerald background,
+ *                        border glow, and live dot container.
+ *  .live-badge-dot     — High-fidelity status dot featuring a two-layer
+ *                        pulsing animation (breathing core + expanding ripple ring).
+ *  .empty-state-icon   — Standalone or table empty-state icon wrapper with
+ *                        gentle floating hover loop (translateY -4px, 3s loop).
+ *  .connect-step-num   — Standalone circular step badge for connection flow;
+ *                        styled with teal gradient fill and spinning dashed ring on hover.
+ *  .glow-teal          — Utility class providing a subtle, dark-mode ambient
+ *                        teal glow (box-shadow + border tint) to any surface.
+ * ═══════════════════════════════════════════════════════════════════════════
+ */
+
+
+/* ==========================================================================
+   0. TOKEN FOUNDATIONS (Dark Fallbacks)
+   ========================================================================== */
+
+:root {
+  --pw-acc-teal:          var(--accent-300, #34d399);
+  --pw-acc-emerald:       var(--accent-400, #10b981);
+  --pw-acc-deep:          var(--accent-500, #059669);
+  --pw-acc-glow-subtle:   rgba(52, 211, 153, 0.08);
+  --pw-acc-glow-soft:     rgba(52, 211, 153, 0.14);
+  --pw-acc-glow-focus:    rgba(52, 211, 153, 0.18);
+  --pw-acc-glow-active:   rgba(52, 211, 153, 0.28);
+  --pw-acc-border:        rgba(52, 211, 153, 0.24);
+  --pw-spring-ease:       var(--ease-spring, cubic-bezier(0.16, 1, 0.3, 1));
+}
+
+
+/* ==========================================================================
+   1. FOCUS-VISIBLE RINGS (Universal Soft Teal Glow)
+   ========================================================================== */
+
+/* Universal keyboard focus ring with spring-ease transition */
+:focus-visible {
+  outline: 2px solid var(--pw-acc-teal, #34d399);
+  outline-offset: 2px;
+  box-shadow:
+    0 0 0 4px var(--pw-acc-glow-focus, rgba(52, 211, 153, 0.18)),
+    0 0 12px var(--pw-acc-glow-subtle, rgba(52, 211, 153, 0.08));
+  transition:
+    box-shadow var(--dur-fast, 120ms) var(--pw-spring-ease),
+    outline-offset var(--dur-fast, 120ms) ease;
+}
+
+/* Interactive controls: Inset separation + external luminous halo */
+.button:focus-visible,
+aside.sidebar nav button.nav:focus-visible,
+.view-tab:focus-visible,
+.filter-chip:focus-visible,
+.gw-tab-btn:focus-visible,
+.segmented-btn:focus-visible,
+.term-height-btn:focus-visible,
+.copy-action-btn:focus-visible,
+.country-chip-remove:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 2px var(--bg-app, #090d13),
+    0 0 0 3px var(--pw-acc-teal, #34d399),
+    0 0 0 7px var(--pw-acc-glow-focus, rgba(52, 211, 153, 0.18)),
+    0 0 16px var(--pw-acc-glow-soft, rgba(52, 211, 153, 0.14));
+}
+
+/* Inputs, textareas, search, selects: soft inward + outward glow */
+input[type="text"]:focus-visible,
+input[type="number"]:focus-visible,
+input[type="search"]:focus-visible,
+input[type="url"]:focus-visible,
+input:not([type]):focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: none;
+  border-color: var(--pw-acc-teal, #34d399) !important;
+  box-shadow:
+    0 0 0 1px var(--pw-acc-teal, #34d399),
+    0 0 0 4px var(--pw-acc-glow-focus, rgba(52, 211, 153, 0.18)),
+    0 0 14px var(--pw-acc-glow-subtle, rgba(52, 211, 153, 0.08));
+  transition:
+    border-color var(--dur-fast, 120ms) ease,
+    box-shadow var(--dur-fast, 120ms) var(--pw-spring-ease);
+}
+
+/* Links & interactive disclosures */
+a:focus-visible,
+summary:focus-visible {
+  outline: none;
+  border-radius: var(--radius-xs, 4px);
+  box-shadow:
+    0 0 0 2px var(--bg-app, #090d13),
+    0 0 0 4px var(--pw-acc-glow-focus, rgba(52, 211, 153, 0.18)),
+    0 0 10px var(--pw-acc-glow-subtle, rgba(52, 211, 153, 0.08));
+}
+
+/* Accessible toggle switch indicator ring */
+.toggle-switch-input:focus-visible + .toggle-switch-slider {
+  outline: none;
+  box-shadow:
+    0 0 0 2px var(--bg-card, #0f1622),
+    0 0 0 4px var(--pw-acc-teal, #34d399),
+    0 0 0 7px var(--pw-acc-glow-focus, rgba(52, 211, 153, 0.18));
+}
+
+
+/* ==========================================================================
+   2. CUSTOM SCROLLBARS (Teal Hover Thumb & Active Bloom)
+   ========================================================================== */
+
+/* WebKit scrollbar track & thumb refinements */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--line-strong, rgba(255, 255, 255, 0.14));
+  border-radius: var(--radius-full, 9999px);
+  border: 1px solid transparent;
+  background-clip: padding-box;
+  transition: background-color var(--dur-fast, 120ms) ease, box-shadow var(--dur-fast, 120ms) ease;
+}
+
+/* Hover: subtle teal tint with soft atmospheric emission */
+::-webkit-scrollbar-thumb:hover {
+  background: var(--pw-acc-emerald, #10b981);
+  background-clip: padding-box;
+  box-shadow:
+    0 0 8px var(--pw-acc-glow-active, rgba(52, 211, 153, 0.28)),
+    inset 0 0 4px rgba(255, 255, 255, 0.2);
+}
+
+/* Active drag: intensified teal */
+::-webkit-scrollbar-thumb:active {
+  background: var(--pw-acc-teal, #34d399);
+  background-clip: padding-box;
+  box-shadow:
+    0 0 12px rgba(52, 211, 153, 0.42),
+    inset 0 0 4px rgba(255, 255, 255, 0.3);
+}
+
+/* Firefox scrollbar-color reactive hover for prominent scroll surfaces */
+aside.sidebar:hover,
+.table-wrap:hover,
+.results-table-wrap:hover,
+.live-ticker-stream:hover,
+pre#log:hover,
+.country-chips-list:hover {
+  scrollbar-color: var(--pw-acc-emerald, #10b981) transparent;
+}
+
+
+/* ==========================================================================
+   3. EMPTY-STATE ICON (Slow Float Animation)
+   ========================================================================== */
+
+@keyframes pw-emptyFloat {
+  0% {
+    transform: translateY(0);
+    filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.35));
+  }
+  100% {
+    transform: translateY(-4px);
+    filter: drop-shadow(0 10px 20px var(--pw-acc-glow-soft, rgba(52, 211, 153, 0.14)));
+  }
+}
+
+.empty-table-icon,
+.empty-state-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  animation: pw-emptyFloat 3s ease-in-out infinite alternate;
+  will-change: transform, filter;
+  border: 1.5px solid var(--pw-acc-border, rgba(52, 211, 153, 0.24));
+  background: radial-gradient(
+    circle at 35% 30%,
+    var(--bg-surface-elevated, #151e2e) 0%,
+    var(--bg-surface, #121927) 80%
+  );
+  box-shadow:
+    0 0 0 5px var(--pw-acc-glow-subtle, rgba(52, 211, 153, 0.08)),
+    0 8px 24px rgba(0, 0, 0, 0.50);
+  transition:
+    transform var(--dur-med, 220ms) var(--pw-spring-ease),
+    border-color var(--dur-med, 220ms) ease,
+    box-shadow var(--dur-med, 220ms) ease;
+}
+
+.empty-table-icon:hover,
+.empty-state-icon:hover {
+  border-color: var(--pw-acc-teal, #34d399);
+  box-shadow:
+    0 0 0 6px var(--pw-acc-glow-focus, rgba(52, 211, 153, 0.18)),
+    0 12px 28px rgba(0, 0, 0, 0.60);
+}
+
+
+/* ==========================================================================
+   4. LIVE BADGE & REFINED TWO-LAYER PULSE
+   ========================================================================== */
+
+/* Layer 1: Core breathing dot */
+@keyframes pw-liveDotBreath {
+  0%, 100% {
+    opacity: 0.85;
+    box-shadow:
+      0 0 4px var(--pw-acc-teal, #34d399),
+      0 0 8px var(--pw-acc-glow-active, rgba(52, 211, 153, 0.28));
+  }
+  50% {
+    opacity: 1;
+    box-shadow:
+      0 0 6px var(--pw-acc-teal, #34d399),
+      0 0 14px rgba(52, 211, 153, 0.55);
+  }
+}
+
+/* Layer 2: Expanding ripple ring */
+@keyframes pw-liveRingRipple {
+  0% {
+    transform: scale(1);
+    opacity: 0.8;
+  }
+  65% {
+    transform: scale(2.7);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(2.7);
+    opacity: 0;
+  }
+}
+
+/* The Live Dot Core */
+.terminal-live-dot,
+.ticker-live-dot,
+.live-badge-dot,
+.live-badge .dot {
+  position: relative;
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--pw-acc-teal, #34d399);
+  animation: pw-liveDotBreath 2s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+
+/* The Expanding Ripple Ring */
+.terminal-live-dot::after,
+.ticker-live-dot::after,
+.live-badge-dot::after,
+.live-badge .dot::after {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: 50%;
+  border: 1px solid var(--pw-acc-teal, #34d399);
+  pointer-events: none;
+  animation: pw-liveRingRipple 2.2s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+  will-change: transform, opacity;
+}
+
+/* Live Badge Shell (.mac-terminal-badge & .live-badge) */
+.mac-terminal-badge,
+.live-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border-radius: var(--radius-full, 9999px);
+  background: linear-gradient(
+    135deg,
+    var(--pw-acc-glow-subtle, rgba(52, 211, 153, 0.08)) 0%,
+    rgba(16, 185, 129, 0.04) 100%
+  );
+  border: 1px solid var(--pw-acc-border, rgba(52, 211, 153, 0.24));
+  color: var(--pw-acc-teal, #34d399);
+  font-family: var(--font-mono, ui-monospace, "SF Mono", monospace);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  box-shadow:
+    0 0 10px var(--pw-acc-glow-subtle, rgba(52, 211, 153, 0.08)),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  transition:
+    border-color var(--dur-fast, 120ms) ease,
+    box-shadow var(--dur-fast, 120ms) ease,
+    transform var(--dur-fast, 120ms) var(--pw-spring-ease);
+}
+
+.mac-terminal-badge:hover,
+.live-badge:hover {
+  border-color: rgba(52, 211, 153, 0.45);
+  box-shadow:
+    0 0 14px var(--pw-acc-glow-focus, rgba(52, 211, 153, 0.18)),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+
+/* ==========================================================================
+   5. CONNECTION-PATH STEP NUMBERS (Teal Gradient Circle + Dashed Ring Spin)
+   ========================================================================== */
+
+@keyframes pw-dashedRingSpin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Reset counter on connection path parent */
+.connect-steps {
+  counter-reset: connect-step-idx;
+}
+
+/* Step item card foundation */
+.connect-step {
+  counter-increment: connect-step-idx;
+  position: relative;
+  padding-right: 38px; /* Safe clearance for corner step badge */
+  transition:
+    transform var(--dur-med, 220ms) var(--pw-spring-ease),
+    border-color var(--dur-med, 220ms) ease,
+    box-shadow var(--dur-med, 220ms) var(--pw-spring-ease);
+}
+
+.connect-step:hover {
+  border-color: var(--pw-acc-border, rgba(52, 211, 153, 0.24));
+  box-shadow:
+    0 4px 20px rgba(0, 0, 0, 0.45),
+    0 0 0 1px var(--pw-acc-glow-subtle, rgba(52, 211, 153, 0.08));
+}
+
+/* Inner teal gradient circle: Generated via CSS counter on .connect-step::before */
+.connect-step::before {
+  content: counter(connect-step-idx);
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono, ui-monospace, "SF Mono", monospace);
+  font-size: 11px;
+  font-weight: 750;
+  color: var(--pw-acc-teal, #34d399);
+  background: radial-gradient(
+    circle at 35% 30%,
+    rgba(52, 211, 153, 0.22) 0%,
+    rgba(16, 185, 129, 0.10) 80%
+  );
+  border: 1px solid var(--pw-acc-border, rgba(52, 211, 153, 0.24));
+  box-shadow:
+    0 0 8px var(--pw-acc-glow-subtle, rgba(52, 211, 153, 0.08)),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  box-sizing: border-box;
+  z-index: 1;
+}
+
+/* Outer dashed ring on ::after */
+.connect-step::after {
+  content: '';
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1.5px dashed rgba(52, 211, 153, 0.32);
+  box-sizing: border-box;
+  pointer-events: none;
+  transform-origin: center;
+  transition:
+    border-color var(--dur-med, 220ms) ease,
+    box-shadow var(--dur-med, 220ms) ease;
+  z-index: 2;
+}
+
+/* Hover: dashed ring smoothly spins continuously */
+.connect-step:hover::after {
+  border-color: var(--pw-acc-teal, #34d399);
+  box-shadow: 0 0 10px var(--pw-acc-glow-focus, rgba(52, 211, 153, 0.18));
+  animation: pw-dashedRingSpin 4s linear infinite;
+}
+
+/* Direct standalone class for explicit wiring: .connect-step-num */
+.connect-step-num {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  font-family: var(--font-mono, ui-monospace, "SF Mono", monospace);
+  font-size: 11px;
+  font-weight: 750;
+  color: var(--pw-acc-teal, #34d399);
+  background: radial-gradient(
+    circle at 35% 30%,
+    rgba(52, 211, 153, 0.22) 0%,
+    rgba(16, 185, 129, 0.10) 80%
+  );
+  border: 1px solid var(--pw-acc-border, rgba(52, 211, 153, 0.24));
+  box-shadow: 0 0 8px var(--pw-acc-glow-subtle, rgba(52, 211, 153, 0.08));
+}
+
+.connect-step-num::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  border: 1.5px dashed rgba(52, 211, 153, 0.32);
+  box-sizing: border-box;
+  pointer-events: none;
+  transform-origin: center;
+  transition: border-color var(--dur-med, 220ms) ease;
+}
+
+.connect-step-num:hover::after,
+*:hover > .connect-step-num::after {
+  border-color: var(--pw-acc-teal, #34d399);
+  animation: pw-dashedRingSpin 4s linear infinite;
+}
+
+/* Refined dashed ring hover for Help Pipeline & Block steps */
+.pipeline-step-badge,
+.block-step-badge {
+  position: relative;
+  background: radial-gradient(
+    circle at 35% 30%,
+    rgba(52, 211, 153, 0.20) 0%,
+    rgba(16, 185, 129, 0.08) 80%
+  );
+  border: 1px solid var(--pw-acc-border, rgba(52, 211, 153, 0.24));
+  color: var(--pw-acc-teal, #34d399);
+  box-shadow: 0 0 8px var(--pw-acc-glow-subtle, rgba(52, 211, 153, 0.08));
+}
+
+.pipeline-step-badge::after,
+.block-step-badge::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  border: 1.5px dashed rgba(52, 211, 153, 0.25);
+  box-sizing: border-box;
+  pointer-events: none;
+  transform-origin: center;
+  transition: border-color var(--dur-fast, 120ms) ease;
+}
+
+.pipeline-step-item:hover .pipeline-step-badge::after,
+.pipeline-step-badge:hover::after,
+.block-step-badge:hover::after {
+  border-color: var(--pw-acc-teal, #34d399);
+  animation: pw-dashedRingSpin 3.5s linear infinite;
+}
+
+
+/* ==========================================================================
+   6. PROGRESS BAR (Animated Gradient Shift While Scanning)
+   ========================================================================== */
+
+@keyframes pw-progressScanGradient {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+/* Scanning active hooks — verified against app.js & index.html */
+#progress-bar.scanning,
+.monitor.is-scanning #progress-bar,
+.card.monitor.is-scanning #progress-bar,
+.monitor[data-phase="scanning"] #progress-bar,
+.monitor[data-phase="collecting"] #progress-bar,
+.monitor[data-phase="starting"] #progress-bar {
+  background: linear-gradient(
+    90deg,
+    var(--pw-acc-emerald, #10b981) 0%,
+    var(--pw-acc-teal, #34d399) 25%,
+    var(--cyan, #06b6d4) 50%,
+    var(--pw-acc-teal, #34d399) 75%,
+    var(--pw-acc-emerald, #10b981) 100%
+  ) !important;
+  background-size: 240% 100% !important;
+  animation: pw-progressScanGradient 2s ease-in-out infinite !important;
+  box-shadow:
+    0 0 12px var(--pw-acc-glow-focus, rgba(52, 211, 153, 0.18)),
+    0 0 2px var(--pw-acc-teal, #34d399),
+    inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+
+
+/* ==========================================================================
+   7. VIEW-TAB ACTIVE (Soft Underline Glow & Refined Counter Pill)
+   ========================================================================== */
+
+/* Active tab text & luminous ambiance */
+.view-tab.active {
+  color: var(--ink, #f8fafc) !important;
+  font-weight: 600;
+  text-shadow: 0 0 14px var(--pw-acc-glow-focus, rgba(52, 211, 153, 0.18));
+}
+
+/* Active tab count pill */
+.view-tab.active .view-count {
+  color: var(--pw-acc-teal, #34d399);
+  background: var(--pw-acc-glow-soft, rgba(52, 211, 153, 0.14));
+  box-shadow:
+    0 0 8px var(--pw-acc-glow-subtle, rgba(52, 211, 153, 0.08)),
+    inset 0 0 0 1px var(--pw-acc-border, rgba(52, 211, 153, 0.24));
+  transition:
+    background-color var(--dur-fast, 120ms) ease,
+    color var(--dur-fast, 120ms) ease,
+    box-shadow var(--dur-fast, 120ms) ease;
+}
+
+/* Underline indicator with soft emerald bloom */
+.view-tab::after {
+  content: '';
+  position: absolute;
+  bottom: 2px;
+  left: 50%;
+  width: 0%;
+  height: 2px;
+  background: var(--pw-acc-teal, #34d399);
+  border-radius: var(--radius-full, 9999px);
+  transform: translateX(-50%);
+  opacity: 0;
+  box-shadow: none;
+  transition:
+    width var(--dur-med, 220ms) var(--pw-spring-ease),
+    opacity var(--dur-med, 220ms) ease,
+    box-shadow var(--dur-med, 220ms) ease;
+}
+
+.view-tab.active::after {
+  width: 72%;
+  opacity: 1;
+  background: linear-gradient(
+    90deg,
+    rgba(52, 211, 153, 0.15) 0%,
+    var(--pw-acc-teal, #34d399) 30%,
+    var(--pw-acc-teal, #34d399) 70%,
+    rgba(52, 211, 153, 0.15) 100%
+  );
+  box-shadow:
+    0 0 8px rgba(52, 211, 153, 0.65),
+    0 0 2px var(--pw-acc-teal, #34d399),
+    0 2px 6px var(--pw-acc-glow-active, rgba(52, 211, 153, 0.28));
+}
+
+/* Inactive tab hover teaser indicator */
+.view-tab:hover:not(.active)::after {
+  width: 36%;
+  opacity: 0.45;
+  background: var(--pw-acc-teal, #34d399);
+  box-shadow: 0 0 6px var(--pw-acc-glow-focus, rgba(52, 211, 153, 0.18));
+}
+
+
+/* ==========================================================================
+   8. BRAND WORDMARK (Subtle Gradient Text & Glowing Tile)
+   ========================================================================== */
+
+/* Wordmark typography & dual-stop gradient */
+.brand {
+  position: relative;
+}
+
+.brand b {
+  display: block;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  background: linear-gradient(
+    135deg,
+    var(--pw-acc-teal, #34d399) 0%,
+    var(--pw-acc-emerald, #10b981) 60%,
+    var(--pw-acc-deep, #059669) 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  filter: drop-shadow(0 0 10px var(--pw-acc-glow-focus, rgba(52, 211, 153, 0.18)));
+  transition: filter var(--dur-med, 220ms) ease;
+}
+
+.brand:hover b {
+  filter: drop-shadow(0 0 16px rgba(52, 211, 153, 0.35));
+}
+
+/* Brand icon tile with gradient wash and glowing perimeter */
+.brand-icon {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm, 6px);
+  background: radial-gradient(
+    circle at 35% 30%,
+    rgba(52, 211, 153, 0.18) 0%,
+    rgba(16, 185, 129, 0.06) 80%
+  );
+  border: 1px solid var(--pw-acc-border, rgba(52, 211, 153, 0.24));
+  color: var(--pw-acc-teal, #34d399);
+  box-shadow:
+    0 0 12px var(--pw-acc-glow-subtle, rgba(52, 211, 153, 0.08)),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  transition:
+    transform var(--dur-med, 220ms) var(--pw-spring-ease),
+    border-color var(--dur-med, 220ms) ease,
+    box-shadow var(--dur-med, 220ms) ease;
+}
+
+.brand:hover .brand-icon {
+  transform: translateY(-1px) scale(1.03);
+  border-color: rgba(52, 211, 153, 0.42);
+  box-shadow:
+    0 0 18px var(--pw-acc-glow-active, rgba(52, 211, 153, 0.28)),
+    inset 0 1px 0 rgba(255, 255, 255, 0.15);
+}
+
+
+/* ==========================================================================
+   9. SUPPLEMENTARY DARK STATE RADIANCE
+   ========================================================================== */
+
+/* Active Scenario Card soft teal containment */
+.scenario-card.active {
+  border-color: var(--pw-acc-teal, #34d399) !important;
+  box-shadow:
+    0 0 0 1px var(--pw-acc-border, rgba(52, 211, 153, 0.24)),
+    0 4px 18px var(--pw-acc-glow-soft, rgba(52, 211, 153, 0.14)),
+    0 12px 32px rgba(0, 0, 0, 0.55) !important;
+}
+
+/* Primary button refined dark hover glow */
+.button.primary:hover:not(:disabled) {
+  box-shadow:
+    0 4px 16px var(--pw-acc-glow-active, rgba(52, 211, 153, 0.28)),
+    0 0 0 1px rgba(52, 211, 153, 0.38);
+}
+
+.button.primary:active:not(:disabled) {
+  box-shadow:
+    0 2px 8px var(--pw-acc-glow-focus, rgba(52, 211, 153, 0.18)),
+    0 0 0 1px rgba(52, 211, 153, 0.25);
+}
+
+/* Utility Class: .glow-teal */
+.glow-teal {
+  box-shadow:
+    0 0 0 1px var(--pw-acc-border, rgba(52, 211, 153, 0.24)),
+    0 0 16px var(--pw-acc-glow-soft, rgba(52, 211, 153, 0.14)) !important;
+}
+
+
+/* ==========================================================================
+   10. PREFERS-REDUCED-MOTION SAFETY CONTRACT
+   ========================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+
+  /* Specific overrides to lock elements in peaceful rest states */
+  .empty-table-icon,
+  .empty-state-icon {
+    animation: none !important;
+    transform: none !important;
+  }
+
+  .terminal-live-dot,
+  .ticker-live-dot,
+  .live-badge-dot,
+  .live-badge .dot {
+    animation: none !important;
+    box-shadow: 0 0 6px var(--pw-acc-glow-active, rgba(52, 211, 153, 0.28)) !important;
+  }
+
+  .terminal-live-dot::after,
+  .ticker-live-dot::after,
+  .live-badge-dot::after,
+  .live-badge .dot::after {
+    animation: none !important;
+    display: none !important;
+  }
+
+  .connect-step:hover::after,
+  .connect-step-num:hover::after,
+  .pipeline-step-badge:hover::after,
+  .block-step-badge:hover::after {
+    animation: none !important;
+    transform: none !important;
+  }
+
+  #progress-bar.scanning,
+  .monitor.is-scanning #progress-bar,
+  .card.monitor.is-scanning #progress-bar {
+    animation: none !important;
+    background-position: 50% 50% !important;
+  }
+}
+
+/* ── Fix: Add-service button was flex-crushed by the preset select ──────── */
+.add-target-btn, #add-target { flex-shrink: 0; white-space: nowrap; }
+#target-preset { flex-shrink: 1; min-width: 0; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   BOLD VISUAL LAYER — 2026-09-26 (round 5)
+   The "make it unmistakable" pass: gradient shell, glowing active states,
+   tinted status chips, hero stats, premium data surfaces. Dark-first;
+   visually reviewed live before landing. Stacks on the dark atmosphere.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ═══════ v1-shell.css ═══════ */
+/* ==========================================================================
+   PROXY WORKBENCH — BOLD AURA & NEXT-GEN APP SHELL (v1-shell.css)
+   Linear / Raycast / Arc / Vercel Energy · Dark Theme Hero Tier
+   Awwwards-Level Polish · Precision Craftsmanship · High Depth & Kinetic Tactility
+
+   DELIVERABLE: /tmp/pw-design/bold/v1-shell.css
+
+   SELECTOR VERIFICATION MANIFEST:
+   - aside.sidebar                               → index.html:40, style.css:377, 10121, 12588
+   - .brand                                      → index.html:41, style.css:391
+   - .brand-icon                                 → index.html:42, style.css:404, 14022
+   - .brand-icon svg                             → index.html:43, style.css:404
+   - .brand span                                 → index.html:47, style.css:391
+   - .brand b                                    → index.html:47, style.css:401, 14002
+   - .nav-label                                  → index.html:49, style.css:423, 9684
+   - aside.sidebar nav                           → index.html:50, style.css:432
+   - aside.sidebar nav button.nav                → index.html:51, style.css:439, 10121, 12588
+   - aside.sidebar nav button.nav svg            → index.html:53, style.css:458, 12644
+   - aside.sidebar nav button.nav.active         → index.html:51, style.css:468, 10148, 12628
+   - aside.sidebar nav button.nav::before        → style.css:10129, 12600
+   - aside.sidebar nav button.nav.active::before → style.css:10143, 12622
+   - aside.sidebar nav button.nav small          → index.html:61, style.css:476
+   - .sidebar-bottom                             → index.html:120, style.css:495, 5872
+   - .sidebar-status                             → index.html:121, style.css:502
+   - .sidebar-lang-btn                           → index.html:127, style.css:523
+   - header                                      → index.html:169, style.css:555, 10098
+   - .breadcrumb                                 → index.html:170, style.css:572
+   - .breadcrumb span                            → index.html:171, style.css:572
+   - .breadcrumb b#page-label                    → index.html:173, style.css:580, app.js:2769
+   - .header-actions                             → index.html:175, style.css:585
+   - #theme-toggle                               → index.html:176, style.css:589, app.js:6669
+   - #lang-toggle                                → index.html:177, style.css:589
+   - .local-badge                                → index.html:178, style.css:597, 10109
+   - #page-scan                                  → index.html:182, app.js:2758
+   - #page-scan .page-heading                    → index.html:183, style.css:660, 12526
+   - #page-scan .page-heading::before            → style.css:12534
+   - #page-scan .page-heading .eyebrow           → index.html:185, style.css:673, 12870
+   - #page-scan .page-heading h1                 → index.html:186, style.css:682, 9569
+   - #page-scan .page-heading p                  → index.html:187, style.css:691, 9703
+   - #page-scan .save-settings-btn               → index.html:189, style.css:698
+   - .scenarios-container                        → index.html:196, style.css:1448
+   - .scenarios-header                           → index.html:197, style.css:1454
+   - .scenarios-title                            → index.html:198, style.css:1455
+   - .scenarios-sub                              → index.html:199, style.css:1456, 9706
+   - .scenarios-grid.one-line-grid               → index.html:201, style.css:6019, 10183
+   - .scenario-card                              → index.html:202, style.css:1241, 1643, 10183
+   - .scenario-card .scenario-icon               → index.html:203, style.css:1666, 6069
+   - .scenario-card strong                       → index.html:205, style.css:1670, 6060, 10225
+   - .scenario-card .scenario-tag                → index.html:207, style.css:1682, 6077, 10235
+   - .scenario-card.active                       → index.html:234, style.css:1661, 10213, 14055
+   - .scenario-card.active::after                → new corner checkmark badge
+   ========================================================================== */
+
+/* ==========================================================================
+   1. SIDEBAR — REFINED OBSIDIAN ARCHITECTURE & BREATHING ROOM
+   ========================================================================== */
+
+/* Wider desktop layout breathing room (1440px and desktop viewports) */
+@media (min-width: 1201px) {
+  aside.sidebar {
+    width: 240px !important;
+  }
+  main {
+    margin-left: 240px !important;
+  }
+}
+
+/* Base sidebar obsidian surface enhancement */
+aside.sidebar {
+  padding: 22px 14px 20px 14px !important;
+  background: linear-gradient(
+    180deg,
+    var(--bg-sidebar, #0b111a) 0%,
+    var(--bg-app, #090d13) 100%
+  ) !important;
+  border-right: 1px solid var(--line, rgba(255, 255, 255, 0.08)) !important;
+  box-shadow: 1px 0 24px -4px rgba(0, 0, 0, 0.5) !important;
+  display: flex !important;
+  flex-direction: column !important;
+}
+
+/* Brand wordmark & radiant logo mark */
+.brand {
+  display: flex !important;
+  align-items: center !important;
+  gap: 12px !important;
+  padding: 6px 10px 22px 10px !important;
+  text-decoration: none !important;
+  color: var(--ink, #f8fafc) !important;
+}
+
+/* Brand logo tile: glowing perimeter & radiant inner wash */
+.brand-icon {
+  width: 36px !important;
+  height: 36px !important;
+  border-radius: var(--radius-md, 8px) !important;
+  background: radial-gradient(
+    circle at 30% 30%,
+    rgba(52, 211, 153, 0.24) 0%,
+    rgba(16, 185, 129, 0.08) 80%
+  ) !important;
+  border: 1px solid var(--teal-border, rgba(52, 211, 153, 0.35)) !important;
+  color: var(--teal, #34d399) !important;
+  box-shadow:
+    0 0 16px var(--teal-glow, rgba(52, 211, 153, 0.28)),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2) !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  flex-shrink: 0 !important;
+  filter: drop-shadow(0 0 8px rgba(52, 211, 153, 0.45));
+  transition:
+    transform var(--dur-med, 220ms) var(--ease-spring, cubic-bezier(0.16, 1, 0.3, 1)),
+    box-shadow var(--dur-med, 220ms) ease,
+    border-color var(--dur-med, 220ms) ease,
+    filter var(--dur-med, 220ms) ease;
+}
+
+.brand:hover .brand-icon {
+  transform: translateY(-1px) scale(1.04);
+  border-color: rgba(52, 211, 153, 0.6) !important;
+  box-shadow:
+    0 0 24px rgba(52, 211, 153, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.3) !important;
+  filter: drop-shadow(0 0 14px rgba(52, 211, 153, 0.7));
+}
+
+/* Brand wordmark typography with luminous gradient fill */
+.brand span:last-child {
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.12em !important;
+  line-height: 1.25 !important;
+  background: linear-gradient(
+    135deg,
+    var(--ink, #f8fafc) 0%,
+    #cbd5e1 35%,
+    var(--teal, #34d399) 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 0 10px rgba(52, 211, 153, 0.2));
+}
+
+.brand b {
+  display: block !important;
+  font-size: 13.5px !important;
+  font-weight: 850 !important;
+  letter-spacing: 0.1em !important;
+  text-transform: uppercase !important;
+  background: linear-gradient(
+    135deg,
+    #a7f3d0 0%,
+    var(--teal, #34d399) 45%,
+    var(--teal-hover, #10b981) 100%
+  ) !important;
+  -webkit-background-clip: text !important;
+  background-clip: text !important;
+  -webkit-text-fill-color: transparent !important;
+  color: transparent !important;
+  filter: drop-shadow(0 0 12px rgba(52, 211, 153, 0.45));
+  transition: filter var(--dur-med, 220ms) ease;
+}
+
+.brand:hover b {
+  filter: drop-shadow(0 0 18px rgba(52, 211, 153, 0.7));
+}
+
+/* Section labels: letterspaced micro-caps */
+.nav-label {
+  font-size: 10px !important;
+  font-weight: 750 !important;
+  letter-spacing: 0.18em !important;
+  text-transform: uppercase !important;
+  font-variant-caps: all-small-caps !important;
+  color: var(--faint, #64748b) !important;
+  padding: 14px 12px 6px 12px !important;
+  line-height: 1.5 !important;
+  opacity: 0.85;
+}
+
+/* Sidebar navigation stack */
+aside.sidebar nav {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 5px !important;
+  flex: 1 !important;
+}
+
+/* Nav items: sleek pills with smooth physics */
+aside.sidebar nav button.nav {
+  position: relative !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 12px !important;
+  width: 100% !important;
+  height: 40px !important;
+  padding: 0 16px 0 14px !important;
+  border-radius: var(--radius-full, 9999px) !important;
+  background: transparent !important;
+  border: 1px solid transparent !important;
+  color: var(--muted, #94a3b8) !important;
+  font-size: 13px !important;
+  font-weight: 550 !important;
+  cursor: pointer !important;
+  text-align: left !important;
+  box-sizing: border-box !important;
+  overflow: hidden !important;
+  transition:
+    transform var(--dur-fast, 120ms) var(--ease-spring, cubic-bezier(0.16, 1, 0.3, 1)),
+    box-shadow var(--dur-fast, 120ms) ease,
+    border-color var(--dur-fast, 120ms) ease,
+    color var(--dur-fast, 120ms) ease,
+    background var(--dur-fast, 120ms) ease !important;
+}
+
+/* Icon container */
+aside.sidebar nav button.nav span:first-child {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  flex-shrink: 0 !important;
+}
+
+aside.sidebar nav button.nav svg {
+  flex-shrink: 0 !important;
+  stroke: currentColor !important;
+  transition:
+    color var(--dur-fast, 120ms) ease,
+    stroke var(--dur-fast, 120ms) ease,
+    filter var(--dur-fast, 120ms) ease,
+    transform var(--dur-fast, 120ms) var(--ease-spring, cubic-bezier(0.16, 1, 0.3, 1)) !important;
+}
+
+/* Nav hover state: subtle pill lift and icon tinting */
+aside.sidebar nav button.nav:hover:not(.active) {
+  background: rgba(255, 255, 255, 0.05) !important;
+  color: var(--ink, #f8fafc) !important;
+  border-color: rgba(255, 255, 255, 0.08) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04) !important;
+  transform: translateX(2px) !important;
+}
+
+aside.sidebar nav button.nav:hover:not(.active) svg {
+  color: var(--teal, #34d399) !important;
+  stroke: var(--teal, #34d399) !important;
+  filter: drop-shadow(0 0 6px rgba(52, 211, 153, 0.45)) !important;
+  transform: scale(1.08) !important;
+}
+
+/* Nav ACTIVE item: gradient teal fill + glow bar */
+aside.sidebar nav button.nav.active {
+  background: linear-gradient(
+    135deg,
+    var(--teal-pale, rgba(16, 185, 129, 0.16)) 0%,
+    rgba(52, 211, 153, 0.06) 45%,
+    transparent 100%
+  ) !important;
+  color: var(--ink, #f8fafc) !important;
+  font-weight: 650 !important;
+  border-color: var(--teal-border, rgba(52, 211, 153, 0.32)) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    inset 0 0 16px rgba(16, 185, 129, 0.08),
+    0 2px 8px rgba(0, 0, 0, 0.35) !important;
+}
+
+aside.sidebar nav button.nav.active svg {
+  color: var(--teal, #34d399) !important;
+  stroke: var(--teal, #34d399) !important;
+  filter: drop-shadow(0 0 8px rgba(52, 211, 153, 0.6)) !important;
+}
+
+/* Vertical glow bar indicator */
+aside.sidebar nav button.nav::before {
+  content: "" !important;
+  position: absolute !important;
+  left: 4px !important;
+  top: 50% !important;
+  width: 3.5px !important;
+  height: 18px !important;
+  border-radius: 9999px !important;
+  background: linear-gradient(
+    180deg,
+    var(--teal-light, #34d399) 0%,
+    var(--teal, #10b981) 100%
+  ) !important;
+  box-shadow:
+    0 0 8px rgba(52, 211, 153, 0.8),
+    0 0 18px rgba(52, 211, 153, 0.4) !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  transform: translateY(-50%) scaleY(0.3) !important;
+  transition:
+    opacity var(--dur-med, 220ms) ease,
+    transform var(--dur-med, 220ms) var(--ease-spring, cubic-bezier(0.16, 1, 0.3, 1)),
+    box-shadow var(--dur-med, 220ms) ease !important;
+  z-index: 2 !important;
+}
+
+aside.sidebar nav button.nav.active::before {
+  opacity: 1 !important;
+  transform: translateY(-50%) scaleY(1) !important;
+}
+
+/* Nav counters (Results / Pools / Keys) */
+aside.sidebar nav button.nav small {
+  margin-left: auto !important;
+  font-family: var(--font-mono, monospace) !important;
+  font-size: 11px !important;
+  font-weight: 650 !important;
+  padding: 1px 7px !important;
+  border-radius: var(--radius-full, 9999px) !important;
+  background: rgba(255, 255, 255, 0.06) !important;
+  color: var(--muted, #94a3b8) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  transition: all var(--dur-fast, 120ms) ease !important;
+}
+
+aside.sidebar nav button.nav.active small {
+  background: rgba(52, 211, 153, 0.16) !important;
+  color: var(--teal, #34d399) !important;
+  border-color: rgba(52, 211, 153, 0.35) !important;
+  box-shadow: 0 0 8px rgba(52, 211, 153, 0.22) !important;
+}
+
+/* Sidebar bottom status & language picker polish */
+.sidebar-bottom {
+  margin-top: auto !important;
+  padding-top: 16px !important;
+  border-top: 1px solid var(--line, rgba(255, 255, 255, 0.08)) !important;
+}
+
+.sidebar-status {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  font-size: 12px !important;
+  color: var(--muted, #94a3b8) !important;
+  font-weight: 500 !important;
+}
+
+.sidebar-lang-btn {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  width: 100% !important;
+  height: 32px !important;
+  padding: 0 12px !important;
+  border-radius: var(--radius-full, 9999px) !important;
+  background: rgba(255, 255, 255, 0.04) !important;
+  border: 1px solid var(--line, rgba(255, 255, 255, 0.08)) !important;
+  color: var(--muted, #94a3b8) !important;
+  font-size: 12px !important;
+  cursor: pointer !important;
+  transition: all var(--dur-fast, 120ms) ease !important;
+}
+
+.sidebar-lang-btn:hover {
+  background: rgba(255, 255, 255, 0.08) !important;
+  border-color: var(--teal-border, rgba(52, 211, 153, 0.3)) !important;
+  color: var(--ink, #f8fafc) !important;
+}
+
+/* ==========================================================================
+   2. TOPBAR — GLASS DEPTH, HIGH-CONTRAST CRUMB & UNIFIED PILLS
+   ========================================================================== */
+
+header {
+  height: 58px !important;
+  position: sticky !important;
+  top: 0 !important;
+  z-index: 40 !important;
+  backdrop-filter: blur(16px) saturate(180%) !important;
+  -webkit-backdrop-filter: blur(16px) saturate(180%) !important;
+  background: rgba(9, 13, 19, 0.72) !important;
+  border-bottom: 1px solid var(--line-strong, rgba(255, 255, 255, 0.12)) !important;
+  box-shadow:
+    0 4px 24px -2px rgba(0, 0, 0, 0.55),
+    inset 0 -1px 0 rgba(52, 211, 153, 0.06) !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  box-sizing: border-box !important;
+}
+
+/* Breadcrumb: stronger hierarchy & typography */
+.breadcrumb {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  font-size: 13.5px !important;
+}
+
+.breadcrumb > span:first-child {
+  color: var(--muted, #94a3b8) !important;
+  font-weight: 550 !important;
+  letter-spacing: 0.02em !important;
+}
+
+.breadcrumb > span:nth-child(2) {
+  color: var(--faint, #64748b) !important;
+  font-weight: 400 !important;
+  opacity: 0.65 !important;
+  margin: 0 1px !important;
+}
+
+.breadcrumb b#page-label {
+  color: var(--ink, #f8fafc) !important;
+  font-size: 14.5px !important;
+  font-weight: 750 !important;
+  letter-spacing: -0.015em !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  text-shadow: 0 0 16px rgba(255, 255, 255, 0.15) !important;
+}
+
+/* Header actions container */
+.header-actions {
+  display: flex !important;
+  align-items: center !important;
+  gap: 10px !important;
+}
+
+/* Unified pill buttons (theme toggle & lang toggle) */
+#theme-toggle,
+#lang-toggle {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  height: 32px !important;
+  padding: 0 14px !important;
+  border-radius: var(--radius-full, 9999px) !important;
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  letter-spacing: 0.02em !important;
+  background: rgba(255, 255, 255, 0.05) !important;
+  border: 1px solid var(--line-strong, rgba(255, 255, 255, 0.12)) !important;
+  color: var(--ink, #f8fafc) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 1px 3px rgba(0, 0, 0, 0.3) !important;
+  cursor: pointer !important;
+  transition:
+    transform var(--dur-fast, 120ms) var(--ease-spring, cubic-bezier(0.16, 1, 0.3, 1)),
+    box-shadow var(--dur-fast, 120ms) ease,
+    border-color var(--dur-fast, 120ms) ease,
+    background var(--dur-fast, 120ms) ease,
+    color var(--dur-fast, 120ms) ease !important;
+}
+
+#theme-toggle:hover,
+#lang-toggle:hover {
+  background: rgba(255, 255, 255, 0.09) !important;
+  border-color: var(--teal-border, rgba(52, 211, 153, 0.35)) !important;
+  color: #ffffff !important;
+  box-shadow:
+    0 0 14px rgba(52, 211, 153, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.15) !important;
+  transform: translateY(-1px) !important;
+}
+
+#theme-toggle:active,
+#lang-toggle:active {
+  transform: translateY(0) scale(0.97) !important;
+}
+
+#theme-toggle:focus-visible,
+#lang-toggle:focus-visible {
+  outline: 2px solid var(--teal, #34d399) !important;
+  outline-offset: 2px !important;
+}
+
+/* Local badge unified with pill aesthetic */
+.local-badge {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 7px !important;
+  height: 32px !important;
+  padding: 0 12px !important;
+  border-radius: var(--radius-full, 9999px) !important;
+  background: var(--teal-pale, rgba(16, 185, 129, 0.12)) !important;
+  border: 1px solid var(--teal-border, rgba(52, 211, 153, 0.32)) !important;
+  color: var(--teal, #34d399) !important;
+  font-size: 11px !important;
+  font-weight: 750 !important;
+  letter-spacing: 0.08em !important;
+  box-shadow: 0 0 12px rgba(52, 211, 153, 0.12) !important;
+  box-sizing: border-box !important;
+}
+
+/* ==========================================================================
+   3. HERO ON SCAN — AURORA DEPTH, DISPLAY HEADLINE & ACCENT SWEEP
+   ========================================================================== */
+
+#page-scan .page-heading {
+  position: relative !important;
+  margin-bottom: 24px !important;
+  padding-bottom: 4px !important;
+}
+
+/* Two large radial gradients (teal 5%, emerald 4%), blur 80px, pointer-events none */
+#page-scan .page-heading::before {
+  content: "" !important;
+  position: absolute !important;
+  top: -40px !important;
+  left: -40px !important;
+  width: min(720px, 100vw) !important;
+  height: 240px !important;
+  background:
+    radial-gradient(ellipse 460px 180px at 20% 35%, rgba(52, 211, 153, 0.05) 0%, transparent 70%),
+    radial-gradient(ellipse 420px 160px at 70% 55%, rgba(16, 185, 129, 0.04) 0%, transparent 70%) !important;
+  filter: blur(80px) !important;
+  pointer-events: none !important;
+  z-index: 0 !important;
+  border-radius: var(--radius-full, 9999px) !important;
+  transform: translateZ(0) !important;
+}
+
+/* Ensure text and controls sit crisply above the ambient aurora */
+#page-scan .page-heading > * {
+  position: relative !important;
+  z-index: 1 !important;
+}
+
+/* Eyebrow: gradient text accent line with animated underline sweep */
+#page-scan .page-heading .eyebrow {
+  position: relative !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  font-size: 11px !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.16em !important;
+  text-transform: uppercase !important;
+  background: linear-gradient(
+    135deg,
+    #a7f3d0 0%,
+    var(--teal, #34d399) 45%,
+    var(--teal-hover, #10b981) 100%
+  ) !important;
+  -webkit-background-clip: text !important;
+  background-clip: text !important;
+  -webkit-text-fill-color: transparent !important;
+  color: transparent !important;
+  padding-bottom: 8px !important;
+  margin-bottom: 6px !important;
+}
+
+/* Underline static track guide */
+#page-scan .page-heading .eyebrow::before {
+  content: "" !important;
+  position: absolute !important;
+  bottom: 0 !important;
+  left: 0 !important;
+  width: 100% !important;
+  height: 1.5px !important;
+  background: rgba(52, 211, 153, 0.18) !important;
+  border-radius: 9999px !important;
+}
+
+/* Animated underline sweep */
+#page-scan .page-heading .eyebrow::after {
+  content: "" !important;
+  position: absolute !important;
+  bottom: -0.5px !important;
+  left: 0 !important;
+  width: 36px !important;
+  height: 2.5px !important;
+  border-radius: 9999px !important;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--teal, #34d399) 50%,
+    var(--teal-hover, #10b981) 100%
+  ) !important;
+  box-shadow:
+    0 0 10px rgba(52, 211, 153, 0.8),
+    0 0 4px #34d399 !important;
+  animation: pw-eyebrow-sweep 3.2s cubic-bezier(0.4, 0, 0.2, 1) infinite !important;
+}
+
+@keyframes pw-eyebrow-sweep {
+  0% {
+    transform: translateX(0);
+    opacity: 0;
+  }
+  15% {
+    opacity: 1;
+  }
+  85% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(115px);
+    opacity: 0;
+  }
+}
+
+/* Huge display headline: clamp 30-40px, weight 750, tighter tracking */
+#page-scan .page-heading h1 {
+  font-size: clamp(30px, 3.2vw, 40px) !important;
+  font-weight: 750 !important;
+  letter-spacing: -0.035em !important;
+  line-height: 1.12 !important;
+  color: var(--ink, #f8fafc) !important;
+  margin: 4px 0 8px 0 !important;
+  text-shadow: 0 2px 20px rgba(0, 0, 0, 0.4) !important;
+}
+
+/* Muted subtitle hierarchy */
+#page-scan .page-heading p {
+  color: var(--muted, #94a3b8) !important;
+  font-size: 14px !important;
+  font-weight: 450 !important;
+  line-height: 1.5 !important;
+  max-width: 620px !important;
+  opacity: 0.88 !important;
+}
+
+/* Save settings button inside hero */
+#page-scan .save-settings-btn {
+  height: 34px !important;
+  padding: 0 16px !important;
+  border-radius: var(--radius-full, 9999px) !important;
+  background: rgba(255, 255, 255, 0.05) !important;
+  border: 1px solid var(--line-strong, rgba(255, 255, 255, 0.12)) !important;
+  color: var(--ink, #f8fafc) !important;
+  font-size: 12px !important;
+  font-weight: 650 !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
+  transition:
+    transform var(--dur-fast, 120ms) var(--ease-spring, cubic-bezier(0.16, 1, 0.3, 1)),
+    box-shadow var(--dur-fast, 120ms) ease,
+    border-color var(--dur-fast, 120ms) ease,
+    background var(--dur-fast, 120ms) ease !important;
+}
+
+#page-scan .save-settings-btn:hover {
+  background: rgba(255, 255, 255, 0.09) !important;
+  border-color: var(--teal-border, rgba(52, 211, 153, 0.4)) !important;
+  color: #ffffff !important;
+  box-shadow:
+    0 0 14px rgba(52, 211, 153, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.15) !important;
+  transform: translateY(-1px) !important;
+}
+
+/* ==========================================================================
+   4. QUICK SCENARIO CARDS — TINTED ICON CIRCLE, BORDER GLOW & CORNER CHECK
+   ========================================================================== */
+
+/* Scenarios bar container & header */
+.scenarios-container.compact-scenarios-bar {
+  margin-bottom: 24px !important;
+}
+
+.scenarios-header {
+  display: flex !important;
+  align-items: baseline !important;
+  gap: 12px !important;
+  margin-bottom: 12px !important;
+}
+
+.scenarios-title {
+  font-size: 13px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.02em !important;
+  color: var(--ink, #f8fafc) !important;
+}
+
+.scenarios-sub {
+  font-size: 12px !important;
+  color: var(--muted, #94a3b8) !important;
+}
+
+/* Card base & vertical layout */
+.scenarios-grid.one-line-grid .scenario-card,
+.scenario-card {
+  position: relative !important;
+  overflow: visible !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: flex-start !important;
+  justify-content: flex-start !important;
+  min-height: 92px !important;
+  padding: 14px 14px !important;
+  gap: 6px !important;
+  border-radius: var(--radius-lg, 12px) !important;
+  background: var(--bg-card, #0f1622) !important;
+  border: 1px solid var(--line, rgba(255, 255, 255, 0.08)) !important;
+  box-shadow:
+    0 2px 6px rgba(0, 0, 0, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05) !important;
+  cursor: pointer !important;
+  box-sizing: border-box !important;
+  transition:
+    transform var(--dur-med, 220ms) var(--ease-spring, cubic-bezier(0.16, 1, 0.3, 1)),
+    box-shadow var(--dur-med, 220ms) var(--ease-spring, cubic-bezier(0.16, 1, 0.3, 1)),
+    border-color var(--dur-fast, 120ms) ease,
+    background var(--dur-fast, 120ms) ease !important;
+}
+
+/* Icon in a tinted gradient circle */
+.scenarios-grid.one-line-grid .scenario-card .scenario-icon,
+.scenario-card .scenario-icon {
+  width: 34px !important;
+  height: 34px !important;
+  min-width: 34px !important;
+  border-radius: var(--radius-full, 9999px) !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  background: radial-gradient(
+    circle at 35% 35%,
+    rgba(52, 211, 153, 0.2) 0%,
+    rgba(16, 185, 129, 0.05) 80%
+  ) !important;
+  border: 1px solid var(--teal-border, rgba(52, 211, 153, 0.28)) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.15),
+    0 2px 6px rgba(0, 0, 0, 0.3) !important;
+  font-size: 17px !important;
+  line-height: 1 !important;
+  margin-bottom: 2px !important;
+  transition:
+    transform var(--dur-fast, 120ms) var(--ease-spring, cubic-bezier(0.16, 1, 0.3, 1)),
+    border-color var(--dur-fast, 120ms) ease,
+    box-shadow var(--dur-fast, 120ms) ease !important;
+}
+
+/* Card titles */
+.scenarios-grid.one-line-grid .scenario-card strong,
+.scenario-card strong {
+  display: block !important;
+  color: var(--ink, #f8fafc) !important;
+  font-size: 12.5px !important;
+  font-weight: 650 !important;
+  letter-spacing: -0.01em !important;
+  line-height: 1.3 !important;
+}
+
+/* Scenario tag */
+.scenarios-grid.one-line-grid .scenario-card .scenario-tag,
+.scenario-card .scenario-tag {
+  display: inline-flex !important;
+  align-items: center !important;
+  height: 20px !important;
+  padding: 0 7px !important;
+  font-family: var(--font-mono, ui-monospace, monospace) !important;
+  font-size: 9.5px !important;
+  font-weight: 750 !important;
+  letter-spacing: 0.06em !important;
+  border-radius: var(--radius-sm, 4px) !important;
+  background: rgba(255, 255, 255, 0.05) !important;
+  border: 1px solid var(--line-strong, rgba(255, 255, 255, 0.12)) !important;
+  color: var(--muted, #94a3b8) !important;
+  align-self: flex-start !important;
+  margin-top: 2px !important;
+  transition: all var(--dur-fast, 120ms) ease !important;
+}
+
+/* Hover: lift with border glow */
+.scenarios-grid.one-line-grid .scenario-card:hover,
+.scenario-card:hover {
+  transform: translateY(-3px) !important;
+  border-color: rgba(52, 211, 153, 0.45) !important;
+  background: var(--bg-card-hover, #131c2a) !important;
+  box-shadow:
+    0 14px 28px -4px rgba(0, 0, 0, 0.7),
+    0 0 0 1px rgba(52, 211, 153, 0.3),
+    0 0 20px rgba(52, 211, 153, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12) !important;
+}
+
+.scenarios-grid.one-line-grid .scenario-card:hover .scenario-icon,
+.scenario-card:hover .scenario-icon {
+  transform: scale(1.08) !important;
+  border-color: rgba(52, 211, 153, 0.5) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.25),
+    0 0 12px rgba(52, 211, 153, 0.35) !important;
+}
+
+/* Active scenario card: unmistakably selected + corner checkmark badge */
+.scenarios-grid.one-line-grid .scenario-card.active,
+.scenario-card.active {
+  border-color: var(--teal, #34d399) !important;
+  background: linear-gradient(
+    135deg,
+    rgba(16, 185, 129, 0.18) 0%,
+    rgba(52, 211, 153, 0.08) 45%,
+    var(--bg-card, #0f1622) 100%
+  ) !important;
+  box-shadow:
+    0 0 0 1px var(--teal, #34d399),
+    0 0 0 4px rgba(52, 211, 153, 0.22),
+    0 10px 26px -2px rgba(0, 0, 0, 0.65),
+    0 0 24px rgba(52, 211, 153, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.2) !important;
+}
+
+.scenarios-grid.one-line-grid .scenario-card.active strong,
+.scenario-card.active strong {
+  color: #ffffff !important;
+}
+
+.scenarios-grid.one-line-grid .scenario-card.active .scenario-tag,
+.scenario-card.active .scenario-tag {
+  background: linear-gradient(
+    135deg,
+    var(--teal-light, #34d399) 0%,
+    var(--teal, #10b981) 100%
+  ) !important;
+  border-color: transparent !important;
+  color: #042017 !important;
+  font-weight: 850 !important;
+  box-shadow: 0 0 10px rgba(52, 211, 153, 0.45) !important;
+}
+
+.scenarios-grid.one-line-grid .scenario-card.active .scenario-icon,
+.scenario-card.active .scenario-icon {
+  background: radial-gradient(
+    circle at 35% 35%,
+    rgba(52, 211, 153, 0.32) 0%,
+    rgba(16, 185, 129, 0.12) 80%
+  ) !important;
+  border-color: rgba(52, 211, 153, 0.65) !important;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.3),
+    0 0 16px rgba(52, 211, 153, 0.45) !important;
+}
+
+/* Corner checkmark badge on active scenario card */
+.scenarios-grid.one-line-grid .scenario-card.active::after,
+.scenario-card.active::after {
+  content: "✓" !important;
+  position: absolute !important;
+  top: -7px !important;
+  right: -7px !important;
+  width: 20px !important;
+  height: 20px !important;
+  border-radius: var(--radius-full, 9999px) !important;
+  background: linear-gradient(
+    135deg,
+    var(--teal-light, #34d399) 0%,
+    var(--teal, #10b981) 100%
+  ) !important;
+  color: #042017 !important;
+  font-size: 12px !important;
+  font-weight: 900 !important;
+  line-height: 20px !important;
+  text-align: center !important;
+  box-shadow:
+    0 0 0 2.5px var(--bg-card, #0f1622),
+    0 2px 8px rgba(16, 185, 129, 0.6),
+    0 0 14px rgba(52, 211, 153, 0.45) !important;
+  z-index: 5 !important;
+  pointer-events: none !important;
+  animation: pw-badge-pop 200ms var(--ease-spring, cubic-bezier(0.16, 1, 0.3, 1)) forwards !important;
+}
+
+@keyframes pw-badge-pop {
+  0% {
+    transform: scale(0);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* Active card hover response */
+.scenarios-grid.one-line-grid .scenario-card.active:hover,
+.scenario-card.active:hover {
+  transform: translateY(-3px) !important;
+  box-shadow:
+    0 0 0 1px var(--teal, #34d399),
+    0 0 0 4px rgba(52, 211, 153, 0.3),
+    0 16px 36px -4px rgba(0, 0, 0, 0.75),
+    0 0 32px rgba(52, 211, 153, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.25) !important;
+}
+
+.scenarios-grid.one-line-grid .scenario-card:active,
+.scenario-card:active {
+  transform: translateY(0) scale(0.985) !important;
+  transition-duration: 80ms !important;
+}
+
+/* ==========================================================================
+   5. PREFERS-REDUCED-MOTION SAFETY CONTRACT
+   ========================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  #page-scan .page-heading .eyebrow::after,
+  .scenarios-grid.one-line-grid .scenario-card.active::after,
+  .scenario-card.active::after {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+
+  aside.sidebar nav button.nav,
+  aside.sidebar nav button.nav::before,
+  aside.sidebar nav button.nav svg,
+  .brand-icon,
+  .brand b,
+  #theme-toggle,
+  #lang-toggle,
+  .scenario-card,
+  .scenario-card .scenario-icon,
+  #page-scan .save-settings-btn {
+    transition-duration: 0.001ms !important;
+    transform: none !important;
+  }
+}
+
+
+/* ═══════ v2-scan.css ═══════ */
+/* ═══════════════════════════════════════════════════════════════════════════
+   PROXY WORKBENCH — BOLD SCAN WORKSPACE (v2-scan.css)
+   Awwwards-level Dark Theme Craft: Linear / Raycast / Arc / Vercel energy.
+   Dark theme is the hero. Vanilla CSS only.
+
+   Deliverable: /tmp/pw-design/bold/v2-scan.css
+   Verified Selectors:
+     - Service rows:       #targets, .target, .target-main-row, .target-icon,
+                           .target-name-input, .target-url-group,
+                           .target-proto-select, .target-url-input,
+                           .target-col-method, .target-method-select,
+                           .target-col-status, .target-status-label,
+                           .target-status-input, .target-btn-advanced,
+                           .target-remove-btn, .target-advanced-drawer
+     - Section headers:    .compact-block-title, .block-step-badge, h2
+     - Monitor card:       .card.monitor, .radial-gauge-wrap, .radial-gauge-svg,
+                           .gauge-bg, .gauge-fill, #radial-progress-fill,
+                           .gauge-percent, .gauge-caption, .metrics-grid,
+                           .metric-card, .metric-icon, .metric-value,
+                           .source-summary.live-passed, #live-passed
+     - Main Action buttons:#start, .mission-btn-start, #stop, .mission-btn-stop,
+                           .secondary-btn-row, #resume
+     - Field cards:        .clean-field-grid, .input-unit-wrap, .select-unit-wrap,
+                           .country-input-box, .unit-badge, label > span
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── 0. DESIGN TOKENS (Scoped Fallback System) ────────────────────────── */
+:root {
+  --pw-bold-bg:          var(--bg-app, #090d13);
+  --pw-bold-card:        var(--bg-card, #0f1622);
+  --pw-bold-surface:     var(--bg-surface, #131a26);
+  --pw-bold-surface-alt: #162030;
+  --pw-bold-teal:        var(--accent-300, #34d399);
+  --pw-bold-teal-dark:   var(--accent-400, #10b981);
+  --pw-bold-teal-deep:   var(--accent-500, #059669);
+  --pw-bold-teal-glow:   rgba(52, 211, 153, 0.35);
+  --pw-bold-ink:         var(--ink, #f8fafc);
+  --pw-bold-muted:       var(--muted, #8b9bb4);
+  --pw-bold-border:      rgba(255, 255, 255, 0.08);
+  --pw-bold-border-teal: rgba(52, 211, 153, 0.38);
+  --pw-bold-danger:      #f43f5e;
+  --pw-bold-danger-tint: rgba(244, 63, 94, 0.12);
+  --pw-bold-radius-sm:   var(--radius-sm, 6px);
+  --pw-bold-radius-md:   var(--radius-md, 8px);
+  --pw-bold-radius-lg:   var(--radius-lg, 12px);
+  --pw-bold-font-mono:   var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
+  --pw-bold-ease-spring: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   1. SERVICE ROWS (Unified 34px, Bordered Mini-Cards, Tinted Status Chips, Ghost Danger)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+#targets {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 250px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
+  padding: 2px 4px 4px 2px;
+  margin-bottom: 8px;
+}
+
+/* The row itself becomes a bordered tactile mini-card */
+.target {
+  background: var(--pw-bold-card, #0f1622) !important;
+  background-image: linear-gradient(
+    180deg,
+    rgba(21, 30, 46, 0.6) 0%,
+    rgba(15, 22, 34, 0.95) 100%
+  ) !important;
+  border: 1px solid var(--pw-bold-border, rgba(255, 255, 255, 0.08)) !important;
+  border-radius: var(--pw-bold-radius-md, 8px) !important;
+  padding: 8px 10px !important;
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.35),
+    0 4px 12px rgba(0, 0, 0, 0.25),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  transition:
+    border-color 180ms ease,
+    box-shadow 180ms ease,
+    transform 180ms var(--pw-bold-ease-spring);
+  box-sizing: border-box;
+  position: relative;
+}
+
+/* Hover: distinct teal border with soft ambient radiance */
+.target:hover {
+  border-color: var(--pw-bold-teal, #34d399) !important;
+  box-shadow:
+    0 0 0 1px rgba(52, 211, 153, 0.22),
+    0 4px 18px rgba(52, 211, 153, 0.12),
+    0 10px 24px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  transform: translateY(-1px);
+}
+
+.target-main-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  width: 100%;
+}
+
+/* Service icon inside row */
+.target-icon {
+  width: 34px !important;
+  height: 34px !important;
+  min-width: 34px !important;
+  border-radius: var(--pw-bold-radius-sm, 6px) !important;
+  background: radial-gradient(
+    circle at 35% 30%,
+    rgba(52, 211, 153, 0.18) 0%,
+    rgba(16, 185, 129, 0.06) 80%
+  ) !important;
+  border: 1px solid rgba(52, 211, 153, 0.26) !important;
+  color: var(--pw-bold-teal, #34d399) !important;
+  font-size: 15px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  box-shadow: 0 0 10px rgba(52, 211, 153, 0.1);
+  transition: transform 180ms ease, border-color 180ms ease;
+}
+
+.target:hover .target-icon {
+  transform: scale(1.05);
+  border-color: rgba(52, 211, 153, 0.48) !important;
+}
+
+/* Service name: unified 34px */
+.target-name-input {
+  height: 34px !important;
+  line-height: 34px !important;
+  width: 130px !important;
+  min-width: 90px !important;
+  max-width: 150px !important;
+  padding: 0 10px !important;
+  font-size: 12px !important;
+  font-weight: 650 !important;
+  border-radius: var(--pw-bold-radius-sm, 6px) !important;
+  border: 1px solid var(--pw-bold-border, rgba(255, 255, 255, 0.08)) !important;
+  background: var(--pw-bold-surface, #131a26) !important;
+  color: var(--pw-bold-ink, #f8fafc) !important;
+  flex-shrink: 0;
+  box-sizing: border-box;
+  transition: border-color 180ms ease, box-shadow 180ms ease, background-color 180ms ease;
+}
+
+.target-name-input:focus {
+  border-color: var(--pw-bold-teal, #34d399) !important;
+  background: #0f1622 !important;
+  box-shadow:
+    inset 0 0 0 1px var(--pw-bold-teal, #34d399),
+    inset 0 2px 4px rgba(52, 211, 153, 0.2),
+    0 0 12px rgba(52, 211, 153, 0.16) !important;
+  outline: none !important;
+}
+
+/* Protocol + URL group: unified 34px */
+.target-url-group {
+  flex: 1 1 180px;
+  min-width: 140px;
+  height: 34px !important;
+  display: flex;
+  align-items: stretch;
+  border: 1px solid var(--pw-bold-border, rgba(255, 255, 255, 0.08)) !important;
+  border-radius: var(--pw-bold-radius-sm, 6px) !important;
+  background: var(--pw-bold-surface, #131a26) !important;
+  box-sizing: border-box;
+  overflow: hidden;
+  transition: border-color 180ms ease, box-shadow 180ms ease;
+}
+
+.target-url-group:focus-within {
+  border-color: var(--pw-bold-teal, #34d399) !important;
+  box-shadow:
+    inset 0 0 0 1px var(--pw-bold-teal, #34d399),
+    inset 0 2px 4px rgba(52, 211, 153, 0.2),
+    0 0 12px rgba(52, 211, 153, 0.16) !important;
+}
+
+.target-url-group .target-proto-select {
+  height: 100% !important;
+  line-height: 32px !important;
+  font-family: var(--pw-bold-font-mono) !important;
+  font-size: 11px !important;
+  font-weight: 750 !important;
+  color: var(--pw-bold-teal, #34d399) !important;
+  background-color: rgba(255, 255, 255, 0.03) !important;
+  border: none !important;
+  border-right: 1px solid var(--pw-bold-border, rgba(255, 255, 255, 0.08)) !important;
+  padding: 0 20px 0 10px !important;
+  margin: 0 !important;
+  cursor: pointer;
+  outline: none !important;
+  flex-shrink: 0;
+  box-shadow: none !important;
+}
+
+.target-url-group .target-url-input {
+  height: 100% !important;
+  line-height: 32px !important;
+  font-family: var(--pw-bold-font-mono) !important;
+  font-size: 12px !important;
+  color: var(--pw-bold-ink, #f8fafc) !important;
+  background: transparent !important;
+  border: none !important;
+  outline: none !important;
+  box-shadow: none !important;
+  padding: 0 10px !important;
+  flex: 1 1 auto;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+/* Method selector: unified 34px */
+.target-col-method {
+  height: 34px !important;
+  flex-shrink: 0;
+  display: flex;
+  align-items: stretch;
+}
+
+.target-method-select {
+  height: 34px !important;
+  line-height: 32px !important;
+  font-family: var(--pw-bold-font-mono) !important;
+  font-size: 11px !important;
+  font-weight: 750 !important;
+  padding: 0 8px !important;
+  border-radius: var(--pw-bold-radius-sm, 6px) !important;
+  border: 1px solid var(--pw-bold-border, rgba(255, 255, 255, 0.08)) !important;
+  background: var(--pw-bold-surface, #131a26) !important;
+  color: var(--pw-bold-muted, #8b9bb4) !important;
+  cursor: pointer;
+  transition: all 180ms ease;
+  outline: none;
+}
+
+.target-method-select:hover,
+.target-method-select:focus {
+  border-color: rgba(52, 211, 153, 0.45) !important;
+  color: var(--pw-bold-teal, #34d399) !important;
+}
+
+/* Status "200/204" chip: unified 34px with tinted background (green tint) instead of plain */
+.target-col-status {
+  height: 34px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  border-radius: var(--pw-bold-radius-sm, 6px) !important;
+  background: rgba(52, 211, 153, 0.08) !important;
+  border: 1px solid rgba(52, 211, 153, 0.28) !important;
+  overflow: hidden !important;
+  flex-shrink: 0 !important;
+  box-sizing: border-box;
+  transition: border-color 180ms ease, box-shadow 180ms ease, background-color 180ms ease;
+}
+
+.target-col-status:hover,
+.target-col-status:focus-within {
+  background: rgba(52, 211, 153, 0.14) !important;
+  border-color: rgba(52, 211, 153, 0.5) !important;
+  box-shadow: 0 0 10px rgba(52, 211, 153, 0.2) !important;
+}
+
+.target-status-label {
+  height: 100% !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  font-size: 9.5px !important;
+  font-weight: 800 !important;
+  font-family: var(--pw-bold-font-mono) !important;
+  letter-spacing: 0.06em !important;
+  color: var(--pw-bold-teal, #34d399) !important;
+  background: rgba(52, 211, 153, 0.12) !important;
+  padding: 0 7px !important;
+  border-right: 1px solid rgba(52, 211, 153, 0.24) !important;
+  user-select: none;
+}
+
+.target-status-input {
+  height: 100% !important;
+  width: 52px !important;
+  text-align: center !important;
+  font-size: 11.5px !important;
+  font-family: var(--pw-bold-font-mono) !important;
+  font-weight: 750 !important;
+  border: none !important;
+  background: transparent !important;
+  color: var(--pw-bold-teal, #34d399) !important;
+  padding: 0 4px !important;
+  outline: none !important;
+  box-shadow: none !important;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 0 8px rgba(52, 211, 153, 0.35);
+}
+
+/* Action buttons: gear & remove */
+.target-col-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.target-btn-advanced {
+  width: 34px !important;
+  height: 34px !important;
+  border-radius: var(--pw-bold-radius-sm, 6px) !important;
+  border: 1px solid var(--pw-bold-border, rgba(255, 255, 255, 0.08)) !important;
+  background: var(--pw-bold-surface, #131a26) !important;
+  color: var(--pw-bold-muted, #8b9bb4) !important;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  transition: all 180ms ease;
+}
+
+.target-btn-advanced:hover,
+.target-btn-advanced.active {
+  color: var(--pw-bold-teal, #34d399) !important;
+  border-color: rgba(52, 211, 153, 0.38) !important;
+  background: rgba(52, 211, 153, 0.1) !important;
+  box-shadow: 0 0 10px rgba(52, 211, 153, 0.16);
+}
+
+/* Remove button: proper ghost-danger button */
+.target-remove-btn {
+  width: 34px !important;
+  height: 34px !important;
+  border-radius: var(--pw-bold-radius-sm, 6px) !important;
+  border: 1px solid rgba(244, 63, 94, 0.16) !important;
+  background: rgba(244, 63, 94, 0.04) !important;
+  color: rgba(244, 63, 94, 0.72) !important;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+  transition:
+    background-color 180ms ease,
+    border-color 180ms ease,
+    color 180ms ease,
+    box-shadow 180ms ease,
+    transform 180ms var(--pw-bold-ease-spring);
+}
+
+.target-remove-btn:hover {
+  background: rgba(244, 63, 94, 0.15) !important;
+  border-color: rgba(244, 63, 94, 0.45) !important;
+  color: #fb7185 !important;
+  box-shadow: 0 0 12px rgba(244, 63, 94, 0.28) !important;
+  transform: translateY(-1px);
+}
+
+.target-remove-btn:active {
+  transform: scale(0.92);
+  background: rgba(244, 63, 94, 0.25) !important;
+}
+
+/* Advanced drawer inside target card */
+.target-advanced-drawer {
+  padding-top: 10px !important;
+  margin-top: 8px !important;
+  border-top: 1px dashed rgba(255, 255, 255, 0.09) !important;
+}
+
+.target-drawer-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.drawer-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.drawer-field > span {
+  font-size: 9.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--pw-bold-muted, #8b9bb4);
+}
+
+.drawer-field input,
+.drawer-field textarea {
+  background: rgba(11, 16, 25, 0.8) !important;
+  border: 1px solid rgba(255, 255, 255, 0.07) !important;
+  border-radius: var(--pw-bold-radius-sm, 6px) !important;
+  color: var(--pw-bold-ink, #f8fafc) !important;
+  font-family: var(--pw-bold-font-mono) !important;
+  font-size: 11.5px !important;
+  padding: 6px 8px !important;
+  transition: all 180ms ease;
+}
+
+.drawer-field input:focus,
+.drawer-field textarea:focus {
+  border-color: var(--pw-bold-teal, #34d399) !important;
+  box-shadow:
+    inset 0 0 0 1px var(--pw-bold-teal, #34d399),
+    inset 0 1px 4px rgba(52, 211, 153, 0.2) !important;
+  outline: none !important;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   2. NUMBERED SECTION HEADERS ("1", "2") — Gradient Teal Circles & Hairline Underline
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.compact-block-title {
+  position: relative !important;
+  display: flex !important;
+  justify-content: space-between !important;
+  align-items: center !important;
+  gap: 12px;
+  padding-bottom: 12px !important;
+  margin-bottom: 14px !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07) !important;
+}
+
+/* Hairline accent sweep underline */
+.compact-block-title::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  width: 72px;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    var(--pw-bold-teal, #34d399) 0%,
+    rgba(52, 211, 153, 0.4) 60%,
+    transparent 100%
+  );
+  pointer-events: none;
+}
+
+.compact-block-title h2 {
+  font-size: 14px !important;
+  font-weight: 750 !important;
+  color: var(--pw-bold-ink, #f8fafc) !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 10px !important;
+  letter-spacing: -0.01em;
+}
+
+/* Gradient teal circles with soft glow */
+.compact-block-title .block-step-badge,
+.block-step-badge {
+  width: 24px !important;
+  height: 24px !important;
+  min-width: 24px !important;
+  border-radius: 50% !important;
+  background: linear-gradient(
+    135deg,
+    #34d399 0%,
+    #10b981 48%,
+    #059669 100%
+  ) !important;
+  border: 1px solid rgba(255, 255, 255, 0.3) !important;
+  color: #032014 !important;
+  font-family: var(--pw-bold-font-mono) !important;
+  font-size: 11px !important;
+  font-weight: 850 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  flex-shrink: 0;
+  box-shadow:
+    0 0 14px rgba(52, 211, 153, 0.42),
+    0 2px 6px rgba(0, 0, 0, 0.3),
+    inset 0 1px 1px rgba(255, 255, 255, 0.45) !important;
+  transition:
+    transform 200ms var(--pw-bold-ease-spring),
+    box-shadow 200ms ease;
+  position: relative;
+}
+
+.compact-block:hover .block-step-badge,
+.block-step-badge:hover {
+  transform: scale(1.08);
+  box-shadow:
+    0 0 20px rgba(52, 211, 153, 0.65),
+    0 4px 10px rgba(0, 0, 0, 0.4),
+    inset 0 1px 1px rgba(255, 255, 255, 0.55) !important;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   3. MONITOR CARD (CURRENT CHECK / MISSION CONTROL)
+      - Conic-gradient ring with glow filter
+      - Slow rotation of faint dashed outer ring
+      - Stat tiles as mini-cards with icon chips
+      - Hero "Matching proxies" stat with big tabular numbers
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.card.monitor {
+  background: linear-gradient(180deg, #101724 0%, #0c121c 100%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  border-radius: var(--pw-bold-radius-lg, 12px) !important;
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.5),
+    0 2px 8px rgba(0, 0, 0, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Subtle ambient backdrop aura inside monitor */
+.card.monitor::before {
+  content: '';
+  position: absolute;
+  top: -40px;
+  right: -40px;
+  width: 180px;
+  height: 180px;
+  background: radial-gradient(
+    circle,
+    rgba(52, 211, 153, 0.08) 0%,
+    transparent 70%
+  );
+  pointer-events: none;
+  filter: blur(40px);
+}
+
+.radial-gauge-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 14px 0 10px;
+  position: relative;
+}
+
+.radial-gauge-wrap {
+  position: relative;
+  width: 120px;
+  height: 120px;
+}
+
+/* Slow rotation of faint dashed outer ring */
+.radial-gauge-wrap::before {
+  content: '';
+  position: absolute;
+  inset: -10px;
+  border-radius: 50%;
+  border: 1.5px dashed rgba(52, 211, 153, 0.22);
+  pointer-events: none;
+  animation: pw-gaugeDashedSpin 28s linear infinite;
+  z-index: 0;
+}
+
+@keyframes pw-gaugeDashedSpin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Conic-gradient ring with glow filter */
+.radial-gauge-wrap::after {
+  content: '';
+  position: absolute;
+  inset: 7px;
+  border-radius: 50%;
+  background: conic-gradient(
+    from -90deg,
+    rgba(52, 211, 153, 0.04) 0deg,
+    rgba(52, 211, 153, 0.25) 120deg,
+    rgba(16, 185, 129, 0.55) 240deg,
+    rgba(52, 211, 153, 0.2) 320deg,
+    rgba(52, 211, 153, 0.04) 360deg
+  );
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 6px), #ffffff calc(100% - 5px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 6px), #ffffff calc(100% - 5px));
+  filter: drop-shadow(0 0 8px rgba(52, 211, 153, 0.45));
+  pointer-events: none;
+  z-index: 1;
+}
+
+.radial-gauge-svg {
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+  position: relative;
+  z-index: 2;
+}
+
+.gauge-bg {
+  stroke: rgba(255, 255, 255, 0.06) !important;
+  stroke-width: 7;
+}
+
+.gauge-fill {
+  stroke: var(--pw-bold-teal, #34d399) !important;
+  stroke-width: 7;
+  stroke-linecap: round;
+  filter: drop-shadow(0 0 6px rgba(52, 211, 153, 0.55));
+  transition: stroke-dashoffset 0.4s ease;
+}
+
+.gauge-percent {
+  font-family: var(--pw-bold-font-mono) !important;
+  font-size: 22px !important;
+  font-weight: 850 !important;
+  color: var(--pw-bold-ink, #f8fafc) !important;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+  text-shadow: 0 0 14px rgba(52, 211, 153, 0.35);
+  letter-spacing: -0.02em;
+}
+
+.gauge-caption {
+  font-size: 9px !important;
+  font-weight: 800 !important;
+  color: var(--pw-bold-teal, #34d399) !important;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  margin-top: 2px;
+  opacity: 0.9;
+}
+
+/* Stat tiles (Proxies/sec, Time remaining) become mini-cards with icon chips */
+.metrics.metrics-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.metric-card {
+  background: var(--pw-bold-surface, #131a26) !important;
+  background-image: linear-gradient(
+    180deg,
+    rgba(21, 30, 46, 0.7) 0%,
+    rgba(15, 22, 34, 0.9) 100%
+  ) !important;
+  border: 1px solid var(--pw-bold-border, rgba(255, 255, 255, 0.08)) !important;
+  border-radius: var(--pw-bold-radius-md, 8px) !important;
+  padding: 10px 12px !important;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25) !important;
+  transition:
+    border-color 180ms ease,
+    box-shadow 180ms ease,
+    transform 180ms var(--pw-bold-ease-spring);
+}
+
+.metric-card:hover {
+  border-color: rgba(52, 211, 153, 0.35) !important;
+  box-shadow:
+    0 4px 16px rgba(0, 0, 0, 0.4),
+    0 0 12px rgba(52, 211, 153, 0.1) !important;
+  transform: translateY(-1px);
+}
+
+.metric-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.metric-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--pw-bold-radius-sm, 6px);
+  background: rgba(52, 211, 153, 0.12);
+  border: 1px solid rgba(52, 211, 153, 0.24);
+  color: var(--pw-bold-teal, #34d399);
+  font-size: 13px;
+  line-height: 1;
+  flex-shrink: 0;
+  box-shadow: 0 0 8px rgba(52, 211, 153, 0.12);
+}
+
+.metric-header small {
+  font-size: 10px !important;
+  font-weight: 750 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.06em !important;
+  color: var(--pw-bold-muted, #8b9bb4) !important;
+}
+
+.metric-value {
+  font-family: var(--pw-bold-font-mono) !important;
+  font-size: 18px !important;
+  font-weight: 800 !important;
+  color: var(--pw-bold-ink, #f8fafc) !important;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+/* "Matching proxies" row becomes a HERO stat with big tabular numbers */
+.source-summary.live-passed {
+  display: flex !important;
+  justify-content: space-between !important;
+  align-items: center !important;
+  padding: 12px 14px !important;
+  border-radius: var(--pw-bold-radius-md, 8px) !important;
+  background: linear-gradient(
+    135deg,
+    rgba(52, 211, 153, 0.14) 0%,
+    rgba(16, 185, 129, 0.06) 50%,
+    rgba(15, 22, 34, 0.8) 100%
+  ) !important;
+  border: 1px solid rgba(52, 211, 153, 0.32) !important;
+  box-shadow:
+    0 0 20px rgba(52, 211, 153, 0.12),
+    0 4px 16px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1) !important;
+  margin-bottom: 10px !important;
+  position: relative;
+  overflow: hidden;
+}
+
+.source-summary.live-passed::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 3px;
+  height: 100%;
+  background: linear-gradient(180deg, var(--pw-bold-teal, #34d399) 0%, #059669 100%);
+}
+
+.live-passed-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: var(--pw-bold-ink, #f8fafc);
+}
+
+.live-passed-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--pw-bold-radius-sm, 6px);
+  background: rgba(52, 211, 153, 0.2);
+  border: 1px solid rgba(52, 211, 153, 0.4);
+  font-size: 14px;
+  box-shadow: 0 0 10px rgba(52, 211, 153, 0.25);
+}
+
+#live-passed {
+  font-family: var(--pw-bold-font-mono) !important;
+  font-size: 26px !important;
+  font-weight: 850 !important;
+  color: var(--pw-bold-teal, #34d399) !important;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 0 14px rgba(52, 211, 153, 0.48);
+  letter-spacing: -0.02em;
+}
+
+.source-summary.sources-summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  border-radius: var(--pw-bold-radius-sm, 6px);
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  color: var(--pw-bold-muted, #8b9bb4);
+  font-size: 11.5px;
+  margin-bottom: 8px;
+}
+
+.source-summary.sources-summary b {
+  font-family: var(--pw-bold-font-mono);
+  color: var(--pw-bold-ink, #f8fafc);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   4. MAIN ACTION BUTTONS: Find-and-Check (Hero Glow + Sheen) & Stop (Danger-Ghost)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Larger, gradient fill (teal->emerald), glow shadow, hover raise + sheen */
+#start.mission-btn-start,
+.mission-btn-start {
+  height: 46px !important;
+  line-height: 44px !important;
+  width: 100% !important;
+  border-radius: var(--pw-bold-radius-md, 8px) !important;
+  background: linear-gradient(
+    135deg,
+    #34d399 0%,
+    #10b981 48%,
+    #059669 100%
+  ) !important;
+  border: 1px solid rgba(255, 255, 255, 0.32) !important;
+  color: #032014 !important;
+  font-size: 14.5px !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.02em !important;
+  box-shadow:
+    0 0 24px rgba(52, 211, 153, 0.38),
+    0 4px 16px rgba(16, 185, 129, 0.42),
+    inset 0 1px 0 rgba(255, 255, 255, 0.45) !important;
+  cursor: pointer;
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  position: relative;
+  overflow: hidden;
+  transition:
+    transform 180ms var(--pw-bold-ease-spring),
+    box-shadow 180ms ease,
+    filter 180ms ease;
+  margin: 12px 0 10px !important;
+}
+
+/* Diagonal sheen light sweep on button */
+#start.mission-btn-start::after,
+.mission-btn-start::after {
+  content: '';
+  position: absolute;
+  top: -50%;
+  left: -80%;
+  width: 50%;
+  height: 200%;
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.45) 50%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  transform: rotate(25deg);
+  transition: transform 650ms var(--pw-bold-ease-spring);
+  pointer-events: none;
+}
+
+#start.mission-btn-start:hover,
+.mission-btn-start:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 0 32px rgba(52, 211, 153, 0.55),
+    0 8px 24px rgba(16, 185, 129, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6) !important;
+  filter: brightness(1.05);
+}
+
+#start.mission-btn-start:hover::after,
+.mission-btn-start:hover::after {
+  transform: rotate(25deg) translateX(460%);
+}
+
+#start.mission-btn-start:active,
+.mission-btn-start:active {
+  transform: translateY(0) scale(0.985);
+  box-shadow:
+    0 0 16px rgba(52, 211, 153, 0.32),
+    0 2px 8px rgba(16, 185, 129, 0.3) !important;
+}
+
+/* Stop button: Danger-ghost styling */
+#stop.mission-btn-stop,
+.mission-btn-stop {
+  height: 36px !important;
+  font-size: 12px !important;
+  font-weight: 700 !important;
+  border-radius: var(--pw-bold-radius-sm, 6px) !important;
+  transition:
+    background-color 180ms ease,
+    border-color 180ms ease,
+    color 180ms ease,
+    box-shadow 180ms ease,
+    transform 180ms var(--pw-bold-ease-spring) !important;
+}
+
+#stop.mission-btn-stop:disabled,
+.mission-btn-stop:disabled {
+  opacity: 0.4 !important;
+  background: rgba(255, 255, 255, 0.02) !important;
+  border: 1px solid rgba(255, 255, 255, 0.06) !important;
+  color: var(--pw-bold-muted, #64748b) !important;
+  cursor: not-allowed;
+  box-shadow: none !important;
+  transform: none !important;
+}
+
+#stop.mission-btn-stop:not(:disabled),
+.mission-btn-stop:not(:disabled) {
+  background: rgba(244, 63, 94, 0.08) !important;
+  border: 1px solid rgba(244, 63, 94, 0.32) !important;
+  color: #fb7185 !important;
+  box-shadow: 0 0 12px rgba(244, 63, 94, 0.16) !important;
+  cursor: pointer;
+}
+
+#stop.mission-btn-stop:not(:disabled):hover,
+.mission-btn-stop:not(:disabled):hover {
+  background: rgba(244, 63, 94, 0.18) !important;
+  border-color: rgba(244, 63, 94, 0.6) !important;
+  color: #ffffff !important;
+  box-shadow: 0 0 20px rgba(244, 63, 94, 0.35) !important;
+  transform: translateY(-1px);
+}
+
+#stop.mission-btn-stop:not(:disabled):active,
+.mission-btn-stop:not(:disabled):active {
+  transform: scale(0.98);
+  background: rgba(244, 63, 94, 0.28) !important;
+}
+
+/* Secondary actions row */
+.secondary-btn-row .button.ghost-btn,
+#resume.ghost-btn {
+  height: 36px !important;
+  border-radius: var(--pw-bold-radius-sm, 6px) !important;
+  background: rgba(255, 255, 255, 0.04) !important;
+  border: 1px solid rgba(255, 255, 255, 0.09) !important;
+  color: var(--pw-bold-ink, #f8fafc) !important;
+  font-weight: 650 !important;
+  font-size: 12px !important;
+  transition: all 180ms ease;
+}
+
+.secondary-btn-row .button.ghost-btn:hover,
+#resume.ghost-btn:hover {
+  background: rgba(255, 255, 255, 0.08) !important;
+  border-color: rgba(255, 255, 255, 0.18) !important;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   5. FIELD CARDS ("How to check" / Parameters & Filters)
+      - Labels in micro-caps
+      - Inputs with inset glow on focus
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Labels in micro-caps */
+.clean-field-grid label > span,
+.clean-field-grid .field-label-with-count span,
+#step-params-card label > span,
+#step-identity-card label > span,
+.watch-keep-fresh-label > span,
+.advanced-accordion label > span {
+  font-size: 10px !important;
+  font-weight: 750 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.07em !important;
+  color: var(--pw-bold-muted, #8b9bb4) !important;
+  min-height: 16px;
+  display: flex;
+  align-items: center;
+  margin-bottom: 2px;
+}
+
+/* Base input styling for the grid */
+.clean-field-grid input,
+.clean-field-grid select,
+.clean-field-grid .country-input-box,
+.input-unit-wrap input,
+.select-unit-wrap select,
+.advanced-accordion input,
+.advanced-accordion select,
+.watch-unit-wrap input {
+  height: 34px !important;
+  line-height: 32px !important;
+  border-radius: var(--pw-bold-radius-sm, 6px) !important;
+  background: var(--pw-bold-surface, #131a26) !important;
+  border: 1px solid var(--pw-bold-border, rgba(255, 255, 255, 0.08)) !important;
+  color: var(--pw-bold-ink, #f8fafc) !important;
+  font-size: 12.5px !important;
+  box-sizing: border-box !important;
+  transition:
+    border-color 180ms ease,
+    box-shadow 180ms ease,
+    background-color 180ms ease !important;
+}
+
+/* Inputs with inset glow on focus */
+.clean-field-grid input:focus,
+.clean-field-grid select:focus,
+.clean-field-grid .country-input-box:focus-within,
+.input-unit-wrap input:focus,
+.select-unit-wrap select:focus,
+.advanced-accordion input:focus,
+.advanced-accordion select:focus,
+.watch-unit-wrap input:focus {
+  border-color: var(--pw-bold-teal, #34d399) !important;
+  background: #0f1622 !important;
+  box-shadow:
+    inset 0 0 0 1px var(--pw-bold-teal, #34d399),
+    inset 0 2px 6px rgba(52, 211, 153, 0.22),
+    0 0 14px rgba(52, 211, 153, 0.16) !important;
+  outline: none !important;
+}
+
+/* Unit badges inside inputs */
+.input-unit-wrap .unit-badge,
+.watch-unit-wrap .unit-badge {
+  font-family: var(--pw-bold-font-mono) !important;
+  font-size: 10px !important;
+  font-weight: 750 !important;
+  letter-spacing: 0.04em !important;
+  text-transform: uppercase !important;
+  color: var(--pw-bold-muted, #8b9bb4) !important;
+  pointer-events: none;
+  transition: color 180ms ease;
+}
+
+.input-unit-wrap input:focus ~ .unit-badge,
+.watch-unit-wrap input:focus ~ .unit-badge {
+  color: var(--pw-bold-teal, #34d399) !important;
+}
+
+/* Preset chips & segmented presets */
+.compact-block-title .segmented-control {
+  background: rgba(255, 255, 255, 0.03) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  border-radius: var(--pw-bold-radius-sm, 6px) !important;
+}
+
+.segmented-btn.active {
+  background: rgba(52, 211, 153, 0.14) !important;
+  color: var(--pw-bold-teal, #34d399) !important;
+  border-color: rgba(52, 211, 153, 0.35) !important;
+  box-shadow: 0 0 10px rgba(52, 211, 153, 0.15) !important;
+}
+
+/* Quick service chips row */
+.quick-service-chip {
+  height: 28px !important;
+  border-radius: var(--pw-bold-radius-sm, 6px) !important;
+  background: rgba(255, 255, 255, 0.03) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  color: var(--pw-bold-muted, #8b9bb4) !important;
+  font-size: 11px !important;
+  font-weight: 650 !important;
+  transition: all 180ms ease;
+}
+
+.quick-service-chip:hover {
+  background: rgba(52, 211, 153, 0.08) !important;
+  border-color: rgba(52, 211, 153, 0.3) !important;
+  color: var(--pw-bold-teal, #34d399) !important;
+}
+
+.quick-service-chip.active {
+  background: rgba(52, 211, 153, 0.16) !important;
+  border-color: rgba(52, 211, 153, 0.45) !important;
+  color: var(--pw-bold-teal, #34d399) !important;
+  box-shadow: 0 0 10px rgba(52, 211, 153, 0.2);
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   6. RESPONSIVE GUARDS (1440px and 900px Viewports)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 1440px) {
+  .workspace-grid {
+    grid-template-columns: minmax(0, 1fr) 350px !important;
+    gap: 16px !important;
+  }
+
+  .target-main-row {
+    gap: 6px;
+  }
+
+  .target-name-input {
+    width: 115px !important;
+  }
+}
+
+@media (max-width: 900px) {
+  .workspace-grid {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 16px !important;
+  }
+
+  .monitor-column {
+    position: static !important;
+    top: auto !important;
+    height: auto !important;
+    max-height: none !important;
+    width: 100% !important;
+  }
+
+  .clean-field-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+}
+
+@media (max-width: 680px) {
+  .clean-field-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .target-main-row {
+    flex-wrap: wrap;
+    height: auto !important;
+  }
+
+  .target-url-group {
+    flex: 1 1 100%;
+  }
+
+  .target-col-method,
+  .target-col-status {
+    flex: 0 0 auto;
+  }
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   7. PREFERS-REDUCED-MOTION SAFETY CONTRACT
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@media (prefers-reduced-motion: reduce) {
+  .radial-gauge-wrap::before {
+    animation: none !important;
+    transform: none !important;
+  }
+
+  #start.mission-btn-start::after,
+  .mission-btn-start::after {
+    display: none !important;
+    animation: none !important;
+  }
+
+  .target:hover,
+  .metric-card:hover,
+  #start.mission-btn-start:hover,
+  #stop.mission-btn-stop:hover,
+  .compact-block:hover .block-step-badge,
+  .block-step-badge:hover {
+    transform: none !important;
+  }
+
+  .target,
+  .metric-card,
+  .radial-gauge-wrap,
+  #start.mission-btn-start,
+  #stop.mission-btn-stop {
+    transition-duration: 0.001ms !important;
+  }
+}
+
+
+/* ═══════ v3-tables.css ═══════ */
+/* ═══════════════════════════════════════════════════════════════════════════
+   PROXY WORKBENCH — BOLD DATA SURFACES & COMMAND CENTER (v3-tables.css)
+   Linear / Raycast / Arc / Vercel Energy · Dark Theme Hero Tier
+   Awwwards-Level Polish · Precision Craftsmanship · High Depth & Kinetic Tactility
+
+   DELIVERABLE: /tmp/pw-design/bold/v3-tables.css
+
+   SELECTOR VERIFICATION MANIFEST:
+   - Results Header:     .results-compact-header, .results-title-group,
+                         .results-compact-actions, #results-view-tabs,
+                         .view-tab, .view-tab.active, .view-count, .view-tools
+   - Results Toolbar:    .results-compact-toolbar, .results-tb-row-1, .results-tb-row-2,
+                         .results-tb-search, #result-search, .search-icon,
+                         .results-tb-filter-chips, #results-filter-chips,
+                         .filter-chip, .filter-chip.active,
+                         .results-tb-country, .smart-country-combobox, #result-country-box,
+                         .results-tb-downloads, #export, .btn-export-main, .download-chip,
+                         .tb-mini-field, #copy-page
+   - Results Table:      .results-card, .table-focus-card, .table-wrap,
+                         .results-table, #result-table, thead, thead th,
+                         .th-check, .th-num, .th-proxy, .th-score, .th-latency,
+                         .th-jitter, .th-speed, .th-success, .th-uptime,
+                         .th-clean, .th-anon, .th-country, .th-provider, .th-age, .th-actions,
+                         tbody#result-rows, tbody tr, tbody td,
+                         .td-check, .proxy-select-box, .td-num, .td-age, .td-actions,
+                         .proxy-cell, .proxy-text, .copy-proxy-btn,
+                         .proto-tag, .proto-socks5, .proto-http, .proto-https, .proto-socks4,
+                         .score, .score.high, .score.med, .score.low,
+                         .latency-cell, .lat-fast, .lat-neutral, .lat-dim, .lat-dot, .lat-val,
+                         .cleanliness, .anonymity, .freshness-badge,
+                         .row-actions-group, .fav-btn, .quick-test-btn, .row-tg-btn, .details-btn
+   - Gateway Page:       #page-gateway, .gateway-unified-card, .gateway-top-bar,
+                         .gw-live-status-pill, .status-pulse-large,
+                         .gateway-status-badge, .gateway-status-badge.online, .gateway-status-badge.offline,
+                         .gw-endpoint-box, code#gateway-address, #copy-gateway-hero, .copy-action-btn,
+                         .gw-metrics-pair, .gw-metric-item, .stat-number, .stat-label,
+                         .card.connect-card, #connect-card, .connect-head, .connect-lan,
+                         .connect-steps, .connect-step, .connect-step-title,
+                         .connect-step-value, .connect-step-note, .connect-step-num,
+                         .gw-center-split, .gateway-tabs-wrap, .gw-tab-btn, .gw-tab-content
+   - Sources Page:       #page-sources, .code-editor-frame, .code-editor-header,
+                         .code-editor-title-wrap, .code-editor-badge, .code-editor-title,
+                         .code-editor-meta, .code-editor-body, .code-editor-gutter,
+                         .code-editor-input, #sources, #proxies,
+                         .catalog-card, #catalog, .catalog-section,
+                         .catalog-sets, #catalog-sets, .catalog-set, .catalog-set.applied,
+                         .catalog-set-main, .catalog-set-name, .catalog-set-meta,
+                         .catalog-sets-inline, .catalog-filters, .catalog-search,
+                         .catalog-head, .catalog-list, #catalog-list, .catalog-row,
+                         .catalog-cell, .catalog-link, .catalog-id, .catalog-publisher
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── 0. DESIGN TOKENS (Obsidian Dark Foundation & Micro-Radiance) ───────── */
+:root {
+  --pw-bold-bg:            var(--bg-app, #090d13);
+  --pw-bold-card:          var(--bg-card, #0f1622);
+  --pw-bold-surface:       var(--bg-surface, #131a26);
+  --pw-bold-surface-alt:   #162030;
+  --pw-bold-teal:          var(--accent-300, #34d399);
+  --pw-bold-teal-dark:     var(--accent-400, #10b981);
+  --pw-bold-teal-deep:     var(--accent-500, #059669);
+  --pw-bold-teal-glow:     rgba(52, 211, 153, 0.35);
+  --pw-bold-teal-wash:     rgba(52, 211, 153, 0.05);
+  --pw-bold-ink:           var(--ink, #f8fafc);
+  --pw-bold-muted:         var(--muted, #8b9bb4);
+  --pw-bold-faint:         var(--faint, #4b5a72);
+  --pw-bold-border:        rgba(255, 255, 255, 0.08);
+  --pw-bold-hairline:      rgba(255, 255, 255, 0.05);
+  --pw-bold-border-teal:   rgba(52, 211, 153, 0.38);
+  --pw-bold-warning:       #f59e0b;
+  --pw-bold-danger:        #f43f5e;
+  --pw-bold-cyan:          #06b6d4;
+  --pw-bold-purple:        #8b5cf6;
+  --pw-bold-radius-xs:     var(--radius-xs, 4px);
+  --pw-bold-radius-sm:     var(--radius-sm, 6px);
+  --pw-bold-radius-md:     var(--radius-md, 8px);
+  --pw-bold-radius-lg:     var(--radius-lg, 12px);
+  --pw-bold-radius-full:   var(--radius-full, 9999px);
+  --pw-bold-font-mono:     var(--font-mono, "SF Mono", "Cascadia Code", ui-monospace, Menlo, Monaco, Consolas, monospace);
+  --pw-bold-ease-spring:   cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   1. RESULTS TABLE (Micro-Caps Sticky Header, Blur + Hairline, Row Hover Wash)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Results card envelope */
+.results-card.table-focus-card,
+.card.results-card {
+  background: var(--pw-bold-card, #0f1622) !important;
+  border: 1px solid var(--pw-bold-border, rgba(255, 255, 255, 0.08)) !important;
+  border-radius: var(--pw-bold-radius-md, 8px) !important;
+  box-shadow:
+    0 4px 24px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06) !important;
+  overflow: hidden;
+  padding: 0 !important;
+}
+
+/* Scroll wrapper container */
+.table-wrap {
+  background: var(--pw-bold-card, #0f1622);
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.16) transparent;
+}
+
+.table-wrap::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.table-wrap::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.table-wrap::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.16);
+  border-radius: var(--pw-bold-radius-full, 9999px);
+}
+
+.table-wrap::-webkit-scrollbar-thumb:hover {
+  background: rgba(52, 211, 153, 0.45);
+}
+
+/* Results table foundation */
+table.results-table,
+.results-table {
+  width: 100%;
+  border-collapse: separate !important;
+  border-spacing: 0 !important;
+  font-size: 12px;
+  background: transparent;
+  color: var(--pw-bold-ink, #f8fafc);
+}
+
+/* Micro-caps sticky table header with glass blur + hairline */
+.results-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: rgba(15, 22, 34, 0.85) !important;
+  backdrop-filter: blur(14px) saturate(180%);
+  -webkit-backdrop-filter: blur(14px) saturate(180%);
+  font-size: 10px !important;
+  font-weight: 750 !important;
+  letter-spacing: 0.09em !important;
+  text-transform: uppercase !important;
+  color: var(--pw-bold-muted, #8b9bb4) !important;
+  padding: 10px 10px !important;
+  border-top: none !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
+  white-space: nowrap;
+  user-select: none;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.35);
+  transition: color 150ms ease;
+}
+
+.results-table thead th:hover {
+  color: var(--pw-bold-ink, #f8fafc) !important;
+}
+
+/* Sticky Checkbox and Row Number header cells */
+.results-table thead th.th-check {
+  left: 0;
+  z-index: 30;
+  width: 38px;
+  min-width: 38px;
+  max-width: 38px;
+  text-align: center;
+  background: rgba(15, 22, 34, 0.94) !important;
+  padding-left: 8px !important;
+  padding-right: 4px !important;
+}
+
+.results-table thead th.th-num {
+  left: 38px;
+  z-index: 30;
+  width: 44px;
+  min-width: 44px;
+  max-width: 44px;
+  text-align: center;
+  background: rgba(15, 22, 34, 0.94) !important;
+  border-right: 1px solid rgba(255, 255, 255, 0.08) !important;
+  box-shadow: 4px 0 10px -3px rgba(0, 0, 0, 0.5) !important;
+}
+
+/* ── ZEBRA REMOVAL IN FAVOR OF CRISP HAIRLINE ROW SEPARATORS ────────── */
+
+/* Explicitly eliminate all zebra stripe alternating bands */
+tbody tr:nth-child(even) td,
+.results-table tbody tr:nth-child(even) td,
+[data-theme="light"] tbody tr:nth-child(even) td {
+  background: transparent !important;
+}
+
+/* Hairline row separators */
+.results-table tbody tr {
+  height: 38px;
+  border-bottom: 1px solid var(--pw-bold-hairline, rgba(255, 255, 255, 0.05)) !important;
+  transition: background-color 140ms ease;
+  position: relative;
+}
+
+.results-table tbody td {
+  padding: 6px 10px !important;
+  font-size: 12px;
+  vertical-align: middle;
+  border-bottom: 1px solid var(--pw-bold-hairline, rgba(255, 255, 255, 0.05)) !important;
+  color: #cbd5e1;
+}
+
+.results-table tbody tr:last-child td {
+  border-bottom: none !important;
+}
+
+/* Sticky checkbox cell on rows */
+.results-table tbody td.td-check {
+  position: sticky;
+  left: 0;
+  z-index: 6;
+  width: 38px;
+  min-width: 38px;
+  max-width: 38px;
+  text-align: center;
+  padding-left: 8px !important;
+  padding-right: 4px !important;
+  background: var(--pw-bold-card, #0f1622);
+  transition: background-color 140ms ease, box-shadow 140ms ease;
+}
+
+/* Sticky row number cell on rows */
+.results-table tbody td.td-num {
+  position: sticky;
+  left: 38px;
+  z-index: 6;
+  width: 44px;
+  min-width: 44px;
+  max-width: 44px;
+  text-align: center;
+  font-family: var(--pw-bold-font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--pw-bold-muted, #8b9bb4);
+  background: var(--pw-bold-card, #0f1622);
+  border-right: 1px solid rgba(255, 255, 255, 0.08) !important;
+  box-shadow: 4px 0 10px -3px rgba(0, 0, 0, 0.45) !important;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+
+/* ── ROW HOVER WITH TEAL-TINTED WASH + LEFT ACCENT BAR ──────────────── */
+
+.results-table tbody tr:hover td {
+  background-color: #121c29 !important;
+  background-image: linear-gradient(
+    90deg,
+    rgba(52, 211, 153, 0.08) 0%,
+    rgba(52, 211, 153, 0.02) 28%,
+    transparent 75%
+  ) !important;
+  color: var(--pw-bold-ink, #f8fafc) !important;
+}
+
+/* Left accent bar on hover via inset shadow on the first cell */
+.results-table tbody tr:hover td.td-check,
+.results-table tbody tr:hover td:first-child {
+  box-shadow: inset 3px 0 0 0 var(--pw-bold-teal, #34d399) !important;
+  background-color: #121c29 !important;
+}
+
+.results-table tbody tr:hover td.td-num {
+  background-color: #121c29 !important;
+  color: var(--pw-bold-teal, #34d399) !important;
+}
+
+/* Selected row state */
+.results-table tbody tr:has(.proxy-select-box:checked) td {
+  background-color: rgba(52, 211, 153, 0.065) !important;
+}
+
+.results-table tbody tr:has(.proxy-select-box:checked) td.td-check,
+.results-table tbody tr:has(.proxy-select-box:checked) td:first-child {
+  box-shadow: inset 3px 0 0 0 var(--pw-bold-teal-dark, #10b981) !important;
+  background-color: #13222e !important;
+}
+
+.results-table tbody tr:has(.proxy-select-box:checked) td.td-num {
+  background-color: #13222e !important;
+  color: var(--pw-bold-teal, #34d399) !important;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   2. QUALITY & LATENCY BADGES (Tinted Pill Backgrounds with Dot Indicators)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── QUALITY SCORE BADGES ─────────────────────────────────────────────── */
+
+.score {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 5px !important;
+  min-width: 50px !important;
+  height: 22px !important;
+  padding: 0 8px !important;
+  border-radius: var(--pw-bold-radius-full, 9999px) !important;
+  font-family: var(--pw-bold-font-mono) !important;
+  font-size: 11px !important;
+  font-weight: 750 !important;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em !important;
+  box-sizing: border-box;
+}
+
+/* Glowing dot indicator via pseudo-element */
+.score::before {
+  content: "";
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+/* High Score (>= 75): Luminous Emerald Pill */
+.score.high {
+  background: rgba(52, 211, 153, 0.12) !important;
+  color: var(--pw-bold-teal, #34d399) !important;
+  border: 1px solid rgba(52, 211, 153, 0.32) !important;
+  box-shadow:
+    0 0 10px rgba(52, 211, 153, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1) !important;
+}
+
+.score.high::before {
+  background: var(--pw-bold-teal, #34d399);
+  box-shadow: 0 0 6px var(--pw-bold-teal, #34d399);
+}
+
+/* Medium Score (45-74): Amber Warning Pill */
+.score.med {
+  background: rgba(245, 158, 11, 0.12) !important;
+  color: #fbbf24 !important;
+  border: 1px solid rgba(245, 158, 11, 0.32) !important;
+  box-shadow:
+    0 0 10px rgba(245, 158, 11, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
+}
+
+.score.med::before {
+  background: #fbbf24;
+  box-shadow: 0 0 6px #fbbf24;
+}
+
+/* Low Score (< 45): Rose Danger Pill */
+.score.low {
+  background: rgba(244, 63, 94, 0.12) !important;
+  color: #fb7185 !important;
+  border: 1px solid rgba(244, 63, 94, 0.32) !important;
+  box-shadow:
+    0 0 10px rgba(244, 63, 94, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
+}
+
+.score.low::before {
+  background: #fb7185;
+  box-shadow: 0 0 6px #fb7185;
+}
+
+/* ── LATENCY CELLS (Tinted Pills with Dot Indicators) ─────────────────── */
+
+.latency-cell {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  padding: 2px 8px !important;
+  height: 22px !important;
+  border-radius: var(--pw-bold-radius-full, 9999px) !important;
+  font-family: var(--pw-bold-font-mono) !important;
+  font-size: 11px !important;
+  font-weight: 650 !important;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  box-sizing: border-box;
+}
+
+.latency-cell .lat-dot {
+  width: 5px !important;
+  height: 5px !important;
+  border-radius: 50% !important;
+  flex-shrink: 0;
+}
+
+/* Fast (< 250ms): Emerald Tint */
+.latency-cell.lat-fast,
+.latency-cell.lat-good {
+  background: rgba(52, 211, 153, 0.1) !important;
+  border: 1px solid rgba(52, 211, 153, 0.28) !important;
+  box-shadow: 0 0 8px rgba(52, 211, 153, 0.1) !important;
+}
+
+.latency-cell.lat-fast .lat-dot,
+.latency-cell.lat-good .lat-dot {
+  background: var(--pw-bold-teal, #34d399) !important;
+  box-shadow: 0 0 6px var(--pw-bold-teal, #34d399) !important;
+}
+
+.latency-cell.lat-fast .lat-val,
+.latency-cell.lat-good .lat-val {
+  color: var(--pw-bold-teal, #34d399) !important;
+  font-weight: 750 !important;
+}
+
+/* Neutral (250-700ms): Slate/Soft Tint */
+.latency-cell.lat-neutral,
+.latency-cell.lat-warn {
+  background: rgba(203, 213, 225, 0.07) !important;
+  border: 1px solid rgba(203, 213, 225, 0.18) !important;
+}
+
+.latency-cell.lat-neutral .lat-dot,
+.latency-cell.lat-warn .lat-dot {
+  background: #94a3b8 !important;
+  box-shadow: 0 0 4px rgba(148, 163, 184, 0.4) !important;
+}
+
+.latency-cell.lat-neutral .lat-val,
+.latency-cell.lat-warn .lat-val {
+  color: #e2e8f0 !important;
+}
+
+/* Dim (> 700ms): Muted/Rose Tint */
+.latency-cell.lat-dim,
+.latency-cell.lat-bad {
+  background: rgba(244, 63, 94, 0.08) !important;
+  border: 1px solid rgba(244, 63, 94, 0.22) !important;
+}
+
+.latency-cell.lat-dim .lat-dot,
+.latency-cell.lat-bad .lat-dot {
+  background: #f87171 !important;
+  box-shadow: 0 0 4px rgba(248, 113, 113, 0.35) !important;
+}
+
+.latency-cell.lat-dim .lat-val,
+.latency-cell.lat-bad .lat-val {
+  color: #fca5a5 !important;
+}
+
+/* ── PROTOCOL TAGS & CELL POLISH ──────────────────────────────────────── */
+
+.proto-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: var(--pw-bold-radius-xs, 4px);
+  font-family: var(--pw-bold-font-mono);
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.proto-tag.proto-socks5 {
+  background: rgba(139, 92, 246, 0.14);
+  color: #c4b5fd;
+  border: 1px solid rgba(139, 92, 246, 0.3);
+}
+
+.proto-tag.proto-http,
+.proto-tag.proto-https {
+  background: rgba(6, 182, 212, 0.12);
+  color: #67e8f9;
+  border: 1px solid rgba(6, 182, 212, 0.28);
+}
+
+.proto-tag.proto-socks4 {
+  background: rgba(245, 158, 11, 0.12);
+  color: #fcd34d;
+  border: 1px solid rgba(245, 158, 11, 0.28);
+}
+
+.proxy-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.proxy-text {
+  font-family: var(--pw-bold-font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--pw-bold-ink, #f8fafc);
+  letter-spacing: -0.01em;
+}
+
+.copy-proxy-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  background: transparent;
+  border: none;
+  color: var(--pw-bold-muted, #8b9bb4);
+  cursor: pointer;
+  opacity: 0.55;
+  transition: opacity 120ms ease, color 120ms ease, transform 120ms ease;
+}
+
+.copy-proxy-btn:hover {
+  opacity: 1;
+  color: var(--pw-bold-teal, #34d399);
+  transform: scale(1.12);
+}
+
+/* Row Action Chips */
+.row-actions-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.row-actions-group .chip,
+.row-actions-group button.chip,
+.row-actions-group a.chip {
+  height: 24px !important;
+  padding: 0 7px !important;
+  font-size: 10.5px !important;
+  border-radius: var(--pw-bold-radius-sm, 6px) !important;
+  background: rgba(255, 255, 255, 0.04) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  color: var(--pw-bold-muted, #8b9bb4) !important;
+  transition: all 140ms ease !important;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.row-actions-group .chip:hover {
+  background: rgba(52, 211, 153, 0.12) !important;
+  border-color: rgba(52, 211, 153, 0.35) !important;
+  color: var(--pw-bold-teal, #34d399) !important;
+  box-shadow: 0 0 8px rgba(52, 211, 153, 0.16) !important;
+}
+
+.fav-btn.is-favorite {
+  color: #fbbf24 !important;
+  border-color: rgba(245, 158, 11, 0.4) !important;
+  background: rgba(245, 158, 11, 0.12) !important;
+  box-shadow: 0 0 8px rgba(245, 158, 11, 0.2) !important;
+}
+
+.row-tg-btn {
+  background: rgba(14, 165, 233, 0.1) !important;
+  color: #38bdf8 !important;
+  border-color: rgba(14, 165, 233, 0.25) !important;
+}
+
+.row-tg-btn:hover {
+  background: rgba(14, 165, 233, 0.2) !important;
+  border-color: rgba(14, 165, 233, 0.45) !important;
+  color: #7dd3fc !important;
+}
+
+/* Cleanliness & Anonymity Pills */
+.cleanliness,
+.anonymity {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: var(--pw-bold-radius-full, 9999px);
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--pw-bold-muted, #8b9bb4);
+}
+
+.cleanliness-listed,
+.cleanliness-local_denied {
+  background: rgba(244, 63, 94, 0.1);
+  color: #fb7185;
+  border-color: rgba(244, 63, 94, 0.28);
+}
+
+.anonymity-elite {
+  background: rgba(52, 211, 153, 0.1);
+  color: var(--pw-bold-teal, #34d399);
+  border-color: rgba(52, 211, 153, 0.28);
+}
+
+.anonymity-anonymous {
+  background: rgba(6, 182, 212, 0.1);
+  color: #67e8f9;
+  border-color: rgba(6, 182, 212, 0.28);
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   3. TOOLBAR (Search Expansion, Tinted Filter Chips, Export Button Gradient)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Compact Toolbar Envelope */
+.results-compact-toolbar {
+  background: var(--pw-bold-card, #0f1622) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  border-radius: var(--pw-bold-radius-md, 8px) !important;
+  padding: 10px 12px !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 10px !important;
+  box-shadow:
+    0 4px 18px rgba(0, 0, 0, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05) !important;
+  margin-bottom: 12px;
+}
+
+.results-tb-row-1 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* ── SEARCH INPUT GROWS WITH ICON ON FOCUS ────────────────────────────── */
+
+.results-tb-search {
+  position: relative;
+  flex: 1 1 200px;
+  min-width: 170px;
+  max-width: 270px;
+  transition:
+    max-width 240ms var(--pw-bold-ease-spring),
+    flex-basis 240ms var(--pw-bold-ease-spring);
+}
+
+.results-tb-search:focus-within {
+  max-width: 380px;
+  flex: 1 1 340px;
+}
+
+.results-tb-search input,
+.results-tb-search input[type="search"] {
+  width: 100% !important;
+  height: 32px !important;
+  padding-left: 30px !important;
+  padding-right: 10px !important;
+  font-size: 12px !important;
+  color: var(--pw-bold-ink, #f8fafc) !important;
+  background: var(--pw-bold-surface, #131a26) !important;
+  border: 1px solid rgba(255, 255, 255, 0.09) !important;
+  border-radius: var(--pw-bold-radius-sm, 6px) !important;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35) !important;
+  transition:
+    border-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.results-tb-search input:focus {
+  outline: none !important;
+  border-color: var(--pw-bold-teal, #34d399) !important;
+  box-shadow:
+    0 0 0 1px var(--pw-bold-teal, #34d399),
+    0 0 16px rgba(52, 211, 153, 0.22),
+    inset 0 1px 2px rgba(0, 0, 0, 0.3) !important;
+}
+
+/* Search icon animation */
+.results-tb-search .search-icon {
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 11px;
+  color: var(--pw-bold-muted, #8b9bb4);
+  pointer-events: none;
+  opacity: 0.65;
+  transition:
+    color 180ms ease,
+    transform 180ms var(--pw-bold-ease-spring),
+    opacity 180ms ease;
+}
+
+.results-tb-search:focus-within .search-icon {
+  color: var(--pw-bold-teal, #34d399);
+  opacity: 1;
+  transform: translateY(-50%) scale(1.15);
+}
+
+/* ── FILTER CHIPS GET TINTED ACTIVE STATES WITH DOT ──────────────────── */
+
+.results-tb-filter-chips {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.results-tb-filter-chips .filter-chip,
+.filter-chip {
+  height: 28px !important;
+  padding: 0 10px !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  border-radius: var(--pw-bold-radius-full, 9999px) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  background: var(--pw-bold-surface, #131a26) !important;
+  color: var(--pw-bold-muted, #8b9bb4) !important;
+  cursor: pointer;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 5px !important;
+  position: relative;
+  transition:
+    transform 140ms ease,
+    border-color 140ms ease,
+    color 140ms ease,
+    box-shadow 140ms ease,
+    background-color 140ms ease !important;
+}
+
+.results-tb-filter-chips .filter-chip:hover,
+.filter-chip:hover {
+  border-color: rgba(52, 211, 153, 0.35) !important;
+  color: var(--pw-bold-ink, #f8fafc) !important;
+  transform: translateY(-1px);
+}
+
+/* Tinted active state with dot indicator */
+.results-tb-filter-chips .filter-chip.active,
+.filter-chip.active {
+  background: rgba(52, 211, 153, 0.12) !important;
+  color: var(--pw-bold-teal, #34d399) !important;
+  border-color: rgba(52, 211, 153, 0.45) !important;
+  box-shadow:
+    0 0 14px rgba(52, 211, 153, 0.22),
+    inset 0 0 0 1px rgba(52, 211, 153, 0.15) !important;
+  font-weight: 750 !important;
+}
+
+/* Dot indicator on active chip */
+.results-tb-filter-chips .filter-chip.active::before,
+.filter-chip.active::before {
+  content: "";
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--pw-bold-teal, #34d399);
+  box-shadow: 0 0 6px var(--pw-bold-teal, #34d399);
+  margin-right: 3px;
+  flex-shrink: 0;
+}
+
+/* ── EXPORT BUTTON GRADIENT LIKE FIND-AND-CHECK ───────────────────────── */
+
+#export.btn-export-main,
+.btn-export-main {
+  height: 32px !important;
+  line-height: 30px !important;
+  padding: 0 14px !important;
+  font-size: 11.5px !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.02em !important;
+  border-radius: var(--pw-bold-radius-sm, 6px) !important;
+  background: linear-gradient(
+    135deg,
+    #34d399 0%,
+    #10b981 48%,
+    #059669 100%
+  ) !important;
+  border: 1px solid rgba(255, 255, 255, 0.35) !important;
+  color: #032014 !important;
+  box-shadow:
+    0 0 14px rgba(52, 211, 153, 0.35),
+    0 2px 8px rgba(16, 185, 129, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.45) !important;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition:
+    transform 160ms var(--pw-bold-ease-spring),
+    box-shadow 160ms ease,
+    filter 160ms ease !important;
+}
+
+/* Diagonal sheen light sweep on export button */
+#export.btn-export-main::after,
+.btn-export-main::after {
+  content: "";
+  position: absolute;
+  top: -50%;
+  left: -80%;
+  width: 45%;
+  height: 200%;
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.45) 50%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  transform: rotate(25deg);
+  transition: transform 600ms var(--pw-bold-ease-spring);
+  pointer-events: none;
+}
+
+#export.btn-export-main:hover,
+.btn-export-main:hover {
+  transform: translateY(-1px);
+  box-shadow:
+    0 0 24px rgba(52, 211, 153, 0.55),
+    0 4px 14px rgba(16, 185, 129, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6) !important;
+  filter: brightness(1.04);
+}
+
+#export.btn-export-main:hover::after,
+.btn-export-main:hover::after {
+  transform: rotate(25deg) translateX(460%);
+}
+
+#export.btn-export-main:active,
+.btn-export-main:active {
+  transform: translateY(0) scale(0.98);
+  box-shadow:
+    0 0 12px rgba(52, 211, 153, 0.3),
+    0 1px 4px rgba(16, 185, 129, 0.3) !important;
+}
+
+/* ── TOOLBAR DOWNLOAD CHIPS & SECONDARY ROW ───────────────────────────── */
+
+.results-tb-downloads {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+
+.results-tb-downloads .download-chip {
+  height: 28px !important;
+  padding: 0 8px !important;
+  font-size: 11px !important;
+  font-weight: 650 !important;
+  border-radius: var(--pw-bold-radius-sm, 6px) !important;
+  background: var(--pw-bold-surface, #131a26) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  color: var(--pw-bold-muted, #8b9bb4) !important;
+  transition:
+    border-color 140ms ease,
+    color 140ms ease,
+    transform 140ms ease !important;
+}
+
+.results-tb-downloads .download-chip:hover:not(:disabled) {
+  border-color: rgba(52, 211, 153, 0.35) !important;
+  color: var(--pw-bold-ink, #f8fafc) !important;
+  transform: translateY(-1px);
+}
+
+.results-tb-downloads .download-chip:disabled {
+  opacity: 0.45 !important;
+  cursor: not-allowed;
+}
+
+/* Toolbar Row 2: Secondary Filters */
+.results-tb-row-2 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.tb-mini-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--pw-bold-muted, #8b9bb4);
+}
+
+.tb-mini-field select,
+.tb-mini-field input {
+  height: 26px !important;
+  padding: 0 6px !important;
+  font-size: 11.5px !important;
+  color: var(--pw-bold-ink, #f8fafc) !important;
+  background: var(--pw-bold-surface, #131a26) !important;
+  border: 1px solid rgba(255, 255, 255, 0.09) !important;
+  border-radius: var(--pw-bold-radius-xs, 4px) !important;
+}
+
+.tb-mini-field select:focus,
+.tb-mini-field input:focus {
+  outline: none;
+  border-color: var(--pw-bold-teal, #34d399) !important;
+  box-shadow: 0 0 0 1px var(--pw-bold-teal, #34d399) !important;
+}
+
+#copy-page.tb-copy-btn {
+  height: 26px;
+  padding: 0 8px;
+  font-size: 11px;
+  font-weight: 650;
+  border-radius: var(--pw-bold-radius-xs, 4px);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: var(--pw-bold-muted, #8b9bb4);
+  transition: all 140ms ease;
+}
+
+#copy-page.tb-copy-btn:hover {
+  background: rgba(52, 211, 153, 0.12);
+  border-color: rgba(52, 211, 153, 0.35);
+  color: var(--pw-bold-teal, #34d399);
+}
+
+/* Country Box in Toolbar */
+.results-tb-country .country-input-box {
+  height: 32px !important;
+  min-height: 32px !important;
+  border-radius: var(--pw-bold-radius-sm, 6px) !important;
+  background: var(--pw-bold-surface, #131a26) !important;
+  border: 1px solid rgba(255, 255, 255, 0.09) !important;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   4. GATEWAY PAGE (Glowing Pulse Ring, Terminal Address Box, Step Circles)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Unified Command Center Card */
+.gateway-unified-card {
+  background: var(--pw-bold-card, #0f1622) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  border-radius: var(--pw-bold-radius-lg, 12px) !important;
+  padding: 20px !important;
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06) !important;
+  margin-bottom: 16px;
+}
+
+.gateway-top-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding-bottom: 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+/* ── THE ONLINE PILL GETS A GLOWING PULSE RING ───────────────────────── */
+
+@keyframes gw-pulse-ring-glow {
+  0% {
+    transform: scale(0.95);
+    box-shadow:
+      0 0 0 0 rgba(52, 211, 153, 0.7),
+      0 0 10px rgba(52, 211, 153, 0.45);
+  }
+  70% {
+    transform: scale(1);
+    box-shadow:
+      0 0 0 8px rgba(52, 211, 153, 0),
+      0 0 18px rgba(52, 211, 153, 0.2);
+  }
+  100% {
+    transform: scale(0.95);
+    box-shadow:
+      0 0 0 0 rgba(52, 211, 153, 0),
+      0 0 10px rgba(52, 211, 153, 0);
+  }
+}
+
+.gw-live-status-pill {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  padding: 6px 14px !important;
+  border-radius: var(--pw-bold-radius-full, 9999px) !important;
+  position: relative;
+  transition:
+    background-color 200ms ease,
+    border-color 200ms ease,
+    box-shadow 200ms ease;
+}
+
+/* Online State: Radiant Emerald Glow */
+.gw-live-status-pill:not(.offline) {
+  background: rgba(52, 211, 153, 0.12) !important;
+  border: 1px solid rgba(52, 211, 153, 0.4) !important;
+  box-shadow:
+    0 0 20px rgba(52, 211, 153, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.15) !important;
+}
+
+.gw-live-status-pill:not(.offline) .status-pulse-large {
+  display: inline-block !important;
+  width: 9px !important;
+  height: 9px !important;
+  border-radius: 50% !important;
+  background: var(--pw-bold-teal, #34d399) !important;
+  animation: gw-pulse-ring-glow 2.2s cubic-bezier(0.24, 0, 0.38, 1) infinite !important;
+  flex-shrink: 0;
+}
+
+.gateway-status-badge.online {
+  color: var(--pw-bold-teal, #34d399) !important;
+  font-weight: 750 !important;
+  letter-spacing: 0.06em !important;
+  text-transform: uppercase !important;
+  font-size: 11.5px !important;
+}
+
+/* Offline State */
+.gw-live-status-pill.offline {
+  background: var(--pw-bold-surface, #131a26) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  color: var(--pw-bold-muted, #8b9bb4) !important;
+}
+
+.gateway-status-badge.offline {
+  color: var(--pw-bold-muted, #8b9bb4) !important;
+  font-weight: 600 !important;
+}
+
+/* ── ADDRESS BOX BECOMES A TERMINAL-STYLE CARD WITH MONO FONT + COPY ──── */
+
+.gw-endpoint-box {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 10px !important;
+  background: #090e17 !important;
+  border: 1px solid rgba(255, 255, 255, 0.11) !important;
+  border-radius: var(--pw-bold-radius-sm, 6px) !important;
+  padding: 5px 8px 5px 12px !important;
+  box-shadow:
+    0 4px 16px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
+  position: relative;
+}
+
+/* Monospace prompt & address */
+.gw-endpoint-box code#gateway-address {
+  font-family: var(--pw-bold-font-mono) !important;
+  font-size: 13.5px !important;
+  font-weight: 650 !important;
+  letter-spacing: 0.02em !important;
+  color: #38bdf8 !important;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.gw-endpoint-box code#gateway-address::before {
+  content: "$";
+  color: var(--pw-bold-teal, #34d399);
+  font-weight: 800;
+  opacity: 0.9;
+}
+
+/* Terminal Copy Button */
+.gw-endpoint-box #copy-gateway-hero.copy-action-btn,
+.copy-action-btn {
+  height: 26px !important;
+  padding: 0 9px !important;
+  font-size: 11px !important;
+  font-weight: 650 !important;
+  border-radius: 4px !important;
+  background: rgba(255, 255, 255, 0.06) !important;
+  border: 1px solid rgba(255, 255, 255, 0.12) !important;
+  color: var(--pw-bold-ink, #f8fafc) !important;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+  transition: all 140ms ease !important;
+}
+
+.gw-endpoint-box #copy-gateway-hero.copy-action-btn:hover:not(:disabled) {
+  background: rgba(52, 211, 153, 0.14) !important;
+  border-color: rgba(52, 211, 153, 0.4) !important;
+  color: var(--pw-bold-teal, #34d399) !important;
+  box-shadow: 0 0 10px rgba(52, 211, 153, 0.25) !important;
+  transform: translateY(-1px);
+}
+
+.gw-endpoint-box #copy-gateway-hero.copy-action-btn:disabled {
+  opacity: 0.4 !important;
+  cursor: not-allowed;
+}
+
+/* Gateway Hero Metrics */
+.gw-metrics-pair {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.gw-metric-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.gw-metric-item .stat-number {
+  font-family: var(--pw-bold-font-mono);
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--pw-bold-ink, #f8fafc);
+  font-variant-numeric: tabular-nums;
+}
+
+.gw-metric-item .stat-label {
+  font-size: 10.5px;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--pw-bold-muted, #8b9bb4);
+}
+
+/* ── CONNECTION PATH STEP CIRCLES + CONNECTING HAIRLINE BETWEEN CARDS ── */
+
+.card.connect-card,
+#connect-card {
+  background: var(--pw-bold-card, #0f1622) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  border-radius: var(--pw-bold-radius-md, 8px) !important;
+  padding: 16px !important;
+  box-shadow:
+    0 4px 18px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05) !important;
+  margin-top: 14px;
+  position: relative;
+}
+
+.connect-steps {
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 14px;
+  margin: 14px 0 0;
+  padding: 0;
+  position: relative;
+  counter-reset: connect-step-idx;
+}
+
+.connect-step {
+  counter-increment: connect-step-idx;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 12px 14px !important;
+  background: var(--pw-bold-surface, #131a26) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  border-radius: var(--pw-bold-radius-md, 8px) !important;
+  position: relative;
+  transition:
+    transform 180ms var(--pw-bold-ease-spring),
+    border-color 180ms ease,
+    box-shadow 180ms ease;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.connect-step:hover {
+  transform: translateY(-2px);
+  border-color: rgba(52, 211, 153, 0.38) !important;
+  box-shadow:
+    0 8px 24px rgba(0, 0, 0, 0.45),
+    0 0 0 1px rgba(52, 211, 153, 0.25),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
+}
+
+/* Step circles with radiant gradient fill */
+.connect-step::before {
+  content: counter(connect-step-idx) !important;
+  position: static !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 24px !important;
+  height: 24px !important;
+  border-radius: 50% !important;
+  background: linear-gradient(
+    135deg,
+    #34d399 0%,
+    #10b981 50%,
+    #059669 100%
+  ) !important;
+  border: 1px solid rgba(255, 255, 255, 0.4) !important;
+  color: #032014 !important;
+  font-family: var(--pw-bold-font-mono) !important;
+  font-size: 11px !important;
+  font-weight: 850 !important;
+  box-shadow:
+    0 0 10px rgba(52, 211, 153, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6) !important;
+  margin-bottom: 2px;
+  flex-shrink: 0;
+}
+
+/* Connecting hairline between cards on desktop */
+@media (min-width: 901px) {
+  .connect-step:not(:last-child)::after {
+    content: "" !important;
+    position: absolute !important;
+    top: 24px !important;
+    right: -15px !important;
+    width: 14px !important;
+    height: 1px !important;
+    background: linear-gradient(
+      90deg,
+      rgba(52, 211, 153, 0.7) 0%,
+      rgba(52, 211, 153, 0.25) 100%
+    ) !important;
+    box-shadow: 0 0 6px rgba(52, 211, 153, 0.35);
+    z-index: 5;
+    pointer-events: none;
+    display: block !important;
+    border: none !important;
+  }
+}
+
+@media (max-width: 900px) {
+  .connect-steps {
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 10px;
+  }
+  .connect-step:not(:last-child)::after {
+    display: none !important;
+  }
+}
+
+.connect-step-title {
+  font-size: 11.5px !important;
+  font-weight: 700 !important;
+  color: var(--pw-bold-teal, #34d399) !important;
+}
+
+.connect-step-value {
+  font-size: 11px !important;
+  color: var(--pw-bold-ink, #f8fafc) !important;
+}
+
+.connect-step-note {
+  font-size: 10px !important;
+  color: var(--pw-bold-faint, #4b5a72) !important;
+}
+
+/* Endpoint specs in step 3 */
+.endpoint-specs {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 11px;
+}
+
+.endpoint-specs code {
+  font-family: var(--pw-bold-font-mono);
+  font-size: 11px;
+  color: #38bdf8;
+  background: rgba(0, 0, 0, 0.25);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   5. SOURCES PAGE (Terminal Chrome Code Editor, Catalog Rows Hover, SETS Chips)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── CODE EDITOR GETS TERMINAL CHROME FEEL ────────────────────────────── */
+
+.code-editor-frame {
+  border: 1px solid rgba(255, 255, 255, 0.09) !important;
+  border-radius: var(--pw-bold-radius-md, 8px) !important;
+  overflow: hidden !important;
+  margin: 10px 0 !important;
+  background: #090e17 !important;
+  box-shadow:
+    0 6px 24px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06) !important;
+  transition:
+    border-color 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.code-editor-frame:focus-within {
+  border-color: rgba(52, 211, 153, 0.42) !important;
+  box-shadow:
+    0 8px 30px rgba(0, 0, 0, 0.55),
+    0 0 0 1px rgba(52, 211, 153, 0.25),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1) !important;
+}
+
+/* Terminal Chrome Header */
+.code-editor-header {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  padding: 8px 12px !important;
+  background: #0d1422 !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
+  position: relative;
+}
+
+/* Synthesized macOS window traffic light dots */
+.code-editor-header::before {
+  content: "";
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #ef4444;
+  box-shadow:
+    14px 0 0 #f59e0b,
+    28px 0 0 #10b981,
+    0 0 6px rgba(239, 68, 68, 0.4);
+  margin-right: 32px;
+  flex-shrink: 0;
+}
+
+.code-editor-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+}
+
+.code-editor-badge {
+  font-family: var(--pw-bold-font-mono) !important;
+  font-size: 9.5px !important;
+  font-weight: 750 !important;
+  padding: 2px 6px !important;
+  border-radius: 4px !important;
+  background: rgba(52, 211, 153, 0.12) !important;
+  color: var(--pw-bold-teal, #34d399) !important;
+  border: 1px solid rgba(52, 211, 153, 0.3) !important;
+  letter-spacing: 0.05em;
+}
+
+.code-editor-title {
+  font-size: 11.5px !important;
+  font-weight: 600 !important;
+  color: var(--pw-bold-ink, #f8fafc) !important;
+}
+
+.code-editor-meta {
+  font-family: var(--pw-bold-font-mono) !important;
+  font-size: 11px !important;
+  color: var(--pw-bold-muted, #8b9bb4) !important;
+}
+
+.code-editor-body {
+  display: flex;
+  height: 180px;
+  max-height: 180px;
+  background: #090e17;
+}
+
+.code-editor-gutter {
+  background: #0a0f19 !important;
+  border-right: 1px solid rgba(255, 255, 255, 0.06) !important;
+  color: #475569 !important;
+  font-family: var(--pw-bold-font-mono) !important;
+  font-size: 11.5px !important;
+  line-height: 1.6 !important;
+  padding: 10px 8px !important;
+  text-align: right;
+  user-select: none;
+}
+
+.code-editor-input {
+  background: #090e17 !important;
+  color: var(--pw-bold-ink, #f8fafc) !important;
+  font-family: var(--pw-bold-font-mono) !important;
+  font-size: 12px !important;
+  line-height: 1.6 !important;
+  padding: 10px 12px !important;
+  border: none !important;
+  outline: none !important;
+  resize: none !important;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
+}
+
+/* ── CATALOG ROWS HOVER STATES ────────────────────────────────────────── */
+
+.catalog-card {
+  background: var(--pw-bold-card, #0f1622) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  border-radius: var(--pw-bold-radius-md, 8px) !important;
+  padding: 16px !important;
+  box-shadow:
+    0 4px 20px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05) !important;
+}
+
+.catalog-head {
+  font-size: 10px !important;
+  font-weight: 750 !important;
+  letter-spacing: 0.08em !important;
+  text-transform: uppercase !important;
+  color: var(--pw-bold-muted, #8b9bb4) !important;
+  padding: 8px 8px !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
+}
+
+.catalog-row {
+  border-bottom: 1px solid var(--pw-bold-hairline, rgba(255, 255, 255, 0.05)) !important;
+  padding: 12px 8px !important;
+  transition:
+    background-color 160ms ease,
+    box-shadow 160ms ease;
+  position: relative;
+}
+
+/* Distinctive hover state for catalog rows */
+.catalog-row:hover {
+  background: rgba(52, 211, 153, 0.045) !important;
+  box-shadow: inset 3px 0 0 0 var(--pw-bold-teal, #34d399) !important;
+}
+
+.catalog-row:hover .catalog-link {
+  color: var(--pw-bold-teal, #34d399) !important;
+  text-shadow: 0 0 10px rgba(52, 211, 153, 0.35);
+}
+
+.catalog-link {
+  font-size: 12.5px;
+  font-weight: 650;
+  color: var(--pw-bold-ink, #f8fafc);
+  text-decoration: none;
+  background: transparent;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+  transition: color 140ms ease;
+}
+
+.catalog-id {
+  font-family: var(--pw-bold-font-mono);
+  font-size: 11px;
+  color: #38bdf8;
+}
+
+.catalog-publisher {
+  font-size: 11px;
+  color: var(--pw-bold-muted, #8b9bb4);
+}
+
+/* ── SETS CHIPS TINTED ────────────────────────────────────────────────── */
+
+/* Inline SETS chips inside catalog rows */
+.catalog-sets-inline {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-top: 3px;
+}
+
+.catalog-sets-inline .badge {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 4px !important;
+  padding: 2px 8px !important;
+  border-radius: var(--pw-bold-radius-full, 9999px) !important;
+  background: rgba(52, 211, 153, 0.12) !important;
+  color: var(--pw-bold-teal, #34d399) !important;
+  border: 1px solid rgba(52, 211, 153, 0.3) !important;
+  font-family: var(--pw-bold-font-mono) !important;
+  font-size: 10.5px !important;
+  font-weight: 650 !important;
+  box-shadow: 0 0 8px rgba(52, 211, 153, 0.1) !important;
+}
+
+/* Catalog Sets container */
+.catalog-sets {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* Catalog set cards */
+.catalog-set {
+  background: var(--pw-bold-surface, #131a26) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  border-radius: var(--pw-bold-radius-md, 8px) !important;
+  padding: 12px 16px !important;
+  min-width: 240px;
+  box-shadow:
+    0 2px 10px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  transition:
+    transform 180ms var(--pw-bold-ease-spring),
+    border-color 180ms ease,
+    box-shadow 180ms ease !important;
+}
+
+.catalog-set:hover {
+  transform: translateY(-2px);
+  border-color: rgba(52, 211, 153, 0.4) !important;
+  box-shadow:
+    0 8px 24px rgba(0, 0, 0, 0.45),
+    0 0 14px rgba(52, 211, 153, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08) !important;
+}
+
+/* Active Applied Set Card */
+.catalog-set.applied {
+  background: linear-gradient(
+    135deg,
+    rgba(52, 211, 153, 0.12) 0%,
+    rgba(16, 185, 129, 0.04) 100%
+  ) !important;
+  border-color: rgba(52, 211, 153, 0.5) !important;
+  box-shadow:
+    0 0 18px rgba(52, 211, 153, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12) !important;
+}
+
+.catalog-set-main strong {
+  font-family: var(--pw-bold-font-mono);
+  font-size: 12px;
+  color: var(--pw-bold-teal, #34d399) !important;
+}
+
+.catalog-set-name {
+  color: var(--pw-bold-ink, #f8fafc) !important;
+  font-weight: 650;
+}
+
+.catalog-set.applied .badge.success {
+  background: rgba(52, 211, 153, 0.2) !important;
+  color: var(--pw-bold-teal, #34d399) !important;
+  border: 1px solid rgba(52, 211, 153, 0.4) !important;
+  box-shadow: 0 0 8px rgba(52, 211, 153, 0.25) !important;
+  font-weight: 700 !important;
+  border-radius: var(--pw-bold-radius-full, 9999px) !important;
+  padding: 2px 8px !important;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   6. RESPONSIVE GUARDS (1440px & 900px Viewport Stability)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@media (max-width: 1440px) {
+  .table-wrap {
+    overflow-x: auto;
+  }
+}
+
+@media (max-width: 900px) {
+  .results-compact-toolbar {
+    padding: 8px 10px !important;
+  }
+
+  .results-tb-search {
+    max-width: 100%;
+    flex: 1 1 100%;
+  }
+
+  .results-tb-search:focus-within {
+    max-width: 100%;
+    flex: 1 1 100%;
+  }
+
+  .results-tb-downloads {
+    margin-left: 0;
+    width: 100%;
+  }
+
+  .gateway-top-bar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .gw-metrics-pair {
+    width: 100%;
+    justify-content: space-between;
+  }
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   7. PREFERS-REDUCED-MOTION SAFETY CONTRACT
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+
+  #export.btn-export-main::after,
+  .btn-export-main::after {
+    display: none !important;
+    animation: none !important;
+  }
+
+  .gw-live-status-pill:not(.offline) .status-pulse-large {
+    animation: none !important;
+    box-shadow: 0 0 6px var(--pw-bold-teal, #34d399) !important;
+  }
+
+  .connect-step:hover,
+  .catalog-set:hover,
+  #export.btn-export-main:hover,
+  .results-tb-filter-chips .filter-chip:hover,
+  .filter-chip:hover,
+  .copy-action-btn:hover {
+    transform: none !important;
+  }
+}
+
+/* ── BOLD LIGHT ADAPTATION (residual pass: light theme catches up) ───────── */
+[data-theme="light"] {
+  --pw-bold-border: rgba(15, 23, 42, 0.12);
+  --pw-bold-hairline: rgba(15, 23, 42, 0.07);
+  --pw-bold-teal: #059669;
+  --pw-bold-teal-dark: #047857;
+  --pw-bold-teal-glow: rgba(5, 150, 105, 0.22);
+  --pw-bold-surface-alt: #f8fafc;
+}
+[data-theme="light"] .target {
+  background-image: linear-gradient(180deg, rgba(5, 150, 105, 0.03) 0%, rgba(5, 150, 105, 0.015) 100%) !important;
+  border-color: rgba(15, 23, 42, 0.12) !important;
+}
+[data-theme="light"] .target:hover {
+  background-image: linear-gradient(180deg, rgba(5, 150, 105, 0.06) 0%, rgba(5, 150, 105, 0.03) 100%) !important;
+}
+[data-theme="light"] .target-name-input:focus {
+  background: #ffffff !important;
+}
+[data-theme="light"] .card.monitor {
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%) !important;
+  border: 1px solid rgba(15, 23, 42, 0.10) !important;
+  box-shadow:
+    0 8px 32px -8px rgba(15, 23, 42, 0.12),
+    0 2px 8px rgba(15, 23, 42, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.8) !important;
+}
+[data-theme="light"] .scenario-card.active strong,
+[data-theme="light"] .scenarios-grid.one-line-grid .scenario-card.active strong {
+  color: #052e21 !important;
+}
+[data-theme="light"] header {
+  background: rgba(255, 255, 255, 0.78) !important;
+  box-shadow:
+    0 4px 24px -12px rgba(15, 23, 42, 0.18),
+    inset 0 -1px 0 rgba(5, 150, 105, 0.08) !important;
+}
+[data-theme="light"] .sidebar {
+  box-shadow: 1px 0 24px -8px rgba(15, 23, 42, 0.10) !important;
+}
+[data-theme="light"] .metric-card {
+  background-image: linear-gradient(180deg, rgba(5, 150, 105, 0.05) 0%, rgba(255, 255, 255, 0.9) 100%) !important;
+  border-color: rgba(15, 23, 42, 0.10) !important;
+  box-shadow: 0 4px 16px -6px rgba(15, 23, 42, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.8) !important;
+}
+[data-theme="light"] .metric-icon {
+  background: rgba(5, 150, 105, 0.10) !important;
+}
+[data-theme="light"] .source-summary.live-passed {
+  background-image: linear-gradient(135deg, rgba(5, 150, 105, 0.10) 0%, rgba(5, 150, 105, 0.04) 50%, rgba(255, 255, 255, 0.9) 100%) !important;
+  border-color: rgba(5, 150, 105, 0.28) !important;
+  box-shadow: 0 4px 16px -6px rgba(15, 23, 42, 0.10) !important;
+}
+[data-theme="light"] .source-summary.live-passed::before {
+  opacity: 0.25;
 }
