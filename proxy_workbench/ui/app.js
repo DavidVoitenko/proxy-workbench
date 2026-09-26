@@ -5557,6 +5557,7 @@ async function details(summary) {
 }
 
 const detailsDialog = $('details-dialog');
+const closeDetailsBtn = $('close-details');
 // Play the exit animation (b-interactions layer) before actually closing.
 function closeDialogAnimated(dlg) {
   if (!dlg || typeof dlg.close !== 'function') return;
