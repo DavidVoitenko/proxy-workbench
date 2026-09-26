@@ -4973,6 +4973,104 @@ class Workbench:
         from . import sourcedesk
         return self._store('sources', lambda: sourcedesk.SourceDesk(self.conn))
 
+    # -- source comparison (F21) -------------------------------------------
+
+    def source_dataset_groups(self, source_ids):
+        """``{source_id: dataset group}`` the catalog already records.
+
+        The research pass compared full snapshots and found that some
+        publishers serve byte-identical payloads under different ids
+        (``docs/requirements/sources-research/overlap.md``: ``hookzof`` and
+        ``proxifly``, 21 036 identical SOCKS5 endpoints).  That verdict is in
+        the catalog, so the comparison does not have to rediscover it by
+        downloading and comparing two lists again -- and an uncollected pair
+        still reads as one dataset rather than as a second opinion.
+        """
+        from . import source_catalog
+        return source_catalog.dataset_groups(sources_catalog(self.data), source_ids)
+
+    def source_cohort(self, sources, *, start=None, end=None, profile_id='',
+                      profile_revision=1, collection_id='', min_success=2 / 3,
+                      label=''):
+        """One comparable unit of observation, built the same way everywhere.
+
+        A comparison is only meaningful inside one cohort, so the window, the
+        profile revision and the admission threshold are decided once and the
+        three surfaces pass the same numbers in.  With no explicit window the
+        span of the observations that actually exist is used -- an honest
+        answer to "over what we measured" -- and a database with no
+        measurement is refused instead of compared over an invented window.
+        """
+        from . import sourcedesk
+        first, last = self.observation_span(sources)
+        low = float(start) if start is not None else first
+        high = float(end) if end is not None else last
+        if low is None or high is None:
+            raise WorkbenchError(
+                tr(f'Нет ни одного измерения для {", ".join(sources) or "источников"}: '
+                   'сравнивать нечего. Сначала выполните проверку (run/scan).',
+                   f'no measurement exists for {", ".join(sources) or "the sources"}: '
+                   'there is nothing to compare. Run a check (run/scan) first.'),
+                'E_STATE_NO_SNAPSHOT')
+        return sourcedesk.Cohort(low, high, profile_id=profile_id,
+                                 profile_revision=int(profile_revision),
+                                 collection_id=collection_id, min_success=min_success,
+                                 label=label)
+
+    def observation_span(self, sources):
+        """The first and last observation these sources were part of."""
+        ids = tuple(sorted({str(item) for item in (sources or ()) if str(item)}))
+        if not ids:
+            return None, None
+        marks = ','.join('?' * len(ids))
+        row = self.conn.execute(
+            f'SELECT min(o.started_at), max(o.finished_at) FROM observations o '
+            f'JOIN candidate_seen s ON s.endpoint_id = o.endpoint_id '
+            f'WHERE s.source IN ({marks})', ids).fetchone()
+        if row is None:
+            return None, None
+        low, high = row[0], row[1]
+        if low is None or high is None or float(high) <= float(low):
+            return None, None
+        return float(low), float(high)
+
+    def source_comparison(self, sources, *, cohort, family_jaccard=None, sample_floor=None,
+                          with_survival=False, dataset_groups=None):
+        """Publishers compared on observed measurements (F21, ``compare_sources``).
+
+        Overlap, a unique contribution per family, cost per admitted address
+        and every named bias come back together, because a pass rate read
+        without them is the number this function exists to qualify.
+        """
+        from . import sourcedesk
+        wanted = tuple(str(item) for item in (sources or ()) if str(item))
+        kwargs = {'dataset_groups': (dataset_groups if dataset_groups is not None
+                                     else self.source_dataset_groups(wanted)),
+                  'with_survival': bool(with_survival)}
+        if family_jaccard is not None:
+            kwargs['family_jaccard'] = family_jaccard
+        if sample_floor is not None:
+            kwargs['sample_floor'] = sample_floor
+        return sourcedesk.compare_sources(self.conn, sources=wanted, cohort=cohort, **kwargs)
+
+    def source_supplier_comparison(self, left, right, *, cohort, **kwargs):
+        """Two of the user's own suppliers on identical terms (``compare_suppliers``)."""
+        from . import sourcedesk
+        return sourcedesk.compare_suppliers(self.conn, left, right, cohort=cohort, **kwargs)
+
+    def source_cohort_comparison(self, sources, cohorts, **kwargs):
+        """Several windows side by side, with why they are not one number.
+
+        ``compare_cohorts`` returns the per-cohort breakdowns *and* the reason
+        the comparison must not be averaged, so a caller cannot accidentally
+        present two different experiments as one number.
+        """
+        from . import sourcedesk
+        breakdowns, warnings = sourcedesk.compare_cohorts(
+            self.conn, sources=tuple(str(item) for item in sources), cohorts=tuple(cohorts),
+            **kwargs)
+        return {'cohorts': [item.as_dict() for item in breakdowns], 'warnings': list(warnings)}
+
     def catalog(self, path=None):
         """Versioned service presets (``servicecatalog``)."""
         from . import servicecatalog
@@ -5561,6 +5659,32 @@ def parser():
     p.add_argument('--query', dest='query', default='',
                    help=tr('source list: фильтр каталога (имя, набор, категория, формат, состояние)',
                            'source list: catalog filter (name, set, category, format, state)'))
+    # F21: the comparison.  Without a window a comparison is not a comparison,
+    # so the window and the admission threshold are named here rather than
+    # defaulted to something that would silently widen the question.
+    p.add_argument('--suppliers', default='',
+                   help=tr('source compare: два своих поставщика через запятую — сравнение на одинаковых условиях',
+                           'source compare: two of your own suppliers, comma separated — one comparison, identical terms'))
+    p.add_argument('--cohorts', default='',
+                   help=tr('source compare: окна "start:end,start:end" (unix seconds) для сравнения когорт',
+                           'source compare: "start:end,start:end" windows (unix seconds) to compare cohorts'))
+    p.add_argument('--since', default='',
+                   help=tr('source compare: начало окна измерений (unix seconds); по умолчанию — все наблюдения',
+                           'source compare: start of the measurement window (unix seconds); all observations by default'))
+    p.add_argument('--until', default='',
+                   help=tr('source compare: конец окна измерений (unix seconds)', 'source compare: end of the measurement window (unix seconds)'))
+    p.add_argument('--family-jaccard', dest='family_jaccard', default='',
+                   help=tr('source compare: порог jaccard, по которому два источника считаются одним семейством',
+                           'source compare: the jaccard threshold at which two sources are one family'))
+    p.add_argument('--sample-floor', dest='sample_floor', default='',
+                   help=tr('source compare: сколько conclusive измерений нужно, чтобы выборка считалась достаточной',
+                           'source compare: conclusive measurements a sample needs before it is called sufficient'))
+    p.add_argument('--survival', action='store_true',
+                   help=tr('source compare: кривая выживания по окнам, с отметкой «не проверено»',
+                           'source compare: the survival curve across windows, with censoring kept visible'))
+    p.add_argument('--survival-windows', dest='survival_windows', type=int, default=0,
+                   help=tr('source compare: на сколько окон делить период для кривой выживания; 0 — три',
+                           'source compare: how many windows to split the survival period into; 0 = three'))
     return p
 
 
@@ -5962,12 +6086,13 @@ def _busy_collection(workbench, collection_id):
     return f'collection {collection_id} is being checked by job {running[0].id}'
 
 
-#: Everything ``source`` can do.  The catalog half (F13) and the redaction half
-#: (F27) answer different questions about the same objects, so they share one
-#: command instead of two that disagree about what a source is.
+#: Everything ``source`` can do.  The catalog half (F13), the redaction half
+#: (F27) and the comparison half (F21) answer different questions about the
+#: same objects, so they share one command instead of two that disagree about
+#: what a source is.
 SOURCE_SUBCOMMANDS = ('list', 'show', 'sets', 'set', 'enable', 'disable', 'add', 'remove',
                       'check', 'update', 'recover', 'status', 'exclude-scope',
-                      'health', 'redact')
+                      'health', 'redact', 'compare')
 
 
 def _source_flag(args, *names, default=None):
@@ -6198,14 +6323,222 @@ def _cmd_source(workbench, args, action):
         return emit(args, [{'code': item.code, 'detail': item.detail} for item in diagnostics],
                     '\n'.join(f"{item.code}: {item.detail}" for item in diagnostics)
                     or tr('Диагностик нет.', 'no diagnostics'))
+
+    if action == 'compare':
+        return _cmd_source_compare(workbench, args)
     raise WorkbenchError(tr(f'Неизвестное действие source: {action}',
                             f'unknown source action: {action}'), 'E_VALIDATION_FIELD')
+
+
+def _source_comparison_args(args):
+    """The comparison knobs, validated once, in the shape every surface uses."""
+    cohort_spec = {}
+    for name, kind in (('since', 'number'), ('until', 'number'), ('profile_revision', 'int'),
+                       ('min_success', 'number')):
+        value = getattr(args, name, None)
+        if value in (None, ''):
+            continue
+        try:
+            cohort_spec[name] = float(value) if kind == 'number' else int(value)
+        except (TypeError, ValueError):
+            raise WorkbenchError(tr(f'Неверное значение {name}: {value!r}',
+                                    f'invalid {name}: {value!r}'), 'E_VALIDATION_FIELD') from None
+    criterion = {}
+    for name, kind in (('family_jaccard', 'number'), ('sample_floor', 'int')):
+        value = getattr(args, name, None)
+        if value in (None, ''):
+            continue
+        try:
+            criterion[name] = float(value) if kind == 'number' else int(value)
+        except (TypeError, ValueError):
+            raise WorkbenchError(tr(f'Неверное значение {name}: {value!r}',
+                                    f'invalid {name}: {value!r}'), 'E_VALIDATION_FIELD') from None
+    return cohort_spec, criterion
+
+
+def _source_comparison_windows(args):
+    """``--cohorts "s:e,s:e"`` as a list of ``(start, end)`` pairs."""
+    raw = _source_flag(args, 'cohorts') or ''
+    spans = []
+    for chunk in str(raw).replace(';', ',').split(','):
+        text = chunk.strip()
+        if not text:
+            continue
+        low, sep, high = text.partition(':')
+        if not sep:
+            raise WorkbenchError(
+                tr(f'Окно {text!r} должно быть парой start:end (unix seconds).',
+                   f'window {text!r} must be a start:end pair (unix seconds).'),
+                'E_VALIDATION_FIELD')
+        try:
+            spans.append((float(low), float(high)))
+        except ValueError:
+            raise WorkbenchError(tr(f'Окно {text!r}: границы должны быть числами.',
+                                    f'window {text!r}: both bounds must be numbers.'),
+                                 'E_VALIDATION_FIELD') from None
+    if len(spans) < 2:
+        raise WorkbenchError(
+            tr('Для сравнения когорт нужно минимум два окна: --cohorts start:end,start:end',
+               'comparing cohorts needs at least two windows: --cohorts start:end,start:end'),
+            'E_VALIDATION_FIELD')
+    return spans
+
+
+def _cmd_source_compare(workbench, args):
+    """``source compare`` -- F21, the comparison a user can actually run.
+
+    Three questions, one command, because they are three readings of the same
+    rows: how do these publishers compare inside one window, do my two
+    suppliers look the same under identical terms, and what happened across
+    the windows in between.  Every one of them prints the overlap, the unique
+    contribution and the named biases next to the pass rate, so the copy case
+    the research found is visible instead of averaged away.
+    """
+    from . import sourcedesk
+    cohort_spec, criterion = _source_comparison_args(args)
+    profile_id = _source_flag(args, 'profile_id', default='') or ''
+    collection_id = _source_flag(args, 'collection', 'collection_id', default='') or ''
+
+    if _source_flag(args, 'suppliers'):
+        pair = _source_ids_argument(args)
+        if len(pair) != 2:
+            raise WorkbenchError(
+                tr('Сравнение поставщиков — это ровно два источника: '
+                   'source compare --suppliers "ИД1,ИД2"',
+                   'a supplier comparison is exactly two sources: '
+                   'source compare --suppliers "ID1,ID2"'), 'E_VALIDATION_FIELD')
+        cohort = workbench.source_cohort(pair, profile_id=profile_id, collection_id=collection_id,
+                                         label='suppliers', **cohort_spec)
+        report = workbench.source_supplier_comparison(pair[0], pair[1], cohort=cohort, **criterion)
+        return emit(args, report.as_dict(), _supplier_text(report.as_dict()))
+
+    if getattr(args, 'cohorts', None):
+        sources = _source_ids_argument(args)
+        if not sources:
+            raise WorkbenchError(
+                tr('Укажите источники: source compare --cohorts ... ИД1 ИД2',
+                   'name the sources: source compare --cohorts ... ID1 ID2'),
+                'E_VALIDATION_FIELD')
+        cohorts = tuple(
+            workbench.source_cohort(sources, profile_id=profile_id,
+                                    collection_id=collection_id,
+                                    label=f'window-{index + 1}', start=low, end=high)
+            for index, (low, high) in enumerate(_source_comparison_windows(args)))
+        body = workbench.source_cohort_comparison(sources, cohorts, **criterion)
+        return emit(args, body, _cohorts_text(body))
+
+    sources = _source_ids_argument(args)
+    if not sources:
+        raise WorkbenchError(
+            tr('Укажите источники: source compare ИД1 ИД2',
+               'name the sources: source compare ID1 ID2'), 'E_VALIDATION_FIELD')
+    cohort = workbench.source_cohort(sources, profile_id=profile_id, collection_id=collection_id,
+                                     label='window-1', **cohort_spec)
+    windows = max(0, int(getattr(args, 'survival_windows', 0) or 0))
+    with_survival = bool(getattr(args, 'survival', False)) or bool(windows)
+    # The curve is requested here rather than through ``compare_sources`` so the
+    # number of windows is the user's; ``compare_sources`` would always split
+    # into three, which is a detail of its default, not of the question.
+    report = workbench.source_comparison(sources, cohort=cohort, **criterion)
+    body = report.as_dict()
+    if with_survival:
+        body['survival'] = [step.as_dict() for step in sourcedesk.survival_across_windows(
+            workbench.conn, sources=tuple(sorted(sources)),
+            profile_id=cohort.profile_id, profile_revision=cohort.profile_revision,
+            collection_id=cohort.collection_id, min_success=cohort.min_success,
+            start=cohort.start, end=cohort.end, count=max(2, windows or 3))]
+    return emit(args, body, _comparison_text(body))
+
+
+def _percent(value):
+    return '—' if value is None else f'{value * 100:.1f}%'
+
+
+def _comparison_text(body):
+    """One screen a person reads: the rate, then everything that qualifies it."""
+    cohort = body.get('cohort') or {}
+    lines = [f'Окно {cohort.get("start", 0):.0f}..{cohort.get("end", 0):.0f}, '
+             f'профиль {cohort.get("profile_id") or "—"}/r{cohort.get("profile_revision", 1)}, '
+             f'порог {_percent(cohort.get("min_success"))}']
+    for note in body.get('warnings') or ():
+        lines.append(f'! {note}')
+    for row in body.get('rows') or ():
+        lines.append(
+            f'{row["source_id"]:<14} {row.get("status", "?"):<13} отдал {row.get("offered", 0):>6}  '
+            f'измерено {row.get("measured", 0):>6}  прошло {row.get("passed", 0):>6}  '
+            f'неизвестно {row.get("unknown", 0):>6}  пригодно {row.get("admitted", 0):>5}  '
+            f'доля {_percent(row.get("reliability")):>6}  '
+            f'[{_percent(row.get("reliability_low"))}, {_percent(row.get("reliability_high"))}]  '
+            f'своих {row.get("unique_offered", 0):>6} (пригодных {row.get("unique_admitted", 0):>5})  '
+            f'семейство {row.get("family_id") or "—"}')
+        for note in row.get('notes') or ():
+            lines.append(f'    · {note}')
+    for family in body.get('families') or ():
+        if len(family.get('members') or ()) > 1:
+            lines.append(f'семейство {family["family_id"]}: '
+                         f'{" ".join(family["members"])} — адресов {family.get("endpoints", 0)}, '
+                         f'своих {family.get("unique_endpoints", 0)}'
+                         + (' (наборы идентичны)' if family.get('identical_group') else ''))
+    for pair in body.get('overlaps') or ():
+        lines.append(f'пересечение {pair["left"]} / {pair["right"]}: общих {pair.get("shared", 0)}, '
+                     f'jaccard {_percent(pair.get("jaccard"))}, '
+                     f'только в первом {pair.get("left_only", 0)}, '
+                     f'только во втором {pair.get("right_only", 0)}'
+                     + (' — ОДИНАКОВЫЕ НАБОРЫ' if pair.get('identical') else ''))
+    for cost, row in zip(body.get('cost') or (), body.get('rows') or ()):
+        lines.append(f'цена пригодного {row["source_id"]}: секунд {cost.get("seconds")}, '
+                     f'байт {cost.get("bytes")}, попыток {cost.get("attempts")}'
+                     + (f' — {cost["reason"]}' if cost.get('reason') else ''))
+    for step in body.get('survival') or ():
+        lines.append(f'окно {step["index"] + 1} [{step["start"]:.0f}..{step["end"]:.0f}]: '
+                     f'вошло {step["entered"]}, выжило {step["alive"]}, умерло {step["dead"]}, '
+                     f'не проверено {step["censored"]}, доля {_percent(step.get("rate"))}')
+    for note in body.get('biases') or ():
+        lines.append(f'СМЕЩЕНИЕ {note["code"]}: {note["detail"]}')
+    return '\n'.join(lines)
+
+
+def _supplier_text(body):
+    lines = [f'Поставщики {body["left"]["source_id"]} / {body["right"]["source_id"]}: '
+             f'одинаковые условия: {"да" if body.get("equal_terms") else "нет"}']
+    lines.extend(_comparison_text(body.get('comparison') or {}).splitlines()[1:])
+    overlap = body.get('overlap')
+    if overlap is not None:
+        lines.append(f'пересечение: общих {overlap.get("shared", 0)}, '
+                     f'jaccard {_percent(overlap.get("jaccard"))}'
+                     + (' — ОДИНАКОВЫЕ НАБОРЫ, уникальный вклад второго равен нулю'
+                        if overlap.get('identical') else ''))
+    for note in body.get('warnings') or ():
+        lines.append(f'! {note}')
+    return '\n'.join(lines)
+
+
+def _cohorts_text(body):
+    lines = []
+    for index, comparison in enumerate(body.get('cohorts') or ()):
+        lines.append(f'--- когорта {index + 1} ---')
+        lines.extend(_comparison_text(comparison).splitlines())
+    for note in body.get('warnings') or ():
+        lines.append(f'! {note}')
+    return '\n'.join(lines)
+
+
+
+def _pool_watch_text(status):
+    """Which pools are being kept filled right now, and for how long."""
+    watching = status.get('watching') or {}
+    if not watching:
+        return tr('Ни один пул не наблюдается.', 'no pool is being watched')
+    return '\n'.join(
+        f"{pool_id}: тактов {item.get('ticks', 0)}"
+        + (f" — ошибка {item['error']}" if item.get('error') else '')
+        for pool_id, item in watching.items())
 
 
 def _source_ids_argument(args):
     """The source ids of one subcommand, in every form the parser accepts."""
     values = []
-    raw = _source_flag(args, 'id', 'name', 'ids', 'set_id')
+    raw = _source_flag(args, 'id', 'name', 'ids', 'set_id', 'suppliers')
     if raw:
         values.extend(part.strip() for part in str(raw).replace(',', ' ').split() if part.strip())
     for extra in (getattr(args, 'items', None) or ())[1:]:
@@ -6341,8 +6674,10 @@ def active_profile_id(workbench):
 
 #: Every ``pool`` subcommand.  ``refill`` and ``recheck`` were reachable from
 #: ``/v1`` and the GUI while the CLI could only look at a pool, which is the
-#: same CLI/API gap F18 asks to close.
-POOL_SUBCOMMANDS = ('list', 'create', 'status', 'members', 'refill', 'recheck')
+#: same CLI/API gap F18 asks to close.  ``start``/``pause`` are the pair that
+#: owns the watch: a pool started here is watched, a pool paused here is not.
+POOL_SUBCOMMANDS = ('list', 'create', 'status', 'members', 'refill', 'recheck',
+                    'start', 'pause', 'watch')
 
 
 def _cmd_pool(workbench, args, action):
@@ -6431,6 +6766,49 @@ def _cmd_pool(workbench, args, action):
                        f'pool {pool_id}: serving {report.served}'
                        f' of {report.desired} ({report.state})'
                        + (f' — {report.deficit_reason}' if report.deficit_reason else '')))
+    if action in ('start', 'pause', 'watch'):
+        # Start, pause and the watch are one thing: the loop belongs to the
+        # pool, so the same command that fills it starts watching it and the
+        # same command that pauses it stops the loop.  `watch` on its own only
+        # reports, so a person can ask "is it still being maintained?" without
+        # changing anything.
+        from . import api as apisvc
+        registry = pools.watch_registry(workbench.data)
+        if action == 'watch':
+            return emit(args, registry.status(), _pool_watch_text(registry.status()))
+        budget = {'max_requests': int(args.max_requests or 0)} if args.max_requests else None
+        if action == 'pause':
+            moved = apisvc.pools_state_for('pause', store.status(pool_id))
+            store.save_status(pool_id, moved.state, deficit_reason=moved.deficit_reason,
+                              next_attempt_at=moved.next_attempt_at)
+            watch = registry.stop(pool_id)
+            return emit(args, dict(_as_json(store.status(pool_id)), watch=watch),
+                        tr(f'Пул {pool_id}: на паузе, наблюдение остановлено '
+                           f'({watch["ticks"]} тактов)',
+                           f'pool {pool_id}: paused, the watch is stopped '
+                           f'({watch["ticks"]} ticks)'))
+        started = apisvc.pools_state_for('start', store.status(pool_id))
+        store.save_status(pool_id, started.state, deficit_reason=started.deficit_reason,
+                          next_attempt_at=started.next_attempt_at)
+        report = pools.refill(store, pool_id, apisvc.pool_candidate_source(workbench.conn),
+                              budget=budget, now=workbench.clock())
+        # A CLI process exits, and a daemon thread dies with it, so this
+        # command starts the loop to prove the path works and then stops it
+        # rather than leaving a thread that will be killed mid-tick.  The watch
+        # that lasts is the one a long-running process owns -- the interface or
+        # the API server -- and it is started by the same start and stopped by
+        # the same pause.  Saying so is better than a command that looks like
+        # it maintains a pool after the shell has exited.
+        watch = registry.start(pool_id, source_factory=apisvc.pool_candidate_source,
+                               budget=budget)
+        registry.stop(pool_id)
+        return emit(args, dict(_as_json(report), watch=watch),
+                    tr(f'Пул {pool_id}: обслуживает {report.served} из {report.desired} '
+                       f'({report.state}); наблюдение включается вместе с пулом в постоянном '
+                       f'процессе (интерфейс или API) и выключается вместе с ним',
+                       f'pool {pool_id}: serving {report.served} of {report.desired} '
+                       f'({report.state}); the watch is started with the pool in a long-running '
+                       f'process (the interface or the API) and stopped with it'))
     if action == 'recheck':
         from . import jobs as jobs_module
         spec = store.require(pool_id)

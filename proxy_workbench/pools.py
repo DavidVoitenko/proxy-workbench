@@ -41,6 +41,7 @@ import contextlib
 import json
 import re
 import sqlite3
+import threading
 import time
 from collections import Counter
 from collections.abc import Iterable as _Iterable
@@ -51,7 +52,7 @@ from typing import Any, Callable, Mapping, Sequence
 __all__ = [
     'Candidate', 'Clock', 'FindRequest', 'HealthResult', 'Member', 'Policy', 'PoolError',
     'PoolSchemaError', 'PoolSpec', 'PoolStatus', 'PoolStore', 'evict', 'refill', 'refill_all',
-    'report_health', 'watch',
+    'report_health', 'watch', 'WatchRegistry', 'WATCHES', 'watch_registry',
     # vocabulary a source implementation, a GUI or an API client needs
     'DOMAIN_OWN', 'DOMAIN_PUBLIC', 'DOMAIN_UNKNOWN', 'DOMAINS', 'FIND_UNITS', 'MEMBER_ACTIVE',
     'MEMBER_COOLDOWN', 'MEMBER_PROBATION', 'MEMBER_RESERVE', 'MEMBER_STATES', 'POOL_STATES',
@@ -1394,6 +1395,192 @@ def watch(store: PoolStore, pool_id: str, source: Callable[..., Sequence[Candida
         if ticks is None or tick < ticks:
             face.sleep(stored.policy.interval_seconds)
     return statuses
+
+
+class _Stopped(Exception):
+    """The watcher was asked to stop; the loop unwinds instead of sleeping."""
+
+
+class _InterruptibleClock(Clock):
+    """A clock whose sleep returns the moment the watcher is asked to stop.
+
+    Without this a ``pause`` would wait out the whole interval before the loop
+    noticed, which reads as "pause does nothing" to whoever pressed it.
+    """
+
+    def __init__(self, stop: threading.Event, base: Clock):
+        self._stop = stop
+        self._base = base
+
+    def now(self) -> float:
+        return self._base.now()
+
+    def sleep(self, seconds: float) -> None:
+        if self._stop.wait(max(0.0, float(seconds))):
+            raise _Stopped()
+
+
+class WatchRegistry:
+    """One background :func:`watch` per pool, started and stopped with the pool.
+
+    :func:`watch` was the only half of F14's "watch/refill restores the pool"
+    that nothing started: a pool created with ``desired=5`` was refilled once
+    by whoever pressed the button and then stayed at whatever it reached.  The
+    loop is not a new engine -- it is :func:`watch` unchanged, one thread per
+    watched pool, bound to the pool's own lifecycle so it cannot outlive the
+    thing it maintains.
+
+    Three things it deliberately does not do:
+
+    * it never runs twice for one pool.  ``start`` on a pool that is already
+      watched reports ``already_running`` instead of adding a second loop;
+      two loops would double the work and neither would show up in the status.
+    * it does not outlive the pool.  ``stop`` -- which the ``pause`` path
+      calls -- ends the loop, and a loop that finds its pool in ``error`` ends
+      itself rather than retrying forever behind the user's back.
+    * it does not spend more than it was given.  Every tick goes through
+      :func:`refill`, the same budget-enforcing call the manual ``pool
+      refill`` makes, and the pool's own ``next_attempt_at`` still defers a
+      tick that arrives early.  A watch therefore spends at most one
+      ``refill_budget`` per interval, which is the promise the policy already
+      made.
+    """
+
+    def __init__(self, open_store: Callable[[], PoolStore] | None = None, *,
+                 clock: Clock | None = None):
+        self._open_store = open_store
+        self._clock = clock or Clock()
+        self._lock = threading.Lock()
+        self._threads: dict[str, threading.Thread] = {}
+        self._stops: dict[str, threading.Event] = {}
+        self._ticks: dict[str, int] = {}
+        self._errors: dict[str, str] = {}
+
+    def watching(self, pool_id: str) -> bool:
+        with self._lock:
+            thread = self._threads.get(str(pool_id))
+        return bool(thread and thread.is_alive())
+
+    def start(self, pool_id: str, source: Callable[..., Sequence[Candidate]] | None = None, *,
+              source_factory: Callable[[Any], Callable[..., Sequence[Candidate]]] | None = None,
+              verify: Callable[..., bool | None] | None = None,
+              budget: int | None = None) -> dict:
+        """Begin watching one pool; report what happened instead of doing it twice.
+
+        ``source_factory(conn)`` is the form a long-running surface uses.  A
+        candidate source reads the database, and a SQLite connection belongs to
+        the thread that opened it, so a source built on the caller's connection
+        raises ``ProgrammingError`` the moment the loop asks it for a tier --
+        which reads as "the pool has no candidates" rather than as a threading
+        mistake.  The factory is therefore called *inside* the loop, on the
+        connection the loop opened itself.  ``source`` stays for a caller that
+        has a source which does not touch the database.
+        """
+        key = str(pool_id)
+        if self._open_store is None:
+            raise PoolError('E_STATE_NOT_FOUND',
+                            'watch_registry(data) must be called before a pool is watched')
+        if source is None and source_factory is None:
+            raise PoolError('E_VALIDATION_FIELD',
+                            'a watch needs a candidate source or a source_factory')
+        with self._lock:
+            running = self._threads.get(key)
+            if running is not None and running.is_alive():
+                return {'pool_id': key, 'watching': True, 'started': False,
+                        'reason': 'already_running', 'ticks': self._ticks.get(key, 0)}
+            stop = threading.Event()
+            thread = threading.Thread(target=self._run, args=(key, source, stop),
+                                      kwargs={'source_factory': source_factory,
+                                              'verify': verify, 'budget': budget},
+                                      name=f'pool-watch-{key}', daemon=True)
+            self._threads[key] = thread
+            self._stops[key] = stop
+            self._ticks[key] = 0
+            self._errors.pop(key, None)
+        thread.start()
+        return {'pool_id': key, 'watching': True, 'started': True, 'reason': '',
+                'ticks': 0}
+
+    def stop(self, pool_id: str, *, timeout: float = 5.0) -> dict:
+        """End the loop for one pool.  Stopping a pool that is not watched is fine."""
+        key = str(pool_id)
+        with self._lock:
+            stop = self._stops.pop(key, None)
+            thread = self._threads.get(key)
+            ticks = self._ticks.get(key, 0)
+        if stop is not None:
+            stop.set()
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=timeout)
+        with self._lock:
+            alive = bool(self._threads.get(key) and self._threads[key].is_alive())
+            if not alive:
+                self._threads.pop(key, None)
+        return {'pool_id': key, 'watching': alive, 'stopped': not alive, 'ticks': ticks}
+
+    def status(self) -> dict:
+        with self._lock:
+            return {'watching': {key: {'ticks': self._ticks.get(key, 0),
+                                       'error': self._errors.get(key, '')}
+                                 for key, thread in sorted(self._threads.items())},
+                    'errors': dict(self._errors)}
+
+    def stop_all(self, *, timeout: float = 5.0) -> None:
+        for key in list(self.status()['watching']):
+            self.stop(key, timeout=timeout)
+
+    # -- the loop itself ---------------------------------------------------
+
+    def _run(self, pool_id, source, stop, *, source_factory, verify, budget):
+        def on_status(status):
+            with self._lock:
+                self._ticks[pool_id] = self._ticks.get(pool_id, 0) + 1
+            # The stop event is the pause path; an error state is the other
+            # honest end: a pool that cannot be filled stays unwatched instead
+            # of being retried forever behind the user's back.
+            return not (stop.is_set() or status.state == STATE_ERROR)
+
+        try:
+            while not stop.is_set():
+                store = None
+                try:
+                    store = self._open_store()
+                    # Built here, on this thread's connection: see `start`.
+                    ticker = source_factory(store.conn) if source_factory is not None else source
+                    watch(store, pool_id, ticker, verify=verify, budget=budget,
+                          clock=_InterruptibleClock(stop, self._clock), on_status=on_status)
+                finally:
+                    if store is not None:
+                        with contextlib.suppress(Exception):
+                            store.conn.close()
+                with self._lock:
+                    if self._stops.get(pool_id) is not stop:
+                        return
+        except _Stopped:
+            return
+        except Exception as exc:  # noqa: BLE001 - a watcher must not die silently
+            with self._lock:
+                self._errors[pool_id] = f'{type(exc).__name__}: {exc}'
+
+
+#: The one registry of the process.  Both ways a user starts a pool -- the
+#: ``/v1`` route and the GUI button -- go through this object, so "is the pool
+#: being watched?" has one answer instead of one per surface.  It is created
+#: without a store: the module must be importable before any database exists,
+#: and the first surface to start a pool binds its data folder.
+WATCHES = WatchRegistry()
+
+
+def watch_registry(data=None) -> WatchRegistry:
+    """The process-wide registry, pointed at ``data`` the first time it is asked.
+
+    Both the API server and the GUI know their data folder before they serve a
+    request, so the binding happens at start-up rather than inside a tick.
+    """
+    if data is not None:
+        target = Path(data) / 'proxies.sqlite3'
+        WATCHES._open_store = lambda: PoolStore.open(target)
+    return WATCHES
 
 
 def refill_all(store: PoolStore, source: Callable[..., Sequence[Candidate]], *, now: float | None = None,

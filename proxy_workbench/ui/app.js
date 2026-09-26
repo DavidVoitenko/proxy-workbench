@@ -2684,6 +2684,9 @@ async function setLang(code) {
   renderLang();
   // Re-render the dynamic areas that cache translated strings.
   try { renderState(state); } catch (e) { console.error(e); }
+  // The ticker paints its lines once and skips repaints on unchanged polls,
+  // so a language switch has to repaint the existing items here.
+  try { renderLiveFeedItems(); } catch (e) { console.error(e); }
   if (resultData) { try { renderResults(resultData); } catch (e) { console.error(e); } }
   if (detailRow) { try { renderDetails(detailRow); } catch (e) { console.error(e); } }
 }
@@ -3035,13 +3038,17 @@ function toast(message, error=false) {
   }, error ? 8000 : 3500);
 }
 
+const UNCHANGED = Symbol('unchanged'); // a 304 from a conditional request: the answer is the one already on screen
+
 async function api(path, body, opts) {
   const timeoutMs = opts && opts.timeoutMs ? opts.timeoutMs : 30000;
+  const headers = {'X-Workbench-Token': token, 'Content-Type': 'application/json'};
+  if (opts && opts.etag) headers['If-None-Match'] = opts.etag;
   let response;
   try {
     response = await fetch(path, {
       method: body === undefined ? 'GET' : 'POST',
-      headers: {'X-Workbench-Token': token, 'Content-Type': 'application/json'},
+      headers,
       body: body === undefined ? undefined : JSON.stringify(body),
       signal: AbortSignal.timeout(timeoutMs)
     });
@@ -3050,10 +3057,11 @@ async function api(path, body, opts) {
     if (error instanceof TypeError) throw new Error(t('error.network'));
     throw error;
   }
+  if (opts && opts.etag && response.status === 304) return UNCHANGED;
   let value = null;
   try { value = await response.json(); } catch (error) { value = null; }
   if (!response.ok) throw new Error(value && value.error ? serverText(value.error) : t('error.app'));
-  return value;
+  return opts && opts.etag ? {value, etag: response.headers.get('ETag') || ''} : value;
 }
 
 function showTab(name) {
@@ -4641,16 +4649,18 @@ async function pollEvents() {
     liveFeedErrors = 0;
     if (!data || !Array.isArray(data.events)) return;
     if (data.cursor) liveFeed.cursor = data.cursor;
+    let added = 0;
     for (const event of data.events) {
       const key = event.stream + ':' + event.seq;
       if (key === liveFeed.lastKey) continue;
       liveFeed.lastKey = key;
       liveFeed.items.push(event);
+      added += 1;
     }
     if (liveFeed.items.length > LIVE_FEED_LIMIT) {
       liveFeed.items = liveFeed.items.slice(-LIVE_FEED_LIMIT);
     }
-    renderLiveFeedItems();
+    if (added) renderLiveFeedItems(); // nothing new: leave the painted ticker alone
   } catch {
     // A missing event stream must not break the page; the feed keeps the last
     // events it already had. A stale cursor (server restart) would fail forever,
@@ -5056,12 +5066,17 @@ function renderSources(report, urls, keys=[], quality={}) {
   }).join('') : `<tr><td colspan="6" class="empty">${esc(t('report.empty'))}</td></tr>`;
 }
 
+let stateTag = null; // ETag of the last /api/state answer: an idle bench revalidates instead of resending
+
 async function poll() {
   if (polling) return;
   if (document.hidden) return; // background tab: skip the work, the next tick catches up
   polling = true;
   try {
-    const value = await api('/api/state');
+    const answer = await api('/api/state', undefined, {etag: stateTag});
+    if (answer === UNCHANGED) return; // the server state is byte-identical: nothing to repaint
+    if (answer && answer.etag) stateTag = answer.etag;
+    const value = answer.value;
     const gwBadge = document.querySelector('.gateway-status-badge');
     const gwPulse = document.querySelector('.status-pulse-large');
     const isOnline = Boolean(value.gateway && value.gateway.address);
