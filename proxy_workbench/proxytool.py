@@ -4487,6 +4487,19 @@ def country_criterion(countries=(), exclude=(), basis='endpoint', unknown='exclu
                                 basis=basis, unknown=unknown)
 
 
+def filter_by_country(rows, criterion, resolver=None, now=None):
+    """One country rule over a set of rows, used by GUI, API and export alike.
+
+    ``geo.filter_rows`` is the implementation; this name is the public one and
+    it is what :meth:`Workbench.filter_by_country` and the API's own filters
+    call.  It is a pure function of the rows and the criterion: nothing is
+    started, no address is dialled, and a row whose country is unknown is
+    reported as unknown rather than quietly counted as a country.
+    """
+    from . import geo
+    return geo.filter_rows(rows, criterion, resolver=resolver, now=now)
+
+
 def criterion_digest(countries=(), exclude=(), basis='endpoint', unknown='exclude'):
     """The identity of the country criterion a snapshot was filtered with.
 
@@ -5097,8 +5110,17 @@ class Workbench:
                                     max_age_seconds=max_age_seconds)
 
     def filter_by_country(self, rows, criterion, resolver=None, now=None):
-        from . import geo
-        return geo.filter_rows(rows, criterion, resolver=resolver, now=now or self.clock())
+        """The GUI list, the read-only API and the export, one country rule (F08).
+
+        This method had no caller: each of the three surfaces had written its
+        own include-only ``row['country'] in wanted`` test, so none of them
+        could say "not this country", compare the exit country, or report what
+        an unknown country did to the row.  They all come here now, and the
+        rule is :func:`filter_by_country` below -- the same one the export
+        reaches through ``core._country_criterion_reason``.
+        """
+        return filter_by_country(rows, criterion, resolver=resolver,
+                                 now=self.clock() if now is None else now)
 
     # -- import (importer + sourcedesk) ------------------------------------
 

@@ -3042,8 +3042,9 @@ const UNCHANGED = Symbol('unchanged'); // a 304 from a conditional request: the 
 
 async function api(path, body, opts) {
   const timeoutMs = opts && opts.timeoutMs ? opts.timeoutMs : 30000;
+  const wantsEtag = Boolean(opts && 'etag' in opts); // first poll has no tag yet: null means "capture it"
   const headers = {'X-Workbench-Token': token, 'Content-Type': 'application/json'};
-  if (opts && opts.etag) headers['If-None-Match'] = opts.etag;
+  if (wantsEtag && opts.etag) headers['If-None-Match'] = opts.etag;
   let response;
   try {
     response = await fetch(path, {
@@ -3057,11 +3058,11 @@ async function api(path, body, opts) {
     if (error instanceof TypeError) throw new Error(t('error.network'));
     throw error;
   }
-  if (opts && opts.etag && response.status === 304) return UNCHANGED;
+  if (wantsEtag && response.status === 304) return UNCHANGED;
   let value = null;
   try { value = await response.json(); } catch (error) { value = null; }
   if (!response.ok) throw new Error(value && value.error ? serverText(value.error) : t('error.app'));
-  return opts && opts.etag ? {value, etag: response.headers.get('ETag') || ''} : value;
+  return wantsEtag ? {value, etag: response.headers.get('ETag') || ''} : value;
 }
 
 function showTab(name) {
