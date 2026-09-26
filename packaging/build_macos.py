@@ -33,7 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from proxy_workbench import desktop
 from release_manifest import build_manifest, write_manifest
-from verify_delivery import child_environment
+from verify_delivery import CheckError, child_environment, verify_service_catalog
 import tray_helper
 
 APP_NAME = 'Proxy Workbench'
@@ -211,6 +211,8 @@ def verify_bundle(bundle):
                          'show no catalog at all. The spec must copy it into the app.')
     if not _bundled_resource(bundle, 'openapi.json'):
         raise BuildError('openapi.json is not inside the bundle; API documentation would be unavailable.')
+    if not _bundled_resource(bundle, 'service_sets.json'):
+        raise BuildError('data/service_sets.json is not inside the bundle; service presets would be unavailable.')
     for translation in (Path(__file__).resolve().parents[1] / 'proxy_workbench' / 'ui' / 'i18n').glob('*.js'):
         if not _bundled_resource(bundle, translation.name):
             raise BuildError(f'ui/i18n/{translation.name} is not inside the bundle.')
@@ -263,6 +265,10 @@ def verify_launch(bundle, *, timeout=120, want_tray=True):
         page = _fetch(f'http://127.0.0.1:{port}/')
         if 'workbench-token' not in page:
             raise BuildError('the built app served a page without the interface token.')
+        try:
+            services = verify_service_catalog(f'http://127.0.0.1:{port}', page)
+        except CheckError as exc:
+            raise BuildError(str(exc)) from exc
         tray = None
         if want_tray:
             tray = _wait_for_tray(logs / 'tray.log', process, TRAY_READY_TIMEOUT_S)
@@ -271,7 +277,7 @@ def verify_launch(bundle, *, timeout=120, want_tray=True):
                              'state in the per-user folder.')
         second = _second_launch(bundle, env, timeout)
         return dict(address=f'http://127.0.0.1:{port}/', data=str(data), page_bytes=len(page),
-                    bundle_unchanged=True, tray=tray, second_launch=second)
+                    bundle_unchanged=True, tray=tray, second_launch=second, service_catalog=services)
     finally:
         process.terminate()
         try:

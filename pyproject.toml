@@ -47,4 +47,4 @@ proxy-workbench = "proxy_workbench.__main__:main"
 packages = ["proxy_workbench"]
 
 [tool.setuptools.package-data]
-proxy_workbench = ["*.json", "ui/*", "ui/i18n/*"]
+proxy_workbench = ["*.json", "data/*.json", "ui/*", "ui/i18n/*"]

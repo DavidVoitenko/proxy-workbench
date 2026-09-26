@@ -36,7 +36,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from proxy_workbench import desktop
 from release_manifest import build_manifest, write_manifest
-from verify_delivery import child_environment, stop as stop_process
+from verify_delivery import CheckError, child_environment, stop as stop_process, verify_service_catalog
 
 GUI_EXE = 'proxy-workbench-gui.exe'
 CLI_EXE = 'proxy-workbench-cli.exe'
@@ -233,11 +233,15 @@ def verify_launch(gui, *, timeout=120):
         page = httpx.get(f'http://127.0.0.1:{port}/', timeout=15, trust_env=False).text
         if 'workbench-token' not in page:
             raise BuildError('the built GUI executable served a page without the interface token.')
+        try:
+            services = verify_service_catalog(f'http://127.0.0.1:{port}', page)
+        except CheckError as exc:
+            raise BuildError(str(exc)) from exc
         if _folder_state(gui.parent) != before:
             raise BuildError('the built GUI executable wrote into its own program folder.')
         second = _second_launch(gui, env, timeout)
         return dict(data=str(data), port=port, page_bytes=len(page), program_folder_unchanged=True,
-                    second_launch=second)
+                    second_launch=second, service_catalog=services)
     finally:
         _stop(process)
         shutil.rmtree(home, ignore_errors=True)

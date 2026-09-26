@@ -25,6 +25,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -39,6 +40,31 @@ START_TIMEOUT_S = 120
 
 class CheckError(Exception):
     """A delivery rule the artifact does not keep."""
+
+
+def verify_service_catalog(base, page):
+    """The installed GUI must serve every shipped service and service set."""
+    import httpx
+    token = re.search(r'workbench-token" content="([^"]+)"', page)
+    if token is None:
+        raise CheckError('the installed GUI has no session token')
+    expected = json.loads((Path(__file__).resolve().parents[1] /
+                           'proxy_workbench/data/service_sets.json').read_text(encoding='utf-8'))
+    try:
+        response = httpx.get(base.rstrip('/') + '/api/service-catalog',
+                             headers={'X-Workbench-Token': token.group(1)},
+                             timeout=15, trust_env=False)
+        response.raise_for_status()
+        served = response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        raise CheckError(f'the installed service catalog is unavailable: {type(exc).__name__}') from exc
+    for actual_key, expected_key in (('presets', 'presets'), ('sets', 'service_sets')):
+        actual = sorted(item.get('id') for item in served.get(actual_key, []))
+        wanted = sorted(item['id'] for item in expected[expected_key])
+        if actual != wanted:
+            raise CheckError(f'the installed service catalog lost or changed {actual_key}: '
+                             f'expected {len(wanted)}, received {len(actual)}')
+    return {'presets': len(served['presets']), 'sets': len(served['sets'])}
 
 
 class Report:

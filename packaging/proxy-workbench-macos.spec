@@ -49,6 +49,7 @@ analysis = Analysis(
     [str(root / 'packaging' / 'desktop_launcher.py')],
     pathex=[str(root)],
     datas=[(str(package / 'ui'), 'proxy_workbench/ui'),
+           (str(package / 'data'), 'proxy_workbench/data'),
            (str(package / 'sources.json'), 'proxy_workbench'), (str(package / 'source-catalog.json'), 'proxy_workbench'), (str(package / 'openapi.json'), 'proxy_workbench'),
            (str(tray), tray_helper.BUNDLE_SUBFOLDER)],
     # Hooks collect keyring backends and tzdata's IANA files and resource packages.

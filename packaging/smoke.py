@@ -20,7 +20,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import httpx
-from verify_delivery import child_environment, stop as stop_process
+from verify_delivery import child_environment, stop as stop_process, verify_service_catalog
 
 
 class MockProxy(BaseHTTPRequestHandler):
@@ -129,6 +129,7 @@ def main(command):
                                 cwd=data, env=env, capture_output=True, text=True, timeout=30)
         assert second.returncode == 0, second.stdout + second.stderr
         assert 'already running' in second.stdout, 'a second start did not reach the desktop host'
+        print(json.dumps({'service_catalog': verify_service_catalog(base, page)}))
         # A package can boot with the catalog or nested translations absent.
         # Exercise the served product, including resources older wheels lost.
         catalog = client.get('/api/source-catalog')

@@ -15,6 +15,9 @@ def verify(path):
         catalog = json.loads(wheel.read('proxy_workbench/source-catalog.json'))
         if not catalog.get('sources'):
             raise ValueError('the wheel has no built-in source catalog')
+        services = json.loads(wheel.read('proxy_workbench/data/service_sets.json'))
+        if not services.get('presets') or not services.get('service_sets'):
+            raise ValueError('the wheel has no service presets or service sets')
         for filename in ('index.html', 'app.js', 'style.css'):
             if not wheel.read(f'proxy_workbench/ui/{filename}'):
                 raise ValueError(f'ui/{filename} is empty')
