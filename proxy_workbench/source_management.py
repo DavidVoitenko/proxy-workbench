@@ -559,7 +559,9 @@ def build_view(catalog, selection, runtime=None, query=None, *, redact=True, now
     if filters.get('state'):
         predicate = STATE_FILTERS[filters['state']]
         rows = [row for row in rows if predicate(row, now)]
-    rows = _sort_rows(rows, filters.get('sort') or 'name')
+    custom_ids = [item.get('id') for item in (selection.get('custom_sources') or [])
+                  if isinstance(item, dict) and item.get('id')]
+    rows = _sort_rows(rows, filters.get('sort') or 'name', custom_ids)
     total = len(rows)
     offset = filters.get('offset', 0)
     limit = filters.get('limit', 200)
@@ -636,8 +638,19 @@ def _retired_view_record(source_id):
             'maturity': 'retired', 'catalog_state': 'retired', 'tags': ['retired']}
 
 
-def _sort_rows(rows, key):
+def _sort_rows(rows, key, custom_order=None):
     runtime_contribution = lambda row: (row['runtime'].get('contribution') or {}).get('exclusive') or 0
+    # A user's own lists keep the order they added them in: the catalog screen
+    # and the state filter must not disagree about the same two rows.
+    if custom_order:
+        order = {source_id: index for index, source_id in enumerate(custom_order)}
+
+        def custom_first(row):
+            if row['id'] in order:
+                return (0, order[row['id']], '')
+            return (1, 0, str(row['name']).lower())
+    else:
+        custom_first = None
     keys = {
         'name': lambda row: (str(row['name']).lower(), row['id']),
         'id': lambda row: row['id'],
@@ -647,6 +660,8 @@ def _sort_rows(rows, key):
         'accepted': lambda row: -(row['runtime'].get('accepted') or 0),
         'exclusive': lambda row: -runtime_contribution(row),
     }
+    if custom_first is not None:
+        return sorted(rows, key=lambda row: (custom_first(row), keys.get(key, keys['name'])(row)))
     return sorted(rows, key=keys.get(key, keys['name']))
 
 

@@ -40,6 +40,12 @@ MAX_BODY = 32 * 1024 * 1024
 MAX_SELECTION = 1000
 
 
+def source_spec_kind(spec):
+    """The declared kind of a legacy "kind url" spec, or http for a bare URL."""
+    parts = str(spec).strip().split(None, 1)
+    return parts[0] if len(parts) == 2 and parts[0] in core.SOURCE_KINDS else 'http'
+
+
 def read_json(path, fallback):
     try:
         return json.loads(path.read_text(encoding='utf-8'))
@@ -410,6 +416,23 @@ class App:
         known = set(settings['sources'])
         added = [source for source in latest if source not in bundled and source not in known]
         settings['sources'] = settings['sources'] + added
+        # A source the collector actually fetches has to be in the selection,
+        # not only in the flat list the collector no longer prefers.
+        for source in added:
+            try:
+                _, _, url = core.source_spec(source)
+                descriptor = source_catalog.custom_source(url, source_spec_kind(source))
+            except (ValueError, source_catalog.CatalogError):
+                continue
+            selection = copy.deepcopy(settings.get('source_selection') or {})
+            custom = {item.get('id'): item for item in selection.get('custom_sources', [])
+                      if isinstance(item, dict)}
+            custom[descriptor['id']] = {'id': descriptor['id'], 'url': descriptor['url'],
+                                        'name': descriptor['url'], 'adapter': descriptor['adapter']}
+            selection['custom_sources'] = list(custom.values())
+            selection['selected_ids'] = list(dict.fromkeys(
+                list(selection.get('selected_ids', [])) + [descriptor['id']]))
+            settings['source_selection'] = selection
         saved = self.save(settings)
         return dict(settings=saved, added=[public_source(source) for source in added])
 

@@ -1086,7 +1086,9 @@ def resolve_collect_sources(args):
     settings = source_management.read_settings(args.data)
     selection = source_management.selection_of(settings or {})
     if bundled and selection.get('selected_ids'):
-        return source_catalog.materialize_selection(settings)
+        # The accepted remote catalog, not the bundled file: a source that exists
+        # only there is shown as selected and must be the one that gets fetched.
+        return source_catalog.materialize_selection(settings, _sources_catalog(args))
     return resolve_sources_file(args.sources, bundled=bundled)
 
 
