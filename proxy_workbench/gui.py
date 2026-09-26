@@ -6,6 +6,7 @@ import argparse
 import re
 import copy
 import asyncio
+import dataclasses
 import hashlib
 import json
 import math
@@ -58,11 +59,39 @@ def _source_id(payload):
     return source_id
 
 
+#: The five support statuses F13 asks of a catalog record.  `support_status`
+#: computes them; the names are repeated here only so the filter can reject a
+#: typo instead of quietly returning an empty list.
+SUPPORT_STATUSES = ('supported', 'needs-auth', 'needs-adapter', 'unsupported', 'experimental')
+
+
 def _known_source(catalog, settings, source_id):
     if source_catalog.source_by_id(catalog, source_id) is not None:
         return True
     selection = settings.get('source_selection') or {}
     return any(item.get('id') == source_id for item in selection.get('custom_sources', []) if isinstance(item, dict))
+
+
+def dataclass_as_dict(value):
+    """Any frozen dataclass of another module, as the JSON a page can read."""
+    if value is None:
+        return None
+    for name in ('as_dict', 'to_dict'):
+        method = getattr(value, name, None)
+        if callable(method):
+            with suppress(TypeError):
+                return method()
+    if dataclasses.is_dataclass(value):
+        return dataclasses.asdict(value)
+    return {key: item for key, item in vars(value).items() if not key.startswith('_')}
+
+
+def jobs_state_names():
+    """The job and item state vocabularies, so a button knows what is legal."""
+    from . import jobs as jobs_module
+    return dict(job=list(jobs_module.JOB_STATES), item=list(jobs_module.ITEM_STATES),
+                terminal=sorted(jobs_module.TERMINAL_JOB_STATES),
+                active=sorted(jobs_module.ACTIVE_JOB_STATES))
 
 ROOT = paths.PACKAGE
 MAX_BODY = 32 * 1024 * 1024
@@ -96,8 +125,10 @@ SERVICE_SET_PAGE = 200
 # One paste into a personal list is bounded: the interface never reads a file
 # the size of a public source dump on behalf of a membership edit.
 MAX_COLLECTION_MEMBERS = 20_000
-# The scope exclusions of the sources page: a small user document, kept beside
-# the tags and the views so a check never rewrites it.
+# The scope exclusions live in `db.candidate_scope_exclusion` (migration 18).
+# The file below is only where a build from before that migration kept them, and
+# `App.import_scope_sidecar` moves its contents across once; nothing reads it
+# after that.
 SCOPE_EXCLUSIONS_FILE = 'gui-scope-exclusions.json'
 SCOPE_EXCLUSION_LIMIT = 20_000
 # The gateway binding the user chose on the gateway page.  A user document for
@@ -471,6 +502,11 @@ class App:
         self.history = Sidecar(self.data/HISTORY_FILE, {'entries': []})
         self.service_sets = Sidecar(self.data/SERVICE_SETS_FILE, {'sets': {}, 'pinned': None})
         self.scope_exclusions_doc = Sidecar(self.data/SCOPE_EXCLUSIONS_FILE, {'exclusions': []})
+        # One-time move of the exclusions a previous build kept in the sidecar
+        # into `db.candidate_scope_exclusion`.  The sidecar is not deleted --
+        # it is the user's document and the import is idempotent -- but nothing
+        # reads it again once the flag is set.
+        self._scope_sidecar_imported = False
         self.gateway_config = Sidecar(self.data/GATEWAY_CONFIG_FILE, {})
         self.schedule_activations = Sidecar(self.data/SCHEDULES_FILE, {'activated': {}})
         self.events_path = self.data/EVENTS_FILE
@@ -574,9 +610,86 @@ class App:
                 db.close()
 
     def source_view(self, query=None):
+        """The catalog as the page asks for it, plus a support-status filter.
+
+        `source_management.parse_query` validates the filters it knows and
+        ignores the rest, so `support` is applied here.  It is a first-class
+        filter and not a decoration: `supported`, `needs-auth`, `needs-adapter`,
+        `unsupported` and `experimental` are exactly the questions F13 asks of
+        a record, and a paid provider has to be findable under `needs-auth`
+        while being visibly inert.  The whole catalog is asked for and the page
+        slice is taken here, because the module's own pagination would have cut
+        the rows the filter is supposed to choose between.
+        """
+        query = query or {}
+        wanted = self._support_filter(query)
+        # `parse_query` reads scalars; `parse_qs` hands over a list for every
+        # key, so `?limit=200` reached it as `['200']` and `int(['200'])`
+        # refused the request with "limit: expected an integer" -- a catalog
+        # page that always sends a page size could never ask for one.  One
+        # flattening, before either branch.
+        flat = {key: (values[0] if isinstance(values, (list, tuple)) and values else values)
+                for key, values in query.items()}
         with self.source_db() as db:
             runtime = source_management.runtime_snapshot(db)
-            return source_management.build_view(self.source_document(), self.settings(), runtime, query, db=db)
+            if not wanted:
+                view = source_management.build_view(self.source_document(), self.settings(),
+                                                    runtime, flat, db=db)
+                # The counts travel with the page so the support filter can
+                # say "10 need an account" instead of being an empty list.
+                view['supports'] = self.support_facets(view['sources'])
+                return view
+            flat.pop('support', None)
+            flat['limit'] = source_management.MAX_ROWS
+            flat['offset'] = 0
+            view = source_management.build_view(self.source_document(), self.settings(),
+                                                runtime, flat, db=db)
+        # `support_status` spells the statuses with an underscore
+        # (`needs_auth`); the page and the contract say `needs-auth`, so the
+        # comparison is on the dash form and the row keeps what the module
+        # said.  One spelling, not two answers.
+        rows = [row for row in view['sources']
+                if str(row.get('support') or '').replace('_', '-') in wanted]
+        view['supports'] = self.support_facets(view['sources'])
+        view['sources_all'] = len(view['sources'])
+        view['total'] = len(rows)
+        try:
+            offset = max(0, int(query.get('offset') or 0))
+        except (TypeError, ValueError):
+            offset = 0
+        try:
+            limit = int(query.get('limit') or 200)
+        except (TypeError, ValueError):
+            limit = 200
+        view['offset'] = offset
+        view['limit'] = limit
+        view['sources'] = rows[offset:offset + limit]
+        view['filters']['support'] = ','.join(sorted(wanted))
+        return view
+
+    @staticmethod
+    def _support_filter(query):
+        raw = query.get('support')
+        if isinstance(raw, (list, tuple)):
+            raw = ','.join(str(item) for item in raw)
+        text = str(raw or '').strip()
+        if not text:
+            return set()
+        values = {item.strip().replace('_', '-') for item in text.split(',') if item.strip()}
+        unknown = sorted(values - set(SUPPORT_STATUSES))
+        if unknown:
+            raise ValueError('Неизвестный статус поддержки: ' + ', '.join(unknown))
+        return values
+
+    @staticmethod
+    def support_facets(rows):
+        """How many records carry each support status, for the filter row."""
+        counts = {status: 0 for status in SUPPORT_STATUSES}
+        for row in rows:
+            status = str(row.get('support') or '').replace('_', '-')
+            if status in counts:
+                counts[status] += 1
+        return counts
 
     def source_row(self, source_id):
         if not isinstance(source_id, str) or not source_id or len(source_id) > 64:
@@ -759,12 +872,12 @@ class App:
     # done when nothing had happened.  They now do the work they name, and when
     # the work is not possible they say so with a reason instead of a smile.
     #
-    # The storage is the interface's own sidecar because `db.py` has no table
-    # for it and this file must not invent one behind its owner's back (see
-    # docs/integration/HANDOFF/fix-web.md).  The addresses themselves are never
-    # deleted: an exclusion removes an address from the user's *scope*, and
-    # `scoped_rows` is what every read of the results and of the export goes
-    # through, so the exclusion is real where the user meets it.
+    # The exclusions live in `db.candidate_scope_exclusion` (migration 18), so
+    # they are read by the same names the rest of the storage uses and undo is
+    # a delete.  The addresses themselves are never deleted: an exclusion
+    # removes an address from the user's *scope*, and `scoped_rows` is what
+    # every read of the results and of the export goes through, so the
+    # exclusion is real where the user meets it.
 
     def source_scope_keys(self, source_id):
         """The ``candidate_seen`` keys of one source, resolved from the catalog.
@@ -842,18 +955,69 @@ class App:
         return dict(id=source_id, recovered=True, cleared=cleared, known=True,
                     name=item.get('name') or source_id, check=report)
 
+    def import_scope_sidecar(self):
+        """Move exclusions written by a build without the table into it, once.
+
+        The previous storage was `gui-scope-exclusions.json`; the table arrived
+        with migration 18.  The addresses in the sidecar were the user's own
+        decision, so they are carried over rather than dropped, and the import
+        is keyed the same way the table is -- one row per (address, scope) --
+        so running it twice adds nothing.
+        """
+        if self._scope_sidecar_imported:
+            return 0
+        self._scope_sidecar_imported = True
+        legacy = [item for item in (self.scope_exclusions_doc.read().get('exclusions') or [])
+                  if isinstance(item, dict) and item.get('proxy')]
+        if not legacy:
+            return 0
+        try:
+            with self.collection_write() as conn:
+                for item in legacy[:SCOPE_EXCLUSION_LIMIT]:
+                    try:
+                        schema.add_scope_exclusion(
+                            conn, str(item['proxy']), source_id=item.get('source'),
+                            as_seen=item.get('as_seen'),
+                            reason=str(item.get('reason') or 'source_scope'),
+                            shared=bool(item.get('shared')))
+                    except (schema.DbError, sqlite3.Error, ValueError):
+                        continue
+                conn.commit()
+        except (schema.DbError, sqlite3.Error, OSError):
+            return 0
+        return len(legacy)
+
     def scope_exclusion_rows(self):
-        """The exclusions as they are stored, newest last, bounded."""
-        stored = self.scope_exclusions_doc.read().get('exclusions') or []
-        rows = [item for item in stored if isinstance(item, dict) and item.get('proxy')]
-        return rows
+        """The exclusions as they are stored, newest last, bounded.
+
+        Read through `db.scope_exclusions`, so a row written by anything else
+        (a second window of the same application, a restore) is visible here
+        too.  A database that is not there yet is an empty scope, not an
+        error: the page says "nothing excluded" and the collection is intact.
+        """
+        self.import_scope_sidecar()
+        conn = self.read_rows_connection()
+        if conn is None:
+            return []
+        try:
+            rows = schema.scope_exclusions(conn)
+        except (schema.DbError, sqlite3.Error):
+            rows = []
+        finally:
+            with suppress(sqlite3.Error):
+                conn.close()
+        return [dict(proxy=row.get('proxy'), as_seen=row.get('as_seen'),
+                     source=row.get('source_id'), reason=row.get('reason'),
+                     created_at=row.get('created_at'), shared=bool(row.get('shared')))
+                for row in rows if row.get('proxy')]
 
     def scope_exclusions(self, query=None):
         """What is excluded from the user's scope right now, and by whom."""
         rows = self.scope_exclusion_rows()
         sources = sorted({str(item.get('source') or '') for item in rows} - {''})
         return dict(count=len(rows), proxies=rows[:SCOPE_EXCLUSION_LIMIT], sources=sources,
-                    limit=SCOPE_EXCLUSION_LIMIT, truncated=len(rows) > SCOPE_EXCLUSION_LIMIT)
+                    limit=SCOPE_EXCLUSION_LIMIT, truncated=len(rows) > SCOPE_EXCLUSION_LIMIT,
+                    storage='database')
 
     def exclude_source_scope(self, payload):
         """Exclude the addresses one source delivered from the current scope.
@@ -885,35 +1049,37 @@ class App:
         except sqlite3.Error:
             delivered, shared = [], set()
         finally:
-            conn.close()
+            with suppress(sqlite3.Error):
+                conn.close()
         already = {str(item.get('proxy')) for item in self.scope_exclusion_rows()}
         exclusive = [value for value in delivered if value not in shared]
         chosen = delivered if include_shared else exclusive
         added, present = [], 0
-        rows = self.scope_exclusion_rows()
-        known = {str(item.get('proxy')): item for item in rows}
         stamp = time.time()
-        for value in chosen:
-            # `candidate_seen.proxy` is the address exactly as a list published
-            # it (`198.51.100.1:8080`), while a results row and
-            # `endpoints.canonical` carry the normalised one
-            # (`http://198.51.100.1:8080`).  The exclusion is stored in the
-            # normalised form, because that is the form `scoped_rows` compares
-            # against; without this the list would be right and the exclusion
-            # would hide nothing.
-            canonical = core.normalize_custom(value) or value
-            if canonical in already:
-                present += 1
-                continue
-            known[canonical] = {'proxy': canonical, 'as_seen': value, 'source': source_id,
-                                'reason': 'source_scope', 'created_at': stamp,
-                                'shared': value in shared}
-            added.append(canonical)
-        if added:
-            stored = list(known.values())[:SCOPE_EXCLUSION_LIMIT]
-            self.scope_exclusions_doc.write({'exclusions': stored})
+        with self.collection_write() as writer:
+            for value in chosen:
+                # `candidate_seen.proxy` is the address exactly as a list
+                # published it (`198.51.100.1:8080`), while a results row and
+                # `endpoints.canonical` carry the normalised one
+                # (`http://198.51.100.1:8080`).  The exclusion is stored in the
+                # normalised form, because that is the form `scoped_rows`
+                # compares against; without this the list would be right and
+                # the exclusion would hide nothing.
+                canonical = core.normalize_custom(value) or value
+                if canonical in already:
+                    present += 1
+                    continue
+                try:
+                    schema.add_scope_exclusion(
+                        writer, canonical, source_id=source_id, as_seen=value,
+                        reason='source_scope', shared=value in shared, now=stamp)
+                except (schema.DbError, sqlite3.Error):
+                    continue
+                already.add(canonical)
+                added.append(canonical)
+            writer.commit()
         return dict(id=source_id, excluded=len(added), delivered=len(delivered),
-                    exclusive=len(exclusive), shared=len(shared) - len(already & shared),
+                    exclusive=len(exclusive), shared=len(shared & set(delivered)) - present,
                     already_excluded=present, include_shared=include_shared,
                     excluded_total=len(self.scope_exclusion_rows()),
                     sample=[{'proxy': value, 'shared': value in shared} for value in added[:20]])
@@ -922,16 +1088,15 @@ class App:
         """Remove exclusions, either all of them or those of one source."""
         payload = payload or {}
         source_id = payload.get('source')
-        rows = self.scope_exclusion_rows()
         if source_id:
             source_id, _keys = self.source_scope_keys(source_id)
-            kept = [item for item in rows if str(item.get('source') or '') != source_id]
-        else:
-            kept = []
-        removed = len(rows) - len(kept)
-        if removed or not source_id:
-            self.scope_exclusions_doc.write({'exclusions': kept})
-        return dict(removed=removed, remaining=len(kept),
+        with self.collection_write() as conn:
+            try:
+                removed = schema.clear_scope_exclusions(conn, source_id=source_id or None)
+                conn.commit()
+            except (schema.DbError, sqlite3.Error) as exc:
+                raise ValueError('Не удалось вернуть адреса в область: %s' % exc) from None
+        return dict(removed=removed, remaining=len(self.scope_exclusion_rows()),
                     source=str(source_id) if source_id else None)
 
     def refresh_catalog(self, payload=None):
@@ -1088,6 +1253,19 @@ class App:
                 if core.export_file(self.data/'exports', name, generation=snapshot.generation).is_file()]
 
 
+    def gateway_lan_mode(self):
+        """What the listener must be told: LAN on/off and which adapter.
+
+        ``resolve_bind`` refuses an interface without the opt-in, so the two
+        travel together.  A non-loopback ``--gateway-host`` is already an
+        explicit request to be reachable, and it does not need the flag twice.
+        """
+        host = (getattr(self, 'gateway_bind', None) or {}).get('host') or '127.0.0.1'
+        lan = getattr(self, 'gateway_lan', None)
+        if lan is None:
+            lan = not api.is_loopback(host)
+        return bool(lan), getattr(self, 'gateway_interface', None)
+
     def gateway_state(self):
         """Everything the connect page needs, and nothing it must not publish.
 
@@ -1104,9 +1282,15 @@ class App:
         address = f'[{host}]:{runner.port}' if ':' in host else f'{host}:{runner.port}'
         token = getattr(runner, 'token', None)
         # A phone can use the QR only when the listener is reachable beyond
-        # this computer.  A loopback gateway remains useful locally, but must
-        # not be advertised as a mobile connection.
-        mobile_ready = (not api.is_loopback(bind_host) and not api.is_loopback(host) and bool(token))
+        # this computer.  The question is answered by the listener itself, not
+        # by the address that was asked for: `--lan` with the default address
+        # listens on the wildcard, so `runner.host` is still `127.0.0.1` while
+        # the socket is already in the network -- and a QR that refuses to
+        # appear for a listener a phone can reach is the exact lie F17 is
+        # about.  `reachable_from_lan` is `bind.lan and not bind.local and
+        # token`, so a passwordless LAN listener is not advertised either.
+        listen_host = getattr(runner, 'listen_host', bind_host)
+        mobile_ready = bool(getattr(runner.gateway, 'reachable_from_lan', False))
         copy_address = address
         if token:
             copy_address = f'http://workbench:{quote(token, safe="")}@{address}'
@@ -1119,6 +1303,7 @@ class App:
                        scope=published.get('scope') or {},
                        available=published.get('available', 0))
         return dict(snapshot, address=address, copy_address=copy_address, bind_host=bind_host,
+                    listen_host=listen_host, lan=bool(getattr(runner, 'lan', False)),
                     mobile_ready=mobile_ready, udp_supported=False,
                     username='workbench' if token else None,
                     password=token if token else None, proxies=snapshot['available'],
@@ -1136,9 +1321,18 @@ class App:
         bind = getattr(self, 'gateway_bind', None)
         if bind is None:
             raise ValueError('Ротирующий прокси отключён при запуске приложения (--no-gateway).')
+        lan, interface = self.gateway_lan_mode()
         with self.mutex:
             try:
-                self.gateway = gateway.Background(self.data, bind['host'], bind['port'], token=self.gateway_token)
+                # `bind=` is the pool/profile the user chose on the gateway
+                # page: without it the listener served the whole published
+                # export whatever the page said, and the pool picker was a
+                # control that did nothing.  `lan=`/`interface=` are the
+                # opt-in that makes `--lan` reach the socket.
+                self.gateway = gateway.Background(self.data, bind['host'], bind['port'],
+                                                  token=self.gateway_token,
+                                                  bind=self.gateway_binding(),
+                                                  lan=lan, interface=interface)
             except (OSError, ValueError) as exc:
                 self.gateway = None
                 raise ValueError(f'Не удалось запустить ротирующий прокси: {exc}. Проверьте порт и адрес.') from None
@@ -2087,6 +2281,18 @@ class App:
         except sqlite3.Error:
             conn.close()
             raise
+        return conn
+
+    def read_rows_connection(self):
+        """The same snapshot, but with rows as mappings.
+
+        `db.scope_exclusions` and the other storage readers build `dict(row)`,
+        which needs `sqlite3.Row`; `read_connection` hands out tuples for the
+        readers that index by position, so the two cannot be one method.
+        """
+        conn = self.read_connection()
+        if conn is not None:
+            conn.row_factory = sqlite3.Row
         return conn
 
     def profile_config(self, conn, profile):
@@ -3302,12 +3508,24 @@ class App:
             rows = []
             for spec in store.list():
                 status = store.status(spec.id)
-                served = sum((status.counts or {}).values())
+                # `sum(counts.values())` added `cooldown` and `probation` to
+                # the number a client is actually served from: three active,
+                # two resting and two on probation read as `served=7` next to
+                # `desired=3`.  `PoolStatus.served` is the members in service
+                # and is the only number comparable with `desired`; the other
+                # phases are reported under their own names, and `count_unit`
+                # says what one of them is -- a "5" means five addresses in one
+                # pool and five distinct exit addresses in another.
                 rows.append(dict(id=spec.id, collection_id=spec.collection_id,
                                  profile_id=spec.profile_id,
                                  profile_revision=spec.profile_revision,
                                  desired=spec.desired, reserve=spec.reserve,
-                                 minimum=spec.minimum, state=status.state, served=served,
+                                 minimum=spec.minimum, state=status.state,
+                                 served=status.served, count_unit=status.count_unit,
+                                 counts=dict(status.counts or {}),
+                                 shortfall=getattr(status, 'shortfall', None),
+                                 deficit_reasons=[{'code': code, 'count': count}
+                                                  for code, count in (status.deficit_reasons or ())],
                                  ready_for_clients=status.ready_for_clients,
                                  deficit_reason=status.deficit_reason,
                                  next_attempt_at=status.next_attempt_at))
@@ -3490,6 +3708,8 @@ class App:
                                  selected=(wanted == spec.id)))
             return dict(schedules=rows, pools=[{'id': item.id} for item in workbench.pools().list()],
                         selected=wanted or None,
+                        persistence=engine.persistence(),
+                        power=engine.report()['power'],
                         detail=next((item for item in rows if item['id'] == wanted), None))
 
     def schedule_action(self, payload):
@@ -3643,16 +3863,33 @@ class App:
             self.gateway_config.write(settings)
         running = getattr(self, 'gateway', None)
         restarted = False
+        applied = None
         if running is not None:
             bind = getattr(self, 'gateway_bind', None)
             if bind is not None:
-                self.stop_gateway()
+                # The binding is applied on the live listener first.  A restart
+                # used to be the only path, so an empty pool produced a 502 for
+                # the client that was connected and the person had no way to
+                # tell "the pool is empty" from "the gateway is broken".
+                # `set_binding` reports how many rows the new binding can
+                # serve right now, which is the honest answer either way.
                 try:
-                    self.start_gateway()
-                except ValueError as exc:
-                    raise ValueError(str(exc)) from None
-                restarted = True
-        return dict(bindings=self.gateway_settings(), restarted=restarted,
+                    applied = running.set_binding(self.gateway_binding())
+                except (ValueError, OSError, RuntimeError) as exc:
+                    raise ValueError('Не удалось применить привязку на живом шлюзе: %s' % exc) from None
+                if not isinstance(applied, dict) or 'rows' not in applied:
+                    # An older listener without the live path still gets the
+                    # choice, by rebuilding it.
+                    self.stop_gateway()
+                    try:
+                        self.start_gateway()
+                    except ValueError as exc:
+                        raise ValueError(str(exc)) from None
+                    restarted = True
+                    applied = None
+        return dict(bindings=self.gateway_settings(), restarted=restarted, applied=applied,
+                    rows=(applied or {}).get('rows'),
+                    empty=bool(applied) and not applied.get('rows'),
                     gateway=self.gateway_state())
 
     # --- storage maintenance (F24) -----------------------------------------
@@ -3797,6 +4034,345 @@ class App:
             backup = getattr(report, 'backup', None)
             body['backup_path'] = str(getattr(backup, 'path', '') or '')
         return body
+
+    # --- diagnostics (F10) -------------------------------------------------
+    #
+    # `diagnostics.py` knows how to read a run as a funnel -- what entered
+    # each stage, what was lost and whose fault it was -- and how to explain an
+    # empty result with one code and one action.  None of it had a route, so
+    # the page had a progress bar and a log tail and the words "0 results"
+    # with nothing behind them.  The routes below are thin: the counting, the
+    # codes and the redaction are the module's.
+
+    #: How many result rows the funnel reads.  The counters only need one row
+    #: per address, and a sweep of 100k payloads would block the page.
+    DIAGNOSTIC_ROWS = 20000
+    #: Where a saved bundle may go: inside the data folder, by name.
+    BUNDLE_NAME = re.compile(r'^[A-Za-z0-9._-]{1,80}\.json$')
+
+    def diagnostic_rows(self, limit=None):
+        """Stored result payloads, newest profile row per address, bounded."""
+        limit = self.DIAGNOSTIC_ROWS if limit is None else max(0, int(limit))
+        if limit <= 0:
+            return []
+        conn = self.read_connection()
+        if conn is None:
+            return []
+        rows = []
+        try:
+            for (payload,) in conn.execute(
+                    'SELECT payload FROM results ORDER BY checked_at DESC LIMIT ?', (limit,)):
+                try:
+                    parsed = json.loads(payload)
+                except (TypeError, ValueError):
+                    continue
+                if isinstance(parsed, dict):
+                    rows.append(parsed)
+        except sqlite3.Error:
+            rows = []
+        finally:
+            with suppress(sqlite3.Error):
+                conn.close()
+        return rows
+
+    def diagnostic_funnel(self, rows=None, status=None, lang=None):
+        """The run as counters, plus the one sentence that says what to do.
+
+        `lang` reaches `explain_zero` as well as the loss list: without it the
+        summary and the action came out in the *terminal* language while the
+        line around them was in the page's, so a Russian page could read
+        "The job ended with an error / Действие:".
+        """
+        from . import diagnostics as diag
+        rows = self.diagnostic_rows() if rows is None else rows
+        status = self.export_status() if status is None else status
+        funnel = diag.build_funnel(rows, status=status)
+        zero = diag.explain_zero(funnel, lang=lang)
+        losses = [{'stage': stage, 'code': code, 'count': count,
+                   'title': diag.code_title(code, lang), 'action': diag.code_action(code, lang)}
+                  for stage, code, count in funnel.losses()[:12]]
+        return funnel, zero, losses
+    def diagnostics_view(self, query=None):
+        """Counters of the last run, and an action for every lost address."""
+        from . import diagnostics as diag
+        query = query or {}
+        lang = str((query.get('lang') or [''])[0] or '')[:2] or None
+        rows = self.diagnostic_rows()
+        status = self.export_status()
+        funnel, zero, losses = self.diagnostic_funnel(rows, status, lang)
+        known = []
+        for code in {item['code'] for item in losses} | ({zero.code} if zero else set()):
+            if not code or not diag.is_known_code(code):
+                continue
+            known.append({'code': code, 'stage': diag.code_stage(code),
+                          'title': diag.code_title(code, lang), 'action': diag.code_action(code, lang)})
+        return dict(
+            stages=[{'stage': stage, **counters.to_dict()}
+                    for stage, counters in funnel.stages.items()
+                    if counters.entered or counters.lost],
+            terminal=dict(funnel.terminal), verdicts=dict(funnel.verdicts),
+            attribution=dict(funnel.attribution), totals=dict(funnel.totals),
+            set_state=funnel.set_state, stop_reason=funnel.stop_reason,
+            entry=funnel.entry(), lost=funnel.lost_total(),
+            zero=zero.to_dict() if zero is not None else None,
+            zero_text=zero.render(lang) if zero is not None else None,
+            losses=losses, codes=known,
+            rows_total=len(rows), sampled=min(len(rows), self.DIAGNOSTIC_ROWS),
+            truncated=len(rows) > self.DIAGNOSTIC_ROWS,
+            health=diag.health_report(
+                version=PRODUCT_VERSION, schema_version=self.schema_version(),
+                scope=dataclass_as_dict(self.snapshot_scope(status)),
+                profile=self.active_profile_id() or None,
+            ).to_dict(),
+            environment=diag.local_environment(),
+        )
+
+    def schema_version(self):
+        """`user_version` of the local database, or None when there is none."""
+        conn = self.read_connection()  # a scalar read needs no row factory
+        if conn is None:
+            return None
+        try:
+            row = conn.execute('PRAGMA user_version').fetchone()
+        except sqlite3.Error:
+            return None
+        finally:
+            with suppress(sqlite3.Error):
+                conn.close()
+        return int(row[0]) if row else None
+
+    def diagnostic_needles(self):
+        """Every live secret of this process, for the canary sweep.
+
+        The bundle is built from stored rows, and the stored form of a
+        credential is a vault reference, not the value -- but "the schema does
+        not hold it" is not the same proof as "the package does not carry it",
+        so the finished payload is swept for these strings and refused if any
+        of them survives.  The check is mechanical and runs on every save.
+        """
+        needles = {str(self.token), str(self.gateway_token)}
+        conn = self.read_connection()
+        if conn is not None:
+            try:
+                for (reference,) in conn.execute('SELECT secret_ref FROM accesses'):
+                    if reference:
+                        needles.add(str(reference))
+            except sqlite3.Error:
+                pass
+            finally:
+                with suppress(sqlite3.Error):
+                    conn.close()
+        return sorted(needles)
+
+    def diagnostics_bundle(self, payload):
+        """Preview, then save, the local diagnostic bundle. Never leaves the machine."""
+        from . import diagnostics as diag
+        from . import sourcedesk
+        payload = payload or {}
+        action = str(payload.get('action') or 'preview')
+        rows = self.diagnostic_rows()
+        status = self.export_status()
+        funnel, zero, _losses = self.diagnostic_funnel(rows, status)
+        try:
+            bundle = diag.build_bundle(status=status, rows=rows, funnel=funnel, zero=zero)
+        except (diag.ActionableError, ValueError, TypeError) as exc:
+            raise ValueError('Не удалось собрать диагностический пакет: %s' % exc) from None
+        leaks = sourcedesk.find_secret_leaks(bundle.payload, self.diagnostic_needles())
+        if leaks:
+            # A live secret in the package is the one failure mode that must
+            # not produce a file.  The path is reported; the value is not.
+            raise ValueError('Пакет содержит секрет и не сохранён. Путь: %s'
+                             % ', '.join(sorted({path for path, _needle in leaks})))
+        text = bundle.to_json()
+        edited = payload.get('text')
+        if action == 'save':
+            if isinstance(edited, str) and edited.strip():
+                # The user may delete anything before saving.  What comes back
+                # is swept again, so an edit cannot smuggle a secret in either.
+                try:
+                    candidate = json.loads(edited)
+                except json.JSONDecodeError as exc:
+                    raise ValueError('Отредактированный пакет не является JSON: %s' % exc) from None
+                recheck = sourcedesk.find_secret_leaks(candidate, self.diagnostic_needles())
+                if recheck:
+                    raise ValueError('Отредактированный пакет содержит секрет; сохранение отменено.')
+                text = edited if edited.endswith('\n') else edited + '\n'
+            name = str(payload.get('name') or '').strip()
+            if not self.BUNDLE_NAME.fullmatch(name or ''):
+                raise ValueError('Имя файла пакета: латиница, цифры, «-», «_» или «.», оканчивается на .json.')
+            target = self.data/'diagnostics'/name
+            try:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(text, encoding='utf-8')
+            except OSError as exc:
+                raise ValueError('Не удалось записать пакет: %s' % exc) from None
+            return dict(saved=True, name=name, path=str(target), bytes=len(text.encode('utf-8')),
+                        redactions=[note.to_dict() for note in bundle.redactions],
+                        sample=bundle.sample_size, total=bundle.total_size,
+                        truncated=bundle.truncated, text=text, canary_clean=True)
+        return dict(saved=False, preview=bundle.preview(), text=text,
+                    redactions=[note.to_dict() for note in bundle.redactions],
+                    sample=bundle.sample_size, total=bundle.total_size,
+                    truncated=bundle.truncated, describe=bundle.describe(),
+                    canary_clean=True, canary_checked=len(self.diagnostic_needles()))
+
+    # --- jobs (F11) --------------------------------------------------------
+    #
+    # `jobs.py` keeps a durable job, its items, structured progress and a
+    # gapless event stream per job.  None of it had a route: the page showed
+    # the worker log, so "пауза" was a word in a text box and the counters a
+    # regex over it.  Everything below is read from the store, never parsed
+    # out of a line of text.
+
+    def job_store(self, workbench):
+        return workbench.jobs()
+
+    def jobs_view(self, query=None):
+        """Every job with its structured progress, and one job's events."""
+        query = query or {}
+        wanted = str((query.get('id') or [''])[0] or '')
+        after = str((query.get('after') or ['0'])[0] or '0')
+        try:
+            after_seq = max(0, int(after))
+        except (TypeError, ValueError):
+            after_seq = 0
+        with core.Workbench(self.data) as workbench:
+            store = self.job_store(workbench)
+            rows = []
+            for job in store.jobs(limit=50):
+                progress = None
+                try:
+                    progress = store.progress(job.id).to_json()
+                except (sqlite3.Error, ValueError, KeyError):
+                    progress = None
+                rows.append(dict(id=job.id, kind=job.kind, state=job.state,
+                                 created_at=job.created_at, started_at=job.started_at,
+                                 finished_at=job.finished_at, idempotency_key=job.idempotency_key,
+                                 scope=job.scope.to_json() if hasattr(job.scope, 'to_json') else {},
+                                 progress=progress))
+            body = dict(jobs=rows, selected=wanted or None, events=[],
+                        cursor=after_seq, states=jobs_state_names())
+            if wanted:
+                try:
+                    body['detail'] = store.progress(wanted).to_json()
+                except Exception:  # noqa: BLE001 - an unknown id is a message, not a crash
+                    body['detail'] = None
+                try:
+                    body['items'] = [item.to_json() for item in store.items(wanted)[:200]]
+                except Exception:  # noqa: BLE001
+                    body['items'] = []
+                body['events'] = [event.to_json() for event in store.events(wanted, after_seq=after_seq)]
+                if body['events']:
+                    body['cursor'] = body['events'][-1]['seq']
+        return body
+
+    def job_action(self, payload):
+        """Pause, resume, cancel or retry one job, with the state it reached."""
+        from . import jobs as jobs_module
+        payload = payload or {}
+        job_id = str(payload.get('id') or '').strip()
+        action = str(payload.get('action') or '').strip()
+        if action != 'recover' and not job_id:
+            raise ValueError('Укажите задание.')
+        with core.Workbench(self.data) as workbench:
+            store = self.job_store(workbench)
+            try:
+                if action == 'pause':
+                    job = store.pause(job_id, reason_code=str(payload.get('reason') or '') or None)
+                elif action == 'resume':
+                    job = store.resume(job_id)
+                elif action == 'cancel':
+                    job = store.cancel(job_id, reason_code=str(payload.get('reason') or '') or None)
+                elif action == 'retry':
+                    job = store.retry(job_id)
+                elif action == 'recover':
+                    report = store.recover()
+                    return dict(action=action, recovery=report.to_json(),
+                                jobs=[dict(id=item.id, kind=item.kind, state=item.state)
+                                      for item in store.jobs(limit=50)])
+                else:
+                    raise ValueError('Неизвестное действие с заданием: ' + (action or '—'))
+                progress = store.progress(job.id).to_json()
+            except jobs_module.JobError as exc:
+                raise ValueError(str(exc) or 'Задание отклонило действие.') from None
+        return dict(action=action, id=job_id, state=job.state, progress=progress,
+                    job=dict(id=job.id, kind=job.kind, state=job.state,
+                             started_at=job.started_at, finished_at=job.finished_at))
+
+    # --- desktop layer (F22) -----------------------------------------------
+    #
+    # `desktop.py` runs the menu bar, the single instance, the login item and
+    # sleep/wake, and it keeps a journal of what it did.  The interface had no
+    # route to any of it, so a user whose application was already running, or
+    # who wanted it to start at login, had no way to see or change that from
+    # where everything else is done.  The tokens in the instance record are
+    # never read here: they are the control channel, not page content.
+
+    def desktop_layout(self):
+        from . import desktop
+        try:
+            return desktop.resolve_layout()
+        except (desktop.DesktopError, OSError):
+            return None
+
+    def desktop_view(self):
+        """What the background layer is, what it did and how it is set up."""
+        from . import desktop
+        from . import scheduler as scheduler_module
+        body = dict(available=False, instance=None, autostart=None, journal=[],
+                    environment=None, power=None, frozen=desktop.frozen())
+        layout = self.desktop_layout()
+        if layout is None:
+            body['error'] = 'Фоновый слой на этой платформе недоступен.'
+            return body
+        body['available'] = True
+        body['layout'] = layout.as_dict()
+        # The interface can be pointed at a different folder with `--data`
+        # than the one the background layer resolves.  Saying so is honest;
+        # quietly reading another folder's journal would not be.
+        body['layout_matches_interface'] = Path(layout.data).resolve() == self.data.resolve()
+        with suppress(Exception):
+            body['environment'] = desktop.describe_environment(layout)
+        with suppress(Exception):
+            body['autostart'] = dataclass_as_dict(desktop.autostart_status(layout))
+        with suppress(Exception):
+            instance = desktop.read_instance(layout)
+            # `Instance` carries the control token and the control address:
+            # they are how a second launch reaches this process, and a page
+            # has no business holding either.
+            body['instance'] = dict(pid=instance.pid, url=instance.url,
+                                    started_at=instance.started_at, tray_pid=instance.tray_pid,
+                                    version=instance.version, platform=instance.platform) \
+                if instance is not None else None
+        with suppress(Exception):
+            body['journal'] = [dict(item) for item in desktop.read_journal(layout, limit=40)]
+        with suppress(Exception):
+            # Sleep, wake and the network are what the background layer exists
+            # for; the identity of the current path is what it reacts to.
+            body['power'] = scheduler_module.read_system_signal().to_dict()
+            body['network'] = list(desktop.network_fingerprint())
+        return body
+
+    def desktop_action(self, payload):
+        """Turn the login item on or off -- the only write here, and explicit."""
+        from . import desktop
+        payload = payload or {}
+        action = str(payload.get('action') or '').strip()
+        layout = self.desktop_layout()
+        if layout is None:
+            raise ValueError('Фоновый слой на этой платформе недоступен.')
+        if action not in ('autostart-on', 'autostart-off'):
+            raise ValueError('Неизвестное действие с фоновым слоем: ' + (action or '—'))
+        try:
+            if action == 'autostart-on':
+                status = desktop.enable_autostart(layout)
+            else:
+                status = desktop.disable_autostart(layout)
+        except (desktop.DesktopError, OSError) as exc:
+            raise ValueError(str(exc) or 'Не удалось изменить автозапуск.') from None
+        with suppress(Exception):
+            desktop.journal(layout, 'gui.autostart', enabled=bool(status.enabled))
+        return dict(action=action, autostart=dataclass_as_dict(status))
 
     def close(self):
         self.stop()
@@ -3953,6 +4529,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond(200, self.app.schedules_view(query))
             if path.path == '/api/gateway/options':
                 return self.respond(200, self.app.gateway_options())
+            if path.path == '/api/diagnostics':
+                return self.respond(200, self.app.diagnostics_view(query))
+            if path.path == '/api/jobs':
+                return self.respond(200, self.app.jobs_view(query))
+            if path.path == '/api/desktop':
+                return self.respond(200, self.app.desktop_view())
             if path.path == '/api/maintenance/cleanup-preview':
                 return self.respond(200, self.app.cleanup_preview_view())
             if path.path == '/api/maintenance/retention-preview':
@@ -4111,6 +4693,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond(200, self.app.pool_action(payload))
             if path == '/api/schedules/action':
                 return self.respond(200, self.app.schedule_action(payload))
+            if path == '/api/diagnostics/bundle':
+                return self.respond(200, self.app.diagnostics_bundle(payload))
+            if path == '/api/jobs/action':
+                return self.respond(200, self.app.job_action(payload))
+            if path == '/api/desktop/action':
+                return self.respond(200, self.app.desktop_action(payload))
             if path == '/api/maintenance/cleanup':
                 return self.respond(200, self.app.cleanup_apply(payload))
             if path == '/api/maintenance/retention':
@@ -4165,6 +4753,9 @@ def main(argv=None):
     parser.add_argument('--lan', action='store_true',
                         help=tr('открыть ротирующий прокси в локальной сети для телефона (явное действие)',
                                 'expose the rotating proxy on the local network for a phone (explicit opt-in)'))
+    parser.add_argument('--gateway-interface', default=os.environ.get('PROXY_WORKBENCH_GATEWAY_INTERFACE'),
+                        help=tr('адрес LAN-адаптера для --lan; без --lan он отвергается, а не игнорируется',
+                                'LAN adapter address for --lan; without --lan it is refused, not ignored'))
     parser.add_argument('--gateway-token', default=os.environ.get('PROXY_WORKBENCH_GATEWAY_TOKEN'),
                         help=tr('пароль ротирующего прокси; свой для каждого запуска, не пароль интерфейса',
                                 'rotating proxy password; its own per run, never the interface password'))
@@ -4211,6 +4802,17 @@ def main(argv=None):
                 print(line, flush=True)
     if not args.no_gateway:
         server.app.gateway_bind = dict(host=args.gateway_host, port=args.gateway_port)
+        # `--lan` used to print a warning and then die in the argument list:
+        # the listener never heard about it, so a phone could not connect and
+        # the flag was a lie.  Both values now travel to `Background`, which
+        # is what `start_gateway` does too, so the button on the connect page
+        # and the command line build the same listener.
+        server.app.gateway_lan = bool(args.lan) or not api.is_loopback(args.gateway_host)
+        server.app.gateway_interface = args.gateway_interface or None
+        if server.app.gateway_interface and not server.app.gateway_lan:
+            print(tr('Интерфейс LAN задан без --lan; интерфейс игнорируется.',
+                     'A LAN interface was given without --lan; it is ignored.'), flush=True)
+            server.app.gateway_interface = None
         gateway_token = args.gateway_token
         if not gateway_token:
             # The gateway password is generated per GUI instance and is never
@@ -4223,7 +4825,11 @@ def main(argv=None):
             print(tr('Внимание: ротирующий прокси открыт в локальной сети; пароль доступа есть в QR.',
                      'Warning: the rotating proxy is open on the local network; its password is in the QR.'), flush=True)
         try:
-            server.app.gateway = gateway.Background(args.data, args.gateway_host, args.gateway_port, token=gateway_token)
+            server.app.gateway = gateway.Background(args.data, args.gateway_host, args.gateway_port,
+                                                    token=gateway_token,
+                                                    bind=server.app.gateway_binding(),
+                                                    lan=server.app.gateway_lan,
+                                                    interface=server.app.gateway_interface)
         except (OSError, ValueError) as exc:
             print(tr(f'Ротирующий прокси не запущен: {exc}. Проверьте порт и адрес.',
                      f'Rotating proxy not started: {exc}. Check the port and bind address.'), flush=True)
@@ -4231,6 +4837,9 @@ def main(argv=None):
             gateway_state = server.app.gateway_state()
             print(tr(f'Ротирующий прокси: {gateway_state["address"]} (HTTP и SOCKS5, только TCP)',
                      f'Rotating proxy: {gateway_state["address"]} (HTTP and SOCKS5, TCP only)'), flush=True)
+            if gateway_state.get('lan'):
+                print(tr(f'Слушает на {gateway_state["listen_host"]}; доступен в локальной сети.',
+                         f'Listening on {gateway_state["listen_host"]}; reachable on the local network.'), flush=True)
             if gateway_state['mobile_ready']:
                 print(tr('LAN-шлюз включён: QR содержит пароль; разрешите порт в брандмауэре.',
                          'LAN gateway enabled: the QR contains the password; allow the port in the firewall.'), flush=True)

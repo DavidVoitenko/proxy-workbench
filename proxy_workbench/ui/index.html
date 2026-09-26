@@ -1650,6 +1650,7 @@ with httpx.Client(proxy="socks5://127.0.0.1:8899") as client:
           <select id="catalog-protocol" data-i18n-aria-label="cat.filterProtocol" aria-label="filterProtocol"><option value="" data-i18n="cat.filterProtocol">Protocol</option></select>
           <select id="catalog-format" data-i18n-aria-label="cat.filterFormat" aria-label="filterFormat"><option value="" data-i18n="cat.filterFormat">Data format</option></select>
           <select id="catalog-access" data-i18n-aria-label="cat.filterAccess" aria-label="filterAccess"><option value="" data-i18n="cat.filterAccess">Access</option></select>
+          <select id="catalog-support" data-i18n-aria-label="cat.filterSupport" aria-label="filterSupport"><option value="" data-i18n="cat.filterSupport">Support</option></select>
           <select id="catalog-set-filter" data-i18n-aria-label="cat.filterSet" aria-label="filterSet"><option value="" data-i18n="cat.filterSet">Set</option></select>
         </div>
 
@@ -1806,6 +1807,8 @@ with httpx.Client(proxy="socks5://127.0.0.1:8899") as client:
           <summary data-i18n="pool.detailTitle">Members and state of the selected pool</summary>
           <div class="field-grid" id="pool-targets"></div>
           <div class="button-row" id="pool-actions"></div>
+          <div class="text-muted" id="pool-counts" aria-live="polite"></div>
+          <div class="maint-list" id="pool-reasons"></div>
           <div class="catalog-list" id="pool-members"></div>
         </details>
       </section>
@@ -1846,6 +1849,30 @@ with httpx.Client(proxy="socks5://127.0.0.1:8899") as client:
         <p class="hint" id="sched-note"></p>
 
         <div class="catalog-list" id="sched-list"></div>
+        <p class="hint" id="sched-persistence"></p>
+      </section>
+
+      <!-- Jobs: structured progress and a gapless event stream (F11) -->
+      <section class="card catalog-card" id="jobs-card">
+        <div class="card-title">
+          <div class="geo-title-wrap">
+            <span class="code-editor-badge">JOBS</span>
+            <h2 data-i18n="jobs.title">Jobs and their progress</h2>
+          </div>
+          <div class="catalog-head-meta">
+            <span id="jobs-count" class="badge subtle">0</span>
+            <button class="button light" id="jobs-recover" data-i18n="jobs.recover">Find interrupted jobs</button>
+            <button class="button light" id="jobs-refresh" data-i18n="common.refresh">Refresh</button>
+          </div>
+        </div>
+        <p class="hint" data-i18n="jobs.lead">A job is the durable record of one run: its queue, its state and its events survive a restart. The counters below are read from that record, not cut out of the log text, and a button is only enabled when the job is in a state the action is legal from.</p>
+        <div class="catalog-list" id="jobs-list" aria-live="polite"></div>
+
+        <details class="advanced-accordion" id="jobs-detail-box">
+          <summary data-i18n="jobs.detailTitle">Progress and events of the selected job</summary>
+          <div class="field-grid" id="jobs-progress"></div>
+          <div class="maint-list" id="jobs-events" aria-live="polite"></div>
+        </details>
       </section>
 
       <!-- What the rotating gateway serves: a named pool and a profile -->
@@ -2390,6 +2417,107 @@ with httpx.Client(proxy="socks5://127.0.0.1:8899") as client:
         <div class="maint-block" id="move-preview-box" hidden>
           <p class="hint" id="move-preview-note"></p>
         </div>
+      </section>
+
+      <!-- Why there is nothing to show, and what to do about it (F10) -->
+      <section class="card catalog-card" id="diagnostics-card">
+        <div class="card-title">
+          <div class="geo-title-wrap">
+            <span class="code-editor-badge">DIAGNOSTICS</span>
+            <h2 data-i18n="diag.title">Why there is nothing to show</h2>
+          </div>
+          <div class="catalog-head-meta">
+            <button class="button light" id="diag-refresh" data-i18n="common.refresh">Refresh</button>
+          </div>
+        </div>
+        <p class="hint" data-i18n="diag.lead">Every address that entered the check and did not reach the result is counted here, with the stage it was lost at. Each line carries the one action that recovers it.</p>
+
+        <div id="diag-zero" class="diag-zero" hidden>
+          <div class="card-title" style="margin:0;">
+            <div class="geo-title-wrap">
+              <span class="code-editor-badge">ZERO RESULT</span>
+              <strong id="diag-zero-code">—</strong>
+            </div>
+          </div>
+          <p class="hint" id="diag-zero-summary"></p>
+          <p class="diag-action" id="diag-zero-action"></p>
+        </div>
+
+        <div class="catalog-list" id="diag-funnel" role="table"
+             aria-label="Funnel: how many addresses entered each stage and what was lost"
+             aria-live="polite">
+          <p class="hint" data-i18n="diag.loading">Reading the last run…</p>
+        </div>
+
+        <details class="advanced-accordion" id="diag-losses-box">
+          <summary data-i18n="diag.lossesTitle">Where addresses are lost, with an action for each reason</summary>
+          <div class="maint-list" id="diag-losses"></div>
+        </details>
+
+        <details class="advanced-accordion" id="diag-health-box">
+          <summary data-i18n="diag.healthTitle">Health of this installation</summary>
+          <div class="maint-list" id="diag-health"></div>
+        </details>
+
+        <div class="card-title" style="margin-top:20px;">
+          <div class="geo-title-wrap">
+            <span class="code-editor-badge">BUNDLE</span>
+            <h3 data-i18n="diag.bundleTitle">Diagnostic package for a bug report</h3>
+          </div>
+          <div class="catalog-head-meta">
+            <button class="button light" id="diag-bundle" data-i18n="diag.bundlePreview">Preview</button>
+            <button class="button primary" id="diag-bundle-save" data-i18n="diag.bundleSave" disabled>Save</button>
+          </div>
+        </div>
+        <p class="hint" data-i18n="diag.bundleLead">The package holds versions, the check scope, the job state, the funnel counters and a sample of rows. Passwords, tokens and authorization headers are replaced with “***”, and the finished text is swept against the live secrets of this process before anything is written. You can delete anything in the preview before saving; the file is written into the data folder and sent nowhere.</p>
+        <div class="field-grid">
+          <label>
+            <span data-i18n="diag.bundleName">File name</span>
+            <input id="diag-bundle-name" spellcheck="false" value="diagnostic.json" maxlength="80">
+          </label>
+        </div>
+        <div class="maint-block" id="diag-bundle-box" hidden>
+          <label class="check-label">
+            <input type="checkbox" id="diag-bundle-edit">
+            <span data-i18n="diag.bundleEdit">Let me remove lines before saving</span>
+          </label>
+          <label class="check-label" for="diag-bundle-text" hidden id="diag-bundle-text-label">
+            <span data-i18n="diag.bundleText">Package text, editable</span>
+          </label>
+          <textarea id="diag-bundle-text" class="code-editor-input" rows="14" spellcheck="false"
+                    aria-labelledby="diag-bundle-text-label" hidden></textarea>
+          <p class="hint" id="diag-bundle-note"></p>
+        </div>
+      </section>
+
+      <!-- The background layer: menu bar, one instance, login item, sleep/wake -->
+      <section class="card catalog-card" id="desktop-card">
+        <div class="card-title">
+          <div class="geo-title-wrap">
+            <span class="code-editor-badge">BACKGROUND</span>
+            <h2 data-i18n="desk.title">The background layer</h2>
+          </div>
+          <div class="catalog-head-meta">
+            <span id="desk-badge" class="badge subtle">—</span>
+            <button class="button light" id="desk-refresh" data-i18n="common.refresh">Refresh</button>
+          </div>
+        </div>
+        <p class="hint" data-i18n="desk.lead">The menu bar, the single instance, start at login and sleep/wake live in the background layer, not in this page. What it did is written to its own journal and shown here.</p>
+        <div class="field-grid">
+          <label>
+            <span data-i18n="desk.autostart">Start at login</span>
+            <select id="desk-autostart" data-i18n-aria-label="desk.autostart" aria-label="Start at login"></select>
+          </label>
+          <div class="align-end">
+            <button class="button light" id="desk-autostart-apply" data-i18n="desk.autostartApply">Apply</button>
+          </div>
+        </div>
+        <p class="hint" id="desk-autostart-note"></p>
+        <div class="maint-list" id="desk-state"></div>
+        <details class="advanced-accordion" id="desk-journal-box">
+          <summary data-i18n="desk.journalTitle">Journal of the background layer</summary>
+          <div class="maint-list" id="desk-journal"></div>
+        </details>
       </section>
     </section>
 
