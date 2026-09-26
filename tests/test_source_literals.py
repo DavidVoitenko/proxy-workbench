@@ -2,9 +2,19 @@
 import unittest
 
 from proxy_workbench.source_literals import decode_address_expression, decode_html_literals
+from proxy_workbench import source_adapters
 
 
 class AddressLiteralTests(unittest.TestCase):
+    def test_table_filters_are_not_reported_as_proxy_addresses(self):
+        body = (b'<table><tr><th>IP Address</th><th>Port</th></tr>'
+                b'<tr><td>--All--</td><td>--All--</td></tr>'
+                b'<tr><td>198.51.100.1</td><td>8080</td></tr></table>')
+        result = source_adapters.parse_page(body, {'kind': 'html-table', 'config': {
+            'columns': {'ip': 'IP Address', 'port': 'Port'}}})
+        self.assertEqual([row['value'] for row in result['records']], ['198.51.100.1:8080'])
+        self.assertEqual(result['rejects'].get('invalid_address'), 1)
+
     def test_provider_string_operations_are_decoded(self):
         examples = {
             '"8.141.022.8".split("").reverse().join("")': '8.220.141.8',

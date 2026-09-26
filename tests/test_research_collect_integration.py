@@ -257,11 +257,10 @@ class CatalogHonestyTests(unittest.TestCase):
         self.assertEqual([source_id for source_id, _ in empty], ['cur-37', 'new-086'])
 
     def test_sources_the_app_cannot_read_say_why_instead_of_looking_ordinary(self):
-        # The address or the port of each of these is written by a
-        # document.write() the parser must not execute, or the page is rendered
-        # client-side and carries no rows at all.
+        # These still require an unsupported decoder or contain no addresses.
+        # ProxyNova/Proxy-List literals have their own bounded data decoder now.
         catalog = source_catalog.load_bundled()
-        for source_id in ('new-011', 'new-012', 'new-050', 'new-052', 'new-057', 'new-065'):
+        for source_id in ('new-012', 'new-050', 'new-065'):
             source = source_catalog.source_by_id(catalog, source_id)
             with self.subTest(source=source_id):
                 self.assertFalse(source_catalog.collectable_source(source))

@@ -700,7 +700,9 @@ def _html_table(body, profile, page_context, limits):
                         protocol_text = found.group(0)
                 if not country:
                     country = cell["text"] if re.fullmatch(r"[A-Za-z]{2}", cell["text"].strip()) else ""
-        if not ip or not port:
+        port = str(port or '').strip()
+        if (not ip or not port.isascii() or not port.isdigit()
+                or len(port) > 5 or not 1 <= int(port) <= 65535):
             reject("invalid_address")
             continue
         protocol = _protocol(protocol_text if isinstance(protocol_text, list)
