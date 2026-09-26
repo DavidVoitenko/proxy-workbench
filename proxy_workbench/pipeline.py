@@ -659,7 +659,10 @@ class HostLimiter:
     async def release(self, host: str) -> None:
         async with self._cond:
             self._busy[host] = max(0, self._busy.get(host, 0) - 1)
-            if self._busy[host] == 0:
+            if self._busy[host] == 0 and self.min_interval_s > 0:
+                # Only a limiter that has to space two measurements of a host
+                # needs to remember when the last one was; without an interval
+                # this would be one clock reading per address kept for nothing.
                 self._last[host] = self.clock.monotonic()
             self._cond.notify_all()
 
@@ -1242,6 +1245,10 @@ class RunResult:
     find: FindProgress
     metrics: RunMetrics
     results: tuple[ItemResult, ...] = ()
+    #: A bounded sample of the results that passed, at most
+    #: ``budgets.max_stored_results`` of them.  How many passed is
+    #: ``counters.passed_endpoints``, and how many of the unit the caller asked
+    #: for is ``find.met``; neither is a length of a list.
     passed: tuple[ItemResult, ...] = ()
     remaining: tuple[str, ...] = ()
     feed_complete: bool = False
@@ -1480,6 +1487,11 @@ class Pipeline:
     ends it for good.
     """
 
+    #: How long the feeder waits for room in the queue before it looks at the
+    #: run's state again.  Long enough not to spin, short enough that a stop is
+    #: noticed while the queue is still full.
+    _QUEUE_WAIT_S = 0.05
+
     def __init__(self, config: PipelineConfig, *, clock: PipelineClock | None = None,
                  control: PipelineControl | None = None,
                  concurrency: AdaptiveConcurrency | None = None):
@@ -1604,6 +1616,22 @@ class Pipeline:
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue = asyncio.Queue(maxsize=self.config.budgets.max_results_pending)
         holder: dict[str, RunResult] = {}
+        # The one value that is not a result: the end of the run.  The consumer
+        # waits for the queue, not for the chain, so one result costs one queue
+        # hand-off and not a task of its own.
+        finished = object()
+
+        async def hand_off(value) -> bool:
+            if not queue.full():
+                queue.put_nowait(value)
+                return True
+            while not self._abandoned.is_set():
+                try:
+                    await asyncio.wait_for(queue.put(value), self._QUEUE_WAIT_S)
+                    return True
+                except TimeoutError:
+                    continue
+            return False
 
         async def emit(result: ItemResult) -> None:
             # A finished measurement is delivered even when the run has just
@@ -1611,35 +1639,28 @@ class Pipeline:
             # address look unmeasured and charge the run twice for it next time.
             # Only a consumer that has gone away abandons the hand-off, and that
             # is the one case where nobody would read the result anyway.
-            while not self._abandoned.is_set():
-                try:
-                    await asyncio.wait_for(queue.put(result), 0.05)
-                    return
-                except TimeoutError:
-                    continue
+            await hand_off(result)
 
         async def drive() -> None:
-            holder['result'] = await self._execute(emit)
+            try:
+                holder['result'] = await self._execute(emit)
+            finally:
+                # The consumer waits for the end of the run and not for one more
+                # result, so it has to be told — even when the run ended badly.
+                await hand_off(finished)
 
         task = loop.create_task(drive())
         try:
             while True:
-                getter = loop.create_task(queue.get())
-                done, _ = await asyncio.wait({getter, task}, return_when=asyncio.FIRST_COMPLETED)
-                if getter in done:
-                    yield getter.result()
-                    continue
-                getter.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await getter
-                while not queue.empty():
-                    yield queue.get_nowait()
-                if not task.done():
-                    await task
-                result = holder.get('result')
-                if result is None:  # pragma: no cover - drive always assigns it
-                    raise PipelineError(E_VALIDATION_SCHEMA, 'Выполнение не вернуло результат.')
-                return
+                item = await queue.get()
+                if item is finished:
+                    break
+                yield item
+            await task
+            result = holder.get('result')
+            if result is None:  # pragma: no cover - drive always assigns it
+                raise PipelineError(E_VALIDATION_SCHEMA, 'Выполнение не вернуло результат.')
+            return
         finally:
             self._abandoned.set()
             if not task.done():
@@ -1945,8 +1966,12 @@ class Pipeline:
 
         The endpoint is admitted to the ledger only when the queue accepted it,
         so an item nobody got to is still pending and is measured on the next
-        run.  While the queue is full the feeder stops pulling bytes from the
-        source: that is where backpressure comes from.
+        run.  While the queue is full the feeder *waits* for a worker to take
+        something: that is where backpressure comes from, and nothing is pulled
+        from the source while it waits.  The wait is bounded in time rather than
+        a spin, because a full queue must not turn backpressure into a busy
+        wait — and because a feeder blocked forever on a full queue could not
+        notice a run that has stopped underneath it.
         """
         while True:
             if self._stopped.is_set() or not self._check_control():
@@ -1958,12 +1983,11 @@ class Pipeline:
             try:
                 self._queue.put_nowait(item)
             except asyncio.QueueFull:
-                # The queue is full: yield to the workers and try again.  Nothing
-                # is pulled from the source while this loop runs, which is the
-                # backpressure the chain needs.
                 self._queue_high_water = self._gate.note_queue(self._queue.qsize(), self._queue_high_water)
-                await asyncio.sleep(0)
-                continue
+                try:
+                    await asyncio.wait_for(self._queue.put(item), self._QUEUE_WAIT_S)
+                except TimeoutError:
+                    continue
             self.ledger.admit(item.endpoint)
             self._count_addresses(item)
             self._queue_high_water = self._gate.note_queue(self._queue.qsize(), self._queue_high_water)
@@ -2250,7 +2274,11 @@ class Pipeline:
                 counters.confirmed_exit_ips = len(self._passed_exit_ips)
         if len(self._results) < self.config.budgets.max_stored_results:
             self._results.append(result)
-        if result.ok:
+        if result.ok and len(self._passed) < self.config.budgets.max_stored_results:
+            # A bounded sample, not a list of all of them: a sweep of half a
+            # million addresses cannot keep half a million results in memory,
+            # and every number that matters is a counter or ``find``, not this
+            # list.  ``RunResult.passed`` says so where it is declared.
             self._passed.append(result)
         if self.config.on_result is not None:
             self._call_hook(self.config.on_result, result)
