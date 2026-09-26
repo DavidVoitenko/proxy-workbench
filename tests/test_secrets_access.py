@@ -182,10 +182,13 @@ class RebindContractTests(AccessStoreTestCase):
         self.access = self.create(access_id='acc-1')
 
     def test_a_rebind_to_a_matching_revision_keeps_working(self):
+        # The rebind advances access_revision, so the replacement secret has to
+        # be staged at the revision the row will now carry. Staging at the old
+        # one is a genuine conflict, not a working rebind.
         replacement = 'sec_rebound'
         self.vault.stage(replacement, s.SecretPayload('alice', CANARY_NEW,
                                                       s.make_verifier(CANARY_NEW, iterations=1000),
-                                                      revision=self.access.access_revision))
+                                                      revision=self.access.access_revision + 1))
         self.vault.mark_ready(replacement)
         db.rebind_secrets(self.conn, {self.access.secret_ref: replacement}, dry_run=False)
         self.assertEqual(self.store.get('acc-1').secret_ref, replacement)

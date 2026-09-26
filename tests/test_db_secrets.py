@@ -59,19 +59,27 @@ class SecretBindingTests(unittest.TestCase):
             self.conn.execute("SELECT secret_ref FROM accesses WHERE id = 'acc-1'").fetchone()[0],
             before)
 
-    def test_rebind_writes_the_new_reference_and_nothing_else(self):
+    def test_rebind_moves_the_reference_and_advances_the_revision(self):
+        # A rebind is a credential change, not a rename: it must retire the
+        # evidence measured with the old secret, so the revision moves on.
+        # Leaving access_revision alone is what let a restored old password
+        # inherit a successful check (F04/F09).
         report = db.rebind_secrets(self.conn, {VAULT_REF: OTHER_VAULT_REF}, dry_run=False)
         self.assertFalse(report.dry_run)
         self.assertEqual(len(report.changed), 1)
         self.assertEqual(
             self.conn.execute("SELECT secret_ref FROM accesses WHERE id = 'acc-1'").fetchone()[0],
             OTHER_VAULT_REF)
-        # An access without a secret is untouched, and no other column moved.
+        # An access without a secret is untouched.
         self.assertEqual(
             self.conn.execute("SELECT secret_ref FROM accesses WHERE id = 'acc-2'").fetchone()[0], None)
         self.assertEqual(
-            self.conn.execute("SELECT access_revision FROM accesses WHERE id = 'acc-1'").fetchone()[0], 1)
-        # Re-running the same mapping is a no-op, not a second write.
+            self.conn.execute("SELECT access_revision FROM accesses WHERE id = 'acc-2'").fetchone()[0], 1)
+        row = self.conn.execute(
+            "SELECT access_revision, rotated_at FROM accesses WHERE id = 'acc-1'").fetchone()
+        self.assertEqual(row[0], 2, 'a rebind must advance access_revision')
+        self.assertIsNotNone(row[1], 'a rebind must stamp rotated_at')
+        # Re-running the same mapping against the already-moved row is a no-op.
         again = db.rebind_secrets(self.conn, {VAULT_REF: OTHER_VAULT_REF}, dry_run=False)
         self.assertEqual(again.changed, ())
 
