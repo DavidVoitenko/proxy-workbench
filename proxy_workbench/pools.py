@@ -49,14 +49,15 @@ from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 __all__ = [
-    'Candidate', 'Clock', 'HealthResult', 'Member', 'Policy', 'PoolError', 'PoolSchemaError',
-    'PoolSpec', 'PoolStatus', 'PoolStore', 'evict', 'refill', 'refill_all', 'report_health', 'watch',
+    'Candidate', 'Clock', 'FindRequest', 'HealthResult', 'Member', 'Policy', 'PoolError',
+    'PoolSchemaError', 'PoolSpec', 'PoolStatus', 'PoolStore', 'evict', 'refill', 'refill_all',
+    'report_health', 'watch',
     # vocabulary a source implementation, a GUI or an API client needs
-    'DOMAIN_OWN', 'DOMAIN_PUBLIC', 'DOMAIN_UNKNOWN', 'DOMAINS', 'MEMBER_ACTIVE', 'MEMBER_COOLDOWN',
-    'MEMBER_PROBATION', 'MEMBER_RESERVE', 'MEMBER_STATES', 'POOL_STATES', 'QUOTA_ASN',
-    'QUOTA_COUNTRY', 'QUOTA_DIMENSIONS', 'QUOTA_EXIT_IP', 'QUOTA_PROTOCOL', 'SOURCE_KNOWN',
-    'SOURCE_RESERVE', 'SOURCE_SOURCES', 'SOURCE_ORDER', 'STATE_COMPLETE', 'STATE_DEGRADED',
-    'STATE_EMPTY', 'STATE_ERROR', 'UNKNOWN_IGNORE', 'UNKNOWN_REJECT', 'transaction',
+    'DOMAIN_OWN', 'DOMAIN_PUBLIC', 'DOMAIN_UNKNOWN', 'DOMAINS', 'FIND_UNITS', 'MEMBER_ACTIVE',
+    'MEMBER_COOLDOWN', 'MEMBER_PROBATION', 'MEMBER_RESERVE', 'MEMBER_STATES', 'POOL_STATES',
+    'QUOTA_ASN', 'QUOTA_COUNTRY', 'QUOTA_DIMENSIONS', 'QUOTA_EXIT_IP', 'QUOTA_PROTOCOL',
+    'SOURCE_KNOWN', 'SOURCE_RESERVE', 'SOURCE_SOURCES', 'SOURCE_ORDER', 'STATE_COMPLETE',
+    'STATE_DEGRADED', 'STATE_EMPTY', 'STATE_ERROR', 'UNKNOWN_IGNORE', 'UNKNOWN_REJECT', 'transaction',
 ]
 
 # --- vocabulary -------------------------------------------------------------
@@ -378,6 +379,55 @@ class Member:
 
 
 @dataclass(frozen=True)
+class FindRequest:
+    """How many more of what the measuring engine should look for, and in what unit.
+
+    This is the pool's half of the answer ``pipeline.FindPolicy`` needs, and it
+    exists because the two sides must not each guess the unit.  A pool keeps
+    *members*; a member is a row of ``pool_member`` and nothing else — the table
+    of CONTRACTS §3.3 migration 7 holds no exit address and no measured country,
+    so a count of anything but members cannot survive the next restart.  That is
+    the whole reason the unit is derived and named here instead of the pool
+    simply asking the engine for exits (HANDOFF/pipeline.md §1.5).
+
+    What the user may still want is *distinctness*, and that is what a quota is
+    for: ``quota={'exit_ip': 1}`` with ``desired=5`` is exactly "five proxies that
+    do not share an exit", is checked on every admission, and reports
+    ``E_POOL_QUOTA_EXIT_IP`` or ``E_POOL_QUOTA_UNKNOWN_EXIT_IP`` when it cannot be
+    satisfied.  So the unit the *supply* must be measured in follows from the
+    policy rather than from a hardcoded guess: a pool that caps members per exit
+    needs the engine to prove distinct exits, and a pool that does not is
+    satisfied by ``desired`` working endpoints.
+
+    ``n`` is the shortfall in the chosen unit, not ``desired``: asking for N
+    again on every tick makes the engine re-measure what the pool already has.
+    """
+
+    n: int
+    what: str
+
+    def as_dict(self) -> dict:
+        return {'n': self.n, 'what': self.what}
+
+    def find_policy(self, find_policy_cls: type) -> Any:
+        """The caller's own ``pipeline.FindPolicy``; this module never imports it."""
+        return find_policy_cls(n=self.n, what=self.what)
+
+
+#: The three units of "N" (F12, CONTRACTS §1.1).  ``ip`` counts the address of a
+#: proxy; for a pool it is never the right unit, so it is rejected by name rather
+#: than silently treated as an endpoint.
+FIND_UNITS = ('endpoint', 'ip', 'exit')
+#: A quota dimension and a find-N unit that name the same thing but not the same
+#: word: the pool stores ``exit_ip``, the engine counts ``exit``.  Keeping the two
+#: vocabularies apart here is what stops a pool from handing the engine a unit it
+#: will refuse — the mistake is a `ValidationError` at the call site, not a
+#: silently defaulted policy.
+FIND_UNIT_FOR_DIMENSION = {QUOTA_EXIT_IP: 'exit', QUOTA_COUNTRY: 'endpoint',
+                           QUOTA_ASN: 'endpoint', QUOTA_PROTOCOL: 'endpoint'}
+
+
+@dataclass(frozen=True)
 class PoolSpec:
     """The target state of a named pool. It is the row in ``pools``, so it survives a crash."""
 
@@ -393,12 +443,31 @@ class PoolSpec:
     deficit_reason: str | None = None
     next_attempt_at: float | None = None
 
+    @property
+    def count_unit(self) -> str:
+        """The unit ``desired``/``minimum``/``served`` are counted in.
+
+        Members, unless the policy caps members per confirmed exit IP: then the
+        pool is deliberately holding N *distinct exits* and every number it
+        reports means that.  See :class:`FindRequest` for why this is derived
+        rather than configured twice.  ``ip`` is never the answer: a pool holds
+        endpoints, and the address of a proxy is not a thing it can count
+        across a restart.
+        """
+        return FIND_UNIT_FOR_DIMENSION[QUOTA_EXIT_IP] if self.policy.quota_limit(QUOTA_EXIT_IP) \
+            else 'endpoint'
+
+    def find_request(self, served: int) -> FindRequest:
+        """What the measuring engine should still be asked for, in this pool's unit."""
+        return FindRequest(n=max(0, int(self.desired) - max(0, int(served))), what=self.count_unit)
+
     def as_dict(self) -> dict:
         return {
             'id': self.id, 'collection_id': self.collection_id, 'profile_id': self.profile_id,
             'profile_revision': self.profile_revision, 'policy': self.policy.to_dict(),
             'desired': self.desired, 'minimum': self.minimum, 'reserve': self.reserve,
-            'state': self.state, 'deficit_reason': self.deficit_reason, 'next_attempt_at': self.next_attempt_at,
+            'state': self.state, 'deficit_reason': self.deficit_reason,
+            'next_attempt_at': self.next_attempt_at, 'count_unit': self.count_unit,
         }
 
 
@@ -440,6 +509,8 @@ class PoolStatus:
     quota_unknown: dict
     quota_conflicts: tuple
     source_errors: tuple
+    count_unit: str = 'endpoint'
+    find: dict | None = None
 
     def as_dict(self) -> dict:
         return {
@@ -460,7 +531,17 @@ class PoolStatus:
             'quota_conflicts': [{'dimension': dimension, 'value': value, 'count': count}
                                 for dimension, value, count in self.quota_conflicts],
             'source_errors': list(self.source_errors),
+            'count_unit': self.count_unit, 'find': dict(self.find or {}),
         }
+
+    def find_policy(self, find_policy_cls: type) -> Any:
+        """``pipeline.FindPolicy`` for the next supply run, built from the pool's own unit.
+
+        The engine side calls this with ``pipeline.FindPolicy``; this module never
+        imports the pipeline, so the two stay independent and a mismatch is a
+        wrong argument at the call site rather than an import error.
+        """
+        return FindRequest(n=max(0, self.shortfall), what=self.count_unit).find_policy(find_policy_cls)
 
 
 @dataclass(frozen=True)
@@ -888,20 +969,43 @@ class _Controller:
                 return
             self._move(member, MEMBER_ACTIVE)
 
-    def _reverify(self) -> None:
-        """Re-measure members in probation; without a measure they stay out of service."""
+    def measure(self) -> list:
+        """Ask the caller's measurement about every probation member.
+
+        This is the only part of a refill that does I/O, so it is deliberately
+        callable *outside* a write transaction: a measurement is a network round
+        trip, and holding SQLite's write lock across one would refuse every other
+        writer of the database for the length of the round trip (CONTRACTS §6.4
+        is about a bounded number of DB-writing executors, not about making the
+        rest of the program wait for a proxy answer).  It reads state, changes
+        nothing, and returns the verdicts :meth:`apply_measurements` commits.
+
+        A measurement that raised is not proof of a dead proxy: it is recorded as
+        a source error and the member keeps waiting.
+        """
         if self.verify is None:
-            return
+            return []
+        verdicts = []
         for member in self._ordered(state=MEMBER_PROBATION):
             if not self.work.may_measure or not self.work.may_spend:
-                return
+                break
             self.work.examined += 1
             try:
                 outcome = self.verify(self.spec, member)
             except Exception as exc:  # a measurement that broke is not proof of a dead proxy
                 self.source_errors.append(type(exc).__name__)
                 continue
-            if outcome is True:
+            if outcome is True or outcome is False:
+                verdicts.append((member.endpoint_id, outcome))
+        return verdicts
+
+    def apply_measurements(self, verdicts: Sequence) -> None:
+        """Commit verdicts taken by :meth:`measure`, inside the write transaction."""
+        for endpoint_id, worked in verdicts:
+            member = self.members.get(endpoint_id)
+            if member is None or member.state != MEMBER_PROBATION:
+                continue  # a concurrent call already moved it; its answer wins
+            if worked:
                 state = self._placement()
                 if state is None:
                     continue  # the pool is full; the member waits in probation and is kept
@@ -909,7 +1013,7 @@ class _Controller:
                     self.reasons[REASON_BUDGET] += 1
                     return
                 self._move(member, state, admitted_at=self.now, released_at=None)
-            elif outcome is False:
+            else:
                 self._move(member, MEMBER_COOLDOWN, released_at=self.now)
                 self.reasons[REASON_COOLDOWN] += 1
 
@@ -1047,6 +1151,9 @@ class _Controller:
         probation = self._ordered(state=MEMBER_PROBATION)
         overdue = tuple(member.endpoint_id for member in probation
                         if self.now > (_finite(member.admitted_at) or 0.0) + self.policy.probation_seconds)
+        # The unit and the supply request travel with the status, so the caller
+        # that starts the next measuring run cannot have to guess either of them.
+        request = self.spec.find_request(served)
         return PoolStatus(
             pool_id=self.spec.id, state=state, at=self.now, collection_id=self.spec.collection_id,
             collection_kind=self.kind, profile_id=self.spec.profile_id,
@@ -1061,7 +1168,8 @@ class _Controller:
             promotions=self.work.promotions, re_admissions=self.work.re_admissions, deferred=deferred,
             recheck_due=tuple(member.endpoint_id for member in probation), probation_overdue=overdue,
             quota_unknown=quota_unknown, quota_conflicts=conflicts,
-            source_errors=tuple(self.source_errors))
+            source_errors=tuple(self.source_errors), count_unit=self.spec.count_unit,
+            find=request.as_dict())
 
     def _ordered(self, state: str | None = None) -> list:
         members = [member for member in self.members.values() if state is None or member.state == state]
@@ -1103,15 +1211,24 @@ def refill(store: PoolStore, pool_id: str, source: Callable[..., Sequence[Candid
 
     ``verify(spec, member)`` re-measures a member in probation. Without it such
     a member is not served and is listed in ``recheck_due`` for whoever runs
-    measurements.
+    measurements. It is the caller's I/O, so it is called with no write
+    transaction open and its verdicts are committed afterwards.
 
     This is an explicit command and always acts; the cadence guard that keeps a
     background loop from overworking a source lives in :func:`watch`, and the
     time the pool wants to be looked at next is in ``status.next_attempt_at``.
 
+    The call is three steps, and the boundary between them is deliberate.
     Candidates are collected before the first write, so a source that dies
-    leaves the committed target and the previous membership intact; a failure
-    while writing rolls the whole refill back.
+    leaves the committed target and the previous membership intact. The phase
+    transitions commit on their own, so a process that dies while measuring
+    leaves a pool whose members are all still accounted for — some of them
+    resting — and whose target is simply not met yet; the next refill finishes
+    it. Admissions and the status land in one transaction, so a caller never
+    sees members without a status or a status without its members. What is
+    deliberately *not* promised is that a crash between the two commits undoes
+    the first one: the alternative would be to hold the write lock for the
+    length of a network round trip, which is the worse failure.
     """
     spec = store.require(pool_id)
     at = time.time() if now is None else float(now)
@@ -1132,14 +1249,22 @@ def refill(store: PoolStore, pool_id: str, source: Callable[..., Sequence[Candid
     work = _Work(spec.policy.refill_budget if budget is None else budget, spec.policy.scan_limit)
     controller = _Controller(store, spec, kind, now=at, work=work, verify=verify)
     candidates = _collect(spec, source, at, work, controller)
-    with transaction(store.conn):  # the whole refill lands, or none of it does
+    # Phase 1: everything that only moves members between phases.  It commits on
+    # its own, so the pool is in a consistent state before the slow part starts.
+    with transaction(store.conn):
         controller._expire_cooldowns()
         controller._expire_proofs()
         controller._retire()
         controller._demote()
         controller._trim()
         controller._promote()
-        controller._reverify()
+    # Phase 2: the measurements, with no write transaction open.  The lock is the
+    # database's, not the pool's: a proxy that takes three seconds to answer must
+    # not freeze every other writer of this file for those three seconds.
+    verdicts = controller.measure()
+    # Phase 3: the verdicts, the admissions and the status, in one transaction.
+    with transaction(store.conn):
+        controller.apply_measurements(verdicts)
         controller.admit(candidates)
         status = controller.status()
         store.save_status(pool_id, status.state, deficit_reason=status.deficit_reason,

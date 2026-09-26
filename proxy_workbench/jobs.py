@@ -746,8 +746,20 @@ class JobStore:
 
     def submit(self, kind: str, scope: Scope, items: Iterable[QueueItem] = (), *,
                idempotency_key: str | None = None) -> Job:
-        """Create and queue a job in one call — what ``POST /v1/jobs`` needs."""
-        return self.queue(self.create_job(kind, scope, items, idempotency_key=idempotency_key).id)
+        """Create and queue a job in one call — what ``POST /v1/jobs`` needs.
+
+        A replay of the same request returns the job that request produced, in
+        whatever state it has reached.  The caller asked "run this", was answered
+        with a job id, and repeating the question must not become a different
+        answer: a job that is already running, finished, cancelled or recovered
+        is still *that* job.  Queueing it again would both break the state
+        machine and do the one thing F11 forbids — the same request producing a
+        second run.
+        """
+        job = self.create_job(kind, scope, items, idempotency_key=idempotency_key)
+        if job.state != 'created':
+            return job
+        return self.queue(job.id)
 
     def enqueue(self, job_id: str, items: Iterable[QueueItem]) -> int:
         """Add items to a job that has not started.  Impossible afterwards: the
