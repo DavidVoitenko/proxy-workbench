@@ -560,8 +560,8 @@ def country_selected(rows, query, *, now=None, workbench=None):
         return list(rows)
     criterion = country_criterion_of(query)
     if workbench is not None:
-        return list(workbench.filter_by_country(rows, criterion, now=now))
-    return list(proxytool.filter_by_country(rows, criterion, now=now))
+        return list(workbench.filter_by_country(rows, criterion, now=now).kept)
+    return list(proxytool.filter_by_country(rows, criterion, now=now).kept)
 
 
 def country_matches(row, query, *, now=None, workbench=None):
@@ -3278,9 +3278,21 @@ def _pool_watch_asked(call):
 
 
 def call_budget(call):
-    """The budget object of a request, as ``pools.refill`` takes it."""
+    """``budget.max_requests`` as the number ``pools.refill`` counts.
+
+    The route body carries an object because a budget has more than one field
+    in other routes; ``pools.refill``'s ``budget`` is a single count of state
+    changes, and handing it the object raised ``TypeError`` -- which the
+    service layer reported as an unavailable service rather than as a bad
+    parameter.  A budget that was asked for is applied, not ignored.
+    """
     budget = (call.body or {}).get('budget')
-    return dict(budget) if isinstance(budget, dict) and budget else None
+    if not isinstance(budget, dict):
+        return None
+    limit = budget.get('max_requests')
+    if limit is None:
+        return None
+    return max(0, int(limit))
 
 
 def _compare_source_ids(call):

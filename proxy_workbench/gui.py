@@ -156,6 +156,11 @@ MAX_COLLECTION_MEMBERS = 20_000
 # after that.
 SCOPE_EXCLUSIONS_FILE = 'gui-scope-exclusions.json'
 SCOPE_EXCLUSION_LIMIT = 20_000
+#: The country criterion the table applies (F08).  These are the values the
+#: CLI already accepts in ``--country-basis`` / ``--country-unknown``; the page
+#: takes them in the query so a link to a scoped table can be shared.
+COUNTRY_BASES = ('endpoint', 'exit', 'either')
+COUNTRY_UNKNOWNS = ('exclude', 'include_unverified', 'require_measurement')
 #: How many publishers one comparison may name.  The overlap matrix is
 #: quadratic, so a page that let a whole catalog through would answer a
 #: question nobody asked with a request that never finishes.
@@ -278,9 +283,12 @@ def inject_source_compare(html):
 
 #: The script that drives the section.  It talks to ``/api/sources/compare``
 #: only -- the same ``sourcedesk`` comparison the CLI and ``/v1`` serve -- and
-#: escapes every value it prints, because a source name is catalog data.
+#: escapes every value it prints, because a source name is catalog data.  The
+#: marker is what makes the injection idempotent: an element id would not be,
+#: because the markup carries the same ids the script looks up.
+SOURCE_COMPARE_MARKER = '/* PW_SOURCE_COMPARE_DRIVER */'
 SOURCE_COMPARE_SCRIPT = """
-<script>
+<script>/* PW_SOURCE_COMPARE_DRIVER */
 (function () {
   const card = document.getElementById('source-compare-card');
   if (!card) return;
@@ -417,7 +425,7 @@ SOURCE_COMPARE_SCRIPT = """
 
 def append_source_compare_script(html):
     """Put the F21 driver at the end of the page, after ``app.js`` has run."""
-    if 'source-compare-run' in html or 'id="source-compare-card"' not in html:
+    if SOURCE_COMPARE_MARKER in html or 'id="source-compare-card"' not in html:
         return html
     if '</body>' in html:
         return html.replace('</body>', SOURCE_COMPARE_SCRIPT + '</body>', 1)
@@ -2605,12 +2613,8 @@ class App:
             # accept.  Their defaults are what this page has always done --
             # the endpoint's own country, an unknown one excluded -- so a link
             # without them selects the same rows it always did.
-            country_basis = query.get('country_basis', ['endpoint'])[0] or 'endpoint'
-            country_unknown = query.get('country_unknown', ['exclude'])[0] or 'exclude'
-            if country_basis not in ('endpoint', 'exit', 'either'):
-                raise ValueError('country_basis: endpoint, exit или either.')
-            if country_unknown not in ('exclude', 'include_unverified', 'require_measurement'):
-                raise ValueError('country_unknown: exclude, include_unverified или require_measurement.')
+            country_basis = (query.get('country_basis', ['endpoint'])[0] or 'endpoint').strip()
+            country_unknown = (query.get('country_unknown', ['exclude'])[0] or 'exclude').strip()
             hide_hosting = normalize_hosting_filter(query.get('hosting', [''])[0]) == 'hide'
             # F02: the table can be about one collection.  An empty value is
             # every collection the profile measured, which is what the scope
@@ -2623,6 +2627,13 @@ class App:
                 or quick not in ('', 'clean', 'speed', 'http')
                 or not math.isfinite(max_latency) or max_latency < 0):
             raise ValueError('Неверные параметры рейтинга.')
+        # Named separately so the message says which control was wrong; a
+        # filter that silently kept the default would be a filter the user
+        # cannot steer.
+        if country_basis not in COUNTRY_BASES:
+            raise ValueError('country_basis: ' + ', '.join(COUNTRY_BASES) + '.')
+        if country_unknown not in COUNTRY_UNKNOWNS:
+            raise ValueError('country_unknown: ' + ', '.join(COUNTRY_UNKNOWNS) + '.')
         limit = max(1, min(limit, PAGE_SIZE_MAX))
         return dict(sort=sort, order=order, view=view, min_success=threshold, offset=offset, limit=limit,
                     min_anonymity=min_anonymity, protocol=protocol, quick=quick, max_latency=max_latency,
