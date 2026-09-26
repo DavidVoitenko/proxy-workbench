@@ -397,7 +397,10 @@ STATE_FILTERS = {
     'not_proxy_source': lambda row, now: bool(row['not_proxy_source']),
     'provider': lambda row, now: row['access_group'] in PROVIDER_GROUPS,
     'needs_access': lambda row, now: bool(row['access_blocked_reason']),
-    'rights_unresolved': lambda row, now: not row['rights_approved'] and row['rights']['data_license'] not in ('unknown', '', None),
+    # The same rule the row badge uses, so a filter and the badge it filters on
+    # can never answer different questions about the same row.
+    'rights_unresolved': lambda row, now: (not row['collectable'] and not row['rights_approved']
+                                           and row['rights']['data_license'] not in ('unknown', '', None)),
     'never_checked': lambda row, now: row['runtime'].get('observed_at') is None,
     'has_data': lambda row, now: row['runtime'].get('observed_at') is not None,
     'last_good': lambda row, now: bool(row['runtime'].get('generation')),
