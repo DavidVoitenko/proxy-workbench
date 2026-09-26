@@ -118,8 +118,9 @@ class LoopbackProxy:
         except (OSError, ValueError):
             conn.sendall(b'HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n')
             return
-        conn.sendall(b'HTTP/1.1 200 Connection established\r\n\r\n')
-        self._pump(conn, upstream)
+        with upstream:
+            conn.sendall(b'HTTP/1.1 200 Connection established\r\n\r\n')
+            self._pump(conn, upstream)
 
     def _pump(self, left, right):
         def copy(source, sink):
@@ -157,9 +158,10 @@ class LoopbackProxy:
         except OSError:
             conn.sendall(b'HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n')
             return
-        request = f'{method} {path} HTTP/1.1\r\nHost: {parsed.netloc}\r\nConnection: close\r\n\r\n'
-        upstream.sendall(request.encode('latin-1'))
-        self._pump(conn, upstream)
+        with upstream:
+            request = f'{method} {path} HTTP/1.1\r\nHost: {parsed.netloc}\r\nConnection: close\r\n\r\n'
+            upstream.sendall(request.encode('latin-1'))
+            self._pump(conn, upstream)
 
     def stop(self):
         if self._server is not None:
@@ -289,6 +291,7 @@ class IntegrationPass(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         cls.origin_server.shutdown()
+        cls.origin_server.server_close()
         cls.proxy.stop()
         cls.conn.close()
 
@@ -514,22 +517,34 @@ class IntegrationPass(unittest.TestCase):
         async def run_gateway():
             # The published generation the export just wrote, read through the
             # same `Exports` reader the API and the GUI use.
-            return await gateway.start(self.home, '127.0.0.1', 0, None,
-                                       {'collection_id': self.collection_id},
-                                       'round-robin', 0, 0)
+            server = await gateway.start(self.home, '127.0.0.1', 0, None,
+                                         {'collection_id': self.collection_id},
+                                         'round-robin', 0, 0)
+            try:
+                # Creation, assertions and teardown must share the live loop;
+                # closing a Windows Proactor loop also invalidates its sockets.
+                async with server:
+                    self.assertIsNotNone(server.gateway)
+                    self.assertTrue(server.sockets)
+                    port = server.sockets[0].getsockname()[1]
+                    self.assertGreater(port, 0)
+                    rows = await server.gateway.pool.arefresh()
+                    self.assertIsInstance(rows, list)
+                    # Ask the local status route: this exercises the listener
+                    # without connecting to any candidate from the export.
+                    reader, writer = await _asyncio.wait_for(
+                        _asyncio.open_connection('127.0.0.1', port), 5)
+                    try:
+                        writer.write(b'GET /status HTTP/1.1\r\nHost: 127.0.0.1\r\n'
+                                     b'Connection: close\r\n\r\n')
+                        await writer.drain()
+                        answer = await _asyncio.wait_for(reader.read(), 5)
+                        self.assertTrue(answer.startswith(b'HTTP/1.1 200 OK\r\n'), answer)
+                        self.assertIsInstance(json.loads(answer.split(b'\r\n\r\n', 1)[1]), dict)
+                    finally:
+                        writer.close()
+                        await writer.wait_closed()
+            finally:
+                await server.gateway.shutdown(grace=0)
 
-        server = _asyncio.run(run_gateway())
-        async def stop():
-            async with server:
-                pass
-        self.addCleanup(lambda: _asyncio.run(stop()))
-        self.assertIsNotNone(server.gateway)
-        # The listener is up on a real port and the rotating pool can be asked
-        # for its contents without raising: that is the "gateway answers" step
-        # of the acceptance, and it reads the export the run above published.
-        self.assertTrue(server.sockets)
-        self.assertTrue(server.sockets[0].getsockname()[1] > 0)
-        rows = server.gateway.pool.refresh()
-        self.assertIsInstance(rows, list)
-        # The listener really accepts a client connection on the address it printed.
-        self.assertTrue(server.sockets)
+        _asyncio.run(run_gateway())

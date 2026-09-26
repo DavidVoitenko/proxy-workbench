@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import asynccontextmanager
 import json
 from pathlib import Path
 import sys
@@ -40,10 +41,13 @@ class ResearchCollectIntegrationTests(unittest.IsolatedAsyncioTestCase):
     def sample(self, source_id):
         return (SAMPLES / f'{source_id}.bin').read_bytes()
 
+    @asynccontextmanager
     async def serve(self, pages):
+        writers, tasks, errors = set(), set(), []
+
         async def handler(reader, writer):
             try:
-                request_line = await reader.readuntil(b'\r\n\r\n')
+                request_line = await asyncio.wait_for(reader.readuntil(b'\r\n\r\n'), 30)
                 target = request_line.split(b' ', 2)[1].decode('ascii')
                 parsed = urlsplit(target)
                 self.requests.append(target)
@@ -58,13 +62,49 @@ class ResearchCollectIntegrationTests(unittest.IsolatedAsyncioTestCase):
                     b'Content-Length: %d\r\nConnection: close\r\n\r\n' % len(body) + body
                 )
                 await writer.drain()
+            except (ConnectionError, asyncio.IncompleteReadError, TimeoutError):
+                # A retried or abandoned local request may close before sending
+                # its headers or before reading the complete response.
+                pass
             finally:
                 writer.close()
-                await writer.wait_closed()
+                try:
+                    await asyncio.wait_for(writer.wait_closed(), 2)
+                except (ConnectionError, TimeoutError):
+                    writer.transport.abort()
+                finally:
+                    writers.discard(writer)
 
-        server = await asyncio.start_server(handler, '127.0.0.1', 0)
+        def finished(task):
+            tasks.discard(task)
+            if not task.cancelled() and (error := task.exception()) is not None:
+                errors.append(error)
+
+        def connected(reader, writer):
+            writers.add(writer)
+            task = asyncio.create_task(handler(reader, writer))
+            tasks.add(task)
+            task.add_done_callback(finished)
+
+        server = await asyncio.start_server(connected, '127.0.0.1', 0)
         base = f'http://127.0.0.1:{server.sockets[0].getsockname()[1]}'
-        return server, base
+        try:
+            yield base
+        finally:
+            # Server.wait_closed() also waits for accepted streams on newer
+            # Python versions. Own and stop those streams before waiting, even
+            # when a retry opened a connection without sending a request.
+            server.close()
+            for task in tuple(tasks):
+                task.cancel()
+            for writer in tuple(writers):
+                writer.close()
+                writer.transport.abort()
+            if tasks:
+                await asyncio.wait_for(asyncio.gather(*tuple(tasks), return_exceptions=True), 2)
+            await asyncio.wait_for(server.wait_closed(), 2)
+        if errors:
+            raise errors[0]
 
     def candidates(self):
         return sorted(row[0] for row in self.db.execute('SELECT proxy FROM candidates'))
@@ -76,8 +116,7 @@ class ResearchCollectIntegrationTests(unittest.IsolatedAsyncioTestCase):
             '/page-json': self.sample('new-045'),
             '/html-table': self.sample('new-010'),
         }
-        server, base = await self.serve(pages)
-        async with server:
+        async with self.serve(pages) as base:
             report = await p.collect(self.db, [
                 f'json-records {base}/json-records',
                 f'fields {base}/fields',
@@ -118,10 +157,11 @@ class ResearchCollectIntegrationTests(unittest.IsolatedAsyncioTestCase):
             'geonode': '/geonode',
             'http-fields': '/http-fields',
         }
-        server, base = await self.serve(pages)
-        specs = [f'{kind} {base}{path}' for kind, path in expected.items()]
-        async with server:
-            report = await p.collect(self.db, specs, [], allow_private_sources=True)
+        async with self.serve(pages) as base:
+            specs = [f'{kind} {base}{path}' for kind, path in expected.items()]
+            # The optional snapshot contains over 155,000 rows: its local
+            # parsing and SQLite writes also spend the source deadline.
+            report = await p.collect(self.db, specs, [], allow_private_sources=True, timeout=300)
 
         self.assertTrue(set(expected).issubset(p.SOURCE_KINDS))
         by_index = {item['source']: item for item in report['sources']}
@@ -146,6 +186,19 @@ class SyntheticCollectIntegrationTests(ResearchCollectIntegrationTests):
     @classmethod
     def setUpClass(cls):
         pass
+
+    async def test_server_cleanup_closes_a_client_without_a_request(self):
+        writer = None
+        try:
+            async with asyncio.timeout(5):
+                async with self.serve({}) as base:
+                    address = urlsplit(base)
+                    reader, writer = await asyncio.open_connection(address.hostname, address.port)
+                self.assertEqual(await reader.read(), b'')
+        finally:
+            if writer is not None:
+                writer.close()
+                await asyncio.wait_for(writer.wait_closed(), 2)
 
     def sample(self, source_id):
         line = b'11.1.1.1:8080\n11.1.1.2:3128\n'

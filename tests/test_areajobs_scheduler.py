@@ -686,8 +686,10 @@ class SqliteStoreTest(unittest.TestCase):
                     'quiet_hours': [{'window': '22:00-07:00'}],
                     'budgets': {'requests': 10, 'timezone': 'Europe/Berlin'}})
 
+        reopened_conn = sqlite3.connect(str(path), isolation_level=None)
+        self.addCleanup(reopened_conn.close)
         reopened = sched.Scheduler(store=sched.SqliteScheduleStore(
-            sqlite3.connect(str(path), isolation_level=None)), clock=lambda: 0.0,
+            reopened_conn), clock=lambda: 0.0,
             power_reader=NoPower())
         spec = reopened.get('nightly')
 

@@ -3876,6 +3876,29 @@ def make_api_server(data, host='127.0.0.1', port=DEFAULT_PORT, token=None, v1=Tr
         def do_OPTIONS(self):
             self.do_GET()
 
+        def discard_legacy_body(self):
+            """Consume bounded request bytes before a legacy refusal closes TCP.
+
+            Closing a Windows socket with unread data can reset it before the
+            client receives the intended HTTP response.
+            """
+            try:
+                length = int(self.headers.get('Content-Length') or 0)
+            except ValueError:
+                return False
+            if length < 0 or length > control.config.max_body_bytes:
+                return False
+            if not length:
+                return True
+            timeout = self.connection.gettimeout()
+            try:
+                self.connection.settimeout(2.0)
+                return len(self.rfile.read(length)) == length
+            except OSError:
+                return False
+            finally:
+                self.connection.settimeout(timeout)
+
         def _control(self):
             url = urlsplit(self.path)
             length = int(self.headers.get('Content-Length') or 0)
@@ -3900,6 +3923,7 @@ def make_api_server(data, host='127.0.0.1', port=DEFAULT_PORT, token=None, v1=Tr
                 return self.send_json(401, {'error': 'missing or wrong token'}, headers=notice)
             if url.path == '/source-sets' or url.path == '/sources' or url.path.startswith('/sources/'):
                 if self.command not in ('GET', 'HEAD'):
+                    self.discard_legacy_body()
                     return self.send_json(405, {'error': 'read-only endpoint'},
                                           headers=(('Allow', 'GET, HEAD'), *notice))
                 from . import source_management

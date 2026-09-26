@@ -950,7 +950,7 @@ class OwnAddressTests(AcceptanceCase):
                                             policy=importer.EndpointPolicy(public_only=False))
             report = workbench.import_commit(plan)
         self.assertEqual(report.added, ('socks5://my-proxy.example.net:1080',))
-        self.assertEqual(workbench.conn.execute(
+        self.assertEqual(self.db.execute(
             'SELECT e.canonical FROM membership m JOIN endpoints e ON e.id=m.endpoint_id '
             'WHERE m.collection_id=?', (collection,)).fetchall()[0][0],
             'socks5://my-proxy.example.net:1080')

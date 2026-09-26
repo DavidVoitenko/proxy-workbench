@@ -328,25 +328,33 @@ class JobRunnerTests(unittest.TestCase):
                    collection_id=db.PUBLIC_COLLECTION_ID, budgets=scheduler.Budgets(requests=50)))
         run = engine.run_now('resume-cost')
         job = jobrunner.submit_schedule(self.data, run)
-        costs = [(5, 500), (2, 200)]
+        costs = [(5, 500, 5.0), (2, 200, 2.0)]
+        elapsed = [100.0]
 
         async def scan_segment(conn, config, **kwargs):
-            requests, received = costs.pop(0)
+            requests, received, seconds = costs.pop(0)
             kwargs['run_state'].update(state='partial', requests=requests, bytes=received)
+            elapsed[0] += seconds
             kwargs['job_store'].pause(kwargs['job_id'])
 
         runner = jobrunner.JobRunner(self.data, scan=scan_segment)
-        first = runner.run_pending()[0]
-        self.assertEqual(first['state'], 'paused')
-        self.workbench.jobs().resume(job.id)
-        second = runner.run_pending()[0]
+        # Advance only the worker's measurement clock; OS timer resolution
+        # must not decide whether a completed segment has a nonzero cost.
+        with mock.patch.object(jobrunner, 'time',
+                               SimpleNamespace(monotonic=lambda: elapsed[0])):
+            first = runner.run_pending()[0]
+            self.assertEqual(first['state'], 'paused')
+            self.workbench.jobs().resume(job.id)
+            second = runner.run_pending()[0]
         self.assertEqual(second['state'], 'paused')
+        self.assertEqual(first['result']['seconds'], 5.0)
+        self.assertEqual(second['result']['seconds'], 7.0)
         self.assertEqual(second['result']['requests'], 7)
         self.assertEqual(second['result']['bytes'], 700)
         persisted = self.workbench.schedules().load_state('resume-cost').counters
         self.assertEqual(persisted.requests, 7)
         self.assertEqual(persisted.bytes, 700)
-        self.assertGreater(persisted.seconds, first['result']['seconds'])
+        self.assertEqual(persisted.seconds, 7.0)
 
     def test_resume_can_spend_only_the_remaining_job_budget(self):
         limits = []

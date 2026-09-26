@@ -127,6 +127,9 @@ class ApiTests(unittest.TestCase):
             ranked = json.loads(ranked_path.read_text(encoding='utf-8'))
             for row in ranked:
                 row['valid_until'] = time.time() - 1
+            # This fixture intentionally corrupts an immutable publication.
+            # Windows enforces the read-only file bit even for replacement.
+            ranked_path.chmod(0o600)
             p.atomic(ranked_path, json.dumps(ranked))
             tampered = client.get('/status').json()
             self.assertEqual(tampered['available'], 0)

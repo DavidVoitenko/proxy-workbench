@@ -58,7 +58,7 @@ class PrefilterTests(unittest.IsolatedAsyncioTestCase):
         progress = []
         started = time.monotonic()
         await p.scan(self.db, config(), workers=2, rate=0, probe=self.probe, progress=False, min_success=1,
-                     prefilter=16, prefilter_timeout=1, on_progress=progress.append)
+                     prefilter=16, prefilter_timeout=.05, on_progress=progress.append)
         self.assertLess(time.monotonic() - started, 10)
         self.assertEqual(self.probed, [self.live])
         rows = self.rows()
@@ -68,7 +68,8 @@ class PrefilterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((progress[-1]['checked'], progress[-1]['passed'], progress[-1]['unreachable']), (41, 1, 40))
         # Resuming the same profile has nothing left to do.
         self.probed.clear()
-        await p.scan(self.db, config(), workers=2, rate=0, probe=self.probe, progress=False, prefilter=16)
+        await p.scan(self.db, config(), workers=2, rate=0, probe=self.probe, progress=False,
+                     prefilter=16, prefilter_timeout=.05)
         self.assertEqual(self.probed, [])
 
     async def test_want_stops_both_stages(self):

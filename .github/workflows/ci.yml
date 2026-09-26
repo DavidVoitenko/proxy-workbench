@@ -22,7 +22,7 @@ env:
 
 jobs:
   local-mock-unit-tests:
-    name: Python ${{ matrix.python-version }} / ${{ matrix.os }}
+    name: Python ${{ matrix.python-version }} / ${{ matrix.os }}${{ matrix.shard-count > 1 && format(' / shard {0}', matrix.shard-index) || '' }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     strategy:
@@ -31,11 +31,22 @@ jobs:
         os:
           - ubuntu-latest
           - macos-latest
-          - windows-latest
         python-version:
           - "3.11"
           - "3.12"
           - "3.14"
+        shard-index: [0]
+        shard-count: [1]
+        include:
+          - {os: windows-latest, python-version: "3.11", shard-index: 0, shard-count: 3}
+          - {os: windows-latest, python-version: "3.11", shard-index: 1, shard-count: 3}
+          - {os: windows-latest, python-version: "3.11", shard-index: 2, shard-count: 3}
+          - {os: windows-latest, python-version: "3.12", shard-index: 0, shard-count: 3}
+          - {os: windows-latest, python-version: "3.12", shard-index: 1, shard-count: 3}
+          - {os: windows-latest, python-version: "3.12", shard-index: 2, shard-count: 3}
+          - {os: windows-latest, python-version: "3.14", shard-index: 0, shard-count: 3}
+          - {os: windows-latest, python-version: "3.14", shard-index: 1, shard-count: 3}
+          - {os: windows-latest, python-version: "3.14", shard-index: 2, shard-count: 3}
 
     steps:
       - name: Check out source
@@ -59,7 +70,7 @@ jobs:
           HTTP_PROXY: ""
           HTTPS_PROXY: ""
           NO_PROXY: "127.0.0.1,localhost"
-        run: python packaging/run_tests.py
+        run: python packaging/run_tests.py --shard-index ${{ matrix.shard-index }} --shard-count ${{ matrix.shard-count }}
 
       - name: Check UI JavaScript syntax
         run: node --check proxy_workbench/ui/app.js

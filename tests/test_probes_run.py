@@ -7,6 +7,7 @@ import asyncio
 import json
 import sys
 import unittest
+from unittest import mock
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -198,17 +199,22 @@ class RetryTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_backoff_is_waited_between_attempts(self):
         async def slow_failure(request):
-            if len(wire.calls) < 2:
+            if len(wire.calls) < 3:
                 return pr.ProbeResponse(code=pr.CONNECT_TIMEOUT, stage='tcp')
             return ok()
 
         wire = transport(slow_failure)
-        start = asyncio.get_running_loop().time()
-        result = await pr.run_probe(target(), options(attempts=3, backoff_s=0.05, backoff_factor=2.0), wire)
-        elapsed = asyncio.get_running_loop().time() - start
+        waits = []
+
+        async def wait(delay):
+            waits.append((delay, len(wire.calls)))
+
+        with mock.patch.object(pr.asyncio, 'sleep', side_effect=wait) as sleep:
+            result = await pr.run_probe(target(), options(attempts=3, backoff_s=0.05, backoff_factor=2.0), wire)
         self.assertTrue(result.ok)
-        self.assertGreaterEqual(elapsed, 0.05)
-        self.assertLess(elapsed, 0.5)
+        self.assertEqual(result.attempts, 3)
+        self.assertEqual(sleep.await_count, 2)
+        self.assertEqual(waits, [(0.05, 1), (0.1, 2)])
 
     async def test_the_whole_probe_deadline_covers_every_attempt(self):
         async def hang(request):

@@ -144,6 +144,7 @@ class PauseAndBudgetRoundTripTests(unittest.TestCase):
         # The other half of the same property: the new columns must not freeze
         # every schedule by making `paused` read as truthy.
         conn = self.reopen()
+        self.addCleanup(conn.close)
         store = scheduler.SqliteScheduleStore(conn)
         store.save_spec(a_spec())
         engine = scheduler.Scheduler(store=store, clock=lambda: T0,
@@ -156,6 +157,7 @@ class PauseAndBudgetRoundTripTests(unittest.TestCase):
 
     def test_a_row_written_before_the_migration_reads_as_not_paused(self):
         conn = self.reopen()
+        self.addCleanup(conn.close)
         conn.execute("INSERT INTO schedules(id, pool_id, kind, interval_minutes, enabled)"
                      " VALUES ('legacy', NULL, 'interval', 60, 1)")
         state = scheduler.SqliteScheduleStore(conn).load_state("legacy")
@@ -165,6 +167,7 @@ class PauseAndBudgetRoundTripTests(unittest.TestCase):
 
     def test_the_run_history_keeps_its_reason_and_the_missed_flag(self):
         conn = self.reopen()
+        self.addCleanup(conn.close)
         store = scheduler.SqliteScheduleStore(conn)
         store.save_spec(a_spec())
         run = scheduler.RunRequest(schedule_id=SCHEDULE_ID, run_id="r1", reason="due",
