@@ -133,5 +133,52 @@ class RecordLimitIsReportedAsPartialTest(unittest.TestCase):
         self.assertIsNone(parsed.get('truncated'))
 
 
+
+class NotModifiedServesTheStoredSetTest(unittest.TestCase):
+    """304 is not an empty answer: the stored set is still what the source offers."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.data = Path(self.temp.name)
+        self.hits = 0
+        self.body = b'11.0.0.1:8080\n11.0.0.2:3128\n'
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    async def _server(self, reader, writer):
+        self.hits += 1
+        request = await reader.read(2048)
+        if b'If-None-Match' in request or b'If-Modified-Since' in request:
+            writer.write(b'HTTP/1.1 304 Not Modified\r\nETag: "abc"\r\n\r\n')
+        else:
+            writer.write(b'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nETag: "abc"\r\n'
+                         b'Content-Length: %d\r\n\r\n' % len(self.body) + self.body)
+        await writer.drain()
+        writer.close()
+
+    def test_a_second_run_reports_the_stored_rows_not_zero(self):
+        async def scenario():
+            server = await asyncio.start_server(self._server, '127.0.0.1', 0)
+            url = 'http://127.0.0.1:%d/list.txt' % server.sockets[0].getsockname()[1]
+            db = p.open_db(self.data / 't.sqlite3')
+            try:
+                first = await p.collect(db, [url], [], 30, allow_private_sources=True)
+                second = await p.collect(db, [url], [], 30, allow_private_sources=True)
+            finally:
+                server.close()
+                db.close()
+            return first['sources'][0], second['sources'][0]
+
+        first, second = asyncio.run(scenario())
+        self.assertEqual(first['rows'], 2)
+        self.assertEqual(first['http_state'], 'http_2xx_nonempty')
+        self.assertFalse(first.get('served_from_cache'))
+        self.assertEqual(second['http_state'], 'not_modified')
+        self.assertEqual(second['rows'], 2, '304 не должен обнулять данные источника')
+        self.assertTrue(second.get('served_from_cache'))
+        self.assertIsNotNone(second.get('cache_age_seconds'))
+        self.assertEqual(self.hits, 2, 'условный запрос должен уходить ровно один раз за прогон')
+
 if __name__ == '__main__':
     unittest.main()
