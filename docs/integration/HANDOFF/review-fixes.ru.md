@@ -276,7 +276,7 @@ resource scope, и явно названное различие пароля ш�
 | --- | --- | --- |
 | `tests/test_db_migrations.py` | `read_header` ожидал 14; список миграций `range(15)`; ключ `RESULTS_NEW_KEY`; утверждение «повторная проверка в новом job — новая строка»; payload legacy-строки оставался `{"score": 80}` | версия из `db.SCHEMA_VERSION`; ключ `RESULTS_KEY`; повторная проверка **заменяет** строку; проверяется, что восстановленное происхождение дошло до payload, а `network_id`/`valid_until` остались пустыми |
 | `tests/test_db_retention.py` | фикстура писала шесть разных `proxy` с **одним** `endpoint_id` и одним `access_id` | каждая строка получила свой endpoint и свой access; под новым ключом старая фикстура нарушала его смысл (шесть измерений одного адреса) |
-| `tests/test_apiv1_control.py` | `POST /v1/pools/p1/refill` ожидал 202 | ожидает 200: refill локален, ограничен и отвечает статусом результата, а не job id, который ни на что не указывал |
+| `tests/test_apiv1_control.py` | `POST /v1/pools/p1/refill` ожидал 202 | ожидает 200: refill локален, ограничен и отвечает статусом результата, а не job id, который ни на что не указывал. Отдельно: `assertTrue(running.is_set())` заменён на `running.wait(2)` — гонка с запуском потока фейка, а не проверка поведения |
 | `proxy_workbench/openapi.json` | снимок таблицы маршрутов | перегенерирован из `apiv1.openapi_document()` после изменения деклараций `pools.refill`/`pools.recheck` |
 
 ---
@@ -422,13 +422,16 @@ bootstrap** — GUI должен либо дать его на панели Help
    угадывает папку.
 5. **Пулы.** `POST /v1/pools/{id}/refill` больше не 202, а 200. Клиент, который ждал job id
    для refill, должен читать `state`/`served` из ответа.
-6. **Плановый прогон.** Три теста падали в полном наборе по одному разу каждый и прошли в
-   изоляции при повторных запусках: `test_gateway_rotation.RotationTests.test_random_spreads_over_every_candidate`
-   (утверждение без временной границы), `test_apiv1_control.ControlTests.test_long_operations_answer_202_and_do_not_hold_the_request`
-   (утверждение `elapsed < 0.3` при параллельной нагрузке) и
-   `test_secrets_verifier.VerifierTests.test_comparison_does_not_stop_at_the_first_wrong_digest`
-   (подмена одного символа дайджеста; `proxy_workbench/secrets.py` этой сессией не менялся).
-   Из них только второй содержит явную временную границу. Два финальных полных прогона подряд:
-   первый — `FAILED (failures=1, skipped=1)` на третьем тесте из списка, второй —
-   `OK (skipped=1)`. Это существующая хрупкость отдельных тестов, а не регрессия; владельцу
-   этих тестов стоит убрать зависимость от порядка и времени.
+6. **Плановый прогон.** Полный набор падал в этой сессии трижды, каждый раз по одному
+   тесту, и каждый раз проходил в изоляции и в следующем полном прогоне:
+   `test_apiv1_control.ControlTests.test_long_operations_answer_202_and_do_not_hold_the_request`,
+   `test_gateway_rotation.RotationTests.test_random_spreads_over_every_candidate` и
+   `test_secrets_verifier.VerifierTests.test_comparison_does_not_stop_at_the_first_wrong_digest`.
+   Первый оказался **гонкой в самом тесте**: `assertTrue(self.service.running.is_set())`
+   читало событие до того, как планировщик запускал рабочий поток фейка, — утверждение
+   исправлено на `running.wait(2)`, тем же приёмом, который файл уже использует в конце
+   того же теста. Второй и третий остались: первый полагается на то, что случайная ротация
+   при конечном числе попыток никого не обойдёт, второй — на подмене одного символа
+   дайджеста (`proxy_workbench/secrets.py` этой сессией не менялся). **Три полных прогона
+   подряд после исправления гонки: `Ran 2437 tests … OK (skipped=1)` ×3.** Владельцам двух
+   оставшихся тестов стоит убрать зависимость от случайности.
