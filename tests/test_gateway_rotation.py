@@ -27,11 +27,17 @@ class RotationTests(GatewayCase):
         ups = [await self.socks_upstream('socks5') for _ in range(3)]
         self.publish([up.url for up in ups])
         _server, address = await self.start(strategy='random')
-        for _ in range(9):
+        # 9 draws from 3 candidates cover all of them only ~92% of the time, so
+        # the old count failed roughly one run in twelve for no product reason.
+        # 30 draws make a miss ~6e-6, and the second assertion catches the real
+        # failure mode this test exists for: rotation collapsing onto one proxy.
+        for _ in range(30):
             granted, _reader, writer = await self.socks_client(address)
             self.assertTrue(granted)
             await shutdown(writer)
         self.assertTrue(all(up.connections for up in ups), 'random must not starve a candidate')
+        self.assertLess(max(up.connections for up in ups), 30,
+                        'random must spread, not hand every client to one proxy')
 
     async def test_unknown_strategy_is_refused(self):
         with self.assertRaises(ValueError):

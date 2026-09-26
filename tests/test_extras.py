@@ -118,9 +118,15 @@ class SingboxTests(unittest.TestCase):
         self.assertEqual(second['type'], 'http')
         self.assertEqual(config['route']['final'], 'auto')
         empty = json.loads(formats.singbox([]))
-        self.assertEqual(empty['outbounds'][0]['type'], 'block')
-        self.assertEqual(empty['route']['final'], 'blocked')
+        # An empty set must fail closed without inventing a DIRECT outbound.
+        # sing-box 1.11 moved special outbounds to rule actions, so the reject is
+        # a documented `action: reject` rule and the outbounds list is empty —
+        # a legacy `type: block` outbound is what this replaced.
         self.assertNotIn('direct', json.dumps(empty))
+        self.assertNotIn('block', json.dumps(empty))
+        self.assertEqual([rule.get('action') for rule in empty['route'].get('rules', [])],
+                         ['reject'])
+        self.assertFalse([ob for ob in empty['outbounds'] if ob.get('type') not in ('selector',)])
 
 
 if __name__ == '__main__':

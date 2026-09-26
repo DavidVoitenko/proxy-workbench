@@ -136,16 +136,34 @@ class RetentionTests(unittest.TestCase):
 
     def test_vacuum_is_opt_in(self):
         self.seed()
-        pages_before = self.conn.execute("PRAGMA page_count").fetchone()[0]
         without = db.apply_retention(self.conn, db.RetentionPolicy(), now=self.now)
         self.assertFalse(without.vacuumed)
         report = db.apply_retention(
             self.conn, db.RetentionPolicy(expired_only=False, keep_newest=1),
             now=self.now, vacuum=True)
         self.assertTrue(report.vacuumed)
-        self.assertLessEqual(self.conn.execute("PRAGMA page_count").fetchone()[0], pages_before)
         self.assertEqual(self.conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
         self.assertEqual(report.to_dict()["vacuumed"], True)
+
+    def test_vacuum_reclaims_space(self):
+        # "opt-in" says vacuuming is a choice; this says the choice pays off.
+        # The seeded fixture is far too small to reclaim anything, and the
+        # results table's key has changed across migrations, so the space is
+        # created in a scratch table that this test owns outright.
+        self.seed()
+        self.conn.execute("CREATE TABLE scratch_bulk (id INTEGER PRIMARY KEY, blob TEXT)")
+        self.conn.executemany(
+            "INSERT INTO scratch_bulk (blob) VALUES (?)",
+            [('%s' % ('x' * 900),) for _ in range(3000)])
+        self.conn.commit()
+        bloated = self.conn.execute("PRAGMA page_count").fetchone()[0]
+        self.assertGreater(bloated, 100, 'the fixture must be big enough for a reclaim to show')
+        self.conn.execute("DELETE FROM scratch_bulk")
+        self.conn.execute("DROP TABLE scratch_bulk")
+        self.conn.commit()
+        db.apply_retention(self.conn, db.RetentionPolicy(), now=self.now, vacuum=True)
+        self.assertLess(self.conn.execute("PRAGMA page_count").fetchone()[0], bloated)
+        self.assertEqual(self.conn.execute("PRAGMA integrity_check").fetchone()[0], "ok")
 
     def test_policy_rejects_unknown_targets_and_negative_values(self):
         with self.assertRaises(db.RetentionError):
