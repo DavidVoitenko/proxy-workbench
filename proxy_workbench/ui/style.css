@@ -12168,3 +12168,298 @@ html.theme-anim, html.theme-anim *, html.theme-anim *::before, html.theme-anim *
 .hstack-8 { display: flex; align-items: center; gap: 8px; }
 .inline-label { font-size: 11.5px; font-weight: 600; color: var(--ink, #f8fafc); }
 .button.compact { height: 32px; font-size: 12px; padding: 0 10px; }
+
+/* ── Element pass (round 3): every control, every state ─────────────────── */
+/* Toggle switch: the hidden checkbox is 0x0 — put the focus ring on the track */
+.toggle-switch-input:focus-visible + .toggle-switch-slider {
+  outline: 2px solid var(--teal, #34d399);
+  outline-offset: 2px;
+}
+/* Re-check buttons carry text; the 26px override layer clipped it */
+.recheck-btn {
+  width: auto;
+  min-width: 26px;
+  padding: 0 8px;
+  white-space: nowrap;
+}
+/* View tabs must never clip their counters */
+.view-tab { white-space: nowrap; }
+/* Disclosure summaries are clickable */
+summary { cursor: pointer; }
+summary:focus-visible { outline: 2px solid var(--teal, #34d399); outline-offset: 2px; border-radius: 6px; }
+/* Narrow screens: no horizontal page scroll, controls wrap instead */
+@media (max-width: 680px) {
+  .view-tabs { overflow-x: auto; max-width: 100%; scrollbar-width: thin; }
+  .results-compact-actions { flex-wrap: wrap; }
+  .header-actions { flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+  .local-badge { padding: 3px 8px; }
+  .local-badge [data-i18n] { max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  body { overflow-x: clip; }
+}
+
+/* Service rows: let the compact row reflow instead of overflowing */
+@media (max-width: 680px) {
+  .target-main-row { flex-wrap: wrap; }
+  .target-url-group { flex: 1 1 100%; min-width: 0; }
+  .target-proto-select { width: 96px !important; max-width: 96px !important; flex: 0 0 96px; }
+  .target-url-input { flex: 1 1 auto; min-width: 0; }
+  .target-col-method, .target-col-status { flex: 0 0 auto; }
+  .targets-header-actions { flex-wrap: wrap; max-width: 100%; }
+}
+
+/* Mobile: the sticky monitor with its own 728px scroll container must not
+   cover the service rows — on narrow screens it becomes a normal block. */
+@media (max-width: 900px) {
+  .monitor-column {
+    position: static;
+    top: auto;
+    height: auto;
+    max-height: none;
+    overflow: visible;
+  }
+}
+/* View tabs: never shrink below their content (bold active text overflowed) */
+.view-tab { flex-shrink: 0; }
+
+/* ── States round 3: focus/hover/active for controls the base forgot ────── */
+.gw-tab-btn:focus-visible,
+.filter-chip:focus-visible,
+.segmented-btn:focus-visible,
+.country-chip-remove:focus-visible {
+  outline: 2px solid var(--teal, #34d399);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+.gw-tab-btn:not(.active):hover,
+.filter-chip:not(.active):hover,
+.segmented-btn:not(.active):hover {
+  background: var(--bg-card-hover, #151e2e);
+  border-color: var(--line-strong, rgba(255, 255, 255, 0.16));
+}
+.gw-tab-btn:not(.active):active,
+.filter-chip:not(.active):active,
+.segmented-btn:not(.active):active {
+  transform: scale(0.97);
+}
+.country-chip-remove:hover {
+  color: var(--rose, #fb7185);
+  background: rgba(251, 113, 133, 0.12);
+}
+.gw-tab-btn:disabled, .segmented-btn:disabled, .filter-chip:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ==========================================================================
+   Import preview, pools/schedules, API keys and storage maintenance.
+   Additive only: these are the same surfaces the pages already use
+   (card, catalog-row/catalog-cell, badge, hint, button chip) plus the few
+   layout helpers the new lists need. No existing rule is redefined.
+   ========================================================================== */
+.mono {
+  font-family: var(--font-mono);
+}
+
+.maint-block {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.maint-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 8px 0;
+}
+
+.maint-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 8px;
+  border-radius: var(--radius-xs, 4px);
+  background: var(--bg-surface);
+  font-size: 12px;
+}
+
+.maint-row.is-kept {
+  background: transparent;
+  border: 1px dashed var(--line-strong, rgba(255, 255, 255, 0.16));
+  color: var(--muted);
+}
+
+.maint-name {
+  font-family: var(--font-mono);
+  word-break: break-all;
+}
+
+.maint-size {
+  flex-shrink: 0;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.maint-subhead {
+  margin: 12px 0 4px;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.imp-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border-radius: var(--radius-sm, 6px);
+  background: var(--bg-surface);
+}
+
+.imp-summary-line {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.imp-counters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.imp-counter {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 3px 9px;
+  border-radius: var(--radius-full, 9999px);
+  background: var(--bg-surface-elevated);
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.imp-counter b {
+  color: var(--text, #e6edf6);
+  font-size: 12px;
+}
+
+.imp-rejected {
+  margin-top: 12px;
+}
+
+.imp-rejected h4 {
+  margin: 0 0 6px;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.imp-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.imp-table th {
+  text-align: left;
+  padding: 6px 8px;
+  color: var(--muted);
+  font-weight: 600;
+  border-bottom: 1px solid var(--line);
+}
+
+.imp-table td {
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+
+.imp-table td.mono {
+  font-family: var(--font-mono);
+  word-break: break-all;
+  color: var(--muted);
+}
+
+.permissions-box {
+  margin: 14px 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm, 6px);
+}
+
+.permissions-box > legend {
+  padding: 0 6px;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+#keys-permissions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.perm-group {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs, 4px);
+}
+
+.perm-group > legend {
+  padding: 0 4px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.perm-items {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.perm-items .check-label span {
+  font-size: 11px;
+}
+
+.field-warn span {
+  color: var(--amber, #f59e0b);
+}
+
+.dialog-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 0 14px;
+}
+
+.pool-row {
+  cursor: default;
+}
+
+#keys-secret-value {
+  user-select: all;
+  color: var(--text, #e6edf6);
+}
+
+#retention-card .field-grid,
+#restore-card .field-grid,
+#import-card .field-grid,
+#keys-create-card .field-grid,
+#keys-bootstrap-card .field-grid,
+#gwb-apply ~ .field-grid {
+  align-items: end;
+}
