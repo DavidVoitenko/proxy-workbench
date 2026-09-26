@@ -16,6 +16,7 @@ probe, and the tests that exercise it inject a fake runner instead.
 """
 from __future__ import annotations
 
+import dataclasses
 import sqlite3
 import tempfile
 import unittest
@@ -709,13 +710,21 @@ class SqliteStoreTest(unittest.TestCase):
             self.assertNotIn(forbidden, source,
                              f'the module must not be able to send anything by accident')
 
-    def test_a_pause_and_a_spent_budget_are_reported_as_lost_when_the_schema_cannot_hold_them(self):
-        """The honest report of a gap the migrator has not closed yet.
+    def test_a_pause_and_a_spent_budget_survive_a_restart_and_a_spec_edit(self):
+        """F15 closed: the schema holds them, and nothing quietly wipes them.
 
-        ``schedules`` as ``db.migrate()`` creates it has no ``paused`` and no
-        ``counters_json`` column, so a restart silently forgets both.  A budget
-        that resets itself is worse than no budget, so the module says so instead
-        of pretending the limit is enforced.
+        This test used to be named after the gap it reported --
+        ``..._are_reported_as_lost_when_the_schema_cannot_hold_them`` -- and
+        asserted ``self.assertFalse(after.state('nightly').paused, 'this is the
+        defect being reported')``.  It was an honest report of a real defect, and
+        two things have since fixed it: migration 17 added ``paused`` and
+        ``counters_json`` to ``schedules``, and ``save_spec`` now upserts instead
+        of ``INSERT OR REPLACE`` (which is DELETE + INSERT in SQLite and reset
+        every column it did not name).  The defect is gone, so an assertion that
+        requires the pause to be forgotten now requires the bug.
+
+        The round trip below is the one that matters, and it covers both doors:
+        the process restart *and* the user editing the interval.
         """
         path = self._migrated()
         conn = sqlite3.connect(str(path), isolation_level=None)
@@ -734,17 +743,29 @@ class SqliteStoreTest(unittest.TestCase):
         engine.pause('nightly', at=clock.now)
         conn.commit()
 
+        # Nothing is lost any more, and the module says so instead of guessing.
         persistence = engine.persistence()
-        self.assertEqual(sorted(persistence['lost_on_restart']), ['counters', 'paused'])
-        self.assertIn('paused', persistence['requested_columns']['schedules'])
+        self.assertEqual(list(persistence['lost_on_restart']), [])
+        self.assertTrue(persistence['persists_runtime_state'])
+        self.assertTrue(persistence['persists_counters'])
+
+        # Door one: the user edits the interval.  `save_spec` used to wipe both.
+        spec = next(item for item in engine.list() if item.id == 'nightly')
+        store.save_spec(dataclasses.replace(spec, interval_minutes=60))
+        self.assertTrue(store.load_state('nightly').paused)
+        self.assertEqual(store.load_state('nightly').counters.requests, 3)
 
         conn.close()
         reopened_conn = sqlite3.connect(str(path), isolation_level=None)
         self.addCleanup(reopened_conn.close)
         after = sched.Scheduler(store=sched.SqliteScheduleStore(reopened_conn),
                                 clock=clock, power_reader=NoPower())
-        self.assertFalse(after.state('nightly').paused, 'this is the defect being reported')
-        self.assertEqual(after.state('nightly').counters.requests, 0)
+        # Door two: the process is gone and comes back.
+        self.assertTrue(after.state('nightly').paused)
+        self.assertEqual(after.state('nightly').pause_reason, 'paused_user')
+        self.assertEqual(after.state('nightly').counters.requests, 3)
+        self.assertEqual(tuple(after.tick().run_requests), (),
+                         'a paused schedule does not run and does not spend')
 
     def test_the_last_run_survives_as_the_anchor_of_the_interval_grid(self):
         """What the contract schema *can* hold, it does hold."""

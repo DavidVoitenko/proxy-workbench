@@ -227,17 +227,21 @@ async def _validate_source_destination(value, allow_private=False):
 
 
 @asynccontextmanager
-async def _source_stream(client, url, allow_private=False):
+async def _source_stream(client, url, allow_private=False, headers=None):
     _, hostname, _, address = await _validate_source_destination(url, allow_private)
+    # ``If-None-Match``/``If-Modified-Since`` are how a 304 happens at all, so
+    # the conditional headers travel with the very first request of a source
+    # whose validators were stored by the previous fetch (F13).
+    request_headers = dict(headers or {})
     if address is None:
-        async with client.stream('GET', url) as response:
+        async with client.stream('GET', url, headers=request_headers) as response:
             yield response
         return
     transport = PinnedSourceTransport(address, hostname)
     pinned_client = httpx.AsyncClient(transport=transport, trust_env=False, verify=TLS,
-                                       follow_redirects=False, timeout=15)
+                                      follow_redirects=False, timeout=15)
     try:
-        async with pinned_client.stream('GET', url) as response:
+        async with pinned_client.stream('GET', url, headers=request_headers) as response:
             yield response
     finally:
         await pinned_client.aclose()
@@ -719,6 +723,57 @@ def policy_min_success(value):
     return number if number > 0 else 1e-9
 
 
+_ENDPOINT_COLUMNS = '__pwk_endpoint_columns__'
+
+
+def endpoint_columns(conn):
+    """The writable columns of ``endpoints``, read once per connection.
+
+    ``db.upsert_endpoint`` asks ``PRAGMA table_info`` on *every* call, and a
+    collection of 50 000 results makes 500 020 of them: measured at ~7 us for
+    the PRAGMA against ~33 us for the whole call, so the column lookup alone is
+    a fifth of the most expensive single operation in a scan.
+
+    The cache is keyed on the connection *and* on ``PRAGMA schema_version``, so
+    a migration that runs while the connection is open invalidates it by itself
+    and cannot let a stale column set be written against a new schema.  The real
+    fix belongs in ``db.columns``; until then this is the same answer computed
+    once instead of once per row.
+    """
+    try:
+        version = conn.execute('PRAGMA schema_version').fetchone()[0]
+    except Exception:  # noqa: BLE001 - a closed or odd connection reads as "no cache"
+        return set(schema.columns(conn, 'endpoints')) - {'id', 'canonical'}
+    cached = getattr(conn, _ENDPOINT_COLUMNS, None)
+    if cached is not None and cached[0] == version:
+        return cached[1]
+    known = set(schema.columns(conn, 'endpoints')) - {'id', 'canonical'}
+    try:
+        setattr(conn, _ENDPOINT_COLUMNS, (version, known))
+    except AttributeError:  # a Connection subclass that forbids attributes
+        pass
+    return known
+
+
+def upsert_endpoint(conn, canonical, **fields):
+    """``db.upsert_endpoint`` with its column set cached (see above).
+
+    The statement is the module's own, unchanged: an INSERT that ignores a
+    conflict and an UPDATE that names only the columns that exist.
+    """
+    known = endpoint_columns(conn)
+    identifier = schema.endpoint_id(canonical)
+    written = {name: value for name, value in fields.items() if name in known}
+    conn.execute('INSERT OR IGNORE INTO endpoints(id, canonical) VALUES (?,?)',
+                 (identifier, canonical))
+    if written:
+        names = sorted(written)
+        assignments = ', '.join(f'"{name}" = ?' for name in names)
+        conn.execute(f'UPDATE endpoints SET {assignments} WHERE id = ?',
+                     [written[name] for name in names] + [identifier])
+    return identifier
+
+
 def ensure_collection(conn, collection_id=None):
     """Resolve a scope collection, refusing one that does not exist.
 
@@ -756,11 +811,211 @@ class Rate:
             self.next = time.monotonic() + self.interval
 
 
-SOURCE_KINDS = ('http', 'https', 'socks4', 'socks5', 'socks5h', 'auto', 'text', 'geonode', 'http-fields')
+#: The four formats the source catalog knows and the flat ``--sources`` list
+#: could not name.  ``source_spec`` accepted nine shapes; 31 catalog entries use
+#: one of these four, so ``collect`` could not reach them at all.  They are read
+#: by ``source_adapters`` with the profile the catalog carries, never by a
+#: second parser here.
+CATALOG_ADAPTER_KINDS = ('json-records', 'fields', 'page-json', 'html-table')
+SOURCE_KINDS = ('http', 'https', 'socks4', 'socks5', 'socks5h', 'auto', 'text', 'geonode',
+                'http-fields') + CATALOG_ADAPTER_KINDS
 DETECT_PROTOCOLS = ('http', 'socks4', 'socks5')
 # ip:port inside free text: "1.2.3.4:8080", "1.2.3.4 8080", CSV and HTML table cells.
 LOOSE_ADDRESS = re.compile(r'(?<![\d.])(?:(https?|socks[45]h?)://)?(\d{1,3}(?:\.\d{1,3}){3})'
                            r'(?::|\s*(?:</t[dh]>\s*<t[dh][^>]*>|[\s,;|])\s*)(\d{2,5})(?!\d)', re.I)
+
+#: Backoff after N consecutive failures of one source, and the quarantine that
+#: follows when they keep coming.  F13 asks for both: a provider that is down
+#: must not be asked every second, and a source that keeps failing must stop
+#: being asked at all until something says it is worth trying again.
+SOURCE_BACKOFF_S = (60.0, 300.0, 1800.0, 7200.0, 21600.0)
+SOURCE_QUARANTINE_AFTER = 3
+SOURCE_QUARANTINE_S = 3600.0
+
+
+class SourcePlan:
+    """One remote source: what it is, how its body is read, where it came from.
+
+    ``kind`` is either a flat-list kind (``http``, ``auto``, ``text``,
+    ``geonode``) or one of :data:`CATALOG_ADAPTER_KINDS`.  A catalog kind
+    carries the adapter profile the catalog record holds, so the catalog's own
+    knowledge of the format -- not a guess made at the fetch site -- decides how
+    the body is parsed.
+    """
+
+    __slots__ = ('source_id', 'url', 'kind', 'profile', 'family_id', 'publisher_id',
+                 'dataset_group', 'name', 'protocol', 'custom')
+
+    def __init__(self, source_id, url, kind='http', profile=None, *, family_id=None,
+                 publisher_id=None, dataset_group=None, name=None, protocol='http', custom=False):
+        self.source_id = str(source_id)
+        self.url = str(url)
+        self.kind = str(kind)
+        self.profile = profile
+        self.family_id = family_id
+        self.publisher_id = publisher_id
+        self.dataset_group = dataset_group
+        self.name = name or self.source_id
+        self.protocol = protocol
+        self.custom = bool(custom)
+
+    @property
+    def identity(self):
+        return {'source_id': self.source_id, 'name': self.name, 'kind': self.kind,
+                'family_id': self.family_id, 'publisher_id': self.publisher_id,
+                'dataset_group': self.dataset_group, 'custom': self.custom}
+
+    def as_dict(self):
+        return dict(self.identity, url=self.url)
+
+    def __repr__(self):
+        return f'SourcePlan(id={self.source_id!r}, kind={self.kind!r})'
+
+
+def sources_catalog(data_dir=None, path=None):
+    """The accepted source catalog, or the bundled one.
+
+    ``source_catalog.load_catalog`` validates and refuses a manifest that
+    promises what it does not carry, so a hand-edited file cannot push an
+    unparseable source into the collector.
+    """
+    from . import source_catalog
+    if path is not None:
+        return source_catalog.load_catalog(path)
+    if data_dir is not None:
+        candidate = Path(data_dir) / 'source-catalog.json'
+        if candidate.is_file():
+            try:
+                return source_catalog.load_catalog(candidate)
+            except (ValueError, OSError):
+                pass
+    return source_catalog.load_bundled()
+
+
+def _source_settings_path(data_dir):
+    return Path(data_dir) / 'gui-settings.json'
+
+
+def _source_settings(data_dir):
+    """The stored settings, or an empty document when there are none yet.
+
+    Read without ``gui`` so a headless collection never needs the interface;
+    a document that is not an object is refused instead of being replaced,
+    because silently overwriting a user's settings is worse than a collection
+    that cannot start.
+    """
+    path = _source_settings_path(data_dir)
+    try:
+        raw = path.read_text(encoding='utf-8')
+    except FileNotFoundError:
+        return {}
+    except (OSError, UnicodeError) as exc:
+        raise ValueError(f'Не удалось прочитать {path}: {exc}') from None
+    try:
+        stored = json.loads(raw) if raw.strip() else {}
+    except json.JSONDecodeError:
+        raise ValueError(f'Файл {path} повреждён; исправьте его перед продолжением.') from None
+    if not isinstance(stored, dict):
+        raise ValueError(f'Файл {path} должен содержать объект настроек.')
+    return stored
+
+
+def write_source_settings(data_dir, settings):
+    """Persist a selection through the one validator the GUI uses.
+
+    ``source_management.write_settings`` delegates to ``gui.read_settings`` /
+    ``gui.save_settings``, which do not exist in this tree (the GUI keeps them as
+    ``App.settings`` / ``App.save``), so the CLI writes the file itself -- with
+    the same ``gui.validate`` and the same atomic writer the GUI uses, so a
+    document written here and one written by the page are indistinguishable.
+    """
+    from . import gui
+    clean = gui.validate(settings)
+    atomic(_source_settings_path(data_dir),
+           json.dumps(clean, ensure_ascii=False, indent=2) + '\n')
+    return clean
+
+
+def source_selection_view(data_dir=None, catalog=None, *, query='', db=None, now=None, redact=True):
+    """One catalog view for the CLI and the API, built by ``source_management``.
+
+    The CLI, the GUI and ``/v1/sources`` all answer from this, so a source's
+    support status, dataset group, access kind and runtime state are the same
+    numbers everywhere (F13, F21).
+    """
+    from . import source_management
+    catalog = catalog if catalog is not None else sources_catalog(data_dir)
+    settings = source_catalog_for(data_dir) if data_dir is not None else {}
+    runtime = source_management.runtime_snapshot(db, now=now) if db is not None else None
+    return source_management.build_view(catalog, settings, runtime=runtime, query=query,
+                                        redact=redact, now=now, db=db)
+
+
+def source_catalog_for(data_dir):
+    """The migrated settings document the catalog selection lives in."""
+    from . import source_catalog
+    return source_catalog.migrate_settings(_source_settings(data_dir),
+                                           sources_catalog(data_dir))
+
+
+def catalog_source_plans(settings, catalog=None, *, include_disabled=False):
+    """The user's selection, resolved into fetchable plans (F13).
+
+    ``source_catalog.migrate_settings`` first, so a tree that still holds the
+    old flat URL list keeps every URL and every *pause* -- a source that was in
+    the list and switched off used to come back switched on, which silently put
+    a disabled list back into the run.
+    """
+    from . import source_catalog
+    if catalog is None:
+        catalog = sources_catalog()
+    settings = source_catalog.migrate_settings(settings, catalog)
+    selection = settings.get('source_selection', {}) if isinstance(settings, dict) else {}
+    specs = {}
+    for item in (selection.get('specs') or []):
+        if isinstance(item, dict) and item.get('id'):
+            specs[item['id']] = item
+    disabled = set(selection.get('download_disabled_ids') or ())
+    plans = []
+    for source_id in source_catalog.selection_ids(settings):
+        if source_id in disabled and not include_disabled:
+            continue
+        item = source_catalog.source_by_id(catalog, source_id)
+        if item is None or not source_catalog.collectable_source(item):
+            continue
+        plan = source_plan_of(item, source_id=source_id, spec=specs.get(source_id))
+        if plan is not None:
+            plans.append(plan)
+    return plans, settings
+
+
+def source_plan_of(item, source_id=None, spec=None):
+    """Turn one catalog record into a :class:`SourcePlan`, or ``None``."""
+    from . import source_catalog
+    if spec and spec.get('endpoints'):
+        item = spec
+    if not isinstance(item, dict):
+        return None
+    source_id = source_id or item.get('id')
+    endpoints = item.get('endpoints') or []
+    if not endpoints or not isinstance(endpoints[0], dict):
+        return None
+    url = endpoints[0].get('url') or ''
+    if not url:
+        return None
+    adapter = item.get('adapter') or {}
+    kind = str(adapter.get('kind') or 'line')
+    if kind not in SOURCE_KINDS:
+        return None
+    profile = None
+    if kind in CATALOG_ADAPTER_KINDS:
+        profile = {'kind': kind, 'profile': str(adapter.get('profile') or 'generic-v1'),
+                   'config': dict(adapter.get('config') or {})}
+    return SourcePlan(
+        source_id, url, kind, profile,
+        family_id=item.get('family_id'), publisher_id=(item.get('publisher') or {}).get('id'),
+        dataset_group=source_catalog.dataset_group_of(item), name=item.get('name'),
+        custom=bool(item.get('custom')))
 
 
 def loose_addresses(line):
@@ -769,6 +1024,21 @@ def loose_addresses(line):
 
 
 def source_spec(value):
+    """One flat-list source: a ``(kind, url)`` pair.
+
+    The shape is unchanged -- callers across the tree unpack two values -- and a
+    :class:`SourcePlan` passes through, so a caller that already resolved the
+    catalog does not have to render it back to a string the catalog cannot
+    express.  :func:`source_plan_of` is the companion for callers that need the
+    identity the plan carries.
+    """
+    if isinstance(value, SourcePlan):
+        return (value.kind, value.url)
+    if isinstance(value, dict):
+        plan = source_plan_of(value)
+        if plan is None:
+            raise ValueError('Некорректная запись источника.')
+        return (plan.kind, plan.url)
     if not isinstance(value, str):
         raise ValueError('Источник должен быть строкой URL или «socks4 URL» / «socks5 URL» / «geonode URL».')
     parts = value.strip().split(None, 1)
@@ -779,7 +1049,215 @@ def source_spec(value):
         _parse_source_url(url)
     except ValueError as exc:
         raise ValueError(f'Источник: {exc}.') from None
+    # A catalog kind named as a bare string carries no adapter profile, so it
+    # is accepted here (settings validation and the migration round-trip both
+    # go through this function) and refused at the one place that would have to
+    # guess the format: the fetch.  A settings document that could not be
+    # validated would be far worse than a source that says what it needs.
     return kind, url
+
+
+def _source_backoff_seconds(failures):
+    index = max(0, min(len(SOURCE_BACKOFF_S) - 1, int(failures) - 1))
+    return SOURCE_BACKOFF_S[index]
+
+
+def _source_headers(plan, state):
+    """Conditional-request headers from the stored state (F13: 304 matters)."""
+    headers = {}
+    etag = (state or {}).get('etag')
+    modified = (state or {}).get('last_modified')
+    if etag:
+        headers['If-None-Match'] = etag
+    if modified:
+        headers['If-Modified-Since'] = modified
+    return headers
+
+
+def _source_state_row(db, source_id, endpoint_id=''):
+    """The stored state of one source, whatever row factory the caller set.
+
+    ``sqlite3.Row``, a plain tuple and a dict row are all read here, because the
+    same connection is handed in by the CLI, the API and the tests and each of
+    them configures ``row_factory`` its own way.
+    """
+    cursor = db.execute('SELECT * FROM source_state WHERE source_id=? AND endpoint_id=?',
+                        (source_id, endpoint_id or ''))
+    row = cursor.fetchone()
+    if row is None:
+        return None
+    if isinstance(row, sqlite3.Row):
+        return dict(row)
+    if isinstance(row, dict):
+        return dict(row)
+    return dict(zip([item[0] for item in cursor.description], row))
+
+
+def record_source_observation(db, run_id, plan, endpoint_url, *, started_at, ended_at,
+                              http_state, parse_state, cache_state, outcome, status=None,
+                              attempts=0, pages=0, nbytes=0, received=0, recognized=0,
+                              accepted=0, rejected=0, duplicate=0, blocked=0,
+                              new_endpoints=0, partial=0, error=None, retryable=False,
+                              body_sha256=None, profile_digest=None, retry_after=None):
+    """One fetch of one source, with the counters F21 compares sources by.
+
+    Counters are about *this* fetch, not about the source in general: "raw",
+    "valid", "duplicate", "new".  A source that offered nothing is recorded as
+    a run that delivered nothing, which is a different statement from one that
+    was never tried.
+    """
+    db.execute(
+        'INSERT OR REPLACE INTO source_observation(run_id, source_id, endpoint_id, started_at, ended_at,'
+        ' http_state, parse_state, cache_state, outcome, status, attempts, pages, bytes, received,'
+        ' recognized, accepted, rejected, duplicate, duplicates_existing, blocked, new_endpoints,'
+        ' partial, error, retryable, body_sha256, fallback_used, profile_digest, retry_after)'
+        ' VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+        (run_id, plan.source_id, endpoint_url, started_at, ended_at, http_state, parse_state,
+         cache_state, outcome, status, int(attempts), int(pages), int(nbytes), int(received),
+         int(recognized), int(accepted), int(rejected), int(duplicate), 0, int(blocked),
+         int(new_endpoints), 1 if partial else 0, error, 1 if retryable else 0, body_sha256,
+         0, profile_digest, retry_after))
+
+
+def record_source_generation(db, plan, observation_id, endpoints, *, state, now, endpoint_url=None,
+                             profile_digest=None, estimated_bytes=0):
+    """An immutable snapshot of what one source offered this time.
+
+    A generation is a record of an answer, not a mutable list: a later fetch
+    that fails leaves it alone, which is what "last good" means and what keeps
+    a provider outage from wiping a working collection.
+    """
+    if state in ('304', 'not_modified'):
+        # A 304 is a validation of the transport, not a new answer.  Creating a
+        # generation here is what made "not modified" look like "delivered
+        # nothing" in the source views.
+        return None
+    cursor = db.execute(
+        'INSERT INTO source_generation(source_id, observation_id, state, active, last_good,'
+        ' created_at, record_count, estimated_bytes, profile_digest, endpoint_url)'
+        ' VALUES (?,?,?,0,0,?,?,?,?,?)',
+        (plan.source_id, observation_id, state, now, len(endpoints), int(estimated_bytes),
+         profile_digest, endpoint_url))
+    generation = cursor.lastrowid
+    db.executemany('INSERT OR IGNORE INTO source_generation_entry(generation_id, endpoint_id,'
+                   ' metadata_json) VALUES (?,?,?)',
+                   [(generation, value, None) for value in dict.fromkeys(endpoints)])
+    db.execute('UPDATE source_generation SET active=1, last_good=1 WHERE id=?', (generation,))
+    return generation
+
+
+def record_source_state(db, plan, endpoint_url, *, now, etag=None, last_modified=None,
+                        final_url=None, success=False, error=None, retry_after=None,
+                        previous=None, generation=None, not_modified=False):
+    """Cache validators, backoff and quarantine of one source (F13).
+
+    A successful fetch clears the backoff and the quarantine; three failures in
+    a row quarantine the source, so a provider that has gone away is asked
+    hourly instead of every collection.  The previous generation is kept and
+    only promoted to ``last_good`` on a real answer -- a 304 is a validation of
+    the transport, not a new one.
+    """
+    previous = previous or {}
+    failures = 0 if success else int(previous.get('consecutive_failures') or 0) + 1
+    backoff_until = None
+    quarantine_until = previous.get('quarantine_until')
+    if not success:
+        backoff_until = now + _source_backoff_seconds(failures)
+        if failures >= SOURCE_QUARANTINE_AFTER:
+            quarantine_until = now + SOURCE_QUARANTINE_S
+    current = previous.get('current_generation')
+    last_good = previous.get('last_good_generation')
+    if success and generation:
+        current, last_good = generation, generation
+    values = (plan.source_id, '', final_url or endpoint_url, etag, last_modified, now,
+              now if success else previous.get('last_success_at'),
+              now if success else previous.get('last_body_at'),
+              now if not_modified else previous.get('last_304_at'),
+              current, last_good, failures, backoff_until, quarantine_until, retry_after, error)
+    db.execute(
+        'INSERT INTO source_state(source_id, endpoint_id, final_url, etag, last_modified,'
+        ' last_attempt_at, last_success_at, last_body_at, last_304_at, current_generation,'
+        ' last_good_generation, consecutive_failures, backoff_until, quarantine_until, retry_after,'
+        ' last_error)'
+        ' VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)'
+        ' ON CONFLICT(source_id, endpoint_id) DO UPDATE SET'
+        ' final_url=excluded.final_url, etag=excluded.etag, last_modified=excluded.last_modified,'
+        ' last_attempt_at=excluded.last_attempt_at,'
+        ' last_success_at=excluded.last_success_at, last_body_at=excluded.last_body_at,'
+        ' last_304_at=excluded.last_304_at, current_generation=excluded.current_generation,'
+        ' last_good_generation=excluded.last_good_generation,'
+        ' consecutive_failures=excluded.consecutive_failures, backoff_until=excluded.backoff_until,'
+        ' quarantine_until=excluded.quarantine_until, retry_after=excluded.retry_after,'
+        ' last_error=excluded.last_error',
+        values)
+
+
+def record_source_identity(db, plan):
+    """Family, publisher and dataset of one source.
+
+    ``dataset_group`` is what F21 needs to tell "the same list published twice"
+    from "two independent publishers"; without it two byte-identical lists look
+    like independent corroboration.
+    """
+    db.execute('INSERT INTO source_identity(source_id, family_id, publisher_id, metadata_json)'
+               ' VALUES (?,?,?,?) ON CONFLICT(source_id) DO UPDATE SET'
+               ' family_id=excluded.family_id, publisher_id=excluded.publisher_id,'
+               ' metadata_json=excluded.metadata_json',
+               (plan.source_id, plan.family_id, plan.publisher_id,
+                json.dumps(plan.identity, sort_keys=True)))
+
+
+def source_contributions(db, source_ids=()):
+    """What each source actually contributed, for the source views (F21).
+
+    ``source_management.attach_contributions`` calls this by name and checks
+    that it exists, so an exclusive set and a shared set are computed from the
+    same numbers on every surface.
+    """
+    if not source_ids:
+        return {}
+    result = {}
+    for source_id in source_ids:
+        rows = db.execute('SELECT count(*) FROM candidate_seen WHERE source=?', (source_id,)).fetchone()[0]
+        result[source_id] = {'seen': int(rows)}
+    return result
+
+
+def _write_source_provenance(db, run_id, plan, url, *, started_at, clock, http_state, parse_state,
+                             outcome, status, attempts, pages, nbytes, received, recognized,
+                             accepted, rejected, duplicate, blocked, new_endpoints, partial,
+                             error, body_sha256, delivered, values, previous, final_url, not_modified,
+                             etag=None, last_modified=None):
+    """Observation, generation and cache state of one fetch, in that order.
+
+    The order matters and is the whole of "last good": the observation is
+    written first because the generation points at it, and the state is written
+    last because a generation id is what it has to store.  A failed or empty
+    fetch writes an observation and touches no generation, so the previous
+    answer survives a provider outage.
+    """
+    ended = clock()
+    cache_state = 'not_modified' if not_modified else ('last_good' if delivered else 'none')
+    record_source_observation(
+        db, run_id, plan, final_url or url, started_at=started_at, ended_at=ended,
+        http_state=http_state, parse_state=parse_state, cache_state=cache_state, outcome=outcome,
+        status=status, attempts=attempts, pages=pages, nbytes=nbytes, received=received,
+        recognized=recognized, accepted=accepted, rejected=rejected, duplicate=duplicate,
+        blocked=blocked, new_endpoints=new_endpoints, partial=partial, error=error,
+        body_sha256=body_sha256)
+    observation = db.execute('SELECT id FROM source_observation WHERE run_id=? AND source_id=?'
+                             ' AND endpoint_id=?', (run_id, plan.source_id, final_url or url)).fetchone()
+    observation_id = observation[0] if observation is not None else None
+    generation = None
+    if delivered:
+        generation = record_source_generation(
+            db, plan, observation_id, sorted(values), state=outcome, now=ended,
+            endpoint_url=final_url or url, estimated_bytes=nbytes)
+    record_source_state(db, plan, url, now=ended, etag=etag, last_modified=last_modified,
+                        final_url=final_url, success=delivered, error=error, previous=previous,
+                        generation=generation, not_modified=not_modified)
+    return {'observation_id': observation_id, 'generation_id': generation,
+            'cache_state': cache_state, 'outcome': outcome}
 
 
 async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
@@ -788,7 +1266,19 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                   max_source_line_bytes=DEFAULT_SOURCE_MAX_LINE_BYTES,
                   max_source_candidates=DEFAULT_SOURCE_MAX_CANDIDATES,
                   max_source_redirects=DEFAULT_SOURCE_MAX_REDIRECTS,
-                  collection_id=None, origin='public', allow_private_endpoints=False):
+                  collection_id=None, origin='public', allow_private_endpoints=False,
+                  plans=None, now=None, record_provenance=True):
+    """Download every source and put the addresses into one collection.
+
+    ``urls`` is the flat ``--sources`` list; ``plans`` is the same thing after
+    the source catalog resolved the user's selection.  Both go through
+    :func:`source_spec`, so one fetch path serves both and a catalog entry is
+    read by the adapter the catalog names for it.
+
+    What a source offered is recorded, not just consumed: an observation with
+    its counters, a generation (an immutable answer), and the cache validators
+    plus backoff and quarantine of the next attempt (F13, F21).
+    """
     if not isinstance(allow_private_sources, bool):
         raise ValueError('allow_private_sources: ожидается bool')
     if not isinstance(allow_private_endpoints, bool):
@@ -802,8 +1292,18 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
     reports = []
     total_rows = 0
     denylist = denylist or Denylist.empty()
-    urls = list(dict.fromkeys(urls))
-    specs = [source_spec(url) for url in urls]
+    clock = now or time.time
+    urls = list(dict.fromkeys(urls or ()))
+    specs = []
+    for value in list(urls) + list(plans or ()):
+        kind, url = source_spec(value)
+        if isinstance(value, SourcePlan):
+            specs.append((kind, url, value))
+        elif isinstance(value, dict):
+            specs.append((kind, url, source_plan_of(value)))
+        else:
+            specs.append((kind, url, None))
+    run_id = f'src-{int(clock() * 1000)}-{os.getpid()}'
     # Collecting into a named list writes membership there; the public source
     # lists keep filling the public base.  Nothing is ever copied between the two.
     collection_id = ensure_collection(db, collection_id)
@@ -813,11 +1313,11 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
     def publish():
         if on_progress:
             on_progress(dict(phase="collecting", sources_done=sum("source" in r for r in reports),
-                             sources_total=len(urls), sources=reports, raw_rows=total_rows,
+                             sources_total=len(specs), sources=reports, raw_rows=total_rows,
                              blocked=sum(r.get('blocked', 0) for r in reports),
                              candidates=db.execute("SELECT count(*) FROM candidates").fetchone()[0]))
 
-    def add(value, protocol='http', country=None, source=None, public_only=True):
+    def add(value, protocol='http', country=None, source=None, public_only=True, seen=None):
         value = value.strip()
         raw = value if '://' in value else protocol+'://'+value
         # A remote source never gets to name a hostname or a private address,
@@ -832,26 +1332,41 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
         # One endpoint entity per canonical address; the collection membership
         # is the scope, and the legacy ``candidates`` row keeps the old readers
         # working (CONTRACTS §1.2 rule 2, §3.3 migrations 1-2).
-        endpoint = schema.upsert_endpoint(db, proxy, country=country,
-                                          country_at=time.time() if country else None,
-                                          country_source='source' if country else None)
+        existed = db.execute('SELECT 1 FROM endpoints WHERE canonical=?', (proxy,)).fetchone() is not None
+        endpoint = upsert_endpoint(db, proxy, country=country,
+                                   country_at=time.time() if country else None,
+                                   country_source='source' if country else None)
         db.execute('INSERT OR IGNORE INTO candidates(proxy, endpoint_id) VALUES (?, ?)', (proxy, endpoint))
         schema.add_member(db, collection_id, endpoint, origin=origin)
         if source:
             # How many lists offer an address: rare ones are less crowded and tend to live longer.
+            duplicate = db.execute('SELECT 1 FROM candidate_seen WHERE proxy=? AND source=?',
+                                   (proxy, source)).fetchone() is not None
             db.execute('INSERT OR IGNORE INTO candidate_seen(proxy, source, endpoint_id) VALUES (?, ?, ?)',
                        (proxy, source, endpoint))
+            db.execute('INSERT OR REPLACE INTO membership_source(collection_id, endpoint_id, source_id,'
+                       ' origin, added_at, last_seen_at) VALUES (?,?,?,?,?,?)'
+                       ' ON CONFLICT(collection_id, endpoint_id, source_id) DO UPDATE SET'
+                       ' last_seen_at=excluded.last_seen_at',
+                       (collection_id, endpoint, source, origin, clock(), clock()))
+            if seen is not None:
+                if proxy in seen:
+                    if duplicate:
+                        seen['duplicate'] = seen.get('duplicate', 0) + 1
+                else:
+                    seen['new'] = seen.get('new', 0) + (0 if existed else 1)
+                    seen['values'].add(proxy)
         if country or source:
             record_candidate_meta(db, proxy, country and country.upper(), source)
         return 'accepted'
 
 
-    def add_detected(value, source=None, public_only=True):
+    def add_detected(value, source=None, public_only=True, seen=None):
         """Unlabeled addresses are tried as every protocol; the checks show which one works."""
         value = value.strip()
         if '://' in value:
-            return add(value, source=source, public_only=public_only)
-        outcomes = [add(value, protocol, source=source, public_only=public_only)
+            return add(value, source=source, public_only=public_only, seen=seen)
+        outcomes = [add(value, protocol, source=source, public_only=public_only, seen=seen)
                     for protocol in DETECT_PROTOCOLS]
         return next((o for o in ('accepted', 'blocked') if o in outcomes), 'invalid')
 
@@ -879,9 +1394,22 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
     gate = asyncio.Semaphore(8)
     async with httpx.AsyncClient(trust_env=False, verify=TLS, follow_redirects=False,
                                  timeout=15) as client:
-        async def fetch(index, kind, url):
+        async def fetch(index, kind, url, plan=None):
+            from . import source_adapters
             nonlocal total_rows
-            key = source_key(urls[index - 1])
+            plan = plan or SourcePlan(source_key(url), url, kind, custom=True)
+            if kind in CATALOG_ADAPTER_KINDS and not plan.profile:
+                # The string named a catalog format but carried no profile, so
+                # there is nothing to parse the body with.  Saying so is the
+                # only honest answer; guessing a parser is how a JSON page
+                # used to be reported as a broken list.
+                reports.append(dict(source=index, source_id=plan.source_id, rows=0, invalid=0,
+                                    blocked=0, pages=0, attempts=0, complete=False, format=kind,
+                                    error='SOURCE_ADAPTER_UNSUPPORTED'))
+                db.commit()
+                publish()
+                return
+            key = plan.source_id
             count = invalid = blocked = pages = attempts = 0
             candidate_count = 0
             endpoint_count = 0
@@ -890,6 +1418,32 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
             page = 1
             expected_total = None
             signatures = set()
+            started_at = clock()
+            state = _source_state_row(db, key) if record_provenance else None
+            seen = {'values': set(), 'new': 0, 'duplicate': 0}
+            received = recognized = status_code = 0
+            body_digest = None
+            final_url = url
+            not_modified = False
+            retry_after = None
+            parse_state = 'pending'
+            http_state = 'not_run'
+            response_etag = None
+            response_modified = None
+            if record_provenance:
+                record_source_identity(db, plan)
+            # A quarantined source is not asked at all: three failures in a row
+            # means the provider is gone, and asking again every collection
+            # spends the budget of the sources that are alive.
+            if state and (state.get('quarantine_until') or 0) > clock():
+                reports.append(dict(source=index, source_id=key, rows=0, invalid=0, blocked=0,
+                                    pages=0, attempts=0, complete=False, format=kind,
+                                    error='SOURCE_QUARANTINED',
+                                    quarantine_until=state.get('quarantine_until'),
+                                    next_attempt_at=state.get('quarantine_until')))
+                db.commit()
+                publish()
+                return
 
             def consume_candidate():
                 nonlocal candidate_count
@@ -904,7 +1458,7 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                     for address in loose_addresses(raw.decode('utf-8', errors='replace')):
                         consume_candidate()
                         count += 1
-                        outcome = add(address, source=key)
+                        outcome = add(address, source=key, seen=seen)
                         invalid += outcome == 'invalid'
                         blocked += outcome == 'blocked'
                     return
@@ -918,11 +1472,20 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                 count += 1
                 if kind == 'http-fields':
                     match = re.fullmatch(r"(\d{1,3}(?:\.\d{1,3}){3}:\d{1,5}):[A-Za-z][A-Za-z .'-]*", line.strip())
-                    outcome = add(match[1], source=key) if match else 'invalid'
+                    outcome = add(match[1], source=key, seen=seen) if match else 'invalid'
                 elif kind == 'auto':
-                    outcome = add_detected(line, source=key)
+                    outcome = add_detected(line, source=key, seen=seen)
+                elif kind in SCHEMES:
+                    outcome = add(line, kind, source=key, seen=seen)
+                elif kind == 'line':
+                    # The catalog's `line` adapter means a plain list of
+                    # addresses.  The protocol comes from the line when it
+                    # names one and is HTTP otherwise; trying every protocol on
+                    # every line is what `--detect-protocols` is for, and doing
+                    # it here would triple a remote list's footprint on a guess.
+                    outcome = add(line, source=key, seen=seen)
                 else:
-                    outcome = add(line, kind, source=key)
+                    outcome = add(line, kind, source=key, seen=seen)
                 invalid += outcome == 'invalid'
                 blocked += outcome == 'blocked'
 
@@ -946,18 +1509,70 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                         # GeoNode https denotes CONNECT capability.
                         endpoint_count += 1
                         outcome = add(f"{host}:{record.get('port')}", 'http' if protocol == 'https' else protocol,
-                                      record.get('country'), key)
+                                      record.get('country'), key, seen=seen)
                         accepted = accepted or outcome == 'accepted'
                         blocked_here = blocked_here or outcome == 'blocked'
                 if not accepted:
                     blocked += blocked_here
                     invalid += not blocked_here
 
-            async def request_source(request_url, expected_page=None):
+            def consume_adapter_records(result):
+                """Feed ``source_adapters`` records into the one membership writer.
+
+                The adapter decides what an address is (and what the publisher
+                *claims* about it); normalization, the denylist and the
+                collection stay here, so an adapter can never write straight
+                into the database or add a private address.
+                """
+                nonlocal count, invalid, blocked, recognized
+                for record in result.get('records') or ():
+                    if isinstance(record, str):
+                        value, country = record, None
+                    elif isinstance(record, dict):
+                        # `source_adapters` returns a normalized record:
+                        # `values` are the addresses it read, `declared` is what
+                        # the *publisher* claimed.  A claim is stored as a claim
+                        # (`country_source='source'`), never as a measurement.
+                        value = record.get('value') or ''
+                        alternatives = list(record.get('values') or ())
+                        declared = record.get('declared') if isinstance(record.get('declared'), dict) else {}
+                        country = declared.get('country') or record.get('country')
+                    else:
+                        continue
+                    if not value:
+                        continue
+                    consume_candidate()
+                    count += 1
+                    recognized += 1
+                    outcomes = []
+                    for candidate in ([value] + [item for item in alternatives if item != value]):
+                        scheme = str(candidate).split('://')[0] if '://' in str(candidate) else None
+                        outcomes.append(add(candidate, scheme if scheme in SCHEMES else 'http',
+                                            country, key, seen=seen))
+                    outcome = next((o for o in ('accepted', 'blocked') if o in outcomes), 'invalid')
+                    invalid += outcome == 'invalid'
+                    blocked += outcome == 'blocked'
+
+            async def request_source(request_url, expected_page=None, headers=None):
                 current_url = request_url
                 for redirect_count in range(max_source_redirects + 1):
-                    async with _source_stream(client, current_url, allow_private_sources) as response:
+                    async with _source_stream(client, current_url, allow_private_sources,
+                                              headers=headers) as response:
                         status = response.status_code
+                        # The validators the *response* carries are what make the
+                        # next conditional request possible; a digest of the body
+                        # is a different thing and would never match.
+                        nonlocal response_etag, response_modified, status_code
+                        response_etag = response.headers.get('etag')
+                        response_modified = response.headers.get('last-modified')
+                        if status == 304:
+                            # A 304 is a validation of the transport, not an
+                            # answer: nothing is parsed and, further down, no
+                            # new generation is written.
+                            nonlocal not_modified, final_url
+                            not_modified = True
+                            final_url = current_url
+                            return None
                         if status in SOURCE_REDIRECT_STATUSES:
                             location = response.headers.get('location')
                             location = location.strip() if isinstance(location, str) else location
@@ -978,6 +1593,18 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                         if 300 <= status < 400:
                             raise SourceFetchError('SOURCE_REDIRECT_INVALID')
                         response.raise_for_status()
+                        if kind in CATALOG_ADAPTER_KINDS:
+                            # The catalog formats are documents, not streams: the
+                            # adapter needs the whole page, and its own byte
+                            # budget is applied by `_read_bounded_body`.
+                            nonlocal parse_state
+                            body = await _read_bounded_body(response, budget, max_source_bytes)
+                            if not body.strip():
+                                # A 200 with no bytes is its own outcome, not a
+                                # broken format (area-sources §2.2).
+                                parse_state = 'empty'
+                                return None
+                            return body
                         if kind == 'geonode':
                             body = await _read_bounded_body(response, budget, max_source_bytes)
                             try:
@@ -1004,6 +1631,7 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                     data = None
                     succeeded = False
                     page_url = url
+                    headers = _source_headers(plan, state) if record_provenance else {}
                     if kind == 'geonode':
                         parsed = urlsplit(url)
                         query = dict(parse_qsl(parsed.query))
@@ -1014,7 +1642,7 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                         attempts += 1
                         try:
                             async with asyncio.timeout(timeout):
-                                data = await request_source(page_url, page)
+                                data = await request_source(page_url, page, headers)
                             succeeded = True
                             error = None
                             break
@@ -1029,6 +1657,41 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                     if not succeeded:
                         break
                     pages += 1
+                    if not_modified:
+                        # 304: nothing was parsed and nothing changed.  The run
+                        # ends here so a "not modified" answer can never be
+                        # mistaken for a page that delivered nothing.
+                        http_state = 'not_modified'
+                        break
+                    if kind in CATALOG_ADAPTER_KINDS:
+                        if data is None:
+                            # A 200 with no bytes: its own outcome, already
+                            # recorded as `empty` by `request_source`.
+                            break
+                        received = budget.get('used', 0)
+                        status_code = 200
+                        body_digest = hashlib.sha256(data).hexdigest()
+                        limits = {'max_bytes': max_source_bytes,
+                                  'max_records': max_source_candidates}
+                        try:
+                            result = source_adapters.parse_page(
+                                data, plan.profile or {'kind': kind},
+                                page_context={'page': page}, limits=limits)
+                        except source_adapters.AdapterError as exc:
+                            error = exc.args[0] if exc.args else 'SOURCE_ADAPTER_ERROR'
+                            # A document that is refused for exceeding its
+                            # budget is not a broken document, and saying so is
+                            # the difference between "raise the limit" and
+                            # "the source is malformed".
+                            parse_state = ('budget_exceeded'
+                                           if error in ('SOURCE_RECORD_LIMIT', 'SOURCE_TOO_LARGE')
+                                           else 'invalid')
+                            break
+                        parse_state = str(result.get('state') or 'complete')
+                        consume_adapter_records(result)
+                        if result.get('truncated'):
+                            error = result.get('reason') or 'SOURCE_RECORD_LIMIT'
+                        break
                     if kind != 'geonode':
                         break
                     batch = data['data']
@@ -1057,15 +1720,54 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                     db.commit()
                     await asyncio.sleep(.1)
             total_rows += count
-            reports.append(dict(source=index, rows=count, invalid=invalid, blocked=blocked, pages=pages,
-                                attempts=attempts, complete=error is None, error=error, format=kind))
+            if not not_modified and error is None and parse_state == 'pending':
+                parse_state = 'complete'
+            # The three fetch states the source views know
+            # (``source_management.FETCH_STATES``) are named here, not invented
+            # per report: a 200 with no addresses and a 200 that failed to parse
+            # are different statements about a source.
+            if not_modified:
+                http_state = 'not_modified'
+            elif error is None:
+                http_state = 'empty_body' if parse_state == 'empty' else 'http_2xx_nonempty'
+            elif parse_state == 'budget_exceeded' or status_code == 429:
+                # The transport worked; the budget did not fit.  Reporting it as
+                # `http_error` would send the user to look at a provider that
+                # answered perfectly.
+                http_state = 'http_429' if status_code == 429 else 'http_2xx_nonempty'
+            else:
+                http_state = 'http_error' if status_code else 'error'
+            delivered = not not_modified and error is None and count > 0
+            report = dict(source=index, source_id=key, rows=count, invalid=invalid, blocked=blocked,
+                          pages=pages, attempts=attempts, complete=error is None, error=error,
+                          format=kind, http_state=http_state, parse_state=parse_state,
+                          cache_state='none', new=seen['new'], duplicate=seen['duplicate'],
+                          accepted=len(seen['values']))
+            if record_provenance:
+                observation = _write_source_provenance(
+                    db, run_id, plan, url, started_at=started_at, clock=clock,
+                    http_state=http_state, parse_state=parse_state, outcome=(
+                        'not_modified' if not_modified else
+                        'empty' if parse_state == 'empty' else
+                        'partial' if report.get('error') == 'SOURCE_RECORD_LIMIT' else
+                        'delivered' if delivered else 'failed'),
+                    status=status_code or None, attempts=attempts, pages=pages,
+                    nbytes=budget.get('used', 0), received=received, recognized=recognized,
+                    accepted=len(seen['values']), rejected=invalid, duplicate=seen['duplicate'],
+                    blocked=blocked, new_endpoints=seen['new'],
+                    partial=error == 'SOURCE_RECORD_LIMIT', error=error,
+                    body_sha256=body_digest, delivered=delivered, values=seen['values'],
+                    etag=response_etag, last_modified=response_modified,
+                    previous=state, final_url=final_url, not_modified=not_modified)
+                report.update(observation)
+            reports.append(report)
             db.commit()
             publish()
             print(tr(f'Источник {index}: строк {count}, заблокировано {blocked}, страниц {pages}, ошибка {error or "нет"}',
                      f'Source {index}: rows {count}, blocked {blocked}, pages {pages}, error {error or "none"}'), flush=True)
         async with asyncio.TaskGroup() as group:
-            for index, (kind, url) in enumerate(specs, 1):
-                group.create_task(fetch(index, kind, url))
+            for index, (kind, url, plan) in enumerate(specs, 1):
+                group.create_task(fetch(index, kind, url, plan))
     db.commit()
     publish()
     return dict(raw_rows=total_rows, unique=db.execute('SELECT count(*) FROM candidates').fetchone()[0],
@@ -1191,6 +1893,343 @@ def proxy_client(proxy, config):
 def request_timeout(config):
     """Whole-request timeout with an optional shorter limit for connecting."""
     return httpx.Timeout(config['timeout'], connect=config.get('connect_timeout', config['timeout']))
+
+
+def _tunnel_host_port(url):
+    parsed = urlsplit(url)
+    if not parsed.hostname:
+        raise ValueError('URL без хоста')
+    return parsed.hostname, parsed.port or (443 if parsed.scheme == 'https' else 80)
+
+
+def _probe_stage_of(exc, stage='target'):
+    """The stage and stable code of a transport failure, from the one classifier."""
+    return diagnostics.classification(exc)
+
+
+def _ws_frame(payload, opcode=0x1):
+    """One masked client frame (RFC 6455 §5.3)."""
+    import os as _os
+    mask = _os.urandom(4)
+    masked = bytes(byte ^ mask[index % 4] for index, byte in enumerate(payload))
+    length = len(payload)
+    if length < 126:
+        head = bytes((0x80 | opcode, 0x80 | length))
+    elif length < 65536:
+        head = bytes((0x80 | opcode, 0x80 | 126)) + length.to_bytes(2, 'big')
+    else:
+        head = bytes((0x80 | opcode, 0x80 | 127)) + length.to_bytes(8, 'big')
+    return head + mask + masked
+
+
+def _ws_frames(buffer):
+    """Decode as many complete frames as the buffer holds; the rest is returned."""
+    out = []
+    while True:
+        if len(buffer) < 2:
+            break
+        first, second = buffer[0], buffer[1]
+        opcode = first & 0x0F
+        length = second & 0x7F
+        offset = 2
+        if length == 126:
+            if len(buffer) < offset + 2:
+                break
+            length = int.from_bytes(buffer[offset:offset + 2], 'big')
+            offset += 2
+        elif length == 127:
+            if len(buffer) < offset + 8:
+                break
+            length = int.from_bytes(buffer[offset:offset + 8], 'big')
+            offset += 8
+        if second & 0x80:
+            if len(buffer) < offset + 4:
+                break
+            offset += 4
+        if len(buffer) < offset + length:
+            break
+        out.append((opcode, buffer[offset:offset + length]))
+        buffer = buffer[offset + length:]
+    return out, buffer
+
+
+class Transport:
+    """The network seam ``probes.py`` measures through (F20, F01).
+
+    ``probes`` never opens a socket: it builds a request, hands it to one of
+    these four methods and interprets what comes back.  Everything the probe
+    ladder can measure has an entry point here, so an endpoint that cannot
+    carry a transfer is never recorded as if it did:
+
+    * :meth:`send` -- one request, bounded by ``ProbeRequest.max_bytes``;
+    * :meth:`download` -- a chunk-level :class:`probes.TransferTrace`, which is
+      what the throughput window is computed from;
+    * :meth:`websocket` -- a real RFC 6455 upgrade plus ping/pong;
+    * :meth:`hold` -- a connection that must stay open.
+
+    ``send`` and ``download`` go through ``httpx`` (the same client, the same
+    SOCKS4 transport and the same TLS context as the rest of the product);
+    ``websocket`` and ``hold`` need a raw socket, so the CONNECT is issued by
+    hand -- ``asyncio.open_connection`` has no proxy argument.
+    """
+
+    def __init__(self, proxy=None, config=None):
+        self.proxy = proxy
+        self.config = config or {}
+        self.calls = 0
+        self._keepalive = None
+
+    def _client(self, timeout, connect=None):
+        options = dict(trust_env=False, verify=TLS, follow_redirects=False,
+                       timeout=httpx.Timeout(timeout, connect=connect or timeout))
+        if self.proxy and self.proxy.startswith('socks4://'):
+            return httpx.AsyncClient(transport=socks4.transport(self.proxy, verify=TLS), **options)
+        if self.proxy:
+            options['proxy'] = self.proxy
+        return httpx.AsyncClient(**options)
+
+    # -- 1. a single bounded request -------------------------------------
+
+    async def send(self, request, *, options):
+        from . import probes
+        self.calls += 1
+        started = time.perf_counter()
+        try:
+            async with self._client(options.read_timeout_s, options.connect_timeout_s) as client:
+                async with client.stream(request.method, request.url,
+                                         headers=request.header_map(),
+                                         content=request.body) as response:
+                    first = time.perf_counter()
+                    body = bytearray()
+                    # A bounded chunk size is what makes the byte budget real: a
+                    # transport that only checked after a 64 KiB chunk would
+                    # overshoot the ceiling by that much.
+                    size = max(1, min(8192, request.max_bytes)) if request.max_bytes else 8192
+                    async for chunk in response.aiter_bytes(chunk_size=size):
+                        body.extend(chunk)
+                        if len(body) >= request.max_bytes:
+                            break
+                    finished = time.perf_counter()
+                    return probes.ProbeResponse(
+                        status=response.status_code, headers=tuple(response.headers.items()),
+                        body=bytes(body), url=str(response.url),
+                        connect_ms=round((first - started) * 1000, 2),
+                        handshake_ms=round((first - started) * 1000, 2),
+                        ttfb_ms=round((first - started) * 1000, 2),
+                        transfer_ms=round((finished - first) * 1000, 2),
+                        total_ms=round((finished - started) * 1000, 2))
+        except Exception as exc:  # a broken proxy raises more than httpx errors
+            stage, code = _probe_stage_of(exc)
+            return probes.ProbeResponse(code=code, stage=request.stage if stage is None else stage)
+
+    async def send_stage(self, request, *, options):
+        """``run_stage`` uses the same seam; the proxy address is the target."""
+        return await self.send(request, options=options)
+
+    # -- 2. a bounded download -------------------------------------------
+
+    async def download(self, target, *, options, reuse=False):
+        from . import probes
+        trace = probes.TransferTrace(url=target.url,
+                                     connection='reused' if reuse else 'cold')
+        started = time.perf_counter()
+        trace.begin(started)
+        try:
+            async with self._client(options.read_timeout_s, options.connect_timeout_s) as client:
+                headers = merge_headers(self.config.get('request_profile', DEFAULT_REQUEST_PROFILE),
+                                        dict(target.headers))
+                async with client.stream('GET', target.url, headers=headers) as response:
+                    trace.status = response.status_code
+                    if response.status_code != 200:
+                        return trace.fail(f'HTTP_{response.status_code}', time.perf_counter())
+                    async for chunk in response.aiter_bytes():
+                        trace.add(len(chunk), time.perf_counter())
+                        if trace.bytes >= target.max_bytes:
+                            break
+                    trace.connect_ms = round((time.perf_counter() - started) * 1000, 2)
+                    return trace.finish(time.perf_counter())
+        except Exception as exc:
+            return trace.fail(diagnostics.classification(exc)[1], time.perf_counter())
+
+    # -- raw socket behind the proxy --------------------------------------
+
+    async def _open(self, url, timeout):
+        host, port = _tunnel_host_port(url)
+        if not self.proxy:
+            return await asyncio.wait_for(asyncio.open_connection(host, port), timeout)
+        parsed = urlsplit(self.proxy)
+        phost, pport = parsed.hostname, parsed.port or (443 if parsed.scheme == 'https' else 80)
+        reader, writer = await asyncio.wait_for(asyncio.open_connection(phost, pport), timeout)
+        authority = f'{host}:{port}'
+        lines = [f'CONNECT {authority} HTTP/1.1', f'Host: {authority}']
+        for name, value in merge_headers(self.config.get('request_profile',
+                                                          DEFAULT_REQUEST_PROFILE)).items():
+            lines.append(f'{name}: {value}')
+        writer.write(('\r\n'.join(lines) + '\r\n\r\n').encode('latin-1'))
+        await writer.drain()
+        head = await asyncio.wait_for(reader.readuntil(b'\r\n\r\n'), timeout)
+        fields = head.split(b' ')
+        status = int(fields[1]) if len(fields) > 1 and fields[1].isdigit() else 0
+        if status != 200:
+            with contextlib.suppress(Exception):
+                writer.close()
+            raise OSError(f'CONNECT {authority} отвечает {status}')
+        if url.startswith('https://'):
+            # `StreamWriter.start_tls` upgrades the same connection in place,
+            # so `reader` stays bound to it and the tunnel is not reopened.
+            await writer.start_tls(TLS, server_hostname=host)
+        return reader, writer
+
+    # -- 3. websocket ------------------------------------------------------
+
+    async def websocket(self, request, *, options, spec):
+        from . import probes
+        trace = probes.WsTrace(connection=request.connection)
+        started = time.perf_counter()
+        writer = None
+        budget = spec.budget
+        try:
+            reader, writer = await self._open(request.url, float(budget['handshake_timeout_s']))
+            parsed = urlsplit(request.url)
+            host = parsed.netloc
+            path = parsed.path or '/'
+            if parsed.query:
+                path += '?' + parsed.query
+            import base64
+            import os as _os
+            key = base64.b64encode(_os.urandom(16)).decode('ascii')
+            lines = [f'GET {path} HTTP/1.1', f'Host: {host}', 'Upgrade: websocket',
+                     'Connection: Upgrade', f'Sec-WebSocket-Key: {key}',
+                     'Sec-WebSocket-Version: 13']
+            for name, value in request.header_map().items():
+                lines.append(f'{name}: {value}')
+            writer.write(('\r\n'.join(lines) + '\r\n\r\n').encode('latin-1'))
+            await writer.drain()
+            head = await asyncio.wait_for(reader.readuntil(b'\r\n\r\n'),
+                                          float(budget['handshake_timeout_s']))
+            fields = head.split(b' ')
+            trace.status = int(fields[1]) if len(fields) > 1 and fields[1].isdigit() else 0
+            trace.handshake_ms = round((time.perf_counter() - started) * 1000, 2)
+            headers = {}
+            for line in head.decode('latin-1').split('\r\n')[1:]:
+                if ':' in line:
+                    name, _, value = line.partition(':')
+                    headers[name.strip().lower()] = value.strip()
+            trace.upgrade = headers.get('upgrade')
+            trace.subprotocol = headers.get('sec-websocket-protocol')
+            trace.extensions = headers.get('sec-websocket-extensions')
+            if trace.status != 101:
+                return trace
+            wanted = int(budget.get('max_pings') or 0)
+            buffer = b''
+            ping_started = time.perf_counter()
+            for index in range(max(1, wanted)):
+                writer.write(_ws_frame(b'ping%d' % index, opcode=0x9))
+                await writer.drain()
+                trace.pings_sent += 1
+                while True:
+                    remaining = float(budget['ping_timeout_s']) - (time.perf_counter() - ping_started)
+                    if remaining <= 0:
+                        return trace
+                    try:
+                        chunk = await asyncio.wait_for(reader.read(4096), remaining)
+                    except (asyncio.TimeoutError, TimeoutError):
+                        # No frame inside the ping budget: the trace is finished
+                        # and the summarizer names it `no_pong` or `closed`
+                        # from what did arrive, which is the honest verdict.
+                        return trace
+                    if not chunk:
+                        trace.closed_by_peer = True
+                        return trace
+                    buffer += chunk
+                    frames, buffer = _ws_frames(buffer)
+                    for opcode, payload in frames:
+                        trace.frames += 1
+                        trace.bytes_in += len(payload)
+                        if opcode == 0x9:  # a ping from the server, answered
+                            writer.write(_ws_frame(payload, opcode=0xA))
+                            await writer.drain()
+                        elif opcode == 0xA:
+                            trace.pongs += 1
+                            trace.rtt_ms = round((time.perf_counter() - ping_started) * 1000, 2)
+                            break
+                    if trace.pongs > index:
+                        break
+            return trace
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            trace.error = type(exc).__name__
+            trace.detail = diagnostics.classification(exc)[1]
+            return trace
+        finally:
+            if writer is not None:
+                with contextlib.suppress(Exception):
+                    writer.close()
+
+    # -- 4. a connection that must stay open -------------------------------
+
+    async def hold(self, request, *, options, spec):
+        from . import probes
+        trace = probes.HoldTrace(connection=request.connection)
+        budget = spec.budget
+        want = float(budget.get('hold_s') or 0)
+        minimum = float(budget.get('min_sustained_s') or 0)
+        writer = None
+        try:
+            opened = time.perf_counter()
+            reader, writer = await self._open(request.url, options.connect_timeout_s)
+            parsed = urlsplit(request.url)
+            path = parsed.path or '/'
+            if parsed.query:
+                path += '?' + parsed.query
+            lines = [f'GET {path} HTTP/1.1', f'Host: {parsed.netloc}', 'Connection: keep-alive']
+            for name, value in request.header_map().items():
+                lines.append(f'{name}: {value}')
+            writer.write(('\r\n'.join(lines) + '\r\n\r\n').encode('latin-1'))
+            await writer.drain()
+            trace.opened_at = opened
+            buffer = await asyncio.wait_for(reader.read(4096), options.read_timeout_s)
+            trace.first_byte_at = time.perf_counter()
+            trace.status = 200
+            trace.bytes, trace.chunks = len(buffer), 1
+            deadline = trace.first_byte_at + want
+            while time.perf_counter() < deadline:
+                remaining = min(deadline - time.perf_counter(), options.read_timeout_s)
+                if remaining <= 0:
+                    break
+                try:
+                    chunk = await asyncio.wait_for(reader.read(4096), remaining)
+                except (asyncio.TimeoutError, TimeoutError):
+                    # The hold window ended with the connection still open and
+                    # nothing more to deliver.  That is the measurement the
+                    # caller asked for, not a failure of the connection.
+                    break
+                if not chunk:
+                    trace.closed_by_peer = True
+                    break
+                trace.bytes += len(chunk)
+                trace.chunks += 1
+                trace.last_byte_at = time.perf_counter()
+            trace.closed_at = time.perf_counter()
+            sustained = trace.sustained_s or 0.0
+            if not trace.closed_by_peer and sustained >= minimum and trace.chunks > 1:
+                trace.error = None
+            elif trace.closed_by_peer or sustained < minimum:
+                trace.error = 'CONNECTION_CLOSED'
+                trace.detail = f'соединение прожило {sustained:.2f} с при минимуме {minimum:.2f} с'
+            return trace
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            trace.error = 'CONNECTION_CLOSED'
+            trace.detail = diagnostics.classification(exc)[1]
+            trace.closed_at = time.perf_counter()
+            return trace
+        finally:
+            if writer is not None:
+                with contextlib.suppress(Exception):
+                    writer.close()
 
 
 async def request_once(proxy, target, config, rate):
@@ -1364,11 +2403,48 @@ def capability_manifest():
     return probes.probes_manifest()
 
 
+def plan_outcome_of(proxy, config, mode, samples, *, own_ips=None):
+    """The ``probes`` verdict of what ``request_once`` already measured.
+
+    The samples are the network work; the *level of evidence* is a rule of
+    :mod:`probes`, so it is asked there instead of being re-derived here.  That
+    is what keeps the promise of F01: a row measured in ``tcp``/``handshake``
+    can never carry ``transfer_ok`` even when a target answered on a later
+    attempt, because ``evidence_for`` reads the mode's own ladder.
+    """
+    from . import probes
+    outcomes = []
+    for index, target in enumerate(config['targets']):
+        subset = [item for item in samples if item.get('target') == index]
+        ok = bool(subset) and all(item['ok'] for item in subset)
+        last = subset[-1] if subset else {}
+        outcomes.append(probes.TargetOutcome(
+            target_id=str(target.get('name') or index), ok=ok,
+            code=None if ok else (last.get('error_code') or last.get('error')),
+            stage=last.get('error_stage'), status=last.get('status'),
+            bytes=sum(item.get('bytes') or 0 for item in subset),
+            attempts=len(subset) or 1, url=str(target.get('url') or ''),
+            total_ms=last.get('ms'), body_limit=int(config.get('max_bytes') or 0) or None,
+            connection='cold'))
+    ok = bool(outcomes) and all(item.ok for item in outcomes)
+    span = max((item.get('ms') or 0.0 for item in samples), default=0.0)
+    finished = time.time()
+    return probes.PlanOutcome(
+        endpoint=proxy, mode=mode.name, base=mode.base or mode.name,
+        evidence='none', ok=ok, targets=tuple(outcomes),
+        code=None if ok else next((item.code for item in outcomes if not item.ok), None),
+        stage=None if ok else next((item.stage for item in outcomes if not item.ok), None),
+        requested_mode=mode.requested or mode.name,
+        started_at=finished - span / 1000.0, finished_at=finished)
+
+
 async def check_proxy(proxy, config, rate, own_ips=None):
+    from . import probes
     samples = []
     limit = allowed_failures(config)
     mode, _options = probe_plan(config)
     failures = [0] * len(config['targets'])
+    transport = Transport(proxy, config)
     for attempt in range(config['attempts']):
         for index, target in enumerate(config['targets']):
             sample = await request_once(proxy, target, config, rate)
@@ -1379,59 +2455,99 @@ async def check_proxy(proxy, config, rate, own_ips=None):
             if limit is not None and failures[index] > limit:
                 row = summarize(proxy, samples, config)
                 row['aborted'] = True
+                _stamp_evidence(row, plan_outcome_of(proxy, config, mode, samples))
                 return row
     row = summarize(proxy, samples, config)
     row['mode'] = mode.name
+    _stamp_evidence(row, plan_outcome_of(proxy, config, mode, samples))
     # The judge is asked only through proxies that already work for a target.
     if config.get('anonymity') and own_ips and row['successes']:
         row['anonymity'] = await judge_proxy(proxy, config, rate, own_ips)
     # Bandwidth is measured only for proxies that work for every target.
     if config.get('speedtest') and row['min_target_reliability'] > 0:
         row['speed'] = await measure_speed(proxy, config, rate)
+    # The capability kinds F20 added are measured only where the module says
+    # they can be, and each one files its own state; a transport that cannot do
+    # them says so instead of silently reporting the basic ladder.
+    if config.get('capabilities'):
+        row['capabilities'] = await check_capabilities(proxy, config, transport)
     return row
 
 
+def _stamp_evidence(row, outcome):
+    """Put the ladder's verdict into the row, so the level is not re-derived."""
+    from . import probes
+    row['evidence'] = probes.evidence_for(outcome)
+    row['is_working'] = probes.is_working(outcome)
+    row['code'] = outcome.code
+    row['stage'] = outcome.stage
+    row['probe_targets'] = [item.to_public() for item in outcome.targets]
+    return row
+
+
+async def check_capabilities(proxy, config, transport=None):
+    """Run the declared capability kinds and file one state per kind (F20).
+
+    Each kind is measured by :mod:`probes` against the very same
+    :class:`Transport` the basic ladder uses, so "websocket supported" means a
+    real 101 and a real pong came back through this proxy -- never a promise.
+    """
+    from . import probes
+    transport = transport or Transport(proxy, config)
+    settings = {'mode': 'collect_only', 'capabilities': config.get('capabilities')}
+    try:
+        plan = probes.build_plan(settings)
+    except probes.ProbeError as exc:
+        return [{'kind': 'unknown', 'id': 'capabilities', 'state': 'error', 'code': exc.code,
+                 'detail': exc.detail, 'connection': 'cold', 'metrics': {}}]
+    results = []
+    for spec in plan.capabilities:
+        outcome = await probes.run_capability(spec, plan.options, transport)
+        results.append(outcome.to_public())
+    return results
+
+
 async def measure_speed(proxy, config, rate):
-    """Download throughput through the proxy in Mbit/s, counted from the first response byte."""
+    """Download throughput through the proxy in Mbit/s, counted from the first response byte.
+
+    The window, the minimums and the "one chunk is not a measurement" rule are
+    :mod:`probes`' -- this function only supplies the bytes.  A transfer that is
+    too small, too short or unfinished therefore comes back
+    ``state='insufficient'`` **without a number**, instead of the old hand-made
+    arithmetic that divided a single chunk by an arbitrary window (defect 15).
+    """
+    from . import probes
     await rate.wait()
     test = config['speedtest']
-    result = dict(mbps=None, bytes=0, ms=None, error=None)
-    # perf_counter: the Windows monotonic clock ticks every ~16 ms, too coarse for fast transfers.
-    started = time.perf_counter()
-    try:
-        async with asyncio.timeout(max(config['timeout'], 30)):
-            async with proxy_client(proxy, config) as client:
-                headers = merge_headers(config.get('request_profile', DEFAULT_REQUEST_PROFILE))
-                async with client.stream('GET', test['url'], headers=headers) as response:
-                    if not 200 <= response.status_code < 300:
-                        result['error'] = f'HTTP_{response.status_code}'
-                        return result
-                    first = None
-                    async for chunk in response.aiter_raw():
-                        first = first or time.perf_counter()
-                        result['bytes'] += len(chunk)
-                        if result['bytes'] >= test['max_bytes']:
-                            break
-                    elapsed = max(time.perf_counter() - (first or started), 1e-6)
-                    if result['bytes']:
-                        result['mbps'] = round(result['bytes'] * 8 / elapsed / 1e6, 2)
-    except Exception as exc:
-        result['error'] = type(exc).__name__
-        result['error_stage'], result['error_code'] = diagnostics.classification(exc)
-        # A partial download still says something about the speed.
-    finally:
-        result['ms'] = round((time.perf_counter() - started) * 1000, 2)
+    target = probes.validate_speed_target({'url': test['url'], 'max_bytes': int(test.get('max_bytes') or 5_000_000)})
+    mode, options = probe_plan(config)
+    transport = Transport(proxy, config)
+    measurement = await probes.run_speed_test(target, options, transport)
+    result = dict(measurement.to_public())
+    # The historical keys stay: the row, the profile evaluation and the export
+    # all read them.  `ms` is the whole-probe time the old row carried.
+    result['mbps'] = measurement.mbps
+    result['bytes'] = measurement.bytes
+    result['ms'] = measurement.total_ms if measurement.total_ms is not None else measurement.transfer_ms
+    result['error'] = None if measurement.state == 'ok' else (measurement.code or measurement.state)
     return result
 
 
 async def detect_own_ips(config):
-    """Public IPs of this machine as seen by the judge; kept in memory only."""
+    """IPs of this machine as the judge sees them; kept in memory only.
+
+    ``global_only=False`` is deliberate: a self-hosted judge echoes the
+    loopback or LAN address it saw, and dropping it left the baseline empty --
+    which then made every endpoint look "elite" for want of a comparison, or
+    "unknown" because the judge could not be verified.  The judge host's own
+    addresses are still subtracted, so its server address never becomes ours.
+    """
     url = config['anonymity']['judge_url']
     headers = merge_headers(config.get('request_profile', DEFAULT_REQUEST_PROFILE))
     async with httpx.AsyncClient(trust_env=False, verify=TLS, timeout=config['timeout'],
                                  follow_redirects=False) as client:
         body = await anonymity.fetch_judge(client, url, headers)
-    own = anonymity.extract_public_ips(body.decode('utf-8', errors='replace'))
+    own = anonymity.extract_public_ips(body.decode('utf-8', errors='replace'), global_only=False)
     # Judges such as azenv also print their own server address; never treat it as ours.
     try:
         infos = await asyncio.get_running_loop().getaddrinfo(urlsplit(url).hostname, None)
@@ -1439,11 +2555,19 @@ async def detect_own_ips(config):
     except (OSError, ValueError):
         pass
     if not own:
-        raise ValueError('judge URL не показал внешний IP этого устройства')
+        raise ValueError('judge URL не показал IP этого устройства')
     return own
 
 
 async def judge_proxy(proxy, config, rate, own_ips):
+    """The anonymity verdict, with the code that explains an ``unknown``.
+
+    ``classify_detail`` and not ``classify``: the two-key form throws away the
+    very thing the user needs when the level is ``unknown`` -- whether the
+    answer was empty, a CAPTCHA, or an unverified judge -- and it throws away
+    the exit address the judge itself labelled.  Both now travel into the row.
+    """
+    from . import probes
     await rate.wait()
     started = time.monotonic()
     headers = merge_headers(config.get('request_profile', DEFAULT_REQUEST_PROFILE))
@@ -1457,8 +2581,13 @@ async def judge_proxy(proxy, config, rate, own_ips):
         # An anonymity check that failed is unknown, never a pass: the level the
         # user asked for is not granted on a failed request (defect 13).
         return anonymity.result('unknown', error=diagnostics.classification(exc)[1], started=started)
-    verdict = anonymity.classify(body, own_ips)
-    return anonymity.result(verdict['level'], verdict['signals'], started=started, exit_address=anonymity.exit_ip(body))
+    # ``judge_verified`` says the direct bootstrap really did show one of our
+    # addresses.  Without that baseline an echo that leaks nothing proves
+    # nothing, and the level stays ``unknown`` rather than ``elite``.
+    detail = anonymity.classify_detail(body, own_ips, judge_verified=bool(own_ips))
+    return anonymity.result(detail['level'], detail['signals'], started=started,
+                            exit_address=detail.get('exit_ip') or anonymity.exit_ip(body),
+                            code=detail.get('code'))
 
 
 def fit_workers(requested):
@@ -1747,7 +2876,8 @@ def exit_address_possible(config, probe, expensive_probe):
 
 
 async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_proxy, progress=True, on_progress=None, min_success=2/3, screen=None, denylist=None, min_anonymity='any', protocol='all', max_latency=None,
-               countries=(), country_of=None, want=0, recheck_passing=False, prefilter=0, prefilter_timeout=3,
+               countries=(), country_exclude=(), country_basis='endpoint', country_unknown='exclude',
+               country_of=None, want=0, recheck_passing=False, prefilter=0, prefilter_timeout=3,
                exclude_hosting=False, provider_of=None, run_state=None,
                collection_id=None, profile_revision=1, max_age_seconds=None,
                access=None, job_id=None, job_store=None, deadline_s=None,
@@ -1808,11 +2938,15 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
     collection_id = ensure_collection(db, collection_id)
     access = as_access(access)
     network_id = snapshot_network(config)
+    # The same criterion the export uses, so a row the check narrows and a row
+    # the export drops are the same row for the same reason (F08).
+    criterion = country_criterion(countries, country_exclude, country_basis, country_unknown)
     admission_policy = core.Policy(
         max_age_seconds=float(max_age_seconds if max_age_seconds else MIN_FRESHNESS_SECONDS),
         min_success=policy_min_success(min_success), min_anonymity=min_anonymity, strict=strict,
         countries=countries, denied=frozenset(active_denylist.proxies) if active_denylist else frozenset(),
         max_latency_ms=max_latency,
+        country_criterion=criterion, exit_country_of=country_of,
         deny_match=active_denylist.match if active_denylist is not None else None,
         protocol_of=proxy_protocol, country_of=country_of,
         hosting_of=(lambda proxy: is_hosting(proxy, provider_of)) if exclude_hosting else None,
@@ -1822,10 +2956,15 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
     def selected(proxy):
         # Protocol and country narrow which candidates are checked; they are not
         # part of the profile, so a later wider run reuses these results.
+        # The country half goes through the same criterion the admission
+        # contract uses, so `basis=exit` and an exclude set are honoured here
+        # too instead of only at export time.
         if protocol not in (None, 'all') and proxy_protocol(proxy) != protocol:
             return False
         if exclude_hosting and is_hosting(proxy, provider_of):
             return False
+        if getattr(criterion, 'active', False):
+            return core._country_criterion_reason({'proxy': proxy}, admission_policy) is None
         return not countries or country_of(proxy) in countries
 
     def counts_as_passed(row):
@@ -2014,7 +3153,7 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
         country = country_of(proxy)
         if country:
             row['country'] = country
-        endpoint = schema.upsert_endpoint(db, proxy)
+        endpoint = upsert_endpoint(db, proxy)
         # One measurement folded into the row by the one admission contract:
         # ``valid_until`` is written here, once, from the measurement time and
         # the policy of this profile revision, and is never recomputed at export
@@ -2240,9 +3379,26 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
         normalize=_already_canonical, parse=chain.parse_lines,
         run_cheap=bool(prefilter), run_basic=True,
         run_expensive=expensive_probe is not None,
-        # Every proxy this run is willing to publish pays for the expensive
-        # stage: its verdict is what the anonymity level and the latency filter
-        # are judged on, so a proxy that skipped it could not be published.
+        # Deliberate decision, not a default: every proxy this run is willing to
+        # publish pays for the expensive stage.
+        #
+        # `EXPENSIVE_UNTIL_N` stops paying for the judge and the bandwidth
+        # download as soon as the requested N is met.  That is the right policy
+        # for a run whose *only* goal is "give me N", and it is wrong for this
+        # one: `--min-anonymity` is a filter, not a goal.  A row that skipped the
+        # expensive stage has no anonymity verdict at all, so `core.Policy`
+        # ranks it `unknown` and drops it from the export -- and a corpus of
+        # 4000 addresses measured with `--want 5` would yield 5 elite proxies
+        # and 3995 silent rejections, with the filter looking like it had
+        # rejected 3995 addresses.  Under `ALL_PASSING` every passing address
+        # gets a real level, and the export is "the elite ones" instead of "the
+        # first five measured".
+        #
+        # The price is real -- one judge request and one body-sized download per
+        # passing address -- and it is what `--max-requests`, `--deadline`,
+        # `--judge-concurrency` and the per-target budgets exist to bound.  A
+        # run that stops early leaves the unmeasured rows with no verdict at all,
+        # which is the honest state; it does not leave them with a wrong one.
         expensive_policy=chain.EXPENSIVE_ALL_PASSING,
         carry_fresh_prior=False)
     engine = chain.Pipeline(config_chain, clock=chain.SystemClock(),
@@ -2300,6 +3456,8 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
         if run_state is not None:
             run_state.update(profile=profile, state=snapshot_state, stop_reason=stop_reason,
                              chain_stop=reason, chain_state=state,
+                             expensive_policy=config_chain.expensive_policy,
+                             run_expensive=config_chain.expensive_required,
                              scope_candidates=total, checked=completed, pending=max(0, total - completed),
                              passed=passed, found=found_now, count_what=find.what,
                              workers=metrics.workers, peak_inflight=metrics.peak_inflight,
@@ -2486,6 +3644,59 @@ def finish_scan_job(store, job_id, state, reason_code):
         return None
 
 
+def run_pool_recheck(workbench, pool_id, *, job_id, protocol='all', max_seconds=None,
+                     deadline_s=None, on_progress=None):
+    """Run a queued ``pool_recheck`` job: measure the pool's own collection.
+
+    The route ``POST /v1/pools/{id}/recheck`` used to create this job and
+    nothing ever executed it -- no consumer of the kind existed anywhere in the
+    tree, so the client got a ``job_id`` for a run that could not start.  This
+    is that consumer: the same :func:`scan`, the same profile and revision the
+    pool was created with, and the job is the one the observations are written
+    into, so progress, recovery and the per-item states all belong to it.
+
+    What the pool asks for travels into the run as ``want``/``count_what`` from
+    :meth:`pools.PoolSpec.find_request` -- the unit is the pool's own, not a
+    hard-coded one, so a pool capped per exit-IP is measured in exits.
+    """
+    from . import jobs
+    store = workbench.jobs()
+    spec = workbench.pools().require(pool_id)
+    collection = str(spec.collection_id)
+    profile_row = workbench.conn.execute('SELECT config FROM profiles WHERE id=?',
+                                         (spec.profile_id,)).fetchone()
+    if profile_row is None:
+        raise WorkbenchError(
+            tr(f'Профиль пула не найден: {spec.profile_id}', f'pool profile not found: {spec.profile_id}'),
+            'E_STATE_PROFILE_UNKNOWN')
+    config = json.loads(profile_row[0])
+    status = workbench.pools().status(pool_id)
+    want = int((getattr(status, 'find', None) or {}).get('n') or 0)
+    count_what = str((getattr(status, 'find', None) or {}).get('what') or spec.count_unit)
+    store.start(job_id)
+    # `scan` answers with the profile id; the run's own state travels in
+    # `run_state`, so that is where the numbers are read from.
+    state = {}
+    try:
+        asyncio.run(scan(
+            workbench.conn, config, protocol=protocol, recheck=True,
+            collection_id=collection, profile_revision=int(spec.profile_revision),
+            want=want, count_what=count_what, job_id=job_id, job_store=store,
+            deadline_s=max_seconds or deadline_s, on_progress=on_progress,
+            progress=bool(on_progress), run_state=state))
+    except Exception as exc:  # noqa: BLE001 - the job must close honestly
+        from . import jobs as joblifecycle
+        finish_scan_job(store, job_id, 'failed', getattr(exc, 'code', None)
+                        or joblifecycle.CODE_INTERRUPTED)
+        raise
+    terminal = 'succeeded' if (state or {}).get('state') == core.SELECTION_COMPLETE else 'partial'
+    finish_scan_job(store, job_id, terminal, (state or {}).get('stop_reason') or 'E_VERDICT_OK')
+    return {'job_id': job_id, 'state': state or {}, 'pool_id': pool_id,
+            'collection_id': collection, 'profile_id': spec.profile_id,
+            'profile_revision': int(spec.profile_revision),
+            'want': want, 'count_what': count_what, 'job_state': terminal}
+
+
 SORTS = ('recommended', 'quality', 'speed', 'stability', 'uptime', 'bandwidth')
 EXPORT_ORDERS = {
     'quality': 'e.score DESC, e.latency, e.proxy',
@@ -2636,12 +3847,22 @@ def criterion_digest(countries=(), exclude=(), basis='endpoint', unknown='exclud
 
 
 def matches_selection(row, protocol='all', max_latency=None, countries=(), country_of=None,
-                      exclude_hosting=False, provider_of=None):
-    """Selection by protocol, maximum median latency (ms), country codes and hosting providers."""
+                      exclude_hosting=False, provider_of=None, criterion=None, exit_country_of=None):
+    """Selection by protocol, maximum median latency (ms), country codes and hosting providers.
+
+    ``criterion`` is the whole rule (``geo.CountryCriterion``): an include set,
+    an "exclude these" set, which country's country is compared and what an
+    unknown one does.  Without it the historical ``countries=`` shortcut is
+    used, so every existing caller keeps its behaviour.
+    """
     if protocol not in (None, 'all') and proxy_protocol(row.get('proxy', '')) != protocol:
         return False
     if exclude_hosting and is_hosting(row.get('proxy', ''), provider_of):
         return False
+    if criterion is not None and getattr(criterion, 'active', False):
+        policy = core.Policy(country_criterion=criterion, country_of=country_of,
+                             exit_country_of=exit_country_of)
+        return core._country_criterion_reason(row, policy) is None
     if countries:
         # The same criterion object the GUI and the API build; ``unknown``
         # excludes an address whose country was never established.
@@ -2676,7 +3897,9 @@ def geo_country_verdict(criterion, row, country_of=None, now=None):
 
 
 def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, denylist=None, local_override=None, min_anonymity='any',
-           protocol='all', max_latency=None, countries=(), country_of=None, exclude_hosting=False, provider_of=None,
+           protocol='all', max_latency=None, countries=(), country_exclude=(),
+           country_basis='endpoint', country_unknown='exclude',
+           country_of=None, exclude_hosting=False, provider_of=None,
            watch_minutes=0, allowed_proxies=None, run_state=None, diagnostic=False, query='', quick='',
            active_profile_path=None, collection_id=None, profile_revision=1, max_age_seconds=None,
            access=None, credentials='redact', client_target=None, client_binary=None,
@@ -2724,6 +3947,15 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
     # A minimum anonymity level only applies to profiles that asked a judge.
     if not cfg.get('anonymity'):
         min_anonymity = 'any'
+    else:
+        # Defect 13: a level asked of an export without a judge is not a
+        # preference, it is an unprovable claim.  `probes.require_anonymity`
+        # owns the rule; the old behaviour silently dropped the requirement and
+        # wrote the rows out as if the user had got what they asked for.
+        from . import probes
+        judge_url = str((cfg.get('anonymity') or {}).get('judge_url') or '').strip()
+        probes.require_anonymity(min_anonymity,
+                                 probes.validate_judge_spec({'url': judge_url} if judge_url else None))
     if local_override is False:
         active_denylist = None
     elif local_override is True or reputation_policy.get('local_enabled', True):
@@ -2740,10 +3972,17 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
     max_age_seconds = float(max_age_seconds if max_age_seconds else MIN_FRESHNESS_SECONDS)
     countries = frozenset(countries or ())
     network_id = snapshot_network(cfg)
+    # F08 parity: the export now filters with the *same* criterion object the
+    # GUI and the API build, so `basis=exit`, the deliberate "never here" set
+    # and the three `unknown` policies mean the same thing on every surface.
+    # Before this only `basis=endpoint` with an include list was expressible,
+    # and the export dropped a row the table kept (or the other way round).
+    criterion = country_criterion(countries, country_exclude, country_basis, country_unknown)
     policy = core.Policy(
         max_age_seconds=max_age_seconds, min_success=policy_min_success(min_success),
         min_anonymity=min_anonymity, strict=strict, protocol=protocol or None,
         countries=countries, max_latency_ms=max_latency,
+        country_criterion=criterion, exit_country_of=country_of,
         exclude_hosting=bool(exclude_hosting),
         denied=frozenset(active_denylist.proxies) if active_denylist is not None else frozenset(),
         deny_match=active_denylist.match if active_denylist is not None else None,
@@ -3160,7 +4399,7 @@ class Workbench:
         """Add canonical addresses to a collection through the one membership writer."""
         added = 0
         for value in canonical_values:
-            endpoint = schema.upsert_endpoint(self.conn, value)
+            endpoint = upsert_endpoint(self.conn, value)
             schema.add_member(self.conn, collection_id, endpoint, origin=origin, now=self.clock())
             self.conn.execute('INSERT OR IGNORE INTO candidates(proxy, endpoint_id) VALUES (?, ?)',
                               (value, endpoint))
@@ -3473,6 +4712,17 @@ def parser():
                            'reference — ссылка на запись хранилища (само значение секрета в артефакт не попадает)',
                            'what to write for addresses measured with credentials: redact writes nothing, '
                            'reference writes a reference to the vault entry (never the secret value)'))
+    # F20/area-export §2: the sing-box file has two shapes depending on the
+    # client version (rule actions from 1.11, the deprecated `block` outbound
+    # before it).  Without a target the versioned compatibility check cannot
+    # run and the user receives an unverified file that exportsvc itself
+    # refuses for a pinned client.
+    p.add_argument('--client-target', default=os.environ.get('PROXY_WORKBENCH_SINGBOX_TARGET') or None,
+                   help=tr('версия клиента sing-box, под которую проверяется файл: 1.11.0, latest, legacy-block',
+                           'sing-box client version the export is checked against: 1.11.0, latest, legacy-block'))
+    p.add_argument('--client-binary', default=os.environ.get('PROXY_WORKBENCH_SINGBOX_BIN') or None,
+                   help=tr('путь к sing-box, которым проверяется сгенерированный файл',
+                           'path to the sing-box binary used to check the generated file'))
     p.add_argument('--sort', choices=list(SORTS), default='recommended',
                    help=tr('quality: стабильность + скорость; speed: задержка; stability: разброс; uptime: живучесть; '
                            'bandwidth: Мбит/с (нужен --speedtest-url); recommended: качество + живучесть + '
@@ -3488,6 +4738,19 @@ def parser():
     p.add_argument('--no-hosting', action='store_true',
                    help=tr('пропускать адреса хостинг-провайдеров и дата-центров (нужна база провайдеров: update-geoip)',
                            'skip addresses of hosting providers and data centres (needs the provider database: update-geoip)'))
+    # F08 parity: the same rule the GUI and the API express, now expressible
+    # from the command line too -- an exit country, a "never here" set, and
+    # what an unknown country does.
+    p.add_argument('--country-basis', choices=('endpoint', 'exit', 'either'), default='endpoint',
+                   help=tr('чью страну сравнивать: адреса, выхода или любую из двух',
+                           'which country to compare: the endpoint, the exit, or either'))
+    p.add_argument('--country-exclude', default='',
+                   help=tr('страны, которых быть не должно ни при каком основании (ISO-коды через запятую)',
+                           'countries that must never appear, whatever the basis (ISO codes, comma separated)'))
+    p.add_argument('--country-unknown', choices=('exclude', 'include_unverified', 'require_measurement'),
+                   default='exclude',
+                   help=tr('что делать с адресом, чья страна неизвестна',
+                           'what to do with an address whose country is unknown'))
     p.add_argument('--want', type=int, default=0,
                    help=tr('остановиться, когда найдено столько подходящих прокси; 0 — проверить все', 'stop once this many matching proxies are found; 0 = check everything'))
     p.add_argument('--geoip-db', type=Path, default=None,
@@ -3632,6 +4895,22 @@ def parser():
     p.add_argument('--include-secret', action='store_true',
                    help=tr('source redact: показать искомую строку, если она утёкла; по умолчанию только факт',
                            'source redact: show the searched string if it leaked; by default only the fact'))
+    # source catalog (F13).  `--sources` stays the flat URL list and still wins;
+    # these are for the catalog half, which addresses a source by its stable id.
+    p.add_argument('--id', default='', dest='id',
+                   help=tr('source: идентификатор источника в каталоге', 'source: catalog source id'))
+    p.add_argument('--set-id', dest='set_id', default='',
+                   help=tr('source set: набор каталога', 'source set: catalog set id'))
+    p.add_argument('--source-url', dest='source_url', default='',
+                   help=tr('source add: URL своего списка', 'source add: URL of your own list'))
+    p.add_argument('--path', type=Path, default=None,
+                   help=tr('source update: файл нового каталога', 'source update: file of the new catalog'))
+    p.add_argument('--shared', action='store_true',
+                   help=tr('source exclude-scope: исключить и общие адреса, а не только уникальные',
+                           'source exclude-scope: exclude shared addresses too, not only exclusive ones'))
+    p.add_argument('--query', dest='query', default='',
+                   help=tr('source list: фильтр каталога (имя, набор, категория, формат, состояние)',
+                           'source list: catalog filter (name, set, category, format, state)'))
     return p
 
 
@@ -4033,18 +5312,232 @@ def _busy_collection(workbench, collection_id):
     return f'collection {collection_id} is being checked by job {running[0].id}'
 
 
+#: Everything ``source`` can do.  The catalog half (F13) and the redaction half
+#: (F27) answer different questions about the same objects, so they share one
+#: command instead of two that disagree about what a source is.
+SOURCE_SUBCOMMANDS = ('list', 'show', 'sets', 'set', 'enable', 'disable', 'add', 'remove',
+                      'check', 'update', 'recover', 'status', 'exclude-scope',
+                      'health', 'redact')
+
+
+def _source_flag(args, *names, default=None):
+    for name in names:
+        value = getattr(args, name, None)
+        if value:
+            return value
+    return default
+
+
+def _source_text(args, index=1):
+    items = list(getattr(args, 'items', None) or ())
+    if len(items) > index:
+        return items[index]
+    text = list(getattr(args, 'text', None) or ())
+    return text[0] if text else None
+
+
 def _cmd_source(workbench, args, action):
-    """``source list|health|redact`` -- sources, subscriptions and redaction (F27)."""
-    from . import sourcedesk
-    if action in ('', 'list'):
-        rows = workbench.conn.execute(
-            'SELECT source, count(*) AS seen FROM candidate_seen GROUP BY source ORDER BY seen DESC').fetchall()
-        return emit(args, [dict(row) for row in rows],
-                    '\n'.join(f"{row['source']}: {row['seen']}" for row in rows)
+    """``source <subcommand>`` -- the source catalog and the subscriptions (F13, F27).
+
+    The catalog half reads and writes the *selection* (``source_catalog``), the
+    runtime half reports what the last collection actually did
+    (``source_management`` over the tables ``collect`` wrote), and the
+    redaction half is F27's.  All three are the same object seen from
+    different sides, so they live behind one command.
+    """
+    from . import source_catalog, source_management, sourcedesk
+    if action not in SOURCE_SUBCOMMANDS:
+        raise WorkbenchError(tr(f'Неизвестное действие source: {action}. Возможны: '
+                                + ', '.join(SOURCE_SUBCOMMANDS),
+                                f'unknown source action: {action}. Available: '
+                                + ', '.join(SOURCE_SUBCOMMANDS)), 'E_VALIDATION_FIELD')
+    data = workbench.data
+    catalog = sources_catalog(data)
+    settings = source_catalog_for(data)
+
+    if action == 'redact':
+        # ``--text`` is the option form because argparse keeps a positional run
+        # only while the options do not interrupt it; both forms are accepted.
+        values = list(args.text) + list(args.items[1:])
+        redacted = [sourcedesk.redact_url(value) for value in values if value]
+        leaks = sourcedesk.find_secret_leaks(redacted, values) if redacted else []
+        return emit(args, {'redacted': redacted, 'leaks': list(leaks)},
+                    '\n'.join(redacted) or tr('Нечего редактировать.', 'nothing to redact'))
+
+    if action == 'list':
+        view = source_selection_view(data, catalog, query=args.query or '',
+                                     db=workbench.conn, now=workbench.clock())
+        rows = view.get('sources') or []
+        limit = int(args.limit or 0) or len(rows)
+        rows = rows[:limit]
+        view = dict(view, shown=len(rows))
+        return emit(args, view, '\n'.join(
+            f"{item['id']:<12} {item.get('support', '?'):<14} {item.get('state', '?'):<14}"
+            f" {item.get('name', '')}" for item in rows)
+            or tr('Каталог пуст.', 'the catalog is empty'))
+
+    if action == 'show':
+        source_id = _source_flag(args, 'name') or _source_text(args)
+        if not source_id:
+            raise WorkbenchError(tr('Укажите источник: source show ИД', 'name a source: source show ID'))
+        detail = source_management.detail_view(catalog, settings, source_id,
+                                               runtime=source_management.runtime_snapshot(
+                                                   workbench.conn, now=workbench.clock(),
+                                                   source_ids=[source_id]),
+                                               db=workbench.conn, now=workbench.clock())
+        if detail is None:
+            raise WorkbenchError(tr(f'Источник не найден: {source_id}', f'source not found: {source_id}'),
+                                 'E_STATE_NOT_FOUND')
+        summary = '\n'.join(f"{key}: {_as_json(detail.get(key))}"
+                            for key in ('id', 'name', 'support', 'dataset_group', 'access',
+                                        'format', 'state', 'runtime')
+                            if detail.get(key) is not None)
+        return emit(args, detail, summary)
+
+    if action == 'sets':
+        settings = source_catalog.migrate_settings(settings, catalog)
+        sets = source_management.sets_view(catalog, settings)
+        return emit(args, sets, '\n'.join(
+            f"{item['id']:<16} {item['members']:>4} {item.get('name', '')}" for item in sets))
+
+    if action in ('set', 'enable', 'disable', 'add', 'remove'):
+        settings = source_catalog.migrate_settings(settings, catalog)
+        changed = {}
+        if action == 'set':
+            set_id = _source_flag(args, 'set_id', 'name') or _source_text(args)
+            if not set_id:
+                raise WorkbenchError(tr('Укажите набор: source set ИМЯ',
+                                        'name a set: source set NAME'), 'E_VALIDATION_FIELD')
+            try:
+                changed = source_management.apply_set(settings, set_id, catalog)
+            except ValueError as exc:
+                raise WorkbenchError(str(exc), 'E_VALIDATION_FIELD') from None
+        elif action in ('enable', 'disable'):
+            ids = _source_ids_argument(args)
+            if not ids:
+                raise WorkbenchError(tr('Укажите источник: source enable|disable ИД',
+                                        'name sources: source enable|disable ID'), 'E_VALIDATION_FIELD')
+            changed = source_management.set_downloads(settings, ids, action == 'disable', catalog)
+        elif action == 'add':
+            url = _source_flag(args, 'source_url', 'url') or _source_text(args)
+            if not url:
+                raise WorkbenchError(tr('Укажите URL: source add URL', 'give a URL: source add URL'),
+                                     'E_VALIDATION_FIELD')
+            try:
+                custom = source_catalog.custom_source(url)
+                selection = settings.setdefault('source_selection', {})
+                selection.setdefault('custom_sources', []).append(custom)
+                selection.setdefault('selected_ids', []).append(custom['id'])
+                changed = source_management.select_ids(settings, [custom['id']], catalog)
+            except ValueError as exc:
+                raise WorkbenchError(str(exc), 'E_VALIDATION_FIELD') from None
+        else:
+            ids = _source_ids_argument(args)
+            if not ids:
+                raise WorkbenchError(tr('Укажите источник: source remove ИД',
+                                        'name sources: source remove ID'), 'E_VALIDATION_FIELD')
+            changed = source_management.remove_sources(settings, ids, catalog)
+        write_source_settings(data, changed)
+        selection = changed.get('source_selection', {}) if isinstance(changed, dict) else {}
+        return emit(args, {'selected': list(selection.get('selected_ids', ())),
+                           'disabled': list(selection.get('download_disabled_ids', ())),
+                           'custom': [item.get('id') for item in selection.get('custom_sources', ())]},
+                    tr(f'Выбрано {len(selection.get("selected_ids", ()))} источников, '
+                       f'выключено {len(selection.get("download_disabled_ids", ()))}',
+                       f'{len(selection.get("selected_ids", ()))} sources selected, '
+                       f'{len(selection.get("download_disabled_ids", ()))} disabled'))
+
+    if action == 'check':
+        source_id = _source_flag(args, 'name') or _source_text(args)
+        if not source_id:
+            raise WorkbenchError(tr('Укажите источник: source check ИД', 'name a source: source check ID'),
+                                 'E_VALIDATION_FIELD')
+        plan = source_plan_of(source_catalog.source_by_id(catalog, source_id), source_id=source_id)
+        if plan is None:
+            raise WorkbenchError(tr(f'Источник недоступен для сбора: {source_id}',
+                                    f'source is not collectable: {source_id}'), 'E_STATE_NOT_FOUND')
+        return emit(args, plan.as_dict(),
+                    tr(f'{plan.source_id}: {plan.kind}, {plan.url}',
+                       f'{plan.source_id}: {plan.kind}, {plan.url}'))
+
+    if action == 'update':
+        incoming = Path(args.path) if args.path else None
+        if incoming is None:
+            raise WorkbenchError(tr('Укажите файл каталога: source update ФАЙЛ',
+                                    'give a catalog file: source update FILE'), 'E_VALIDATION_FIELD')
+        body = incoming.read_bytes()
+        accepted = source_catalog.decode_catalog_bytes(body, current=catalog)
+        verdict = source_catalog.accept_catalog(catalog, accepted)
+        if not verdict.get('accepted'):
+            return emit(args, verdict, tr('Каталог не принят.', 'the catalog was not accepted'))
+        target = Path(data) / 'source-catalog.json'
+        atomic(target, body)
+        return emit(args, dict(verdict, path=str(target)),
+                    tr(f'Каталог обновлён: ревизия {verdict.get("revision", "?")}',
+                       f'catalog updated: revision {verdict.get("revision", "?")}'))
+
+    if action == 'recover':
+        source_id = _source_flag(args, 'name') or _source_text(args)
+        if not source_id:
+            raise WorkbenchError(tr('Укажите источник: source recover ИД',
+                                    'name a source: source recover ID'), 'E_VALIDATION_FIELD')
+        plan = source_plan_of(source_catalog.source_by_id(catalog, source_id), source_id=source_id)
+        if plan is None:
+            return emit(args, {'source_id': source_id, 'recovered': False, 'cleared': 0,
+                               'reason': 'источник не в каталоге или недоступен для сбора'},
+                        tr(f'Восстанавливать нечего: {source_id}', f'nothing to recover: {source_id}'))
+        state = _source_state_row(workbench.conn, source_id)
+        workbench.conn.execute('UPDATE source_state SET consecutive_failures=0, backoff_until=NULL,'
+                               ' quarantine_until=NULL, last_error=NULL WHERE source_id=? AND endpoint_id=?',
+                               (source_id, ''))
+        workbench.conn.commit()
+        return emit(args, {'source_id': source_id, 'recovered': True,
+                           'quarantine_until': (state or {}).get('quarantine_until')},
+                    tr(f'Карантин снят: {source_id}', f'quarantine cleared: {source_id}'))
+
+    if action == 'status':
+        from . import source_management as sm
+        snapshot = sm.runtime_snapshot(workbench.conn, now=workbench.clock())
+        try:
+            from . import proxytool as self_module
+            sm.attach_contributions(snapshot, workbench.conn,
+                                    [key for key in snapshot if key])
+        except Exception:  # noqa: BLE001 - contributions are a nicety, not the state
+            pass
+        rows = [{'source_id': key, **_as_json(value)} for key, value in sorted(snapshot.items())]
+        return emit(args, {'sources': rows, 'count': len(rows)},
+                    '\n'.join(f"{item['source_id']}: {_as_json(item.get('http_state'))} "
+                              f"принято {item.get('accepted', 0)}" for item in rows)
                     or tr('Источники ещё не собирались.', 'no sources collected yet'))
+
+    if action == 'exclude-scope':
+        from . import db as store
+        source_id = _source_flag(args, 'name') or _source_text(args)
+        if not source_id:
+            raise WorkbenchError(tr('Укажите источник: source exclude-scope ИД',
+                                    'name a source: source exclude-scope ID'), 'E_VALIDATION_FIELD')
+        include_shared = bool(_source_flag(args, 'shared', default=False))
+        candidates = source_management.source_addresses(
+            workbench.conn, source_id, exclusive=not include_shared)
+        rows = store.scope_exclusions(workbench.conn, now=workbench.clock())
+        already = {item['proxy'] for item in rows}
+        added = 0
+        for value in candidates:
+            if value in already:
+                continue
+            store.add_scope_exclusion(workbench.conn, value, source_id=source_id,
+                                      now=workbench.clock(),
+                                      reason='source_scope', shared=not include_shared)
+            added += 1
+        workbench.conn.commit()
+        return emit(args, {'source_id': source_id, 'delivered': len(candidates),
+                           'excluded': added, 'already_excluded': len(candidates) - added,
+                           'shared': include_shared},
+                    tr(f'Исключено {added} адресов источника {source_id}',
+                       f'excluded {added} addresses of source {source_id}'))
+
     if action == 'health':
-        source_id = args.name or (args.text[0] if args.text else '') \
-            or ((args.items or ['', ''])[1] if len(args.items) > 1 else '')
+        source_id = _source_flag(args, 'name') or _source_text(args)
         if not source_id:
             raise WorkbenchError(tr('Укажите источник: source health ИД', 'name a source: source health ID'))
         rows = workbench.conn.execute(
@@ -4055,16 +5548,19 @@ def _cmd_source(workbench, args, action):
         return emit(args, [{'code': item.code, 'detail': item.detail} for item in diagnostics],
                     '\n'.join(f"{item.code}: {item.detail}" for item in diagnostics)
                     or tr('Диагностик нет.', 'no diagnostics'))
-    if action == 'redact':
-        # ``--text`` is the option form because argparse keeps a positional run
-        # only while the options do not interrupt it; both forms are accepted.
-        values = list(args.text) + list(args.items[1:])
-        redacted = [sourcedesk.redact_url(value) for value in values if value]
-        leaks = sourcedesk.find_secret_leaks(redacted, values) if redacted else []
-        return emit(args, {'redacted': redacted, 'leaks': list(leaks)},
-                    '\n'.join(redacted) or tr('Нечего редактировать.', 'nothing to redact'))
     raise WorkbenchError(tr(f'Неизвестное действие source: {action}',
-                            f'unknown source action: {action}'))
+                            f'unknown source action: {action}'), 'E_VALIDATION_FIELD')
+
+
+def _source_ids_argument(args):
+    """The source ids of one subcommand, in every form the parser accepts."""
+    values = []
+    raw = _source_flag(args, 'id', 'name', 'ids', 'set_id')
+    if raw:
+        values.extend(part.strip() for part in str(raw).replace(',', ' ').split() if part.strip())
+    for extra in (getattr(args, 'items', None) or ())[1:]:
+        values.extend(part.strip() for part in str(extra).replace(',', ' ').split() if part.strip())
+    return list(dict.fromkeys(values))
 
 
 def _cmd_api_key(workbench, args, action):
@@ -4193,23 +5689,41 @@ def active_profile_id(workbench):
     return text if row else None
 
 
+#: Every ``pool`` subcommand.  ``refill`` and ``recheck`` were reachable from
+#: ``/v1`` and the GUI while the CLI could only look at a pool, which is the
+#: same CLI/API gap F18 asks to close.
+POOL_SUBCOMMANDS = ('list', 'create', 'status', 'members', 'refill', 'recheck')
+
+
 def _cmd_pool(workbench, args, action):
-    """``pool list|create|status|members`` -- a steady pool of proxies (F14)."""
+    """``pool list|create|status|members|refill|recheck`` -- a steady pool of proxies (F14).
+
+    ``refill`` and ``recheck`` are the two halves of keeping a pool up: the
+    first re-admits from what is already measured, the second measures the
+    pool's own collection again.  Both were reachable from ``/v1`` and from the
+    GUI while the CLI could only look at the pool, which is the same CLI/API gap
+    F18 asks to close.
+    """
     from . import pools
+    if action not in POOL_SUBCOMMANDS:
+        raise WorkbenchError(
+            tr(f'Неизвестное действие pool: {action}. Возможны: ' + ', '.join(POOL_SUBCOMMANDS),
+               f'unknown pool action: {action}. Available: ' + ', '.join(POOL_SUBCOMMANDS)),
+            'E_VALIDATION_FIELD')
     store = workbench.pools()
     if action in ('', 'list'):
         rows = []
         for spec in store.list():
             status = store.status(spec.id)
-            served = sum((status.counts or {}).values())
             rows.append({'id': spec.id, 'collection_id': spec.collection_id,
                          'profile_id': spec.profile_id, 'desired': spec.desired,
-                         'state': status.state, 'served': served,
+                         'state': status.state, 'served': status.served,
+                         'count_unit': status.count_unit,
                          'ready_for_clients': status.ready_for_clients,
                          'deficit_reason': status.deficit_reason})
         return emit(args, rows, '\n'.join(
-            f"{row['id']} {row['state']} {row['served']}/{row['desired']} {row['deficit_reason'] or ''}"
-            for row in rows) or tr('Пулов нет.', 'no pools'))
+            f"{row['id']} {row['state']} {row['served']}/{row['desired']} {row['count_unit']}"
+            f" {row['deficit_reason'] or ''}" for row in rows) or tr('Пулов нет.', 'no pools'))
     pool_id = args.name or ((args.items or ['', ''])[1] if len(args.items) > 1 else '')
     if action == 'create':
         if not pool_id:
@@ -4238,6 +5752,8 @@ def _cmd_pool(workbench, args, action):
                 'deficit_reason': status.deficit_reason,
                 'deficit_reasons': list(status.deficit_reasons or ()),
                 'counts': dict(status.counts or {}), 'desired': status.desired,
+                'served': status.served, 'count_unit': status.count_unit,
+                'find': dict(status.find or {}),
                 'minimum': status.minimum, 'reserve': status.reserve,
                 'ready_for_clients': status.ready_for_clients,
                 'next_attempt_at': status.next_attempt_at}
@@ -4250,7 +5766,43 @@ def _cmd_pool(workbench, args, action):
         return emit(args, members, '\n'.join(
             f"{item['endpoint_id']} {item['state']}" for item in members)
             or tr('В пуле нет участников.', 'the pool has no members'))
-    raise WorkbenchError(tr(f'Неизвестное действие pool: {action}', f'unknown pool action: {action}'))
+    if action == 'refill':
+        # The same call `/v1/pools/{id}/refill` makes, with the same budget
+        # semantics: a spent budget is an honest "nothing was admitted", not a
+        # second implementation with its own rules.
+        from . import api as apisvc
+        budget = {'max_requests': int(args.max_requests or 0)} if args.max_requests else None
+        report = pools.refill(store, pool_id, apisvc.pool_candidate_source(workbench.conn),
+                              budget=budget, now=workbench.clock())
+        return emit(args, _as_json(report),
+                    tr(f'Пул {pool_id}: обслуживает {report.served}'
+                       f' из {report.desired} ({report.state})'
+                       + (f' — {report.deficit_reason}' if report.deficit_reason else ''),
+                       f'pool {pool_id}: serving {report.served}'
+                       f' of {report.desired} ({report.state})'
+                       + (f' — {report.deficit_reason}' if report.deficit_reason else '')))
+    if action == 'recheck':
+        from . import jobs as jobs_module
+        spec = store.require(pool_id)
+        job_id = submit_scan_job(
+            workbench, workbench.conn, 'pool_recheck', profile=spec.profile_id,
+            profile_revision=int(spec.profile_revision), collection_id=spec.collection_id,
+            candidates=[value for (value,) in collection_candidates(
+                workbench.conn, spec.collection_id)],
+            filters={'protocol': args.protocol or 'all'},
+            budgets={'max_seconds': args.deadline or None},
+            idempotency_key=_source_flag(args, 'id') or None)
+        report = run_pool_recheck(workbench, pool_id, job_id=job_id,
+                                  protocol=args.protocol or 'all',
+                                  max_seconds=args.deadline or None)
+        state = report.get('state') or {}
+        return emit(args, _as_json(report),
+                    tr(f'Пул {pool_id}: задание {job_id}, проверено {state.get("checked", 0)}, '
+                       f'прошло {state.get("passed", 0)} ({report.get("job_state")})',
+                       f'pool {pool_id}: job {job_id}, checked {state.get("checked", 0)}, '
+                       f'passed {state.get("passed", 0)} ({report.get("job_state")})'))
+    raise WorkbenchError(tr(f'Неизвестное действие pool: {action}',
+                            f'unknown pool action: {action}'), 'E_VALIDATION_FIELD')
 
 
 def parse_window(value):
@@ -4612,7 +6164,12 @@ def _cmd_diagnose(workbench, args, action):
         body = diagnostics.health_report(version=PRODUCT_VERSION,
                                          schema_version=schema.SCHEMA_VERSION,
                                          max_age_seconds=MIN_FRESHNESS_SECONDS).to_dict()
-        problems = [item for item in body.get('checks', []) if item.get('state') != 'ok']
+        # `HealthCheck.to_dict()` answers with the boolean `ok`; there is no
+        # `state` field, so asking for it made every check look like a problem
+        # and a healthy database reported "5 checks, 5 problems".  `state` is
+        # accepted as an alias so a check that grows one keeps working.
+        problems = [item for item in body.get('checks', [])
+                    if not (item.get('ok', item.get('state') == 'ok'))]
         return emit(args, body, tr(
             f'Здоровье: проверок {len(body.get("checks", []))}, проблем {len(problems)}',
             f'health: {len(body.get("checks", []))} checks, {len(problems)} problems'))
@@ -4722,8 +6279,11 @@ def main(argv=None):
         p.error(tr('Неверные числовые параметры', 'Invalid numeric options'))
     try:
         countries = geoip.parse_countries(args.country)
+        country_exclude = geoip.parse_countries(getattr(args, 'country_exclude', '') or '')
     except ValueError as exc:
         p.error(tr(str(exc), 'Countries: use two-letter ISO codes, for example DE,NL.'))
+    country_basis = getattr(args, 'country_basis', 'endpoint') or 'endpoint'
+    country_unknown = getattr(args, 'country_unknown', 'exclude') or 'exclude'
     if args.command != 'export' and (args.selection_file is not None or args.export_query or args.export_hosting or args.export_quick):
         p.error('--selection-file/--export-query/--export-hosting/--export-quick доступны только для export')
     if len(args.export_query) > 100:
@@ -4865,12 +6425,16 @@ def main(argv=None):
                       sort=args.sort, min_success=args.min_success, denylist=denylist,
                       local_override=args.local_denylist, min_anonymity=args.min_anonymity,
                       protocol=args.protocol, max_latency=args.max_latency or None,
-                      countries=countries, country_of=country_of,
+                      countries=countries, country_exclude=country_exclude,
+                      country_basis=country_basis, country_unknown=country_unknown,
+                      country_of=country_of,
                       exclude_hosting=args.no_hosting or args.export_hosting == 'hide',
                       provider_of=provider_of, watch_minutes=args.watch, query=export_query, quick=export_quick,
                       allowed_proxies=selected, run_state=run_state, diagnostic=diagnostic,
                       collection_id=args.collection or None,
                       credentials=credentials,
+                      client_target=getattr(args, 'client_target', None),
+                      client_binary=getattr(args, 'client_binary', None),
                       secret_grant=(exportsvc.SecretGrant(allowed=True, issued_by='local-cli')
                                     if credentials == exportsvc.CREDENTIALS_REFERENCE else None),
                       active_profile_path=None if diagnostic else args.data / 'last-profile.txt')
@@ -4885,6 +6449,18 @@ def main(argv=None):
             urls = [] if args.no_sources else json.loads(args.sources.read_text(encoding='utf-8'))
             if not isinstance(urls, list):
                 raise ValueError('sources: ожидается JSON-массив http(s) URL')
+            # F13: without an explicit `--sources` the collection follows the
+            # user's *selection* in the source catalog, not a flat list of URLs.
+            # Before this, a run always asked for a list file and a source the
+            # user had switched on in the catalog was never downloaded.
+            plans = []
+            if not urls and not args.no_sources:
+                plans, migrated = catalog_source_plans(
+                    _source_settings(args.data), sources_catalog(args.data))
+                # `migrate_settings` is idempotent, so writing it back on every
+                # run is what turns an old flat-URL tree into a selection once
+                # and keeps every existing URL and every existing pause.
+                write_source_settings(args.data, migrated)
             report = asyncio.run(stoppable(collect(
                 db, urls, args.input, args.source_timeout, update_progress, denylist=collect_denylist,
                 allow_private_sources=args.allow_private_sources, detect_protocols=args.detect_protocols,
@@ -4892,7 +6468,7 @@ def main(argv=None):
                 max_source_line_bytes=args.source_max_line_bytes,
                 max_source_candidates=args.source_max_candidates,
                 max_source_redirects=args.source_max_redirects,
-                allow_private_endpoints=args.allow_private_endpoints), args.stop_file))
+                allow_private_endpoints=args.allow_private_endpoints, plans=plans), args.stop_file))
             atomic(args.data / 'sources-report.json', json.dumps(report, indent=2) + '\n')
             print(tr(f'Уникальных кандидатов в базе: {report["unique"]}', f'Unique candidates in the database: {report["unique"]}'), flush=True)
         if args.command in ('scan', 'run'):
@@ -4964,6 +6540,9 @@ def main(argv=None):
                                                screen=reputation_check, denylist=denylist,
                                                min_anonymity=args.min_anonymity, protocol=args.protocol,
                                                max_latency=args.max_latency or None, countries=countries,
+                                               country_exclude=country_exclude,
+                                               country_basis=country_basis,
+                                               country_unknown=country_unknown,
                                                country_of=country_of, prefilter=prefilter,
                                                exclude_hosting=args.no_hosting, provider_of=provider_of,
                                                prefilter_timeout=min(args.prefilter_timeout, args.connect_timeout),

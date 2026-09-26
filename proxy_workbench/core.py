@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import hashlib
 import math
+import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
@@ -194,6 +195,18 @@ class Policy:
     protocol: str | None = None
     countries: frozenset[str] = frozenset()
     unknown_country: str = 'exclude'
+    #: The one country rule, as ``geo.CountryCriterion`` builds it (F08).
+    #: ``core`` is a leaf with no database and no DDL, so the object is *given*
+    #: to it, not constructed here: ``basis`` (endpoint / exit / either), the
+    #: deliberate "never here" ``exclude`` set and the three ``unknown``
+    #: policies all live in that object, so the GUI filter and the export
+    #: engine answer the same question with the same rules.  Left ``None``,
+    #: admission falls back to ``countries``/``unknown_country`` exactly as
+    #: before, so a caller that has not been updated keeps its behaviour.
+    country_criterion: Any = None
+    #: Country of an *exit address* -- the same lookup the endpoint one does,
+    #: applied to the address the judge saw.  Needed by ``basis=exit`` only.
+    exit_country_of: Callable[[str], str | None] | None = None
     exclude_hosting: bool = False
     denied: frozenset[str] = frozenset()
     max_latency_ms: float | None = None
@@ -413,6 +426,118 @@ def row_country(row: Mapping[str, Any], policy: Policy) -> str | None:
     return None
 
 
+def row_exit_country(row: Mapping[str, Any], policy: Policy) -> str | None:
+    """Country the *exit* was measured in, or ``None``.
+
+    `basis=exit` is the rule F08 asks for: a German endpoint wanted for a
+    Dutch exit must survive, which it cannot do if the only country compared is
+    the endpoint's own.  The address comes from the judge echo the row recorded
+    -- the same place `proxytool.exit_address_of` reads it.
+    """
+    exit_address = _text(row.get('exit_ip'))
+    if not exit_address:
+        anonymity = row.get('anonymity')
+        if isinstance(anonymity, Mapping):
+            exit_address = _text(anonymity.get('exit_ip'))
+    if not exit_address:
+        return None
+    if policy.exit_country_of:
+        return _text(policy.exit_country_of(exit_address))
+    return None
+
+
+class _CountryFact:
+    """The country record a criterion needs, built without importing ``geo``.
+
+    ``core`` is a leaf by design, and the criterion it evaluates is
+    ``geo.CountryCriterion``; the object it hands over is duck-typed on the
+    three members ``geo.evaluate`` reads -- ``code``, ``known`` and
+    ``is_stale`` -- plus the provenance it reports back.  Building the real
+    ``geo.CountryFact`` here would have made the admission contract depend on
+    the geography module it is meant to be independent of.
+    """
+
+    __slots__ = ('code', 'source', 'at', 'address')
+
+    def __init__(self, code, source, at, address):
+        self.code = code.upper() if isinstance(code, str) else code
+        self.source = source
+        self.at = at
+        self.address = address
+
+    @property
+    def known(self) -> bool:
+        return self.code is not None
+
+    def is_stale(self, now, max_age_seconds) -> bool:
+        if max_age_seconds is None:
+            return False
+        if self.at is None or now is None:
+            return True
+        return (float(now) - float(self.at)) > float(max_age_seconds)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f'_CountryFact(code={self.code!r}, source={self.source!r})'
+
+
+def _country_fact(code, source, address, at):
+    """One country fact for the criterion; ``code`` of ``None`` means unknown."""
+    return _CountryFact(code, source, at, address)
+
+
+def _country_criterion_reason(row: Mapping[str, Any], policy: Policy):
+    """``E_SCOPE_COUNTRY`` when the criterion rejects the row, else ``None``.
+
+    The verdict itself is ``geo.evaluate``'s -- the same call the GUI filter
+    and the export engine make -- so an export and a table can no longer
+    disagree about whether a row is in the requested country.
+    """
+    from . import geo
+    criterion = policy.country_criterion
+    if not getattr(criterion, 'active', False):
+        return None
+    moment = time.time()
+    declared = row_country(row, policy)
+    address = str(row.get('proxy') or '').partition('://')[2]
+    endpoint = None
+    if declared:
+        endpoint = _country_fact(declared, 'source', address, moment)
+    elif policy.country_of:
+        resolved = _text(policy.country_of(str(row.get('proxy') or '')))
+        if resolved:
+            endpoint = _country_fact(resolved, 'resolved', address, moment)
+    exit_country = row_exit_country(row, policy)
+    exit_fact = None
+    if exit_country:
+        # The exit's country is an *observed* one, and the precedence in
+        # ``geo.SOURCE_PRECEDENCE`` puts it above the endpoint's own claim.
+        exit_fact = _country_fact(exit_country, 'observed_exit', exit_address_of_row(row), moment)
+    verdict = geo.evaluate(criterion, endpoint=endpoint, exit=exit_fact, now=moment)
+    if verdict.matched:
+        # ``unknown=True`` is not a rejection: ``include_unverified`` and
+        # ``require_measurement`` both admit the row and say how little is
+        # known about it.  Only the criterion's own ``unknown`` policy decides
+        # that, and it has already decided it inside ``geo.evaluate``.
+        return None
+    return 'E_SCOPE_COUNTRY', {
+        'country': (exit_country or declared), 'basis': criterion.basis,
+        'required': list(getattr(criterion, 'include', ()) or ()),
+        'excluded': list(getattr(criterion, 'exclude', ()) or ()),
+        'unknown': getattr(criterion, 'unknown', None), 'reason': verdict.reason,
+        'needs_measurement': bool(verdict.needs_measurement)}
+
+
+def exit_address_of_row(row: Mapping[str, Any]) -> str:
+    """The exit address a row recorded, whichever field carries it."""
+    value = _text(row.get('exit_ip'))
+    if value:
+        return value
+    anonymity = row.get('anonymity')
+    if isinstance(anonymity, Mapping):
+        return _text(anonymity.get('exit_ip')) or ''
+    return ''
+
+
 def capabilities_of(row: Mapping[str, Any]) -> frozenset[str]:
     """Only what the row actually demonstrates; nothing is inferred from the address."""
     if not isinstance(row, Mapping) or not row:
@@ -474,7 +599,11 @@ def _quality_reason(row: Mapping[str, Any], policy: Policy) -> tuple[str, dict[s
         protocol = row_protocol(row, policy)
         if protocol != policy.protocol:
             return 'E_SCOPE_PROTOCOL', {'protocol': protocol, 'required': policy.protocol}
-    if policy.countries:
+    if policy.country_criterion is not None:
+        reason = _country_criterion_reason(row, policy)
+        if reason is not None:
+            return reason
+    elif policy.countries:
         country = row_country(row, policy)
         if country is None:
             if policy.unknown_country != 'include':

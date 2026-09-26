@@ -1826,8 +1826,18 @@ class SqliteScheduleStore:
             columns.append('notifications_json')
             values.append(json.dumps(spec.notifications.to_dict(), sort_keys=True))
         placeholders = ', '.join('?' for _ in columns)
+        # `INSERT OR REPLACE` is a DELETE plus an INSERT in SQLite: every column
+        # left out of the list comes back at its default.  `paused`,
+        # `pause_reason`, `resume_at`, `counters_json` and `last_run_at` are not
+        # in that list, so before this change a user pause and the spent daily
+        # budget survived a restart and were then silently wiped by the next
+        # `save_spec` -- the moment the user edited the interval.  An upsert
+        # that only names the columns it writes keeps the rest.
+        assignments = ', '.join(f'"{column}"=excluded."{column}"' for column in columns
+                                if column != 'id')
         self.connection.execute(
-            f'INSERT OR REPLACE INTO {name} ({", ".join(columns)}) VALUES ({placeholders})', values)
+            f'INSERT INTO {name} ({", ".join(columns)}) VALUES ({placeholders})'
+            f' ON CONFLICT(id) DO UPDATE SET {assignments}', values)
         self.connection.commit()
 
     def load_specs(self) -> list[ScheduleSpec]:

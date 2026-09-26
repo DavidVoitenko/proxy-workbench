@@ -10,13 +10,24 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from proxy_workbench import db
 from tests.workbench_support import legacy_database as legacy_file  # noqa: E402
 
-#: Every table CONTRACTS §3.3 declares, including the five pre-versioning ones.
+#: Every table CONTRACTS §3.3 declares, including the five pre-versioning ones,
+#: plus the eight the source desk, the source generations and the scope
+#: exclusions need.  Those eight arrived with migration 16 and 18; the list was
+#: not extended, so the assertion "a new database is exactly the contract"
+#: started failing the moment the contract itself grew.  `area-ddl.md` §6.1 asks
+#: for exactly this addition.
 CONTRACT_TABLES = (
     "candidates", "candidate_meta", "candidate_seen", "results", "profiles",
     "schema_migrations", "endpoints", "collections", "membership", "accesses",
     "observations", "job", "job_item", "job_event", "checkpoint", "pools",
     "pool_member", "schedules", "schedule_run", "api_keys", "audit_log",
     "export_artifact", "import_batch",
+    # migration 16 -- the source desk and the source generations
+    "source_state", "source_observation", "source_generation",
+    "source_generation_entry", "source_identity", "source_feed",
+    "membership_source",
+    # migration 18 -- scope exclusions
+    "candidate_scope_exclusion",
 )
 
 LEGACY_ROWS = (

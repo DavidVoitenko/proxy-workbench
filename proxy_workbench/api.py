@@ -40,6 +40,7 @@ from . import formats
 from . import geoip
 from .branding import PRODUCT_NAME, PRODUCT_VERSION
 from .i18n import tr
+from . import proxytool
 from .proxytool import (PROTOCOLS, SORTS, export_file as proxytool_export_file,
                         export_manifest as proxytool_export_manifest, proxy_protocol,
                         reputation_status, row_history, PUBLIC_ACCESS)
@@ -1519,22 +1520,63 @@ class WorkbenchService(apiv1.Service):
         wanted = str((call.body or {}).get('format') or 'txt')
         return wanted if wanted in importer.FORMATS else None
 
+    def _import_policy(self, call):
+        """The endpoint policy of an import, from the request body (defect 10).
+
+        ``importer.DEFAULT_POLICY`` refuses hostnames, private addresses and the
+        RFC 5737 documentation ranges.  The CLI has ``--allow-private-endpoints``
+        and the GUI has had a checkbox since the defect was found -- but no call
+        from this file ever passed a policy, so a user's own gateway list
+        imported through the API was accepted by the form and dropped by the
+        importer, with no way to say otherwise.  The choice is now an explicit
+        request field, and it is written to the audit log, because "this
+        collection is deliberately local" is a statement about trust.
+        """
+        from . import importer
+        body = call.body or {}
+        wanted = body.get('allow_private_endpoints')
+        if wanted is None:
+            return importer.DEFAULT_POLICY
+        if not isinstance(wanted, bool):
+            raise apiv1.field_error('allow_private_endpoints',
+                                    tr('ожидается true или false', 'expected true or false'))
+        return importer.EndpointPolicy(public_only=not wanted)
+
+    def _audit_import_policy(self, workbench, call, collection_id, policy):
+        """Record the endpoint policy an import ran under."""
+        try:
+            workbench.keys()._audit(
+                getattr(getattr(call, 'principal', None), 'key_id', None),
+                'import.policy',
+                object_kind='collection', object_id=collection_id,
+                scope={'allow_private_endpoints': not policy.public_only,
+                       'credentials': policy.credentials})
+        except Exception:  # noqa: BLE001 - an audit that cannot be written is not an import failure
+            pass
+
     def _op_imports_preview(self, call):
         def action(workbench):
-            plan = workbench.import_preview(self._import_source(call, workbench),
-                                            self._import_collection(call),
+            collection = self._import_collection(call)
+            policy = self._import_policy(call)
+            self._audit_import_policy(workbench, call, collection, policy)
+            plan = workbench.import_preview(self._import_source(call, workbench), collection,
                                             mode=str((call.body or {}).get('mode') or 'merge'),
-                                            fmt=self._import_format(call))
-            return plan.to_dict()
+                                            fmt=self._import_format(call), policy=policy)
+            body = plan.to_dict()
+            body['allow_private_endpoints'] = not policy.public_only
+            return body
         return self._with_workbench(action)
 
     def _op_imports_commit(self, call):
         def action(workbench):
             collection = self._import_collection(call)
+            policy = self._import_policy(call)
+            self._audit_import_policy(workbench, call, collection, policy)
             plan = workbench.import_preview(self._import_source(call, workbench), collection,
                                             mode=str((call.body or {}).get('mode') or 'merge'),
                                             fmt=self._import_format(call),
-                                            idempotency_key=call.idempotency_key)
+                                            idempotency_key=call.idempotency_key,
+                                            policy=policy)
             if plan.needs_mapping:
                 raise apiv1.ApiError('E_VALIDATION_SCHEMA', status=422,
                                      details={'needs_mapping': True})
@@ -1542,6 +1584,7 @@ class WorkbenchService(apiv1.Service):
             # The route is an async job: a long operation answers with a job id
             # and never holds the request open (R18).
             body = report.to_dict()
+            body['allow_private_endpoints'] = not policy.public_only
             body['job_id'] = self._record_job(workbench, 'import', collection, len(report.added or ()))
             return body
         return self._with_workbench(action)
@@ -1647,8 +1690,65 @@ class WorkbenchService(apiv1.Service):
                                               idempotency_key=call.idempotency_key)))
 
     def _op_jobs_retry(self, call):
-        return self._with_workbench(lambda workbench: _job_dict(
-            self._job_store_of(workbench).retry(call.params.get('id'), idempotency_key=call.idempotency_key)))
+        """Retry what a job did not finish, and not what it deliberately skipped.
+
+        `jobs.JobStore.retry()` defaults to every item that is not ``done``,
+        and that set includes ``blocked`` -- the addresses a *resume* marked
+        ``OBSOLETE_MEMBERSHIP`` because they had left the collection.  Queuing
+        them re-measures endpoints the scope no longer contains, which is the
+        same rule ``resume`` refuses to break through a different door
+        (area-jobs §7 defect D).
+
+        The decision here is that **retry must not widen the scope**.  An
+        endpoint that left the collection is not "unfinished work"; it is work
+        that is no longer in scope, and the honest answer for it is a report,
+        not a socket.  So the item list is built here, excluding ``blocked``,
+        and the excluded ones are named in the answer.  A retry that would
+        queue nothing is refused with that reason instead of quietly creating
+        an empty job -- and if every unfinished item is blocked, the caller is
+        pointed at ``recover``, which is the operation that re-queues a crashed
+        job's *pending* items.
+        """
+        from . import jobs as jobs_module
+
+        def action(workbench):
+            store = self._job_store_of(workbench)
+            job_id = str(call.params.get('id'))
+            try:
+                blocked = {item.item_id for item in store.items(job_id)
+                           if item.state == 'blocked'}
+            except jobs_module.JobError:
+                blocked = set()
+            if not blocked:
+                answer = _job_dict(store.retry(job_id, idempotency_key=call.idempotency_key))
+                # The route is an async job: it must carry a `job_id` or the
+                # transport refuses the answer, and a client would have no id
+                # to follow the new run with.
+                answer['job_id'] = answer['id']
+                return answer
+            try:
+                pending = [item.item_id for item in store.items(job_id)
+                           if item.state not in ('done', 'blocked')]
+            except jobs_module.JobError as exc:
+                raise apiv1.ApiError('E_STATE_JOB_NOT_FOUND', status=404,
+                                     details={'reason': str(exc)}) from None
+            if not pending:
+                raise apiv1.ApiError(
+                    'E_CONFLICT_REVISION', status=409,
+                    details={'job_id': job_id, 'blocked': len(blocked),
+                             'blocked_only': True},
+                    action=tr('все незавершённые элементы вышли из области проверки; '
+                              'используйте jobs/{id}/recover, который перезапускает '
+                              'незавершённые элементы, а не вышедшие из коллекции',
+                              'every unfinished item has left the check scope; use '
+                              'jobs/{id}/recover, which requeues unfinished items rather '
+                              'than the ones that left the collection'))
+            retried = store.retry(job_id, items=pending, idempotency_key=call.idempotency_key)
+            answer = _job_dict(retried)
+            answer['job_id'] = answer['id']
+            answer['excluded_blocked'] = len(blocked)
+            return answer
+        return self._with_workbench(action)
 
     def _op_events_system(self, call):
         """The system stream, read the same way as a job stream (CONTRACTS §5.7)."""
@@ -1804,7 +1904,15 @@ class WorkbenchService(apiv1.Service):
         return self._with_workbench(action)
 
     def _op_pools_recheck(self, call):
-        """Queue a measurement of the pool's own collection, not of the body's."""
+        """Measure the pool's own collection, as the job the route promises.
+
+        The route used to create a ``pool_recheck`` job and return its id, and
+        nothing in the tree ever ran a job of that kind: the client held a job
+        id for work that could not start.  The job is now created *and executed*
+        through the one engine, so the observations, the per-item states and the
+        events all belong to the job the client was given, and a run that cannot
+        start closes the job with its refusal instead of leaving it dangling.
+        """
         def action(workbench):
             from . import proxytool as engine
             from . import jobs as jobs_module
@@ -1827,8 +1935,18 @@ class WorkbenchService(apiv1.Service):
                                   filters={'protocol': (call.body or {}).get('protocol', 'all')},
                                   budgets={'max_seconds': (call.body or {}).get('max_seconds')}),
                 items, idempotency_key=call.idempotency_key)
-            return {'job_id': job.id, 'kind': 'pool_recheck', 'state': job.state,
-                    'pool_id': pool_id, 'collection_id': collection, 'items': len(items)}
+            if job.state in ('succeeded', 'partial', 'cancelled', 'failed'):
+                # A replay of the same idempotency key returns the job that
+                # request produced, already finished; it must not measure again.
+                return {'job_id': job.id, 'kind': 'pool_recheck', 'state': job.state,
+                        'pool_id': pool_id, 'collection_id': collection, 'items': len(items),
+                        'replayed': True}
+            report = engine.run_pool_recheck(
+                workbench, pool_id, job_id=job.id,
+                protocol=(call.body or {}).get('protocol', 'all'),
+                max_seconds=(call.body or {}).get('max_seconds'))
+            report.update({'kind': 'pool_recheck', 'items': len(items), 'replayed': False})
+            return report
         return self._with_workbench(action)
 
     # -- schedules ----------------------------------------------------------
@@ -1994,74 +2112,179 @@ class WorkbenchService(apiv1.Service):
             return {}
 
     def _op_sources_catalog(self, call):
-        """The versioned source catalog with its honest evidence states."""
-        catalog = self._catalog()
-        rows = catalog.get('sources') or catalog.get('rows') or []
-        query = str(call.query.get('q') or call.query.get('query') or '').strip().lower()
-        if query:
-            rows = [row for row in rows
-                    if query in json.dumps(row, ensure_ascii=False, default=str).lower()]
+        """The versioned source catalog with its honest evidence states.
+
+        The rows come from ``source_management.build_view`` -- the same view the
+        CLI and the GUI get -- so every row carries the derived fields F13 asks
+        for: ``support`` (supported / needs_adapter / needs_auth /
+        experimental / unsupported) and ``dataset_group``, the key that tells
+        "the same list published twice" from "two independent publishers".  The
+        old handler returned the raw manifest, which has neither, and filtered
+        by scanning the whole JSON of every row.
+        """
+        view = self._source_view(call)
+        rows = view.get('sources') or []
         return {'items': self._guard_objects(rows, call, 'id', 'sources'),
-                'stream_id': 'sources-catalog', 'next_seq': None, 'total': len(rows),
-                'schema_version': catalog.get('schema_version'),
-                'published_at': catalog.get('published_at'),
-                'revision': catalog.get('revision')}
+                'stream_id': 'sources-catalog', 'next_seq': None,
+                'total': view.get('total', len(rows)),
+                'offset': view.get('offset', 0),
+                'limit': view.get('limit', len(rows)),
+                'filters': view.get('filters'),
+                'facets': view.get('facets'),
+                'access_groups': view.get('access_groups'),
+                'sets': view.get('sets'),
+                'schema_version': self._catalog().get('schema_version'),
+                'published_at': self._catalog().get('published_at'),
+                'revision': self._catalog().get('revision')}
+
+    def _source_view(self, call, *, source_ids=None, query=None):
+        """``source_management.build_view`` over the local database."""
+        from . import source_management
+        db = self._connection_ro()
+        catalog = self._catalog()
+        settings = source_management.selection_of(self._catalog_settings())
+        runtime = source_management.runtime_snapshot(db, now=self.clock(), source_ids=source_ids)
+        try:
+            return source_management.build_view(
+                catalog, settings, runtime=runtime,
+                query=call.query.get('q') or call.query.get('query') or query or '',
+                redact=not self._principal_can_read_secrets(call), now=self.clock(), db=db)
+        finally:
+            _close(db)
+
+    def _principal_can_read_secrets(self, call):
+        principal = getattr(call, 'principal', None)
+        return bool(principal is not None and getattr(principal, 'include_secrets', False))
+
+    def _connection_ro(self):
+        try:
+            return self.connection()
+        except sqlite3.Error:
+            return None
+
+    def _catalog_settings(self):
+        """The catalog selection document, migrated from whatever is on disk.
+
+        The API used to work on a *separate* flat URL list (``sources.json``),
+        which meant an id from ``/v1/sources/catalog`` could not be enabled,
+        disabled or refreshed at all: two different notions of "a source" in
+        one product.  Both are migrated into one document here.
+        """
+        from . import source_catalog
+        settings = dict(self._source_settings())
+        selection = settings.get('source_selection')
+        if isinstance(selection, dict) and selection.get('selected_ids'):
+            return settings
+        # A tree that only has the legacy flat list becomes a selection once,
+        # keeping every URL and every pause (source_catalog.migrate_settings).
+        try:
+            merged = proxytool.source_catalog_for(self.data)
+        except ValueError:
+            return settings
+        if merged.get('source_selection', {}).get('selected_ids'):
+            proxytool.write_source_settings(self.data, merged)
+        return merged
+
+    def _write_catalog_settings(self, settings):
+        return proxytool.write_source_settings(self.data, settings)
 
     def _op_sources_list(self, call):
-        """Configured sources with what the last collection actually saw."""
-        settings = self._source_settings()
-        seen = {}
-        conn = self.connection()
-        try:
-            if conn is not None:
-                for row in conn.execute('SELECT source, count(*) AS n FROM candidate_seen '
-                                        'GROUP BY source'):
-                    seen[row['source']] = row['n']
-        except sqlite3.Error:
-            seen = {}
-        finally:
-            _close(conn)
-        enabled = [item for item in settings.get('sources') if item not in set(settings.get('disabled') or ())]
-        items = [{'id': item, 'url': item, 'enabled': item in enabled,
-                  'kind': 'custom', 'addressed': seen.get(item, 0)} for item in settings.get('sources')]
+        """The user's selection with what the last collection actually saw.
+
+        One row per *catalog source*, not per raw URL: the id a client holds
+        from ``/v1/sources/catalog`` is the id it can act on here, and every
+        row carries the runtime snapshot the tables recorded.
+        """
+        view = self._source_view(call)
+        items = []
+        for row in view.get('sources') or []:
+            item = dict(row)
+            runtime = item.get('runtime') or {}
+            item['addressed'] = int(runtime.get('accepted') or 0)
+            item['seen'] = int(runtime.get('received') or 0)
+            item['http_state'] = runtime.get('http_state')
+            item['last_attempt_at'] = runtime.get('last_attempt_at')
+            items.append(item)
+        selection = view.get('selection') or {}
         return {'items': self._guard_objects(items, call, 'id', 'sources'),
-                'stream_id': 'sources', 'next_seq': None, 'total': len(items),
-                'disabled': sorted(settings.get('disabled') or ())}
+                'stream_id': 'sources', 'next_seq': None, 'total': view.get('total', len(items)),
+                'selected': list(selection.get('selected_ids', ())),
+                'disabled': list(selection.get('download_disabled_ids', ())),
+                'custom': [item.get('id') for item in selection.get('custom_sources', ())]}
 
     def _op_sources_get(self, call):
+        from . import source_management
         wanted = str(call.params.get('id') or '')
-        settings = self._source_settings()
-        for item in settings.get('sources'):
-            if item == wanted:
-                return {'id': item, 'url': item,
-                        'enabled': item not in set(settings.get('disabled') or ()),
-                        'kind': 'custom'}
-        raise apiv1.ApiError('E_STATE_NOT_FOUND', status=404, details={'id': wanted})
+        db = self._connection_ro()
+        try:
+            detail = source_management.detail_view(
+                self._catalog(), self._catalog_settings(), wanted,
+                runtime=source_management.runtime_snapshot(db, now=self.clock(),
+                                                          source_ids=[wanted]),
+                db=db, now=self.clock(),
+                redact=not self._principal_can_read_secrets(call))
+        finally:
+            _close(db)
+        if detail is None:
+            raise apiv1.ApiError('E_STATE_NOT_FOUND', status=404, details={'id': wanted})
+        return detail
 
     def _op_sources_create(self, call):
+        from . import source_catalog, source_management
         body = call.body or {}
         url = str(body.get('url') or '').strip()
         if not url:
             raise apiv1.field_error('url', tr('нужен URL источника', 'a source URL is required'))
-        settings = self._source_settings()
-        if url in settings['sources']:
+        settings = self._catalog_settings()
+        selection = settings.setdefault('source_selection', {})
+        try:
+            custom = source_catalog.custom_source(url)
+        except ValueError as exc:
+            raise apiv1.field_error('url', str(exc)) from None
+        if custom['id'] in set(selection.get('selected_ids', ())):
             raise apiv1.ApiError('E_CONFLICT_REVISION', status=409, details={'url': url},
                                  message=tr('источник уже добавлен', 'the source is already added'))
-        settings['sources'] = settings['sources'] + [url]
-        self._write_source_settings(settings)
-        return {'id': url, 'url': url, 'enabled': True, 'created': True,
-                'sources': len(settings['sources'])}
+        selection.setdefault('custom_sources', []).append(custom)
+        selection.setdefault('selected_ids', []).append(custom['id'])
+        changed = source_management.select_ids(settings, [custom['id']], self._catalog())
+        self._write_catalog_settings(changed)
+        return {'id': custom['id'], 'url': custom['url'], 'enabled': True, 'created': True,
+                'custom': True,
+                'sources': len(changed.get('source_selection', {}).get('selected_ids', []))}
 
     def _op_sources_update(self, call):
+        """Re-point a *custom* source at a new URL; a catalog entry is not editable.
+
+        Silently editing a catalog record would be a lie about what the
+        publisher serves, so only a source the user added themselves can move.
+        """
+        from . import source_catalog
         wanted = str(call.params.get('id') or '')
         body = call.body or {}
-        url = str(body.get('url') or wanted).strip()
-        settings = self._source_settings()
-        if wanted not in settings['sources']:
-            raise apiv1.ApiError('E_STATE_NOT_FOUND', status=404, details={'id': wanted})
-        settings['sources'] = [url if item == wanted else item for item in settings['sources']]
-        self._write_source_settings(settings)
-        return {'id': url, 'url': url, 'updated': True}
+        url = str(body.get('url') or '').strip()
+        if not url:
+            raise apiv1.field_error('url', tr('нужен URL источника', 'a source URL is required'))
+        settings = self._catalog_settings()
+        selection = settings.get('source_selection', {})
+        customs = selection.get('custom_sources') or []
+        for index, item in enumerate(customs):
+            if isinstance(item, dict) and item.get('id') == wanted:
+                try:
+                    replacement = source_catalog.custom_source(url)
+                except ValueError as exc:
+                    raise apiv1.field_error('url', str(exc)) from None
+                customs[index] = replacement
+                selection['selected_ids'] = [
+                    replacement['id'] if value == wanted else value
+                    for value in selection.get('selected_ids', [])]
+                self._write_catalog_settings(settings)
+                return {'id': replacement['id'], 'url': replacement['url'], 'updated': True,
+                        'custom': True}
+        raise apiv1.ApiError('E_STATE_NOT_FOUND', status=404, details={'id': wanted},
+                             message=tr('изменить можно только свой источник; запись каталога '
+                                        'описывает опубликованный список',
+                                        'only your own source can be changed; a catalog record '
+                                        'describes a published list'))
 
     def _op_sources_enable(self, call):
         return self._source_flag(call, enabled=True)
@@ -2070,61 +2293,134 @@ class WorkbenchService(apiv1.Service):
         return self._source_flag(call, enabled=False)
 
     def _source_flag(self, call, *, enabled):
+        from . import source_management
         wanted = str(call.params.get('id') or '')
-        settings = self._source_settings()
-        if wanted not in settings['sources']:
+        settings = self._catalog_settings()
+        selection = settings.get('source_selection', {})
+        known = set(selection.get('selected_ids', ())) | set(selection.get('download_disabled_ids', ()))
+        if wanted not in known:
             raise apiv1.ApiError('E_STATE_NOT_FOUND', status=404, details={'id': wanted})
-        disabled = [item for item in (settings.get('disabled') or []) if item != wanted]
-        if not enabled:
-            disabled.append(wanted)
-        settings['disabled'] = sorted(disabled)
-        self._write_source_settings(settings)
-        return {'id': wanted, 'enabled': bool(enabled), 'disabled': sorted(disabled)}
+        changed = source_management.set_downloads(settings, [wanted], not enabled, self._catalog())
+        self._write_catalog_settings(changed)
+        result = changed.get('source_selection', {})
+        return {'id': wanted, 'enabled': bool(enabled),
+                'disabled': sorted(result.get('download_disabled_ids', ())),
+                'selected': list(result.get('selected_ids', ()))}
 
     def _op_sources_refresh_preview(self, call):
         """What a refresh would decide, with its own reasons (F27).
 
-        The decision comes from ``sourcedesk``; the engine owns the fetch, so a
-        preview never touches the network and never changes membership.
+        The decision comes from ``sourcedesk`` and the *state* comes from the
+        ``source_feed`` row the last collection wrote.  The old handler
+        synthesized a ``FeedState`` out of the last report and therefore always
+        described a source that had never been fetched.
         """
         return self._source_refresh_state(call, refresh=False)
 
     def _op_sources_refresh(self, call):
         return self._source_refresh_state(call, refresh=True)
 
+    def _feed_state_of(self, source_id, collection_id):
+        """The real ``source_feed`` row of one source, or a state that says so."""
+        from . import sourcedesk
+        state = sourcedesk.FeedState(source_id=source_id, collection_id=collection_id)
+        conn = self._connection_ro()
+        if conn is None:
+            return state
+        try:
+            row = conn.execute('SELECT * FROM source_feed WHERE source_id=? AND collection_id=?',
+                               (source_id, collection_id)).fetchone()
+        except sqlite3.Error:
+            row = None
+        finally:
+            _close(conn)
+        if row is None:
+            return state
+        record = dict(row)
+
+        def listed(name):
+            try:
+                return tuple(json.loads(record.get(name) or '[]'))
+            except (TypeError, ValueError):
+                return ()
+
+        return sourcedesk.FeedState(
+            source_id=source_id, collection_id=collection_id,
+            mode=record.get('mode') or 'replace',
+            active=listed('active_json'), last_good=listed('last_good_json'),
+            last_attempt_at=record.get('last_attempt_at'),
+            last_success_at=record.get('last_success_at'),
+            last_good_at=record.get('last_good_at'),
+            last_validated_at=record.get('last_validated_at'),
+            expires_at=record.get('expires_at'),
+            next_attempt_at=record.get('next_attempt_at'),
+            quarantine_until=record.get('quarantine_until'),
+            consecutive_failures=int(record.get('consecutive_failures') or 0),
+            last_outcome=record.get('last_outcome'),
+            last_error=record.get('last_error'),
+            etag=record.get('etag'), last_modified=record.get('last_modified'),
+            body_sha256=record.get('body_sha256'),
+            retry_after=record.get('retry_after'),
+            access_id=record.get('access_id'),
+            access_revision=int(record.get('access_revision') or 1))
+
     def _source_refresh_state(self, call, *, refresh):
         from . import sourcedesk
         wanted = str(call.params.get('id') or '')
-
-        def action(workbench):
-            report = self._last_collect_report()
-            state = sourcedesk.FeedState(source_id=wanted, collection_id=schema_public_collection(),
-                                         last_attempt_at=self.clock() if report else None,
-                                         last_outcome=(report or {}).get('outcome'))
-            result = sourcedesk.FeedResult(outcome=(report or {}).get('outcome') or 'ok',
-                                           fetched_at=self.clock())
-            plan = sourcedesk.plan_refresh(state, result, now=self.clock())
-            diagnostics = sourcedesk.feed_diagnostics(state, now=self.clock())
-            return {'source_id': wanted, 'mode': plan.mode, 'outcome': plan.outcome,
-                    'reason_code': plan.reason_code, 'applied': bool(refresh and plan.applied),
-                    'next_attempt_at': plan.next_attempt_at,
-                    'diagnostics': [{'code': item.code, 'detail': item.detail} for item in diagnostics]}
-        return self._with_workbench(action)
+        state = self._feed_state_of(wanted, schema_public_collection())
+        fetched = bool(state.active or state.last_good or state.last_attempt_at)
+        if not fetched:
+            # A source that has never been fetched has no refresh plan, and
+            # inventing one is what the old handler did: it synthesised a state
+            # out of the last collect report and answered "ok, nothing to do"
+            # for a source nothing had ever asked.  The honest answer names the
+            # absence and says what would create it.
+            return {'source_id': wanted, 'mode': None, 'outcome': 'never_fetched',
+                    'reason_code': None, 'applied': False, 'next_attempt_at': None,
+                    'has_feed_row': False,
+                    'feed': {'active': [], 'last_good': [], 'expires_at': None, 'etag': None,
+                             'last_outcome': None, 'last_error': None,
+                             'consecutive_failures': state.consecutive_failures,
+                             'quarantine_until': state.quarantine_until,
+                             'next_attempt_at': state.next_attempt_at},
+                    'diagnostics': [{'code': 'SOURCE_NEVER_FETCHED',
+                                     'detail': tr('источник ещё ни разу не загружался; '
+                                                  'строки source_feed нет',
+                                                  'this source has never been fetched; there is '
+                                                  'no source_feed row')}]}
+        result = sourcedesk.FeedResult(
+            outcome=state.last_outcome or 'ok',
+            fetched_at=state.last_attempt_at or 0.0,
+            entries=state.active,
+            etag=state.etag, last_modified=state.last_modified,
+            body_sha256=state.body_sha256, retry_after=state.retry_after)
+        plan = sourcedesk.plan_refresh(state, result, now=self.clock())
+        diagnostics = sourcedesk.feed_diagnostics(state, now=self.clock())
+        return {'source_id': wanted, 'mode': plan.mode, 'outcome': plan.outcome,
+                'reason_code': plan.reason_code, 'applied': bool(refresh and plan.applied),
+                'next_attempt_at': plan.next_attempt_at,
+                'has_feed_row': True,
+                'feed': {'active': list(state.active), 'last_good': list(state.last_good),
+                         'expires_at': state.expires_at, 'etag': state.etag,
+                         'last_outcome': state.last_outcome, 'last_error': state.last_error,
+                         'consecutive_failures': state.consecutive_failures,
+                         'quarantine_until': state.quarantine_until,
+                         'next_attempt_at': state.next_attempt_at},
+                'diagnostics': [{'code': item.code, 'detail': item.detail} for item in diagnostics]}
 
     def _op_sources_refresh_status(self, call):
         from . import sourcedesk
         wanted = str(call.params.get('id') or '')
-
-        def action(workbench):
-            report = self._last_collect_report()
-            state = sourcedesk.FeedState(source_id=wanted, collection_id=schema_public_collection(),
-                                         last_attempt_at=self.clock() if report else None,
-                                         last_outcome=(report or {}).get('outcome'))
-            diagnostics = sourcedesk.feed_diagnostics(state, now=self.clock())
-            return {'source_id': wanted, 'job_id': str(call.params.get('job_id') or ''),
-                    'outcome': (report or {}).get('outcome'),
-                    'diagnostics': [{'code': item.code, 'detail': item.detail} for item in diagnostics]}
-        return self._with_workbench(action)
+        state = self._feed_state_of(wanted, schema_public_collection())
+        diagnostics = sourcedesk.feed_diagnostics(state, now=self.clock())
+        return {'source_id': wanted, 'job_id': str(call.params.get('job_id') or ''),
+                'outcome': state.last_outcome, 'has_feed_row': bool(state.last_attempt_at),
+                'feed': {'active': list(state.active), 'last_good': list(state.last_good),
+                         'expires_at': state.expires_at, 'etag': state.etag,
+                         'last_error': state.last_error,
+                         'consecutive_failures': state.consecutive_failures,
+                         'quarantine_until': state.quarantine_until},
+                'diagnostics': [{'code': item.code, 'detail': item.detail} for item in diagnostics]}
 
     def _last_collect_report(self):
         path = self.data / 'sources-report.json'
@@ -2634,6 +2930,23 @@ def pool_candidate_source(conn, *, min_success=1.0):
             measured = row['checked_at'] is not None
             allowed = bool(measured and kind == pools_module.SOURCE_KNOWN
                            and result_allowed(payload, min_success))
+            # F14 quotas (country / ASN / exit-IP) are enforced on these three
+            # fields.  Without them a pool that asked for five *different*
+            # exits could not be filled on the live API path: every candidate
+            # arrived with `exit_ip=None`, so the quota was satisfied by zero
+            # and the cap it was meant to express never fired.  They come from
+            # the row's own payload, which is the only place a measurement of
+            # them exists; an address never measured stays `None` and the pool
+            # then reports `quota_unknown` instead of guessing.
+            anonymity = payload.get('anonymity') if isinstance(payload.get('anonymity'), dict) else {}
+            geo = payload.get('geo') if isinstance(payload.get('geo'), dict) else {}
+            exit_ip = anonymity.get('exit_ip') or payload.get('exit_ip') or None
+            country = payload.get('country') or geo.get('country') or None
+            asn = geo.get('asn')
+            try:
+                asn = int(asn) if asn is not None else None
+            except (TypeError, ValueError):
+                asn = None
             offered.append(pools_module.Candidate(
                 endpoint_id=row['endpoint_id'], canonical=row['canonical'],
                 collection_id=spec.collection_id, allowed=allowed,
@@ -2642,6 +2955,8 @@ def pool_candidate_source(conn, *, min_success=1.0):
                                         else pools_module.REASON_DENIED)),
                 checked_at=row['checked_at'], valid_until=row['valid_until'],
                 protocol=proxytool_proxy(row['canonical']),
+                country=str(country).strip().upper() or None if country else None,
+                asn=asn, exit_ip=str(exit_ip).strip() or None if exit_ip else None,
                 origin_domain=pools_module.DOMAIN_OWN))
         return offered
 

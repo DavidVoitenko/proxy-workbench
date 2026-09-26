@@ -390,8 +390,12 @@ class FetchStateTests(unittest.TestCase):
         import tempfile
         self._tmp = tempfile.TemporaryDirectory()
         self.conn, _report = db.open_db(str(Path(self._tmp.name) / 'feed.sqlite3'))
-        for statement in sd.REQUESTED_DDL:
-            self.conn.execute(statement)
+        # `db.migrate()` now creates `source_feed` and `membership_source` itself
+        # (migration 16), so replaying `sd.REQUESTED_DDL` on top raises
+        # "table source_feed already exists".  The DDL is *declared* by the
+        # module so the two can be compared; it is not executed here any more,
+        # and `tests/test_area_ddl_sourcedesk.py` proves the module's tables and
+        # the migrator's are the same ones.
         self.desk = sd.SourceDesk(self.conn)
         self.source = sd.user_source(binding_id='b1', url='https://list.invalid/free-proxy-list/')
         self.desk.bind(self.source, collection_id='public')
