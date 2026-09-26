@@ -992,6 +992,13 @@ async def _collect_legacy(db, urls, inputs, timeout=60, on_progress=None, denyli
                         break
                     if not_modified:
                         error = None
+                        # A 304 is not an empty answer: report the stored set and
+                        # its age rather than counting zero rows for this run.
+                        stored = _cache_entries(db, key)
+                        if stored:
+                            count = len(stored)
+                            invalid = 0
+                            pages = max(pages, 1)
                         db.execute('''UPDATE source_state SET last_304_at=?,last_attempt_at=?,
                                       consecutive_failures=0,backoff_until=NULL,quarantine_until=NULL,
                                       retry_after=NULL,last_error=NULL WHERE source_id=? AND endpoint_id=?''',
@@ -1037,7 +1044,9 @@ async def _collect_legacy(db, urls, inputs, timeout=60, on_progress=None, denyli
                                 attempts=attempts, complete=error is None, error=error, format=kind,
                                 http_state='not_modified' if not_modified else
                                            ('http_2xx_nonempty' if error is None or truncated else 'http_error'),
-                                final_url=final_url))
+                                final_url=final_url,
+                                served_from_cache=bool(not_modified and stored),
+                                cache_age_seconds=(_last_good_age(db, key) if not_modified else None)))
             db.commit()
             publish()
             print(tr(f'Источник {index}: строк {count}, заблокировано {blocked}, страниц {pages}, ошибка {error or "нет"}',
@@ -1657,8 +1666,19 @@ async def _collect_rich_sources(db, plans, inputs, timeout, on_progress, denylis
                             report['http_state'] = 'http_2xx_nonempty'
                             report['final_url'] = final_url
                             if not_modified:
-                                report.update(http_state='not_modified', parse_state='not_run', cache_state='not_modified',
+                                # 304 is not an empty answer: the stored set is what
+                                # this source still offers, and the report says so —
+                                # with its age — instead of counting zero rows.
+                                stored = _cache_entries(db, source_id)
+                                age = _last_good_age(db, source_id, clock())
+                                report.update(http_state='not_modified', parse_state='not_run',
+                                              cache_state='not_modified' if stored else 'none',
                                               complete=True, outcome='available', last_304_at=clock())
+                                if stored:
+                                    report.update(rows=len(stored), accepted=len(stored), recognized=len(stored),
+                                                  new_endpoints=0, duplicate=0, duplicates_existing=0,
+                                                  rejected=0, blocked=0, cache_age_seconds=age,
+                                                  served_from_cache=True)
                                 _ensure_state(db, source_id, endpoint_id)
                                 db.execute('''UPDATE source_state SET last_304_at=?,last_attempt_at=?,
                                               consecutive_failures=0,backoff_until=NULL,quarantine_until=NULL,
