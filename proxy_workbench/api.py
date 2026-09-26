@@ -23,6 +23,7 @@ import hmac
 import ipaddress
 import json
 import random
+import secrets as random_source
 import sqlite3
 import threading
 import time
@@ -556,6 +557,7 @@ class WorkbenchService(apiv1.Service):
         self.clock = clock or time.time
         self._lock = threading.RLock()
         self.started = self.clock()
+        self.reservations = Reservations(self.clock)
 
     # -- helpers -----------------------------------------------------------
 
@@ -886,7 +888,13 @@ class WorkbenchService(apiv1.Service):
         target = directory / name
         if not target.is_file() or target.resolve().parent != directory.resolve():
             raise apiv1.ApiError('E_STATE_NOT_FOUND', status=404, details={'name': name})
-        return {'data': target.read_bytes(), 'filename': target.name}
+        return {'data': target.read_bytes(), 'filename': target.name,
+                'content_type': _artifact_content_type(name),
+                # The generation's own status records whether the artifact was
+                # cut with credential references in it.  A redacted identity (a
+                # subscription, the legacy token) is refused such an artifact by
+                # ``apiv1`` instead of receiving bytes it may not read.
+                'secrets': _artifact_is_secret(directory, name)}
 
     def _op_checks_collect(self, call):
         """Accept a collection run and hand it to the job store.
@@ -2239,36 +2247,194 @@ class WorkbenchService(apiv1.Service):
 
     # -- reservations -------------------------------------------------------
 
-    def _op_reservations_lease(self, call):
-        return self._reservation(call, 'lease')
-
     def _op_reservations_acquire(self, call):
-        return self._reservation(call, 'acquire')
+        """Take the addresses out of the pool for the life of a lease.
+
+        The three reservation routes used to answer from the published snapshot
+        and to ignore everything the body said: ``lease_id``, ``ttl_s`` and
+        ``state`` were read and dropped, nothing was reserved, and two acquires
+        of one pool handed out the same addresses -- a made-up ``lease_id``
+        renewed and released a lease that never existed (F29, acceptance 5).
+        """
+        pool_id = str((call.body or {}).get('pool_id') or '')
+        body = call.body or {}
+        count = int(body.get('count') or 1)
+        ttl_s = int(body.get('ttl_s') or 0) or DEFAULT_LEASE_TTL_S
+        candidates = self._pool_candidates(call, pool_id)
+        lease, retry_in = self.reservations.acquire(pool_id, _caller_key_id(call),
+                                                    candidates, count, ttl_s)
+        if lease is None:
+            raise apiv1.ApiError('E_LIMIT_QUEUE', status=429,
+                                 retry_after=max(1, int(retry_in or 0)),
+                                 details={'pool_id': pool_id, 'available': 0,
+                                          'count': count, 'retry_after_s': max(1, int(retry_in or 0))},
+                                 action=tr('пул полностью арендован: повторите после освобождения '
+                                           'или истечения TTL',
+                                           'the pool is fully leased: retry after a lease is '
+                                           'released or expires'))
+        return _lease_body(lease, 'acquire', len(candidates))
+
+    def _op_reservations_lease(self, call):
+        """Renew a lease this key holds.  Someone else's lease is not found."""
+        body = call.body or {}
+        pool_id = str(body.get('pool_id') or '')
+        lease_id = str(body.get('lease_id') or '')
+        ttl_s = int(body.get('ttl_s') or 0) or DEFAULT_LEASE_TTL_S
+        lease = self.reservations.renew(lease_id, pool_id, _caller_key_id(call), ttl_s)
+        return _lease_body(lease, 'lease', None)
 
     def _op_reservations_release(self, call):
-        return self._reservation(call, 'release')
+        """Give the addresses back, and say what became of the lease."""
+        body = call.body or {}
+        pool_id = str(body.get('pool_id') or '')
+        lease_id = str(body.get('lease_id') or '')
+        state = str(body.get('state') or 'returned')
+        lease = self.reservations.release(lease_id, pool_id, _caller_key_id(call), state)
+        return _lease_body(lease, 'release', None)
 
     def _op_reservations_feedback(self, call):
-        return self._reservation(call, 'feedback')
+        """Bounded target-aware feedback on one pool member.
 
-    def _reservation(self, call, action):
-        """A reservation over one generation, refused beyond its budget.
-
-        The rows stay where they are: a reservation is a promise about capacity,
-        never a second copy of the snapshot.
+        What the pool can store is the member's own phase: a positive report
+        puts it back in service, a negative one parks it in cooldown.  The
+        per-target detail the route accepts has nowhere to live -- there is no
+        feedback table -- so it is echoed back as ``stored: false`` with the
+        reason instead of being dropped in silence (F07).  See the handoff to
+        ``db.py`` for the table this is waiting on.
         """
-        rows, status = self.exports.load()
-        if not rows:
-            raise apiv1.ApiError('E_STATE_SNAPSHOT_EMPTY', status=409,
-                                 details={'available': 0},
-                                 action=tr('сначала выполните проверку', 'run a check first'))
+        from . import pools as pools_module
         body = call.body or {}
-        wanted = int(body.get('count') or body.get('lease') or 1)
-        limit = min(max(1, wanted), len(rows))
-        return {'action': action, 'generation': status.get('generation'),
-                'available': len(rows), 'granted': limit,
-                'items': [{'proxy': row.get('proxy'), 'age_seconds': row.get('age_seconds')}
-                          for row in rows[:limit]]}
+        pool_id = str(body.get('pool_id') or '')
+        endpoint_id = str(body.get('endpoint_id') or '')
+        ok = bool(body.get('ok'))
+        store, conn = self._pool_store()
+        try:
+            if store is None:
+                raise apiv1.ApiError('E_STATE_NOT_FOUND', status=409,
+                                     details={'reason': 'no readable database'})
+            store.require(pool_id)
+            if store.member(pool_id, endpoint_id) is None:
+                raise apiv1.ApiError('E_STATE_NOT_FOUND', status=404,
+                                     details={'pool_id': pool_id, 'endpoint_id': endpoint_id})
+            state = pools_module.MEMBER_ACTIVE if ok else pools_module.MEMBER_COOLDOWN
+            store.set_member_state(pool_id, endpoint_id, state)
+            if conn is not None:
+                conn.commit()
+        except apiv1.ApiError:
+            raise
+        except Exception as exc:
+            code = getattr(exc, 'code', None) or 'E_STATE_NOT_FOUND'
+            raise apiv1.ApiError(_api_code(code), status=_error_status(code),
+                                 details={'pool_id': pool_id, 'endpoint_id': endpoint_id},
+                                 message=str(exc)) from None
+        finally:
+            _close(conn)
+        unstored = {name: body[name] for name in ('latency_ms', 'target_id', 'error_code')
+                    if body.get(name) is not None}
+        return {'pool_id': pool_id, 'endpoint_id': endpoint_id, 'ok': ok,
+                'member_state': state, 'recorded': True, 'reputation_changed': False,
+                'note': tr('отзыв применён к пулу, глобальная репутация не меняется',
+                           'the feedback was applied to the pool; global reputation is unchanged'),
+                'not_stored': ({'fields': sorted(unstored),
+                                'reason': 'no feedback table in the schema; see docs/integration/'
+                                          'HANDOFF/fix-api.md'} if unstored else {})}
+
+    def _pool_candidates(self, call, pool_id):
+        """The addresses *this* pool can serve right now, best first.
+
+        A reservation is about one pool.  The old implementation answered from
+        the published snapshot and used ``pool_id`` for nothing but the scope
+        check, so a lease over a pool of collection B handed out addresses of
+        collection A.  The rows are the pool's own members and the admission is
+        the shared contract's, never a second calculation here (CONTRACTS §2.3).
+        """
+        from . import core
+        from . import pools as pools_module
+        body = call.body or {}
+        store, conn = self._pool_store()
+        try:
+            if store is None:
+                raise apiv1.ApiError('E_STATE_NOT_FOUND', status=409,
+                                     details={'reason': 'no readable database'},
+                                     action=tr('откройте папку данных программы',
+                                               'open the program data folder first'))
+            spec = store.require(pool_id)
+            serving = [member.endpoint_id for member in store.members(pool_id)
+                       if member.state in (pools_module.MEMBER_ACTIVE,
+                                           pools_module.MEMBER_RESERVE)]
+        except apiv1.ApiError:
+            raise
+        except Exception as exc:
+            code = getattr(exc, 'code', None) or 'E_STATE_NOT_FOUND'
+            raise apiv1.ApiError(_api_code(code), status=_error_status(code),
+                                 details={'pool_id': pool_id}, message=str(exc)) from None
+        finally:
+            _close(conn)
+        if not serving:
+            return []
+        profile = str(body.get('profile_id') or spec.profile_id)
+        max_age = int(body.get('max_age_seconds') or 0) or core.DEFAULT_MAX_AGE_SECONDS
+        policy = core.Policy(max_age_seconds=max_age,
+                             exclude_hosting=bool(body.get('exclude_hosting')),
+                             allow_missing_identity=True)
+        # The measurement network is the one the engine pins for a profile
+        # (``snapshot_network``), not a guess: a row measured on another network
+        # is not comparable with this pool and must not be leased as if it were.
+        scope = core.Scope(spec.collection_id, profile, int(spec.profile_revision or 1),
+                           self._profile_network(profile))
+        conn = self.connection()
+        try:
+            marks = ','.join('?' * len(serving))
+            found = conn.execute(
+                'SELECT e.id AS endpoint_id, e.canonical AS proxy, r.payload AS payload '
+                'FROM endpoints e LEFT JOIN results r ON r.endpoint_id = e.id '
+                f'AND r.profile_id = ? WHERE e.id IN ({marks}) ORDER BY e.canonical',
+                (profile, *serving)).fetchall() if conn is not None else []
+        except sqlite3.Error:
+            found = []
+        finally:
+            _close(conn)
+        rows = []
+        for record in found:
+            if not record['payload']:
+                continue
+            try:
+                row = json.loads(record['payload'])
+            except (TypeError, ValueError):
+                continue
+            row['proxy'] = row.get('proxy') or record['proxy']
+            row['endpoint_id'] = row.get('endpoint_id') or record['endpoint_id']
+            rows.append(row)
+        selection = core.select(rows, scope, PUBLIC_ACCESS, policy, self.clock())
+        # The same presentation a published row carries, so a leased address and
+        # a downloaded one cannot disagree about its age or its verdict.
+        return [{'proxy': str(row.get('proxy')),
+                 'endpoint_id': row.get('endpoint_id'),
+                 'age_seconds': row.get('age_seconds'),
+                 'admission_reason': row.get('admission_reason'),
+                 'score': row.get('score'),
+                 'country': row.get('country'),
+                 'latency_ms': row.get('latency_ms')}
+                for row in exportsvc.attach_admission(selection.admitted, selection)]
+
+    def _profile_network(self, profile_id):
+        """The measurement network of a profile, from its own stored config."""
+        conn = self.connection()
+        try:
+            row = conn.execute('SELECT config FROM profiles WHERE id=?',
+                               (profile_id,)).fetchone() if conn is not None else None
+        except sqlite3.Error:
+            row = None
+        finally:
+            _close(conn)
+        if row is None:
+            return None
+        try:
+            config = json.loads(row[0] or '{}')
+        except (TypeError, ValueError):
+            config = {}
+        from .proxytool import snapshot_network
+        return snapshot_network(config)
 
     # -- results ------------------------------------------------------------
 
@@ -2329,6 +2495,36 @@ API_CODE_ALIASES = {'E_POOL_UNKNOWN': 'E_STATE_NOT_FOUND'}
 def _api_code(code):
     name = str(code or '')
     return API_CODE_ALIASES.get(name, name)
+
+
+#: The content type each file of an artifact is served with.  The download route
+#: is a raw body, and a redaction rule that cannot tell JSON from text cannot be
+#: applied to it, so the file names its own type here.
+ARTIFACT_CONTENT_TYPES = {
+    'ranked.json': 'application/json; charset=utf-8',
+    'singbox.json': 'application/json; charset=utf-8',
+    'ranked.csv': 'text/csv; charset=utf-8',
+    'proxy.pac': 'application/x-ns-proxy-autoconfig; charset=utf-8',
+    'clash.yaml': 'text/yaml; charset=utf-8',
+}
+
+
+def _artifact_content_type(name):
+    return ARTIFACT_CONTENT_TYPES.get(name, 'text/plain; charset=utf-8')
+
+
+def _artifact_is_secret(directory, name):
+    """Whether this generation was cut with credential references in it.
+
+    ``status.json`` of the *generation* is the artifact's own record, not the
+    mutable convenience copy in the exports root, so a later publication cannot
+    change the answer for an artifact that is already on disk.
+    """
+    try:
+        status = json.loads((directory / 'status.json').read_text(encoding='utf-8'))
+    except (OSError, ValueError, UnicodeError):
+        return False
+    return str(status.get('credentials') or 'redact') != exportsvc.CREDENTIALS_REDACT
 
 
 def _error_status(code):
@@ -2640,6 +2836,168 @@ def _close(conn):
             conn.close()
         except sqlite3.Error:
             pass
+
+
+#: How long a lease lives when the caller did not say.  The route declares
+#: ``ttl_s`` as required, so this only covers a body that reached the service
+#: without one (a direct internal call); the API layer answers such a body with
+#: its own validation error before it gets here.
+DEFAULT_LEASE_TTL_S = 300
+
+#: What the caller may report about a lease it gives back.
+LEASE_STATES = ('returned', 'lost', 'consumed')
+
+
+class Reservations:
+    """Live leases over the members of a pool: a promise about capacity.
+
+    A lease takes its addresses *out* of the pool for the life of the lease.
+    Before this registry the three reservation routes answered from the
+    published snapshot and read nothing they were given: ``lease_id``,
+    ``ttl_s`` and ``state`` were dropped, so two acquires of one pool handed out
+    the same addresses and a made-up ``lease_id`` renewed and released a lease
+    that never existed (F29, acceptance 5).
+
+    Ownership is per key: a lease belongs to the key that took it, and renewing
+    or releasing someone else's answers like a lease that does not exist, so a
+    key cannot learn that another key is holding anything.  An expired lease is
+    free again on the next call -- the TTL is the whole expiry policy, checked
+    lazily rather than by a sweeper, so a lease can never be stranded by a
+    process that stopped.
+
+    The registry lives in the service, which is the process that hands the
+    addresses out.  A restart forgets it, so two servers on one database would
+    still both lease; see the handoff for the durable table in ``db.py``.
+    """
+
+    def __init__(self, clock=None):
+        self._clock = clock or time.time
+        self._lock = threading.RLock()
+        self._leases = {}
+        self._by_pool = {}
+
+    def now(self):
+        return float(self._clock())
+
+    def acquire(self, pool_id, key_id, candidates, count, ttl_s):
+        """Free the addresses nobody holds.  Returns (lease, retry_after_s)."""
+        now = self.now()
+        limit = max(1, int(count or 1))
+        with self._lock:
+            self._expire(now)
+            held = self._by_pool.get(pool_id) or {}
+            taken = {proxy for record in held.values() for proxy in record['proxies']}
+            free = [row for row in candidates if row.get('proxy') not in taken][:limit]
+            if not free:
+                soonest = min((record['expires_at'] for record in held.values()), default=None)
+                return None, (max(0.0, soonest - now) if soonest is not None else None)
+            lease_id = 'lease-' + random_source.token_hex(8)
+            record = {
+                'lease_id': lease_id, 'pool_id': pool_id, 'key_id': key_id,
+                'proxies': [row.get('proxy') for row in free], 'rows': free,
+                'acquired_at': now, 'expires_at': now + max(1, int(ttl_s or 0)),
+                'state': 'active', 'renewed_at': None, 'released_at': None,
+            }
+            self._leases[lease_id] = record
+            self._by_pool.setdefault(pool_id, {})[lease_id] = record
+            return record, None
+
+    def renew(self, lease_id, pool_id, key_id, ttl_s):
+        record = self._owned(lease_id, pool_id, key_id)
+        now = self.now()
+        with self._lock:
+            self._expire(now)
+            if record['lease_id'] not in self._leases:
+                raise _no_lease(lease_id, pool_id)
+            record['expires_at'] = now + max(1, int(ttl_s or 0))
+            record['renewed_at'] = now
+        return dict(record)
+
+    def release(self, lease_id, pool_id, key_id, state='returned'):
+        if state not in LEASE_STATES:
+            raise apiv1.field_error('state', ', '.join(LEASE_STATES))
+        record = self._owned(lease_id, pool_id, key_id)
+        with self._lock:
+            self._expire(self.now())
+            if record['lease_id'] not in self._leases:
+                raise _no_lease(lease_id, pool_id)
+            self._drop(lease_id)
+        record = dict(record)
+        record['state'] = state
+        record['released_at'] = self.now()
+        return record
+
+    def held(self, pool_id=None):
+        """The live leases, for a status answer and for tests."""
+        with self._lock:
+            self._expire(self.now())
+            records = list(self._leases.values()) if pool_id is None else \
+                list((self._by_pool.get(pool_id) or {}).values())
+            return [dict(record) for record in records]
+
+    def forget(self, key_id=None):
+        """Drop the leases of one key (or of every key)."""
+        with self._lock:
+            for lease_id in [lease_id for lease_id, record in self._leases.items()
+                             if key_id is None or record['key_id'] == key_id]:
+                self._drop(lease_id)
+
+    def _owned(self, lease_id, pool_id, key_id):
+        with self._lock:
+            self._expire(self.now())
+            record = self._leases.get(lease_id)
+        # A foreign lease and a lease that never existed answer alike.
+        if record is None or record['pool_id'] != pool_id or record['key_id'] != key_id:
+            raise _no_lease(lease_id, pool_id)
+        return record
+
+    def _expire(self, now):
+        for lease_id in [lease_id for lease_id, record in self._leases.items()
+                         if record['expires_at'] <= now]:
+            record = self._leases[lease_id]
+            record['state'] = 'expired'
+            self._drop(lease_id)
+
+    def _drop(self, lease_id):
+        record = self._leases.pop(lease_id, None)
+        if record is None:
+            return None
+        holders = self._by_pool.get(record['pool_id'])
+        if holders is not None:
+            holders.pop(lease_id, None)
+            if not holders:
+                self._by_pool.pop(record['pool_id'], None)
+        return record
+
+
+def _no_lease(lease_id, pool_id):
+    return apiv1.ApiError('E_STATE_NOT_FOUND', status=404,
+                          details={'lease_id': lease_id, 'pool_id': pool_id},
+                          action=tr('аренды нет, она истекла или принадлежит другому ключу',
+                                     'the lease is gone: it expired or belongs to another key'))
+
+
+def _lease_body(lease, action, available=None):
+    """One lease, as the three reservation routes answer it."""
+    now = time.time()
+    body = {'action': action, 'lease_id': lease['lease_id'], 'pool_id': lease['pool_id'],
+            'key_id': lease['key_id'], 'state': lease['state'],
+            'granted': len(lease['proxies']),
+            'acquired_at': lease['acquired_at'], 'expires_at': lease['expires_at'],
+            'ttl_s': round(max(0.0, lease['expires_at'] - now), 3),
+            'items': [dict(row) for row in lease['rows']]}
+    if lease.get('renewed_at') is not None:
+        body['renewed_at'] = lease['renewed_at']
+    if lease.get('released_at') is not None:
+        body['released_at'] = lease['released_at']
+    if available is not None:
+        body['available'] = available
+    return body
+
+
+def _caller_key_id(call):
+    principal = getattr(call, 'principal', None)
+    return getattr(principal, 'key_id', None) or 'anonymous'
 
 
 class LegacyKeyStore(apiv1.KeyStore):

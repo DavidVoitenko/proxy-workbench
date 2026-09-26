@@ -26,11 +26,16 @@ lifecycle    :class:`FeedState`, :class:`FeedResult`, :class:`FeedPolicy`,
               :func:`plan_refresh`, :func:`plan_rotation`,
               :func:`feed_diagnostics`, :func:`quota_from_response`
 storage      :class:`SourceDesk`
+comparison   :class:`Cohort`, :func:`compare_sources`, :func:`compare_suppliers`,
+              :func:`compare_cohorts`, :func:`survival_across_windows`,
+              :func:`provider_inventory`, :func:`wilson_interval`,
+              :func:`classify_measurement` (F21)
 """
 from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 import sqlite3
 import time
@@ -49,7 +54,19 @@ __all__ = [
     'feed_diagnostics', 'import_clash', 'import_singbox', 'import_subscription', 'is_ref',
     'make_ref', 'parse_document', 'plan_refresh', 'plan_rotation', 'quota_from_response',
     'redact_headers', 'redact_url', 'resolve_headers', 'resolve_url', 'user_source',
+    # F21
+    'BIAS_CODES', 'BiasNote', 'Cohort', 'CostPerAdmitted', 'FAMILY_JACCARD_DEFAULT',
+    'FetchState', 'Family', 'INERT_ACCESS_KINDS', 'OverlapPair', 'ProviderNote', 'SAMPLE_FLOOR',
+    'STATUS_MEASURED', 'STATUS_NO_DATA', 'STATUS_NOT_COLLECTED', 'SourceComparison', 'SourceStats',
+    'SupplierComparison', 'SurvivalStep', 'UNKNOWN_CODES', 'UNKNOWN_CODES_NOT_CONCLUSIVE',
+    'classify_measurement', 'compare_cohorts', 'compare_sources', 'compare_suppliers',
+    'provider_inventory', 'survival_across_windows', 'wilson_interval',
 ]
+
+#: How many endpoint ids go into one ``IN (...)`` clause.  SQLite's default
+#: ``SQLITE_MAX_VARIABLE_NUMBER`` is 999 on older builds, so a comparison never
+#: builds a statement that silently overflows it.
+_SQL_BATCH = 400
 
 # --------------------------------------------------------------------------
 # Errors
@@ -1640,3 +1657,1255 @@ class SourceDesk:
         plan = plan_refresh(state, feed, policy=FeedPolicy(mode=mode), now=now, foreign=foreign)
         self.apply_plan(plan, now=now)
         return plan
+
+
+# --------------------------------------------------------------------------
+# Comparison of sources and suppliers (F21)
+# --------------------------------------------------------------------------
+#
+# Everything in this section is read back out of the rows this application
+# itself wrote:
+#
+#   ``candidate_seen``        which catalog publisher offered an address;
+#   ``membership_source``     which user feed (a supplier) offered it;
+#   ``observations``          what was actually measured, when, for which
+#                             profile revision, and what came back;
+#   ``endpoints``             the geography, and -- importantly -- *whose*
+#                             observation the country came from;
+#   ``job``                   the conditions the run was under (filters,
+#                             budgets, find-N), which decide what the numbers
+#                             are allowed to mean.
+#
+# Three rules are load-bearing and are enforced here rather than documented:
+#
+# 1. *Unknown is unknown.*  A measurement that never concluded -- the target
+#    could not answer, the run ran out of budget, the job was stopped, the
+#    verdict is missing or unreadable -- is counted as ``unknown`` and stays
+#    out of the denominator.  It is never folded into a zero.  An address with
+#    no observation at all is ``not measured``, which is a third thing again.
+# 2. *Overlap is not independence.*  Two publishers that hand out the same
+#    addresses are one publisher counted twice.  :func:`compare_sources` groups
+#    them into families and reports what each family adds on top of the others,
+#    so a mirror can never look like a second independent contribution.
+# 3. *Nothing is estimated.*  With no observations the report says "no data".
+#    It does not fall back to the catalog's own claims, and it never invents a
+#    price, a pass rate or a proxy-quality figure.
+
+#: Bias labels a comparison may carry.  Every one of them is attached only when
+#: the database actually shows the condition, never as boilerplate.
+BIAS_FIND_N = 'find_n'                #: the run stopped at N, so the sample is a prefix
+BIAS_FILTERS = 'filters'              #: the run applied filters; the sample is not the source's output
+BIAS_GEOGRAPHY = 'geography'          #: the compared sources cover different countries
+BIAS_ORDER = 'order'                  #: address attribution is order-dependent; overlap is the correction
+BIAS_SAMPLE = 'sample_size'           #: the sample is too small to separate the sources
+BIAS_PUBLISHER_GEO = 'publisher_geography'  #: the country came from the list, not from us
+BIAS_SHARED_COST = 'shared_cost'      #: a measurement of a shared address is charged to every crediting source
+BIAS_UNKNOWN = 'unknown_measurements'       #: some measurements did not conclude
+BIAS_SCOPE = 'scope'                  #: the sources were not collected under the same conditions
+
+BIAS_CODES = (BIAS_FIND_N, BIAS_FILTERS, BIAS_GEOGRAPHY, BIAS_ORDER, BIAS_SAMPLE,
+              BIAS_PUBLISHER_GEO, BIAS_SHARED_COST, BIAS_UNKNOWN, BIAS_SCOPE)
+
+#: Below this many *conclusive* measurements a rate is reported with a
+#: deliberately wide interval and ``sample_sufficient=False``.  The number is
+#: never withheld -- it is the interval and the flag that say "do not conclude
+#: anything from this yet".
+SAMPLE_FLOOR = 20
+
+#: 1.0 groups only *exactly equal* address sets into one family, which is the
+#: copy case the source research actually found.  Lower it to fold near
+#: duplicates in as well; the value is reported so a reader knows which rule
+#: produced the grouping.
+FAMILY_JACCARD_DEFAULT = 1.0
+
+#: Access kinds that describe a commercial arrangement rather than a public
+#: list.  They stay visible in the catalog and are never collected, so they
+#: appear in a comparison as ``not_collected`` -- never as a source with a zero
+#: pass rate, and never with a made-up price.
+INERT_ACCESS_KINDS = ('paid', 'temporary_trial', 'free_with_api_key')
+
+#: A run that stopped for one of these reasons measured something, but not
+#: necessarily the address: the verdict says nothing about the proxy.
+UNKNOWN_CODES_NOT_CONCLUSIVE = frozenset({
+    'TARGET_UNAVAILABLE', 'BUDGET_EXHAUSTED', 'INSUFFICIENT_SAMPLE',
+    'E_LIMIT_BUDGET', 'DEADLINE_EXCEEDED', 'E_JOB_CANCELLED', 'E_JOB_PAUSED',
+    'E_JOB_STOPPED', 'CANCELLED', 'SKIPPED', 'BLOCKED',
+})
+#: Short alias; the longer name is the one the reports use.
+UNKNOWN_CODES = UNKNOWN_CODES_NOT_CONCLUSIVE
+
+_NON_CONCLUSIVE = None
+
+
+def _non_conclusive_codes():
+    """Codes after which the run, not the address, decided the outcome.
+
+    The project's own probe layer already states the rule -- "failures at the
+    target stage are evidence about the target, not about the proxy" -- in
+    ``probes.TARGET_FAILURE_CODES``.  It is unioned in lazily instead of being
+    copied, so the two definitions cannot drift; the local set above covers the
+    case where the probe layer is not importable.
+    """
+    global _NON_CONCLUSIVE
+    if _NON_CONCLUSIVE is None:
+        codes = set(UNKNOWN_CODES_NOT_CONCLUSIVE)
+        try:
+            from .probes import TARGET_FAILURE_CODES
+        except Exception:  # noqa: BLE001 - the classification must not depend on the import
+            pass
+        else:
+            codes.update(TARGET_FAILURE_CODES)
+        _NON_CONCLUSIVE = frozenset(codes)
+    return _NON_CONCLUSIVE
+
+#: A country whose source is one of these was *declared by somebody else* -- the
+#: list that published the address, or the provider it names.  It is a claim,
+#: not our measurement, and the report keeps the two apart.
+PUBLISHER_COUNTRY_SOURCES = frozenset({'source', 'provider'})
+
+STATUS_MEASURED = 'measured'
+STATUS_NO_DATA = 'no_data'
+STATUS_NOT_COLLECTED = 'not_collected'
+
+OUTCOME_PASS = 'pass'
+OUTCOME_FAIL = 'fail'
+OUTCOME_UNKNOWN = 'unknown'
+
+
+def _number(value):
+    """A finite float, or ``None``.  ``bool`` is not a number here."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    result = float(value)
+    return result if math.isfinite(result) else None
+
+
+def _positive_int(value):
+    number = _number(value)
+    return None if number is None or number < 0 else int(number)
+
+
+def wilson_interval(successes, trials, *, z=1.959963984540054):
+    """Wilson score interval for a binomial proportion.
+
+    Returns ``(None, None)`` when there is no trial at all.  That is the whole
+    point: a source nobody measured has no interval, and a caller that treats
+    ``None`` as ``0.0`` is the bug this function exists to make impossible.
+    """
+    if not isinstance(trials, int) or trials <= 0:
+        return None, None
+    successes = max(0, min(int(successes), trials))
+    proportion = successes / trials
+    denominator = 1.0 + z * z / trials
+    centre = proportion + z * z / (2.0 * trials)
+    margin = z * math.sqrt(proportion * (1.0 - proportion) / trials + z * z / (4.0 * trials * trials))
+    low = (centre - margin) / denominator
+    high = (centre + margin) / denominator
+    return max(0.0, low), min(1.0, high)
+
+
+def _verdict_payload(raw):
+    """The measurement row stored in ``observations.verdict``.
+
+    A row that is not a JSON object is *unknown*, not a failure: the address was
+    measured and the answer was lost, which is a different statement.
+    """
+    if isinstance(raw, Mapping):
+        return raw
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    try:
+        parsed = json.loads(raw)
+    except ValueError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def classify_measurement(payload, error_code=None):
+    """Decide what one measurement says: ``pass``, ``fail`` or ``unknown``.
+
+    The three-way split is the honesty requirement.  ``unknown`` covers every
+    case where the run did not get far enough to learn anything about the
+    address -- the target was down, the budget ran out, the job was stopped, the
+    verdict never arrived or is not readable.  Those measurements leave the
+    denominator; they are not zeros, and they are not passes either.
+    """
+    code = str(error_code or '').strip()
+    if code in _non_conclusive_codes():
+        return OUTCOME_UNKNOWN, 'run_did_not_conclude'
+    if code:
+        # A code that is not in the non-conclusive set is a real, attributable
+        # failure of this address (UNREACHABLE, CONNECT_TIMEOUT, ...).  The code
+        # is the evidence on its own, so a payload that did not survive the
+        # round-trip does not turn a measured failure into an "unknown".
+        return OUTCOME_FAIL, code
+    # A caller may hand over the column as it is stored, so the payload is
+    # decoded here rather than assumed to be a mapping already.
+    payload = _verdict_payload(payload)
+    if payload is None:
+        return OUTCOME_UNKNOWN, 'no_verdict'
+    reliability = _number(payload.get('min_target_reliability'))
+    if reliability is None:
+        reliability = _number(payload.get('reliability'))
+    if reliability is None:
+        return OUTCOME_UNKNOWN, 'no_reliability_measured'
+    if reliability > 0:
+        return OUTCOME_PASS, None
+    return OUTCOME_FAIL, 'measured_zero'
+
+
+def _measurement_cost(payload, started_at, finished_at):
+    """Seconds, bytes and attempts one measurement really spent.
+
+    Bytes and attempts come from the samples the probe recorded, so a refused
+    connection is not charged with the body it never read.  All three are
+    ``None`` when the measurement is unknown -- a run that concluded nothing
+    also spent nothing we can attribute.
+    """
+    state, reason = classify_measurement(payload, None)
+    if state == OUTCOME_UNKNOWN:
+        return None
+    seconds = None
+    start = _number(started_at)
+    finish = _number(finished_at)
+    if start is not None and finish is not None and finish >= start:
+        seconds = finish - start
+    total_bytes = 0
+    saw_bytes = False
+    for sample in (payload.get('samples') or ()) if isinstance(payload, Mapping) else ():
+        if isinstance(sample, Mapping) and _positive_int(sample.get('bytes')) is not None:
+            total_bytes += _positive_int(sample.get('bytes'))
+            saw_bytes = True
+    speed = payload.get('speed') if isinstance(payload, Mapping) else None
+    if isinstance(speed, Mapping) and _positive_int(speed.get('bytes')) is not None:
+        total_bytes += _positive_int(speed.get('bytes'))
+        saw_bytes = True
+    attempts = 0
+    samples = payload.get('samples') if isinstance(payload, Mapping) else None
+    if isinstance(samples, (list, tuple)):
+        attempts = len(samples)
+    if not attempts:
+        attempts = _positive_int(payload.get('requests')) or 0
+    return seconds, (total_bytes if saw_bytes else 0), attempts, reason
+
+
+@dataclass(frozen=True)
+class Cohort:
+    """One comparable unit of observation: a window under one profile revision.
+
+    A comparison is only meaningful inside one cohort.  Two cohorts with a
+    different ``profile_revision`` or a different window answer a different
+    question, and :func:`compare_cohorts` says so instead of averaging them
+    together.
+    """
+
+    start: float
+    end: float
+    profile_id: str = ''
+    profile_revision: int = 1
+    collection_id: str = ''
+    min_success: float = 2 / 3
+    access_ids: tuple = ()
+    label: str = ''
+
+    def __post_init__(self):
+        start, end = _number(self.start), _number(self.end)
+        if start is None or end is None:
+            raise SourceDeskError('E_VALIDATION_FIELD', 'Окно когорты должно быть числами (unix seconds).')
+        if end <= start:
+            raise SourceDeskError('E_VALIDATION_FIELD', 'Конец окна когорты должен быть позже начала.')
+        if not isinstance(self.profile_revision, int) or isinstance(self.profile_revision, bool) \
+                or self.profile_revision < 1:
+            raise SourceDeskError('E_VALIDATION_FIELD', 'profile_revision должен быть целым >= 1.')
+        threshold = _number(self.min_success)
+        if threshold is None or not 0 < threshold <= 1:
+            raise SourceDeskError('E_VALIDATION_FIELD', 'min_success должен быть долей от 0 до 1.')
+        if not isinstance(self.access_ids, tuple) or any(not isinstance(item, str) for item in self.access_ids):
+            raise SourceDeskError('E_VALIDATION_FIELD', 'access_ids должен быть кортежем строк.')
+
+    @property
+    def key(self):
+        return (self.profile_id, self.profile_revision, round(self.start, 3), round(self.end, 3))
+
+    def contains(self, at):
+        moment = _number(at)
+        return moment is not None and self.start <= moment < self.end
+
+    def as_dict(self):
+        return {'start': self.start, 'end': self.end, 'profile_id': self.profile_id,
+                'profile_revision': self.profile_revision, 'collection_id': self.collection_id,
+                'min_success': self.min_success, 'access_ids': list(self.access_ids),
+                'label': self.label}
+
+
+@dataclass(frozen=True)
+class FetchState:
+    """What the last fetch of a user feed actually proved.
+
+    ``delivered_nothing`` is its own state on purpose.  A URL that answers
+    ``HTTP 200`` with a valid ``ETag`` and an empty body has delivered nothing;
+    folding that into "ok" is exactly the quiet success the source research
+    found, so it is reported apart from a fetch that returned addresses.
+    """
+
+    source_id: str
+    known: bool = False
+    last_outcome: str = ''
+    delivered_nothing: bool = False
+    etag: str | None = None
+    body_sha256: str | None = None
+    last_attempt_at: float | None = None
+    last_success_at: float | None = None
+    consecutive_failures: int = 0
+    quarantined_until: float | None = None
+
+    def as_dict(self):
+        return {'source_id': self.source_id, 'known': self.known, 'last_outcome': self.last_outcome,
+                'delivered_nothing': self.delivered_nothing, 'etag': self.etag,
+                'body_sha256': self.body_sha256, 'last_attempt_at': self.last_attempt_at,
+                'last_success_at': self.last_success_at, 'consecutive_failures': self.consecutive_failures,
+                'quarantined_until': self.quarantined_until}
+
+
+@dataclass(frozen=True)
+class SourceStats:
+    """What one source contributed inside one cohort.
+
+    ``reliability`` is ``None`` -- and stays ``None`` -- when nothing conclusive
+    was measured.  ``status`` separates the three honest answers:
+
+    * ``not_collected`` -- the source has no addresses in this database at all;
+    * ``no_data``       -- it has addresses, but none of them was measured here;
+    * ``measured``      -- at least one conclusive measurement exists.
+    """
+
+    source_id: str
+    status: str = STATUS_NO_DATA
+    offered: int = 0
+    measured: int = 0
+    passed: int = 0
+    failed: int = 0
+    unknown: int = 0
+    admitted: int = 0
+    observations: int = 0
+    attempts: int = 0
+    seconds: float | None = 0.0
+    bytes: int = 0
+    unique_offered: int = 0
+    unique_admitted: int = 0
+    reliability: float | None = None
+    reliability_low: float | None = None
+    reliability_high: float | None = None
+    sample_sufficient: bool = False
+    family_id: str = ''
+    countries: tuple = ()
+    publisher_country_claims: int = 0
+    measured_countries: int = 0
+    fetch: FetchState | None = None
+    notes: tuple = ()
+
+    def as_dict(self):
+        return {
+            'source_id': self.source_id, 'status': self.status, 'offered': self.offered,
+            'measured': self.measured, 'passed': self.passed, 'failed': self.failed,
+            'unknown': self.unknown, 'admitted': self.admitted, 'observations': self.observations,
+            'attempts': self.attempts, 'seconds': self.seconds, 'bytes': self.bytes,
+            'unique_offered': self.unique_offered, 'unique_admitted': self.unique_admitted,
+            'reliability': self.reliability, 'reliability_low': self.reliability_low,
+            'reliability_high': self.reliability_high, 'sample_sufficient': self.sample_sufficient,
+            'family_id': self.family_id,
+            'countries': [dict(item) for item in self.countries],
+            'publisher_country_claims': self.publisher_country_claims,
+            'measured_countries': self.measured_countries,
+            'fetch': self.fetch.as_dict() if self.fetch else None,
+            'notes': list(self.notes),
+        }
+
+
+@dataclass(frozen=True)
+class OverlapPair:
+    """How much two publishers hand out in common.
+
+    ``identical`` means the two sets are equal.  That is the copy case: the
+    second publisher's addresses are not a second opinion, they are the first
+    one again, and its unique contribution is zero by construction.
+    """
+
+    left: str
+    right: str
+    left_size: int
+    right_size: int
+    shared: int
+    jaccard: float | None
+    identical: bool
+    left_only: int
+    right_only: int
+
+    def as_dict(self):
+        return {'left': self.left, 'right': self.right, 'left_size': self.left_size,
+                'right_size': self.right_size, 'shared': self.shared, 'jaccard': self.jaccard,
+                'identical': self.identical, 'left_only': self.left_only, 'right_only': self.right_only}
+
+
+@dataclass(frozen=True)
+class Family:
+    """Publishers whose address sets are the same, plus what the group adds.
+
+    ``unique_endpoints`` is measured against *every other source in the
+    comparison*, not only against the other members of the family.  A family
+    that only re-publishes what a second family already offers has nothing to
+    add, and the report must be able to say exactly that.
+    """
+
+    family_id: str
+    members: tuple
+    endpoints: int
+    unique_endpoints: int
+    unique_admitted: int
+    identical_group: bool
+
+    def as_dict(self):
+        return {'family_id': self.family_id, 'members': list(self.members), 'endpoints': self.endpoints,
+                'unique_endpoints': self.unique_endpoints, 'unique_admitted': self.unique_admitted,
+                'identical_group': self.identical_group}
+
+
+@dataclass(frozen=True)
+class CostPerAdmitted:
+    """What one admitted address cost, in time, bytes and attempts.
+
+    Every field is ``None`` when nothing was admitted: "no admitted address"
+    is not a price of zero, and dividing by it would invent an infinity.  The
+    shared-cost note stays because a measurement of an address offered by three
+    publishers is charged to all three, so a family's cost is the cost of the
+    whole family, not of one member.
+    """
+
+    admitted: int = 0
+    seconds: float | None = None
+    bytes: int | None = None
+    attempts: int | None = None
+    basis: str = 'admitted'
+    reason: str = ''
+
+    def as_dict(self):
+        return {'admitted': self.admitted, 'seconds': self.seconds, 'bytes': self.bytes,
+                'attempts': self.attempts, 'basis': self.basis, 'reason': self.reason}
+
+
+@dataclass(frozen=True)
+class BiasNote:
+    """A named reason the numbers above are not the whole truth."""
+
+    code: str
+    detail: str
+    sources: tuple = ()
+
+    def as_dict(self):
+        return {'code': self.code, 'detail': self.detail, 'sources': list(self.sources)}
+
+
+@dataclass(frozen=True)
+class SurvivalStep:
+    """One step of the survival curve, with censoring kept visible."""
+
+    index: int
+    start: float
+    end: float
+    entered: int
+    alive: int
+    dead: int
+    censored: int
+    rate: float | None
+    rate_of_entered: float | None
+
+    def as_dict(self):
+        return {'index': self.index, 'start': self.start, 'end': self.end, 'entered': self.entered,
+                'alive': self.alive, 'dead': self.dead, 'censored': self.censored,
+                'rate': self.rate, 'rate_of_entered': self.rate_of_entered}
+
+
+@dataclass(frozen=True)
+class SourceComparison:
+    """The whole answer for one cohort: rows, overlap, families, cost, bias.
+
+    ``warnings`` is where "these cohorts are not comparable" lives.  It is never
+    empty to hide a problem: a comparison across different profile revisions or
+    different windows is legitimate to ask for and illegitimate to read as one
+    number, so it is answered with a refusal plus the per-cohort breakdown.
+    """
+
+    cohort: Cohort
+    rows: tuple
+    overlaps: tuple
+    families: tuple
+    cost: tuple
+    biases: tuple
+    survival: tuple = ()
+    warnings: tuple = ()
+    family_jaccard: float = FAMILY_JACCARD_DEFAULT
+    universe: str = 'compared'
+
+    def row(self, source_id):
+        for item in self.rows:
+            if item.source_id == source_id:
+                return item
+        return None
+
+    @property
+    def has_data(self):
+        return any(item.status == STATUS_MEASURED for item in self.rows)
+
+    def as_dict(self):
+        return {
+            'cohort': self.cohort.as_dict(),
+            'rows': [item.as_dict() for item in self.rows],
+            'overlaps': [item.as_dict() for item in self.overlaps],
+            'families': [item.as_dict() for item in self.families],
+            'cost': [item.as_dict() for item in self.cost],
+            'biases': [item.as_dict() for item in self.biases],
+            'survival': [item.as_dict() for item in self.survival],
+            'warnings': list(self.warnings),
+            'family_jaccard': self.family_jaccard,
+            'universe': self.universe,
+            'has_data': self.has_data,
+        }
+
+
+@dataclass(frozen=True)
+class SupplierComparison:
+    """Two of the user's own suppliers, measured on identical terms.
+
+    Both sides are read from the same cohort: the same window, the same profile
+    revision, the same admission threshold.  ``equal_terms`` is not a promise,
+    it is the result of checking, and when it is ``False`` the reason is in
+    ``warnings`` -- the comparison is then a description of two different
+    experiments, not a verdict on a supplier.
+    """
+
+    cohort: Cohort
+    left: SourceStats
+    right: SourceStats
+    overlap: OverlapPair | None
+    equal_terms: bool
+    warnings: tuple = ()
+    comparison: SourceComparison | None = None
+
+    def as_dict(self):
+        return {'cohort': self.cohort.as_dict(), 'left': self.left.as_dict(), 'right': self.right.as_dict(),
+                'overlap': self.overlap.as_dict() if self.overlap else None,
+                'equal_terms': self.equal_terms, 'warnings': list(self.warnings),
+                'comparison': self.comparison.as_dict() if self.comparison else None}
+
+
+@dataclass(frozen=True)
+class ProviderNote:
+    """A commercial or trial provider: visible, never collected, never priced.
+
+    The comparison must be able to show that these exist without pretending to
+    have measured them.  ``status`` is ``not_collected`` for all of them, which
+    is the honest answer -- not a zero pass rate and not a hidden row.
+    """
+
+    source_id: str
+    name: str
+    access_kind: str
+    collectable: bool
+    terms_url: str = ''
+    status: str = STATUS_NOT_COLLECTED
+    note: str = ''
+
+    def as_dict(self):
+        return {'source_id': self.source_id, 'name': self.name, 'access_kind': self.access_kind,
+                'collectable': self.collectable, 'terms_url': self.terms_url, 'status': self.status,
+                'note': self.note}
+
+
+def _table_exists(conn, name):
+    row = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone()
+    return row is not None
+
+
+def _attribution(conn, sources, collection_id=None):
+    """``{source_id: frozenset(endpoint_id)}`` from the two provenance tables.
+
+    ``candidate_seen`` is what the catalog collectors delivered and is not
+    scoped to a collection; ``membership_source`` is what the user's own feeds
+    delivered and is.  Both are many-to-many on purpose: an address offered by
+    four lists belongs to all four, and pretending otherwise is the
+    first-attribution bias that overlap is here to correct.
+    """
+    wanted = tuple(sources)
+    if not wanted:
+        return {}
+    placeholders = ', '.join('?' * len(wanted))
+    result = {}
+    if _table_exists(conn, 'candidate_seen'):
+        for source_id, endpoint_id in conn.execute(
+                f'SELECT source, endpoint_id FROM candidate_seen WHERE source IN ({placeholders})',
+                wanted):
+            result.setdefault(source_id, set()).add(endpoint_id)
+    if _table_exists(conn, 'membership_source'):
+        if collection_id:
+            for source_id, endpoint_id in conn.execute(
+                    f'SELECT source_id, endpoint_id FROM membership_source '
+                    f'WHERE source_id IN ({placeholders}) AND collection_id=?', (*wanted, collection_id)):
+                result.setdefault(source_id, set()).add(endpoint_id)
+        else:
+            for source_id, endpoint_id in conn.execute(
+                    f'SELECT source_id, endpoint_id FROM membership_source WHERE source_id IN ({placeholders})',
+                    wanted):
+                result.setdefault(source_id, set()).add(endpoint_id)
+    return {source_id: frozenset(items) for source_id, items in result.items()}
+
+
+def _country_facts(conn, endpoint_ids):
+    """``{endpoint_id: (country, country_source)}`` for the addresses we hold."""
+    ids = tuple(endpoint_ids)
+    facts = {}
+    if not ids or not _table_exists(conn, 'endpoints'):
+        return facts
+    for start in range(0, len(ids), _SQL_BATCH):
+        chunk = ids[start:start + _SQL_BATCH]
+        placeholders = ', '.join('?' * len(chunk))
+        for endpoint_id, country, country_source in conn.execute(
+                f'SELECT id, country, country_source FROM endpoints WHERE id IN ({placeholders})', chunk):
+            facts[endpoint_id] = (country, country_source)
+    return facts
+
+
+def _job_conditions(conn, cohort, job_ids):
+    """What the runs that produced this cohort actually did.
+
+    Find-N, filters and the country policy are not decorations on a number --
+    they decide which addresses were ever measured, and therefore which claims
+    the number may support.  They are read from the ``job`` rows the
+    observations name, not from settings that may have changed since.  An
+    absent row is "no evidence", which is not the same as "the run had no
+    filters": only a filter that is actually recorded raises a note.
+    """
+    conditions = {'filters': {}, 'states': set(), 'jobs': set()}
+    if not _table_exists(conn, 'job'):
+        return conditions
+    ids = tuple(sorted(job_ids))
+    if not ids:
+        return conditions
+    for start in range(0, len(ids), _SQL_BATCH):
+        chunk = ids[start:start + _SQL_BATCH]
+        placeholders = ', '.join('?' * len(chunk))
+        for job_id, scope_json, state in conn.execute(
+                f'SELECT id, scope_json, state FROM job WHERE id IN ({placeholders})', chunk):
+            conditions['jobs'].add(job_id)
+            if state:
+                conditions['states'].add(state)
+            scope = {}
+            if isinstance(scope_json, str) and scope_json.strip():
+                try:
+                    parsed = json.loads(scope_json)
+                except ValueError:
+                    parsed = None
+                if isinstance(parsed, dict):
+                    scope = parsed
+            filters = scope.get('filters')
+            if isinstance(filters, Mapping):
+                merged = dict(conditions['filters'])
+                merged.update(filters)
+                conditions['filters'] = merged
+    return conditions
+
+
+def _find_n_requested(filters):
+    for name in ('want', 'find_n', 'count_what'):
+        value = filters.get(name)
+        number = _number(value)
+        if number is not None and number > 0:
+            return True
+    return False
+
+
+def _fetch_states(conn, sources):
+    """Feed health for the user's own sources, when that table exists."""
+    wanted = tuple(sources)
+    if not wanted or not _table_exists(conn, 'source_feed'):
+        return {}
+    placeholders = ', '.join('?' * len(wanted))
+    states = {}
+    for row in conn.execute(
+            f'SELECT source_id, last_outcome, etag, body_sha256, last_attempt_at, last_success_at, '
+            f'consecutive_failures, quarantine_until FROM source_feed WHERE source_id IN ({placeholders})',
+            wanted):
+        outcome = str(row[1] or '')
+        states[row[0]] = FetchState(
+            source_id=row[0], known=True, last_outcome=outcome,
+            delivered_nothing=outcome == 'empty', etag=row[2], body_sha256=row[3],
+            last_attempt_at=row[4], last_success_at=row[5],
+            consecutive_failures=int(row[6] or 0), quarantined_until=row[7])
+    return states
+
+
+def _measure_window(conn, cohort, endpoints):
+    """Fold the observations of one cohort into one record per address.
+
+    The unit is the address, not the run: an address checked three times in a
+    window is one address, and its state is decided by its most recent
+    conclusive measurement.  Every run is still counted, because the cost of
+    measuring it is real whether or not it changed the answer.
+    """
+    records = {}
+    if not endpoints or not _table_exists(conn, 'observations'):
+        return records
+    clause = 'profile_revision = ?'
+    params = [cohort.profile_revision]
+    if cohort.profile_id:
+        clause += ' AND profile_id = ?'
+        params.append(cohort.profile_id)
+    if cohort.access_ids:
+        clause += ' AND access_id IN ({})'.format(', '.join('?' * len(cohort.access_ids)))
+        params.extend(cohort.access_ids)
+    ids = tuple(endpoints)
+    job_ids = set()
+    # The window is applied in Python, not in SQL: an observation belongs to the
+    # window that holds its start *or* its finish, so a run that straddles a
+    # window edge is still counted exactly once instead of falling between two
+    # predicates and disappearing.
+    for start in range(0, len(ids), _SQL_BATCH):
+        chunk = ids[start:start + _SQL_BATCH]
+        placeholders = ', '.join('?' * len(chunk))
+        for endpoint_id, started_at, finished_at, verdict, error_code, job_id in conn.execute(
+                f'SELECT endpoint_id, started_at, finished_at, verdict, error_code, job_id '
+                f'FROM observations WHERE {clause} AND endpoint_id IN ({placeholders})',
+                (*params, *chunk)):
+            if not cohort.contains(started_at) and not cohort.contains(finished_at):
+                continue
+            payload = _verdict_payload(verdict)
+            state, reason = classify_measurement(payload, error_code)
+            cost = _measurement_cost(payload, started_at, finished_at)
+            if job_id:
+                job_ids.add(job_id)
+            reliability = None
+            if payload is not None:
+                reliability = _number(payload.get('min_target_reliability'))
+                if reliability is None:
+                    reliability = _number(payload.get('reliability'))
+            record = records.get(endpoint_id)
+            if record is None or (started_at or 0) >= (record['at'] or 0):
+                records[endpoint_id] = {'state': state, 'reason': reason, 'at': started_at,
+                                        'reliability': reliability}
+                record = records[endpoint_id]
+            record['observations'] = record.get('observations', 0) + 1
+            if cost is not None:
+                seconds, byte_count, attempts, _ = cost
+                record['seconds'] = record.get('seconds', 0.0) + (seconds or 0.0)
+                record['bytes'] = record.get('bytes', 0) + byte_count
+                record['attempts'] = record.get('attempts', 0) + attempts
+    records.setdefault('__jobs__', job_ids)
+    return records
+
+
+def _families(attribution, sources, threshold):
+    """Group publishers whose address sets overlap at or above ``threshold``.
+
+    The grouping is a union-find over pairs, so a chain of near-duplicates
+    collapses into one group -- a mirror of a mirror is still a mirror.  The
+    result is a pure function of the sets: the order the sources arrived in
+    cannot change a single membership.
+    """
+    parent = {source_id: source_id for source_id in sources}
+
+    def find(item):
+        while parent[item] != item:
+            parent[item] = parent[parent[item]]
+            item = parent[item]
+        return item
+
+    def union(left, right):
+        left_root, right_root = find(left), find(right)
+        if left_root != right_root:
+            # Sorted so the representative does not depend on arrival order.
+            low, high = sorted((left_root, right_root))
+            parent[high] = low
+
+    for index, left in enumerate(sources):
+        left_set = attribution.get(left) or frozenset()
+        if not left_set:
+            continue
+        for right in sources[index + 1:]:
+            right_set = attribution.get(right) or frozenset()
+            if not right_set:
+                continue
+            shared = len(left_set & right_set)
+            union_size = len(left_set | right_set)
+            if shared and (shared / union_size if union_size else 0.0) >= threshold:
+                union(left, right)
+
+    groups = {}
+    for source_id in sources:
+        groups.setdefault(find(source_id), []).append(source_id)
+    return {root: tuple(sorted(members)) for root, members in groups.items()}
+
+
+def _overlaps(attribution, sources):
+    """Every pair that shares addresses, strongest first, order-independent."""
+    pairs = []
+    for index, left in enumerate(sources):
+        left_set = attribution.get(left) or frozenset()
+        for right in sources[index + 1:]:
+            right_set = attribution.get(right) or frozenset()
+            shared_set = left_set & right_set
+            if not shared_set and not (left_set and right_set):
+                continue
+            union_size = len(left_set | right_set)
+            jaccard = (len(shared_set) / union_size) if union_size else None
+            pairs.append(OverlapPair(
+                left=left, right=right, left_size=len(left_set), right_size=len(right_set),
+                shared=len(shared_set), jaccard=jaccard,
+                identical=bool(left_set) and left_set == right_set,
+                left_only=len(left_set - right_set), right_only=len(right_set - left_set)))
+    pairs.sort(key=lambda pair: (-pair.shared, pair.left, pair.right))
+    return tuple(pairs)
+
+
+def compare_sources(conn, *, sources, cohort, family_jaccard=FAMILY_JACCARD_DEFAULT,
+                    sample_floor=SAMPLE_FLOOR, with_survival=False):
+    """Compare publishers on observed measurements, inside one cohort.
+
+    ``sources`` are the ids as they appear in ``candidate_seen.source`` or
+    ``membership_source.source_id`` -- whatever the caller collected under.  Two
+    of them is the supplier comparison and works exactly like a larger one: the
+    cohort is shared, so the terms are shared by construction rather than by
+    promise.
+
+    The result is a pure function of the rows.  Permuting ``sources`` cannot
+    change a count, a family, a cost or a bias note: every set operation runs on
+    endpoint ids, and every output list is sorted.
+    """
+    if not isinstance(conn, sqlite3.Connection):
+        raise SourceDeskError('E_VALIDATION_FIELD', 'Сравнение источников требует sqlite3.Connection.')
+    if not isinstance(cohort, Cohort):
+        raise SourceDeskError('E_VALIDATION_FIELD', 'Ожидался Cohort.')
+    wanted = tuple(dict.fromkeys(str(item) for item in (sources or ()) if str(item)))
+    if not wanted:
+        raise SourceDeskError('E_VALIDATION_FIELD', 'Нужен хотя бы один источник для сравнения.')
+    threshold = _number(family_jaccard)
+    if threshold is None or not 0 < threshold <= 1:
+        raise SourceDeskError('E_VALIDATION_FIELD', 'family_jaccard должен быть долей от 0 до 1.')
+    floor = _positive_int(sample_floor)
+    if floor is None:
+        raise SourceDeskError('E_VALIDATION_FIELD', 'sample_floor должен быть неотрицательным целым.')
+
+    ordered = tuple(sorted(wanted))
+    attribution = _attribution(conn, ordered, cohort.collection_id or None)
+    for source_id in ordered:
+        attribution.setdefault(source_id, frozenset())
+    universe = set()
+    for items in attribution.values():
+        universe |= items
+
+    records = _measure_window(conn, cohort, universe) if universe else {}
+    job_ids = records.pop('__jobs__', set()) if records else set()
+    conditions = _job_conditions(conn, cohort, job_ids)
+
+    # A family is a set of publishers; what it adds is measured against every
+    # other source in the comparison, not only against its own members.
+    grouped = _families(attribution, ordered, threshold)
+    family_of = {source_id: root for root, members in grouped.items() for source_id in members}
+    family_endpoints = {}
+    for source_id, root in family_of.items():
+        family_endpoints.setdefault(root, set()).update(attribution.get(source_id) or frozenset())
+
+    countries = _country_facts(conn, universe) if universe else {}
+    fetches = _fetch_states(conn, ordered)
+
+    rows = []
+    for source_id in ordered:
+        own = attribution.get(source_id) or frozenset()
+        if not own:
+            rows.append(SourceStats(source_id=source_id, status=STATUS_NOT_COLLECTED, offered=0,
+                                    family_id=family_of[source_id], fetch=fetches.get(source_id),
+                                    notes=('источник не собирался: ни одного адреса в базе',)))
+            continue
+        other_sources = set(ordered) - {source_id}
+        unique = set(own)
+        for name in other_sources:
+            unique -= attribution.get(name) or frozenset()
+        measured = passed = failed = unknown = admitted = 0
+        observations = attempts = 0
+        total_seconds = 0.0
+        total_bytes = 0
+        seen_seconds = False
+        histogram = {}
+        publisher_claims = ours = 0
+        for endpoint_id in own:
+            if endpoint_id in countries:
+                code, origin = countries[endpoint_id]
+                if code:
+                    histogram[code] = histogram.get(code, 0) + 1
+                    if origin in PUBLISHER_COUNTRY_SOURCES:
+                        publisher_claims += 1
+                    else:
+                        ours += 1
+            record = records.get(endpoint_id)
+            if record is None:
+                continue
+            measured += 1
+            observations += record.get('observations', 0)
+            attempts += record.get('attempts', 0)
+            total_bytes += record.get('bytes', 0)
+            if 'seconds' in record:
+                total_seconds += record.get('seconds', 0.0)
+                seen_seconds = True
+            state = record['state']
+            if state == OUTCOME_PASS:
+                passed += 1
+                if _admitted(record, cohort.min_success):
+                    admitted += 1
+            elif state == OUTCOME_FAIL:
+                failed += 1
+            else:
+                unknown += 1
+        trials = passed + failed
+        low, high = wilson_interval(passed, trials)
+        unique_admitted = 0
+        for endpoint_id in unique:
+            record = records.get(endpoint_id)
+            if record and record['state'] == OUTCOME_PASS and _admitted(record, cohort.min_success):
+                unique_admitted += 1
+        notes = []
+        if not measured:
+            notes.append('адреса есть, измерений в этом окне нет: данных о качестве нет')
+        elif unknown:
+            notes.append(f'{unknown} измерений не дали вывода и не входят в знаменатель')
+        rows.append(SourceStats(
+            source_id=source_id,
+            status=STATUS_MEASURED if measured else STATUS_NO_DATA,
+            offered=len(own), measured=measured, passed=passed, failed=failed, unknown=unknown,
+            admitted=admitted, observations=observations, attempts=attempts,
+            seconds=total_seconds if seen_seconds else None, bytes=total_bytes,
+            unique_offered=len(unique), unique_admitted=unique_admitted,
+            reliability=(passed / trials) if trials else None,
+            reliability_low=low, reliability_high=high,
+            sample_sufficient=trials >= floor,
+            family_id=family_of[source_id],
+            countries=tuple({'country': code, 'count': count} for code, count in sorted(histogram.items())),
+            publisher_country_claims=publisher_claims, measured_countries=ours,
+            fetch=fetches.get(source_id), notes=tuple(notes)))
+
+    families = []
+    for root, members in sorted(grouped.items()):
+        owned = family_endpoints.get(root) or set()
+        outside = set()
+        for name in ordered:
+            if name in members:
+                continue
+            outside |= attribution.get(name) or frozenset()
+        unique_endpoints = owned - outside
+        unique_admitted = 0
+        for endpoint_id in unique_endpoints:
+            record = records.get(endpoint_id)
+            if record and record['state'] == OUTCOME_PASS and _admitted(record, cohort.min_success):
+                unique_admitted += 1
+        member_sets = [attribution.get(name) or frozenset() for name in members]
+        identical = (len(members) > 1 and bool(member_sets[0])
+                     and all(item == member_sets[0] for item in member_sets))
+        families.append(Family(family_id=root, members=members, endpoints=len(owned),
+                               unique_endpoints=len(unique_endpoints), unique_admitted=unique_admitted,
+                               identical_group=identical))
+
+    overlaps = _overlaps(attribution, ordered)
+    cost = tuple(_cost_for(row) for row in rows)
+    biases = _biases(rows, families, overlaps, conditions, ordered, threshold, floor)
+    warnings = _cohort_warnings(rows)
+    survival = ()
+    if with_survival:
+        survival = survival_across_windows(conn, sources=ordered, profile_id=cohort.profile_id,
+                                           profile_revision=cohort.profile_revision,
+                                           collection_id=cohort.collection_id,
+                                           min_success=cohort.min_success, start=cohort.start,
+                                           end=cohort.end)
+    return SourceComparison(cohort=cohort, rows=tuple(rows), overlaps=overlaps, families=tuple(families),
+                            cost=cost, biases=biases, survival=survival, warnings=warnings,
+                            family_jaccard=threshold, universe='compared')
+
+
+def _admitted(record, min_success):
+    """Whether the address cleared the cohort's admission threshold."""
+    number = _number(record.get('reliability'))
+    if number is None:
+        return False
+    return number > 0 and number + 1e-12 >= min_success
+
+
+def _cost_for(row):
+    """Cost per admitted address, or an honest ``None`` with a reason."""
+    if not row.admitted:
+        return CostPerAdmitted(admitted=0, seconds=None, bytes=None, attempts=None,
+                               basis='admitted', reason='нет ни одного пригодного адреса в этом окне')
+    return CostPerAdmitted(admitted=row.admitted, seconds=row.seconds, bytes=row.bytes,
+                           attempts=row.attempts, basis='admitted', reason='')
+
+
+def _cohort_warnings(rows):
+    """What a reader must be told before reading a number off this report."""
+    warnings = []
+    if all(row.status == STATUS_NOT_COLLECTED for row in rows):
+        warnings.append('ни один источник не собирался: наблюдений нет, сравнивать нечего')
+    elif not any(row.measured for row in rows):
+        warnings.append('наблюдений в этом окне нет: pass-rate неизвестен, а не нулевой')
+    return tuple(warnings)
+
+
+def _biases(rows, families, overlaps, conditions, sources, threshold, sample_floor):
+    """Name every condition the reader must know before trusting a number."""
+    notes = []
+    measured = [row for row in rows if row.measured]
+
+    if conditions.get('filters') and _find_n_requested(conditions['filters']):
+        notes.append(BiasNote(
+            BIAS_FIND_N,
+            f'задание останавливалось на N={conditions["filters"].get("want")} '
+            f'({conditions["filters"].get("count_what") or "endpoint"}): измерен только префикс списка',
+            tuple(sorted(sources))))
+    if conditions.get('filters'):
+        others = {name: value for name, value in conditions['filters'].items()
+                  if name not in ('want', 'count_what') and value not in (None, [], {}, '', False)}
+        if others:
+            notes.append(BiasNote(BIAS_FILTERS,
+                                  f'измерения шли под фильтрами {sorted(others)}: доля прошедших '
+                                  f'относится к отфильтрованной части, а не ко всему списку',
+                                  tuple(sorted(sources))))
+    for family in families:
+        if len(family.members) > 1:
+            notes.append(BiasNote(
+                BIAS_ORDER,
+                f'семейство {family.family_id}: {", ".join(family.members)} отдают пересекающиеся адреса; '
+                f'заслуга за первый увиденный адрес зависит от порядка, уникальный вклад считается отдельно',
+                family.members))
+    for pair in overlaps:
+        if pair.identical:
+            notes.append(BiasNote(BIAS_SHARED_COST,
+                                  f'{pair.left} и {pair.right} отдают одинаковый набор из {pair.shared} '
+                                  f'адресов: это один издатель, посчитанный дважды, а не два независимых',
+                                  (pair.left, pair.right)))
+    if any(row.publisher_country_claims for row in rows):
+        total = sum(row.publisher_country_claims for row in rows)
+        notes.append(BiasNote(BIAS_PUBLISHER_GEO,
+                              f'{total} стран пришли из чужих метаданных списка, а не из наших измерений',
+                              tuple(sorted(row.source_id for row in rows if row.publisher_country_claims))))
+    distributions = [row.countries for row in measured if row.countries]
+    if len(distributions) > 1:
+        tops = {row.source_id: (row.countries[0]['country'] if row.countries else None) for row in measured}
+        if len({value for value in tops.values() if value}) > 1:
+            notes.append(BiasNote(BIAS_GEOGRAPHY,
+                                  f'источники покрывают разные страны ({tops}): сравнение процента прошедших '
+                                  f'между ними не apples-to-apples', tuple(sorted(tops))))
+    small = [row.source_id for row in measured if not row.sample_sufficient]
+    if small:
+        notes.append(BiasNote(BIAS_SAMPLE,
+                              f'выборка меньше {sample_floor} conclusive измерений у {", ".join(small)}: '
+                              f'интервал Уilson широк, выводы о разнице пока преждевременны', tuple(small)))
+    unknown_total = sum(row.unknown for row in rows)
+    if unknown_total:
+        notes.append(BiasNote(BIAS_UNKNOWN,
+                              f'{unknown_total} измерений не дали вывода (цель, бюджет, отмена): '
+                              f'они не нули и не успехи, знаменатель их не считает', tuple(sorted(sources))))
+    if threshold < 1.0:
+        notes.append(BiasNote(BIAS_ORDER,
+                              f'семейства объединены по порогу jaccard={threshold}, а не только по точному совпадению',
+                              tuple(sorted(sources))))
+    notes.sort(key=lambda note: (note.code, note.detail))
+    return tuple(notes)
+
+
+def survival_across_windows(conn, *, sources, profile_id='', profile_revision=1, collection_id='',
+                            windows=None, min_success=2/3, count=3, start=None, end=None):
+    """How many addresses were still working in the windows after the first.
+
+    An address that was simply not re-checked in a later window is *censored*,
+    not dead.  Counting it as dead would turn "we did not look" into "the proxy
+    died", which is the same mistake as turning unknown into a zero.  The step
+    therefore reports ``rate`` over the addresses that were actually judged and
+    ``censored`` beside it, so the reader can see how much of the original
+    cohort the curve really rests on.
+    """
+    if not isinstance(conn, sqlite3.Connection):
+        raise SourceDeskError('E_VALIDATION_FIELD', 'Survival требует sqlite3.Connection.')
+    ordered = tuple(sorted(dict.fromkeys(str(item) for item in (sources or ()) if str(item))))
+    if not ordered:
+        return ()
+    if not isinstance(profile_revision, int) or isinstance(profile_revision, bool) or profile_revision < 1:
+        raise SourceDeskError('E_VALIDATION_FIELD', 'profile_revision должен быть целым >= 1.')
+    threshold = _number(min_success)
+    if threshold is None or not 0 < threshold <= 1:
+        raise SourceDeskError('E_VALIDATION_FIELD', 'min_success должен быть долей от 0 до 1.')
+    spans = _window_spans(windows, start, end, count)
+    if len(spans) < 2:
+        raise SourceDeskError('E_VALIDATION_FIELD',
+                              'Для survival нужно минимум два окна: переживание нескольких окон и есть смысл.')
+    attribution = _attribution(conn, ordered, collection_id or None)
+    tracked = set()
+    for items in attribution.values():
+        tracked |= items
+    if not tracked:
+        return ()
+
+    alive = None
+    steps = []
+    for index, (from_at, to_at) in enumerate(spans):
+        cohort = Cohort(from_at, to_at, profile_id=profile_id, profile_revision=profile_revision,
+                        collection_id=collection_id, min_success=threshold,
+                        label=f'window-{index + 1}')
+        records = _measure_window(conn, cohort, tracked)
+        records.pop('__jobs__', None)
+        if alive is None:
+            entered = {endpoint_id for endpoint_id, record in records.items()
+                       if record['state'] == OUTCOME_PASS and _admitted(record, threshold)}
+        else:
+            entered = set(alive)
+        if not entered:
+            steps.append(SurvivalStep(index=index, start=from_at, end=to_at, entered=0, alive=0,
+                                      dead=0, censored=0, rate=None, rate_of_entered=None))
+            continue
+        still = censored = dead = 0
+        survivors = set()
+        for endpoint_id in entered:
+            record = records.get(endpoint_id)
+            if record is None or record['state'] == OUTCOME_UNKNOWN:
+                censored += 1
+            elif record['state'] == OUTCOME_PASS and _admitted(record, threshold):
+                still += 1
+                survivors.add(endpoint_id)
+            else:
+                dead += 1
+        judged = still + dead
+        steps.append(SurvivalStep(index=index, start=from_at, end=to_at, entered=len(entered),
+                                  alive=still, dead=dead, censored=censored,
+                                  rate=(still / judged) if judged else None,
+                                  rate_of_entered=still / len(entered)))
+        alive = survivors
+    return tuple(steps)
+
+
+def _window_spans(windows, start, end, count):
+    """Explicit windows, or a simple equal split of ``[start, end)``."""
+    if windows is not None:
+        spans = []
+        for item in windows:
+            if not isinstance(item, (list, tuple)) or len(item) != 2:
+                raise SourceDeskError('E_VALIDATION_FIELD', 'Окно должно быть парой (start, end).')
+            low, high = _number(item[0]), _number(item[1])
+            if low is None or high is None or high <= low:
+                raise SourceDeskError('E_VALIDATION_FIELD', 'Окно должно быть (start, end) с end > start.')
+            spans.append((low, high))
+        return spans
+    low, high = _number(start), _number(end)
+    if low is None or high is None or high <= low:
+        raise SourceDeskError('E_VALIDATION_FIELD', 'Нужны start/end или явные windows для survival.')
+    parts = max(2, int(_number(count) or 2))
+    step = (high - low) / parts
+    return [(low + index * step, low + (index + 1) * step) for index in range(parts)]
+
+
+def compare_suppliers(conn, left, right, *, cohort, **kwargs):
+    """Compare two of the user's own suppliers on identical terms.
+
+    Both sides come from one cohort, so the window, the profile revision and the
+    admission threshold are the same by construction.  What is checked rather
+    than assumed is whether the two actually have comparable evidence: if one
+    side was never measured, the answer says so instead of reading as a loss.
+    """
+    if not left or not right:
+        raise SourceDeskError('E_VALIDATION_FIELD', 'Нужны два источника для сравнения поставщиков.')
+    if str(left) == str(right):
+        raise SourceDeskError('E_VALIDATION_FIELD', 'Поставщики должны быть разными.')
+    comparison = compare_sources(conn, sources=(left, right), cohort=cohort, **kwargs)
+    warnings = list(comparison.warnings)
+    equal = True
+    left_row, right_row = comparison.row(str(left)), comparison.row(str(right))
+    if left_row is None or right_row is None:
+        raise SourceDeskError('E_VALIDATION_FIELD', 'Один из поставщиков не попал в сравнение.')
+    if left_row.status != right_row.status:
+        equal = False
+        warnings.append(f'статусы источников различаются ({left_row.status} против {right_row.status}): '
+                        f'это описание двух разных экспериментов, а не сравнение поставщиков')
+    elif left_row.status == STATUS_MEASURED and right_row.status == STATUS_MEASURED:
+        if not (left_row.sample_sufficient and right_row.sample_sufficient):
+            equal = False
+            warnings.append('выборка одного из поставщиков меньше порога: разницу по ней утверждать нельзя')
+    if left_row.status == STATUS_NOT_COLLECTED or right_row.status == STATUS_NOT_COLLECTED:
+        equal = False
+        warnings.append('один из поставщиков не собирался: у него нет ни одного наблюдения')
+    overlap = next((pair for pair in comparison.overlaps
+                    if {pair.left, pair.right} == {str(left), str(right)}), None)
+    if overlap and overlap.identical:
+        warnings.append('оба поставщика отдают одинаковый набор адресов: уникальный вклад второго равен нулю, '
+                        'это один и тот же список, а не два независимых')
+    return SupplierComparison(cohort=cohort, left=left_row, right=right_row, overlap=overlap,
+                              equal_terms=equal, warnings=tuple(warnings), comparison=comparison)
+
+
+def compare_cohorts(conn, *, sources, cohorts):
+    """Per-cohort breakdowns plus an explicit warning when they are not comparable.
+
+    Comparing two runs of different profile revisions, or of windows that do not
+    overlap, is a legitimate question and an illegitimate average.  Both
+    breakdowns are returned; the warning says why they must not be read as one
+    number.
+    """
+    if not isinstance(conn, sqlite3.Connection):
+        raise SourceDeskError('E_VALIDATION_FIELD', 'Сравнение когорт требует sqlite3.Connection.')
+    items = tuple(cohorts or ())
+    if len(items) < 2:
+        raise SourceDeskError('E_VALIDATION_FIELD', 'Нужны минимум две когорты для сравнения.')
+    for item in items:
+        if not isinstance(item, Cohort):
+            raise SourceDeskError('E_VALIDATION_FIELD', 'Ожидался Cohort.')
+    warnings = []
+    revisions = {item.profile_revision for item in items}
+    profiles = {item.profile_id for item in items}
+    if len(revisions) > 1:
+        warnings.append(f'когорты с разной ревизией профиля ({sorted(revisions)}): правила приёмки разные, '
+                        f'сравнивать их как одно измерение нельзя')
+    if len(profiles) > 1:
+        warnings.append(f'когорты разных профилей ({sorted(profiles)}): это разные эксперименты')
+    thresholds = {item.min_success for item in items}
+    if len(thresholds) > 1:
+        warnings.append(f'разный порог приёмки ({sorted(thresholds)}): «пригодный» означает разное')
+    windows = [(item.start, item.end) for item in items]
+    if any(windows[index][1] <= windows[index + 1][0] for index in range(len(windows) - 1)):
+        warnings.append('окна не пересекаются: измерения в них относятся к разным моментам времени')
+    breakdowns = tuple(compare_sources(conn, sources=sources, cohort=item) for item in items)
+    return tuple(breakdowns), tuple(warnings)
+
+
+def provider_inventory(catalog, *, sources=None, comparison=None):
+    """Commercial and trial providers: visible, never collected, never priced.
+
+    These rows are the honest alternative to a made-up pass rate.  They are
+    reported with their access kind, their terms link and ``not_collected`` --
+    a state that says "we have no measurement", which is different from "we
+    measured and it failed".  No price appears here: a cost per address for a
+    plan this application never subscribed to would be an invention.
+    """
+    if not isinstance(catalog, Mapping):
+        raise SourceDeskError('E_VALIDATION_FIELD', 'Ожидался каталог источников.')
+    measured = {}
+    if comparison is not None:
+        measured = {row.source_id: row.status for row in comparison.rows}
+    notes = []
+    for record in (catalog.get('sources') or ()):
+        if not isinstance(record, Mapping):
+            continue
+        access = record.get('access') if isinstance(record.get('access'), Mapping) else {}
+        kind = str(access.get('kind') or 'unknown')
+        source_id = str(record.get('id') or '')
+        collectable = bool(record.get('collection_allowed', True))
+        if not collectable or kind in INERT_ACCESS_KINDS:
+            status = measured.get(source_id, STATUS_NOT_COLLECTED)
+            notes.append(ProviderNote(
+                source_id=source_id, name=str(record.get('name') or source_id), access_kind=kind,
+                collectable=False, terms_url=str(record.get('terms_url') or ''),
+                status=status if status == STATUS_MEASURED else STATUS_NOT_COLLECTED,
+                note='коммерческое предложение: не собирается, локальных измерений нет, '
+                     'цена не оценивалась'))
+    notes.sort(key=lambda item: (item.access_kind, item.source_id))
+    return tuple(notes)
