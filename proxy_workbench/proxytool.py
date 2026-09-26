@@ -57,6 +57,12 @@ PREVIEW_MAX_BYTES = DEFAULT_SOURCE_MAX_BYTES
 DEFAULT_SOURCE_MAX_LINE_BYTES = 64 * 1024
 DEFAULT_SOURCE_MAX_CANDIDATES = 500_000
 PREVIEW_MAX_CANDIDATES = 200_000
+#: What a *check* spends.  ``PREVIEW_MAX_CANDIDATES`` is the bound a caller of
+#: :func:`preview_collect` gets; an interactive check wants to answer "is this
+#: list readable and what is in it", and reading 200 000 rows of a 3 MB public
+#: list to answer that keeps the page waiting for a minute.  The check stops
+#: here and reports the truncation as a fact about the check.
+PREVIEW_CHECK_CANDIDATES = 5_000
 DEFAULT_SOURCE_MAX_REDIRECTS = 5
 #: Pages one fetch of a paginated source will walk.  A provider that keeps
 #: returning full pages must not be able to hold a collection open forever.
@@ -462,6 +468,16 @@ def normalize_custom_list(value):
 
 
 def public_url(value):
+    """The host and port of a stored URL, or ``''`` for anything unusable.
+
+    Total on purpose.  A stored value can be ``None`` -- a generation written
+    by a fetch that never reached an endpoint leaves the column empty -- and
+    ``urlunsplit`` then raised ``TypeError`` from deep inside ``urllib``, which
+    turned one empty column into a dropped connection with no response at all
+    instead of a row that says "no URL".
+    """
+    if not isinstance(value, str) or not value.strip():
+        return ''
     try:
         parsed = urlsplit(value)
         port = parsed.port
@@ -471,7 +487,10 @@ def public_url(value):
     if ':' in host and not host.startswith('['):
         host = '[' + host + ']'
     authority = host + (f':{port}' if port else '')
-    return urlunsplit((parsed.scheme, authority, '/', '', ''))
+    try:
+        return urlunsplit((parsed.scheme, authority, '/', '', ''))
+    except TypeError:
+        return ''
 
 
 ATOMIC_REPLACE_ATTEMPTS = 40
@@ -1078,17 +1097,16 @@ def catalog_source_plans(settings, catalog=None, *, include_disabled=False):
     return plans, settings
 
 
-def fetch_catalog(url, *, current=None, timeout=20, max_bytes=8 * 1024 * 1024,
-                  allow_private_sources=False, etag=None, last_modified=None):
+async def fetch_catalog(url, *, current=None, timeout=20, max_bytes=8 * 1024 * 1024,
+                        allow_private_sources=False, etag=None, last_modified=None):
     """The single bounded owner for fetching a remote source catalog.
 
-    Synchronous, and deliberately so: the caller is a job thread, not a request
-    handler.  It reuses the same URL validation, DNS pinning, redirect and
-    downgrade policy as a proxy source, sends the stored validators so a
-    publisher that has nothing new costs a 304 instead of a body, and decodes
-    the answer only through the pure catalog validator -- no response data is
-    imported or evaluated.  The caller decides whether to accept it; this
-    function never writes anything.
+    It reuses the same URL validation, DNS pinning, redirect and downgrade
+    policy as a proxy source, sends the stored validators so a publisher with
+    nothing new costs a 304 instead of a body, and decodes the answer only
+    through the pure catalog validator -- no response data is imported or
+    evaluated.  The caller decides whether to accept it; this function never
+    writes anything.
     """
     from . import source_catalog
     current_url = str(url or '').strip()
@@ -1107,10 +1125,10 @@ def fetch_catalog(url, *, current=None, timeout=20, max_bytes=8 * 1024 * 1024,
         try:
             if allowed_host and urlsplit(current_url).hostname != allowed_host:
                 raise SourceFetchError('SOURCE_REDIRECT_HOST')
-            with httpx.Client(trust_env=False, verify=TLS, follow_redirects=False,
-                              timeout=timeout) as client:
-                with _source_stream_sync(client, current_url, allow_private_sources,
-                                         validators if not redirect_count else None) as response:
+            async with httpx.AsyncClient(trust_env=False, verify=TLS, follow_redirects=False,
+                                         timeout=timeout) as client:
+                async with _source_stream(client, current_url, allow_private_sources,
+                                          validators if not redirect_count else None) as response:
                     if response.status_code == 304:
                         return dict(state='not_modified', catalog=current, etag=etag,
                                     last_modified=last_modified)
@@ -1130,7 +1148,7 @@ def fetch_catalog(url, *, current=None, timeout=20, max_bytes=8 * 1024 * 1024,
                     if response.status_code >= 400:
                         raise SourceFetchError('SOURCE_HTTP_ERROR',
                                                retryable=response.status_code >= 500)
-                    body = _read_bounded_sync(response, max_bytes)
+                    body = await _read_bounded_body(response, {'used': 0}, max_bytes)
                     catalog = source_catalog.decode_catalog_bytes(body, current, max_bytes=max_bytes)
                     return dict(state='available', catalog=catalog,
                                 etag=response.headers.get('etag'),
@@ -1139,82 +1157,6 @@ def fetch_catalog(url, *, current=None, timeout=20, max_bytes=8 * 1024 * 1024,
         except SourceFetchError:
             raise
     raise SourceFetchError('SOURCE_REDIRECT_TOO_MANY')
-
-
-def _validate_source_destination_sync(value, allow_private=False):
-    """The synchronous twin of :func:`_validate_source_destination`.
-
-    Same rules, same answers, no event loop: a catalog is fetched by a
-    background thread, and a second policy is a second way to be wrong.
-    """
-    try:
-        parsed, host, port = _parse_source_url(value)
-    except ValueError as exc:
-        raise SourceFetchError('SOURCE_URL_INVALID') from exc
-    if allow_private:
-        return parsed, host, port, None
-    if _is_blocked_source_hostname(host):
-        raise SourceFetchError('SOURCE_PRIVATE_DESTINATION')
-    try:
-        address = ipaddress.ip_address(host)
-    except ValueError:
-        alternate = _source_ip_literal(host)
-        if alternate is not None:
-            if _is_blocked_source_ip(alternate):
-                raise SourceFetchError('SOURCE_PRIVATE_DESTINATION')
-            raise SourceFetchError('SOURCE_URL_INVALID')
-        address = None
-    if address is not None:
-        if _is_blocked_source_ip(address):
-            raise SourceFetchError('SOURCE_PRIVATE_DESTINATION')
-        return parsed, host, port, str(address)
-    try:
-        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
-    except (OSError, ValueError) as exc:
-        raise SourceFetchError('SOURCE_DNS_ERROR', retryable=True) from exc
-    addresses = [entry[4][0] for entry in infos if entry[4]]
-    if not addresses or any(_is_blocked_source_ip(item) for item in addresses):
-        raise SourceFetchError('SOURCE_PRIVATE_DESTINATION' if addresses else 'SOURCE_DNS_ERROR',
-                               retryable=not addresses)
-    return parsed, host, port, str(addresses[0])
-
-
-@contextmanager
-def _source_stream_sync(client, url, allow_private=False, headers=None):
-    """The synchronous twin of :func:`_source_stream`, with the same policy.
-
-    A catalog is fetched by a background thread, so it gets the same
-    destination validation, the same DNS pinning and the same redirect refusal
-    as a source list -- a catalog URL must not be the one route in the app that
-    can be pointed anywhere.
-    """
-    _, hostname, _, address = _validate_source_destination_sync(url, allow_private)
-    request_headers = dict(headers or {})
-    if address is None:
-        with client.stream('GET', url, headers=request_headers) as response:
-            yield response
-        return
-    transport = PinnedSourceTransport(address, hostname)
-    pinned = httpx.Client(transport=transport, trust_env=False, verify=TLS,
-                          follow_redirects=False, timeout=15)
-    try:
-        with pinned.stream('GET', url, headers=request_headers) as response:
-            yield response
-    finally:
-        pinned.close()
-
-
-def _read_bounded_sync(response, max_bytes):
-    """Read a response body within ``max_bytes``, or refuse it."""
-    declared = _declared_response_length(response)
-    if declared is not None and declared > max_bytes:
-        raise SourceFetchError('SOURCE_TOO_LARGE')
-    body = bytearray()
-    for chunk in response.iter_bytes():
-        if len(body) + len(chunk) > max_bytes:
-            raise SourceFetchError('SOURCE_TOO_LARGE')
-        body.extend(chunk)
-    return bytes(body)
 
 
 def bundled_sources_path():
