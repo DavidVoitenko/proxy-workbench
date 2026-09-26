@@ -183,7 +183,12 @@ class ControlTests(unittest.TestCase):
         self.assertTrue(response.json()['job_id'])
         self.assertEqual(dict(response.headers)['Location'],
                          f"/v1/jobs/{response.json()['job_id']}")
-        self.assertTrue(self.service.running.is_set())
+        # The job runs in a worker thread the fake starts; `is_set()` read the
+        # event before the thread had been scheduled, so the assertion was a race
+        # with thread startup and failed under load. `wait(2)` states the same
+        # intent -- the job is still running after the 202 -- without depending on
+        # when the thread is picked up. The final `wait(2)` below already used it.
+        self.assertTrue(self.service.running.wait(2), 'the job must still be running after the 202')
         # the API stays usable while the job runs
         self.assertEqual(self.call('GET', '/v1/jobs').status_code, 200)
         self.service.running.wait(2)
