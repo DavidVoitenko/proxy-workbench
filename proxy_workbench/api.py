@@ -497,11 +497,13 @@ def policy_of(query, *, min_success=2/3, strict=False, denylist=None, max_age_se
         allow_missing_identity=True, protocol_of=proxy_protocol)
 
 
-def select(rows, query, *, denylist=None, now=None):
+def select(rows, query, *, denylist=None, now=None, workbench=None):
     """The rows a query selects, decided by the one admission contract.
 
     Every surface that shows a list -- CLI ``get``, the GUI table and this API --
     calls this function, so one scope gives one set (F18, F29 acceptance 7).
+    The country part is ``geo``'s rule, reached through ``workbench`` when the
+    caller has one, so this list and an export cannot disagree about a row.
     """
     now = time.time() if now is None else now
     policy = policy_of(query, denylist=denylist)
@@ -525,12 +527,46 @@ def select(rows, query, *, denylist=None, now=None):
         if query.get('anonymity', 'any') != 'any' and \
                 rank.get(row['anonymity'] or 'unknown', -1) < rank[query['anonymity']]:
             continue
-        if query.get('countries') and row['country'] not in query['countries']:
-            continue
         if policy.protocol and policy.protocol != 'all' and row['protocol'] != policy.protocol:
             continue
         selected.append(row)
-    return selected
+    return country_selected(selected, query, now=now, workbench=workbench)
+
+
+#: The one country rule of F08, applied to a set of rows.
+#:
+#: This used to be ``row['country'] not in query['countries']`` written out
+#: here and again in ``_matches`` -- an include-only test that could not say
+#: "not this country", could not compare the exit country, and dropped an
+#: unknown country without saying so.  The criterion was already written, in
+#: ``geo``, and already reached by the CLI, the export and the GUI list; it
+#: simply was not on this path, so two copies of the rule answered for the
+#: same rows.  Both copies now call the same function, which is read-only and
+#: starts nothing.
+def country_criterion_of(query, *, basis='endpoint', unknown='exclude'):
+    """The criterion this API's query asks for, or an empty one."""
+    from . import geo
+    wanted = query.get('countries') if isinstance(query, dict) else None
+    if not wanted:
+        return geo.CountryCriterion()
+    return geo.parse_criterion({'include': list(wanted), 'basis': basis, 'unknown': unknown})
+
+
+def country_selected(rows, query, *, now=None, workbench=None):
+    """The rows one country criterion keeps, through the rule the export uses."""
+    from . import proxytool
+    wanted = query.get('countries') if isinstance(query, dict) else None
+    if not wanted:
+        return list(rows)
+    criterion = country_criterion_of(query)
+    if workbench is not None:
+        return list(workbench.filter_by_country(rows, criterion, now=now))
+    return list(proxytool.filter_by_country(rows, criterion, now=now))
+
+
+def country_matches(row, query, *, now=None, workbench=None):
+    """Whether one row satisfies the query's country criterion."""
+    return bool(country_selected([row], query, now=now, workbench=workbench))
 
 
 # ---------------------------------------------------------------------------
@@ -825,9 +861,14 @@ class WorkbenchService(apiv1.Service):
         protocol = query.get('protocol')
         if protocol and protocol != 'all' and row.get('protocol') != protocol:
             return False
-        country = query.get('country')
-        if country and row.get('country') not in str(country).split(','):
-            return False
+        # A third copy of the country test used to live here, parsing the query
+        # string itself and knowing nothing about an exit country, an exclusion
+        # or an unknown one.  It is the same criterion ``select`` and the export
+        # use, so one row has one country answer in this service.
+        if query.get('country'):
+            return country_matches(
+                row, {'countries': geoip.parse_countries(str(query['country']))},
+                workbench=self.workbench())
         return True
 
     # -- status and exports -------------------------------------------------
@@ -3025,26 +3066,30 @@ def pool_candidate_source(conn, *, min_success=1.0):
         except sqlite3.Error:
             members = set()
         rows = conn.execute(
-            'SELECT e.id AS endpoint_id, e.canonical AS canonical, r.payload AS payload,'
-            ' r.checked_at AS checked_at, r.valid_until AS valid_until'
+            'SELECT e.id, e.canonical, r.payload, r.checked_at, r.valid_until'
             ' FROM membership m JOIN endpoints e ON e.id = m.endpoint_id'
             ' LEFT JOIN results r ON r.endpoint_id = e.id AND r.profile_id=?'
             ' WHERE m.collection_id=? ORDER BY e.canonical LIMIT ?',
             (spec.profile_id, spec.collection_id, limit)).fetchall()
         offered = []
-        for row in rows:
-            is_member = row['endpoint_id'] in members
+        for endpoint_id, canonical, raw_payload, checked_at, valid_until in rows:
+            # Read by position, not by column name.  This source is handed
+            # whatever connection the caller had, and ``PoolStore.open`` does
+            # not promise a ``sqlite3.Row`` factory; indexing a plain tuple by
+            # name raised ``TypeError`` inside a background watch, where the
+            # pool reported it as "the source failed" and simply never filled.
+            is_member = endpoint_id in members
             if kind == pools_module.SOURCE_RESERVE and not is_member:
                 continue
             if kind != pools_module.SOURCE_RESERVE and is_member:
                 continue
             payload = {}
-            if row['payload']:
+            if raw_payload:
                 try:
-                    payload = json.loads(row['payload'])
+                    payload = json.loads(raw_payload)
                 except (TypeError, ValueError):
                     payload = {}
-            measured = row['checked_at'] is not None
+            measured = checked_at is not None
             allowed = bool(measured and kind == pools_module.SOURCE_KNOWN
                            and result_allowed(payload, min_success))
             # F14 quotas (country / ASN / exit-IP) are enforced on these three
@@ -3065,13 +3110,13 @@ def pool_candidate_source(conn, *, min_success=1.0):
             except (TypeError, ValueError):
                 asn = None
             offered.append(pools_module.Candidate(
-                endpoint_id=row['endpoint_id'], canonical=row['canonical'],
+                endpoint_id=endpoint_id, canonical=canonical,
                 collection_id=spec.collection_id, allowed=allowed,
                 admission_reason=(None if allowed or kind == pools_module.SOURCE_RESERVE
                                   else (pools_module.REASON_TIME_MISSING if not measured
                                         else pools_module.REASON_DENIED)),
-                checked_at=row['checked_at'], valid_until=row['valid_until'],
-                protocol=proxytool_proxy(row['canonical']),
+                checked_at=checked_at, valid_until=valid_until,
+                protocol=proxytool_proxy(canonical),
                 country=str(country).strip().upper() or None if country else None,
                 asn=asn, exit_ip=str(exit_ip).strip() or None if exit_ip else None,
                 origin_domain=pools_module.DOMAIN_OWN))

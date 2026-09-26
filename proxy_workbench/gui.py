@@ -2601,6 +2601,16 @@ class App:
             max_latency = float(query.get('max_latency', ['0'])[0])
             search = query.get('q', [''])[0].strip().lower()[:100]
             countries = frozenset(geoip.parse_countries(query.get('country', [''])[0][:1000]))
+            # F08 parity: the same three knobs the CLI and the API already
+            # accept.  Their defaults are what this page has always done --
+            # the endpoint's own country, an unknown one excluded -- so a link
+            # without them selects the same rows it always did.
+            country_basis = query.get('country_basis', ['endpoint'])[0] or 'endpoint'
+            country_unknown = query.get('country_unknown', ['exclude'])[0] or 'exclude'
+            if country_basis not in ('endpoint', 'exit', 'either'):
+                raise ValueError('country_basis: endpoint, exit или either.')
+            if country_unknown not in ('exclude', 'include_unverified', 'require_measurement'):
+                raise ValueError('country_unknown: exclude, include_unverified или require_measurement.')
             hide_hosting = normalize_hosting_filter(query.get('hosting', [''])[0]) == 'hide'
             # F02: the table can be about one collection.  An empty value is
             # every collection the profile measured, which is what the scope
@@ -2616,7 +2626,8 @@ class App:
         limit = max(1, min(limit, PAGE_SIZE_MAX))
         return dict(sort=sort, order=order, view=view, min_success=threshold, offset=offset, limit=limit,
                     min_anonymity=min_anonymity, protocol=protocol, quick=quick, max_latency=max_latency,
-                    search=search, countries=countries, hide_hosting=hide_hosting, collection=collection)
+                    search=search, countries=countries, hide_hosting=hide_hosting, collection=collection,
+                    country_basis=country_basis, country_unknown=country_unknown)
 
     def result_plan(self, query):
         """One validated description of "which rows the table is about"."""
@@ -2664,9 +2675,19 @@ class App:
         if not (cfg or {}).get('anonymity'):
             plan = dict(plan, min_anonymity='any')
         max_age = self.status_max_age(plan['status']) if plan.get('status') else admission.DEFAULT_MAX_AGE_SECONDS
+        # The country half is the ``geo.CountryCriterion`` the export already
+        # applies, not the legacy ``countries=`` shortcut.  The shortcut is an
+        # include-only set that cannot say "not this country", cannot compare an
+        # exit country and drops an unknown one without saying so -- so the
+        # table and an export of the same rows could disagree about one filter.
+        # Behaviour is unchanged for the picker the page has: an include list
+        # with ``unknown='exclude'`` keeps exactly what it kept before.
         return admission.Policy(max_age_seconds=max_age, min_success=max(plan['min_success'], 1e-9),
                                 min_anonymity=plan['min_anonymity'], strict=strict,
                                 protocol=plan['protocol'],
+                                country_criterion=core.country_criterion(
+                                    sorted(plan['countries']), basis=plan.get('country_basis', 'endpoint'),
+                                    unknown=plan.get('country_unknown', 'exclude')),
                                 countries=plan['countries'] if plan['countries'] else frozenset(),
                                 exclude_hosting=plan['hide_hosting'],
                                 denied=frozenset(denylist.proxies) if denylist else frozenset(),

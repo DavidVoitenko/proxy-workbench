@@ -162,5 +162,46 @@ class PollSkipTests(unittest.TestCase):
         self.assertEqual(done.returncode, 0, done.stderr)
 
 
-if __name__ == '__main__':
+class ApiEtagCaptureTests(unittest.TestCase):
+    """api() itself: a null tag must still capture the ETag from the first 200."""
+
+    def setUp(self):
+        self.source = ws.js_slice("const UNCHANGED", "function showTab")
+
+    def run_api(self, script, tail):
+        return ws.run_node(
+            'const assert = require("assert");\n'
+            'const token = "x";\n'
+            'const t = (key) => key;\n'
+            'const serverText = (value) => value;\n'
+            'globalThis.AbortSignal = {timeout: () => undefined};\n'
+            'let calls = 0;\n'
+            'globalThis.fetch = async (path, init) => {\n'
+            '  calls += 1;\n'
+            '  if (calls === 1) assert.strictEqual(init.headers["If-None-Match"], undefined);\n'
+            '  else assert.strictEqual(init.headers["If-None-Match"], \'"aaa"\');\n'
+            '  return {\n'
+            '    ok: true,\n'
+            '    status: calls === 2 ? 304 : 200,\n'
+            '    headers: {get: (name) => String(name).toLowerCase() === "etag" ? \'"aaa"\' : null},\n'
+            '    json: async () => ({gateway: null}),\n'
+            '  };\n'
+            '};\n'
+            + script +
+            '\n;(async () => {\n' + tail + '\n'
+            '})().then(() => console.log("OK")).catch((error) => { console.error(error); process.exit(1); });\n'
+        )
+
+    def test_a_null_tag_still_captures_the_first_etag(self):
+        tail = (
+            'const first = await api("/api/state", undefined, {etag: null});'
+            'assert.strictEqual(first.etag, \'"aaa"\');'
+            'const second = await api("/api/state", undefined, {etag: first.etag});'
+            'assert.strictEqual(second, UNCHANGED);'
+        )
+        done = self.run_api(self.source, tail)
+        self.assertEqual(done.returncode, 0, done.stderr)
+
+
+if __name__ == "__main__":
     unittest.main()
