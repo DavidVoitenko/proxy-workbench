@@ -41,6 +41,9 @@ The biggest release so far: a new interface, a source catalog of 150 lists, a de
 
 ### Fixed
 
+- The chosen interface language is kept after a restart; before, ten of the twelve languages fell back to English on the next start.
+- Results table cells stay under their own headers when some columns are hidden.
+- Results table text is readable in the light theme.
 - A fresh failure now withdraws an older success, so a published list no longer serves an address the latest check rejected.
 - Retention cleanup runs instead of being rolled back by SQLite.
 - Keys limited to one collection can no longer read other collections' jobs, profiles, sources, schedules or artifacts.
