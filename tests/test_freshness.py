@@ -211,11 +211,26 @@ class ExportFormatTests(unittest.TestCase):
                          ('empty', 'nothing_in_scope', 0, False, False))
         self.assertIsNone(report['expires_at'])
         clash = (out / 'clash.yaml').read_text(encoding='utf-8')
-        singbox = json.loads((out / 'singbox.json').read_text(encoding='utf-8'))
+        pac = (out / 'proxy.pac').read_text(encoding='utf-8')
         self.assertNotIn('DIRECT', clash)
         self.assertIn('REJECT', clash)
-        self.assertEqual(singbox['outbounds'][0]['type'], 'block')
-        self.assertEqual(singbox['route']['final'], 'blocked')
+        self.assertNotIn('DIRECT', pac)
+        # The sing-box reject is the one construct whose form depends on the
+        # client version, and no version is pinned anywhere in this run, so the
+        # file is not written rather than written in a shape nobody checked.
+        # Every other format of the fail-closed artifact is still there, and
+        # pinning a target - here through client.json beside the snapshots -
+        # produces exactly that file.
+        generation = p.current_generation_name(out)
+        self.assertFalse((out / 'generations' / generation / 'singbox.json').exists())
+        for name in ('proxies.txt', 'hostport.txt', 'ranked.json', 'ranked.csv', 'proxy.pac', 'clash.yaml'):
+            self.assertTrue((out / 'generations' / generation / name).is_file(), name)
+        (out / 'client.json').write_text(json.dumps({'target': '1.14.0'}), encoding='utf-8')
+        p.export(self.db, 'empty', out, min_success=1)
+        written = json.loads((out / 'generations' / p.current_generation_name(out) /
+                              'singbox.json').read_text(encoding='utf-8'))
+        self.assertEqual(written['outbounds'], [])
+        self.assertEqual(written['route'], {'rules': [{'action': 'reject'}]})
 
     def test_publication_copy_failure_keeps_old_pointer_and_profile(self):
         cfg = config()

@@ -45,7 +45,7 @@ __all__ = [
     'help_for', 'help_entries', 'codes_for_stage', 'code_stage', 'code_title',
     'code_action', 'is_known_code', 'classify_error', 'classification', 'stage_of',
     'StageCounters', 'SourceReport', 'Funnel', 'build_funnel', 'record_source_report',
-    'data_state', 'explain_zero', 'funnel_explanation', 'ZeroResult',
+    'data_state', 'explain_zero', 'funnel_explanation', 'ZeroResult', 'resolve_help_code',
     'ControlLimits', 'ControlProbe', 'ControlVerdict', 'DEFAULT_CONTROL_LIMITS',
     'check_control', 'attribution_for', 'Redaction', 'DEFAULT_REDACTION',
     'RedactionNote', 'redact_value', 'DiagnosticBundle', 'BUNDLE_SCHEMA_VERSION',
@@ -552,10 +552,42 @@ class ErrorHelp:
                 'values': dict(self.values)}
 
 
+#: A specific status folds onto the documented family code for *help only*.
+#: ``classification`` deliberately keeps ``HTTP_503`` as the counter key, so the
+#: funnel can say exactly which status; asking for help with it must still land
+#: on an entry that has an action, instead of "unknown error code: HTTP_503".
+HTTP_STATUS_FAMILY = re.compile(r'^HTTP_(\d{3})$')
+HTTP_FAMILY_CODES = {3: 'HTTP_3XX', 4: 'HTTP_4XX', 5: 'HTTP_5XX'}
+
+
+def resolve_help_code(code: Any) -> tuple[str, dict[str, Any]]:
+    """The documented code to explain ``code`` with, and the parameters it adds.
+
+    ``HTTP_503`` is a real engine value and a real counter key, so it is kept
+    where it is; for help it becomes ``HTTP_5XX`` with ``status=503``, which is
+    the entry that says what to do about a server error.  A status that names a
+    cause unambiguously keeps its own, narrower code: 429 stays a rate limit and
+    407 stays an auth failure, because "the target refused the request" is not
+    what the user has to act on.
+    """
+    match = HTTP_STATUS_FAMILY.fullmatch(str(code or ''))
+    if not match:
+        return str(code or ''), {}
+    status = int(match.group(1))
+    _stage, specific = classification(f'HTTP_{status}')
+    if specific in CODES:
+        return specific, {'status': status}
+    family = HTTP_FAMILY_CODES.get(status // 100)
+    return (family, {'status': status}) if family in CODES else (str(code), {})
+
+
 def help_for(code: Any, *, params: Mapping[str, Any] | None = None, lang: str | None = None) -> ErrorHelp:
     """Localized help for a code.  An undocumented code gets honest generic text."""
-    entry = CODES.get(code) if isinstance(code, str) else None
+    resolved, folded = resolve_help_code(code)
+    entry = CODES.get(resolved) if isinstance(resolved, str) else None
     values = {key: value for key, value in dict(params or {}).items() if value is not None}
+    for key, value in folded.items():
+        values.setdefault(key, value)
     if entry is None:
         unknown_ru = f'Неизвестный код ошибки: {code}'
         unknown_en = f'Unknown error code: {code}'
@@ -830,10 +862,24 @@ class Funnel:
         return self.dominant()[1]
 
     def zero_result(self) -> bool:
+        """Whether this run produced nothing the user can act on.
+
+        An explicit ``exported`` total is authoritative: it is the count the
+        artifact was built from.  Without one, the test is whether any row
+        reached a measured, in-lifetime state.
+
+        Losses are the *reason* for an empty result, never evidence that there
+        was one.  Requiring ``lost_total() == 0`` made every "all addresses
+        were lost" run — unreachable sources, unknown measurement time, the
+        device being offline, the target being down, an exhausted budget —
+        report ``zero_result() is False`` and produce no explanation at all,
+        which is exactly the run F10 says the user must be able to read
+        without a traceback.
+        """
         exported = self.totals.get('exported')
         if _finite_number(exported):
             return float(exported) <= 0
-        return self.terminal.get(TIME_OK, 0) <= 0 and self.lost_total() <= 0
+        return self.terminal.get(TIME_OK, 0) <= 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -1735,7 +1781,8 @@ class FixtureRecipe:
         if self.whole_probe_timeout_s is not None:
             config['whole_probe_timeout'] = self.whole_probe_timeout_s
         return {'complete': self.complete, 'code': self.code, 'config': config,
-                'source': dict(self.source), 'samples': [dict(sample) for sample in self.samples]}
+                'source': redact_value(dict(self.source), self.policy),
+                'samples': [redact_value(dict(sample), self.policy) for sample in self.samples]}
 
     def render(self, lang: str | None = None) -> str:
         label = _pick('Рецепта воспроизведения замера', 'Measurement reproduction recipe', lang)
@@ -1762,6 +1809,12 @@ def fixture_recipe(row: Mapping[str, Any], config: Mapping[str, Any] | None = No
     Without the profile configuration the target URLs and assertions cannot be
     known, and the recipe says so instead of guessing.  Credentials in target
     URLs are redacted, so a recipe is safe to paste into an issue.
+
+    The ``source`` and ``samples`` a recipe was built from carry the endpoint
+    as the client sent it, and an engine error message repeats the target URL,
+    so both are redacted again on the way into :meth:`FixtureRecipe.to_dict`:
+    this is the shape a help page or an API serves, and a recipe must never be
+    the place where an upstream password reappears (F25).
     """
     samples = tuple({'target': sample.get('target'), 'attempt': sample.get('attempt'),
                      'status': sample.get('status'), 'error': sample.get('error'), 'ok': bool(sample.get('ok')),

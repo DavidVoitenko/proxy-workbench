@@ -311,8 +311,15 @@ class CountryFact:
         return cls(normalize_code(code), source, at=at, database_version=database_version, address=address)
 
     @classmethod
-    def unknown(cls, source=SOURCE_UNRESOLVED, address=None):
-        return cls(None, source, address=address)
+    def unknown(cls, source=SOURCE_UNRESOLVED, address=None, at=None):
+        """No code, but the address and the moment it was used are still facts.
+
+        A hostname resolved to an address the database cannot classify has no
+        country, yet "which address, and when" is exactly what makes the gap
+        explainable - F08 asks for a hostname's geography to rest on the
+        address that was really used and the time it was used.
+        """
+        return cls(None, source, at=at, address=address)
 
     @property
     def known(self):
@@ -951,7 +958,8 @@ class Resolver:
                 facts.append(CountryFact.of(looked_up, source, at=at, address=address,
                                             database_version=self.database_version))
             elif not declared:
-                facts.append(CountryFact.unknown(SOURCE_UNRESOLVED, address=address))
+                facts.append(CountryFact.unknown(SOURCE_UNRESOLVED, address=address,
+                                                 at=at if source == SOURCE_RESOLVED else None))
         else:
             facts.append(CountryFact.unknown(SOURCE_UNRESOLVED, address=info.host))
         merged = merge_facts(facts, self.now, self.max_age_seconds)
@@ -978,15 +986,28 @@ class Resolver:
         return ProviderFact(ip_version=classify_host(proxy).ip_version)
 
     def from_row(self, row):
-        """``(endpoint, exit, provider)`` for a stored row, without touching the network."""
-        proxy = (row or {}).get('proxy') or ''
-        checked_at = (row or {}).get('checked_at')
-        endpoint = self.endpoint_fact(proxy)
+        """``(endpoint, exit, provider)`` for a stored row, without touching the network.
+
+        The row's own ``country`` is a claim of the list that published it, and
+        it is read here as one.  It was not: a row carrying ``country='NL'``
+        whose address is absent from the GeoIP database came out of this method
+        as unknown and was dropped by every criterion, while
+        ``proxytool.geo_country_verdict`` - the same criterion, the same row -
+        matched it from the row.  The GUI list and the export disagreed about
+        one filter, which is the parity F08 requires; both now compare the same
+        claim with the same source and the same precedence.
+        """
+        row = row or {}
+        proxy = row.get('proxy') or ''
+        checked_at = row.get('checked_at')
+        mapped = self.declared.get(proxy)
+        endpoint = self.endpoint_fact(proxy, declared=mapped if mapped else (row.get('country') or None))
         if endpoint is not None and endpoint.source in (SOURCE_GEOIP, SOURCE_SOURCE) and checked_at:
             # The row was measured at checked_at, so that is when this knowledge was obtained.
             endpoint = replace(endpoint, at=float(checked_at))
-        exit_ip = (row or {}).get('exit_ip') or ((row or {}).get('anonymity') or {}).get('exit_ip')
-        exit_claim = (row or {}).get('exit_country')
+        exit_ip = row.get('exit_ip') or ((row.get('anonymity') or {}).get('exit_ip')
+                                        if isinstance(row.get('anonymity'), dict) else None)
+        exit_claim = row.get('exit_country')
         exit_fact = self.exit_fact(exit_ip, at=checked_at) if exit_ip else \
             CountryFact.of(exit_claim, SOURCE_OBSERVED_EXIT, at=checked_at) if exit_claim else None
         return endpoint, exit_fact, self.provider_fact(proxy)
@@ -1050,6 +1071,13 @@ def filter_rows(rows, criterion, resolver=None, now=None):
     one set of rows gives one answer in all three places.  Rows are not
     modified, and no network call happens here: an unknown exit is reported as
     unknown, never measured.
+
+    Without a ``resolver`` the filter has no knowledge at all and says so
+    instead of guessing - every row is compared as unknown.  A caller that has
+    rows with a country in them passes a :class:`Resolver`; it reads the row's
+    own ``country`` and ``exit_country`` as the claims they are, so the answer
+    matches the export engine, which builds the same facts
+    (``proxytool.geo_country_verdict``).
     """
     if not isinstance(criterion, CountryCriterion):
         criterion = parse_criterion(criterion)
