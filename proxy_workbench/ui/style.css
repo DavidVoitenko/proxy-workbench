@@ -22198,3 +22198,44 @@ summary {
 /* 6. Sheen appears only on hover (CTA no longer looks washed out at rest) */
 .button.primary::after { opacity: 0 !important; transition: opacity 120ms ease !important; }
 .button.primary:hover:not(:disabled)::after { opacity: 1 !important; }
+
+/* ── Round 8: results header groups + live-stream typography hardening ───── */
+/* The tools group must never be squeezed into a vertical sliver at the
+   screen edge: the parent wraps the two groups, the tools wrap internally. */
+.results-compact-actions {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  gap: 10px !important;
+  align-items: center !important;
+}
+.results-compact-actions .view-tabs { flex: 0 1 auto !important; min-width: 0 !important; }
+.results-compact-actions .view-tools {
+  flex: 1 1 320px !important;
+  min-width: 280px !important;
+  display: flex !important;
+  flex-wrap: wrap !important;
+  gap: 6px !important;
+  row-gap: 8px !important;
+  justify-content: flex-start !important;
+}
+.view-tools .button,
+.view-tools select,
+.view-tools .compact-select {
+  white-space: nowrap !important;
+  flex-shrink: 0 !important;
+}
+.view-tools #saved-views { flex-shrink: 1 !important; min-width: 120px !important; }
+/* Live stream texts: left-aligned, sane spacing in every font fallback */
+.live-feed-source {
+  font-family: var(--font, system-ui) !important;
+  text-align: left !important;
+  word-spacing: normal !important;
+  letter-spacing: normal !important;
+  white-space: normal !important;
+  line-height: 1.45 !important;
+}
+.ticker-item, .ticker-text, .ticker-badge, .ticker-code {
+  text-align: left !important;
+  word-spacing: normal !important;
+  letter-spacing: normal !important;
+}
