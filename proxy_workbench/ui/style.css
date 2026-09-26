@@ -22170,7 +22170,7 @@ summary {
 .dnsbl-timeout-label input { justify-self: start !important; }
 /* 2. Results header: tidy wrap, compact saved-views select, equal buttons */
 .view-tools { flex-wrap: wrap !important; row-gap: 8px !important; align-items: center !important; }
-#saved-views { width: auto !important; max-width: 210px !important; }
+#saved-views { width: auto !important; max-width: 240px !important; }
 .view-tools .button { height: 34px !important; }
 /* 3. Empty table row: never show hover accent / left bars */
 .results-table tbody tr:has(> td.empty),
