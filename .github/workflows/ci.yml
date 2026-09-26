@@ -137,3 +137,66 @@ jobs:
           docker run --rm proxy-workbench:ci --version
           docker run --rm proxy-workbench:ci --help > /dev/null
           docker run --rm proxy-workbench:ci clear-data --yes
+
+  # The .app users install (F23).  This job builds it on a real macOS runner,
+  # starts it, and checks the page it serves, its per-user data folder, a second
+  # start and the untouched bundle.  It is unsigned - no identity exists in
+  # this project - and the manifest says so.
+  #
+  # --no-tray: the menu bar helper is compiled and put into the bundle here,
+  # and its presence is checked, but a build machine has no logged-in user to
+  # show a menu bar to.  Whether the status item actually appears is verified
+  # by a run of packaging/build_macos.py without that flag, and the manifest
+  # records "checked: false" rather than a claim.
+  macos-artifact:
+    name: macOS .app / arm64
+    runs-on: macos-14
+    timeout-minutes: 45
+    env:
+      ALL_PROXY: ""
+      HTTP_PROXY: ""
+      HTTPS_PROXY: ""
+      NO_PROXY: "127.0.0.1,localhost"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install pinned dependencies
+        run: python -m pip install --requirement requirements.txt pyinstaller==6.22.3
+
+      - name: Build and verify the .app
+        run: python packaging/build_macos.py --dist dist --no-dmg --no-tray
+
+      - name: Smoke test the built application
+        run: python packaging/smoke.py "dist/Proxy Workbench.app/Contents/MacOS/Proxy Workbench"
+
+      - name: Report what the build recorded
+        run: |
+          python - <<'PY'
+          import json, glob
+          manifest = json.load(open(glob.glob('dist/*.manifest.json')[0]))
+          print('version:  ', manifest['version'])
+          print('bundle:   ', manifest['bundle']['signature'])
+          print('menu bar: ', json.dumps(manifest['menu_bar'], ensure_ascii=False))
+          print('launch:   ', json.dumps(manifest['verified']['detail']['second_launch'], ensure_ascii=False))
+          assert manifest['verified']['launched'], 'the built app was not launched'
+          assert manifest['menu_bar']['helper'], 'the menu bar helper is not in the bundle'
+          PY
+
+      - name: Verify the manifest against the files on disk
+        run: python packaging/verify_release.py "$(ls dist/*.manifest.json)"
+
+      - name: Upload the artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: proxy-workbench-macos-arm64
+          if-no-files-found: error
+          path: |
+            dist/Proxy Workbench.app
+            dist/proxy-workbench-*.zip
+            dist/proxy-workbench-*.manifest.json

@@ -1,37 +1,56 @@
 # Release notes: desktop-поставка
 
-**Версия:** 2.2.1 (номер не менялся; изменения пока не выпущены)
-**Дата:** 26 сентября 2026 (фоновый слой F22 добавлен и проверен)
-**Статус:** модуль и сборщики готовы и проверены частично; релиз не выпускался
+**Версия:** 2.3.0
+**Дата:** 26 сентября 2026
+**Статус:** macOS-артефакт собран и проверен живым запуском на этой машине;
+Windows-артефакт не собирался (машина — macOS), CI-задание на реальном
+Windows-runner добавлено, но ещё не выполнялось
 
 Этот файл — единственное место, где перечислено, что в поставке **есть**, а
-что **только подготовлено**. Он написан по результатам локальных проверок, а
-не по плану. Всё, что здесь не перечислено как проверенное, не проверено.
+что **только подготовлено**. Он написан по результатам выполненных здесь
+проверок, а не по плану. Всё, что здесь не перечислено как проверенное, не
+проверено.
+
+## Что было сломано и что исправлено
+
+| Дефект | Как выглядел | Что сделано | Чем проверено |
+| --- | --- | --- | --- |
+| **В `.app` не было меню-бара** | `desktop.py` собирает нативный Swift-helper, но ни spec, ни `build_macos.py` не клали его в bundle. Приложение запускалось и честно писало «в сборке нет helper меню-бара» | `packaging/tray_helper.py` компилирует helper через `swiftc` (тот самый `desktop.ensure_tray_helper`, без второй копии логики) и кладёт его в bundle как данные; spec без него прерывает сборку | Живой запуск собранного `.app`: helper в `Contents/Frameworks/tray/`, в его логе `ready {"status_item":true,"visible":true,"frame":[1186,1084,50,33],"menu_items":9}` |
+| **Обычный запуск не доходил до фонового слоя** | `python -m proxy_workbench` и консольный скрипт `proxy-workbench` уходили в `gui.main`; меню-бар, один экземпляр, автозапуск и sleep/wake не работали при обычном запуске | `proxy_workbench/__main__.py` маршрутизирует: без аргументов и флаги хоста → `desktop.main`; `gui` и `--no-desktop` → только интерфейс; команда (`scan`, `collect`, …) → CLI. Frozen-сборки используют тот же маршрут | `proxy-workbench` без аргументов поднимает desktop host; повторный запуск отвечает «The application is already running: …», процессов 1 → 1 |
+| **Замороженная сборка не могла выполнить проверку** | Worker запускается как `[sys.executable, 'scan', …]`; launcher звал `desktop.main()`, который отдавал `scan` в argparse интерфейса: `error: unrecognized arguments: scan` | Frozen launcher (`packaging/desktop_launcher.py`) маршрутизирует командные слова в CLI тем же правилом | `packaging/smoke.py` против собранного `.app`: полный цикл collect → scan → API → gateway, `smoke test passed` |
+| **Windows-сборщик был нерабочим** | `pyinstaller` искался в `PATH` (сборка в venv без неё падала с `No such file or directory`), оба бинарника делили один workpath, `portable-README.txt` для установщика никогда не писался в `dist`, `[Files]` ссылался на относительные пути | `python -m PyInstaller` через тот же интерпретатор, свой workpath на бинарник, README пишется в `dist`, установщику передаётся `SourceDir`, добавлен поиск `iscc` в стандартных папках | Разбор всех spec, статический запуск spec с подменённым API PyInstaller, чтение PE-subsystem из синтетического PE. **Артефакт на Windows не собирался** |
+| **`console=False` ничем не подтверждалось** | Единственная проверка — grep по тексту spec | `build_windows.py` читает PE-subsystem из самого `.exe` и отказывается публиковать пару, где GUI-бинарник не windowed или CLI не console | Функция проверена на синтетических PE32/PE32+; проверка на настоящем `.exe` выполнится в Windows CI |
+| **Версия расходилась** | `branding.PRODUCT_VERSION = 2.3.0`, `pyproject.toml = 2.2.1`: bundle объявлял 2.3.0, wheel назывался 2.2.1 | `pyproject.toml` приведён к 2.3.0 | `pip show` / `python -m proxy_workbench --version` / `Info.plist` дают одно число |
 
 ## Что добавлено
 
 | Что | Состояние | Проверка |
 | --- | --- | --- |
-| `proxy_workbench/desktop.py`: per-user `data`/`cache`/`logs`, явный portable mode, миграция старой папки, worker command и cwd, чтение ресурсов из bundle, проверка обновления с backup и откатом, проверка подписи и нотаризации | готово | `tests/test_desktop_layout.py`, `tests/test_desktop_migration.py`, `tests/test_desktop_update.py`, `tests/test_desktop_signing.py` |
-| macOS `.app` (arm64, onedir) + `.zip` + `.dmg` | собрано на этой машине | `packaging/build_macos.py`, включая запуск собранного приложения |
-| Windows GUI `.exe` (`console=False`) и отдельный CLI `.exe` (`console=True`) | сборщик и spec готовы; на Windows не собирались | `tests/test_packaging_release.py` (дескрипторы), `build_windows.py` не запускался |
-| Per-user installer (Inno Setup, `PrivilegesRequired=lowest`) | скрипт готов; `iscc` на этой машине нет | `tests/test_packaging_release.py` |
-| Portable-вариант Windows (zip с обоими бинарниками) | готово | `packaging/build_windows.py` |
-| Манифест артефактов и проверка релиза (`release_manifest.py`, `verify_release.py`) | готово | `tests/test_packaging_release.py` |
-| Тонкий desktop host поверх существующего интерфейса (`desktop.main`) | готово | `tests/test_desktop_update.py` (host-команды), запуск собранного `.app` |
+| Точка входа с тремя слоями: приложение / интерфейс / CLI, `--no-desktop` как выход | готово | живой запуск собранного `.app` и из исходников |
+| `packaging/tray_helper.py`: сборка helper меню-бара для bundle | готово | `swiftc` отрабатывает за ~2 с, результат лежит в bundle и запускается |
+| `packaging/verify_delivery.py`: per-user пути, portable mode, перенос старой папки — на настоящем артефакте | готово | 15 из 15 проверок на собранном `.app` |
+| Валидация собранного macOS-артефакта расширена: helper в bundle, меню-бар по логу helper'а, второй запуск не плодит копию, нет orphan-процессов | готово | `packaging/build_macos.py` падает с кодом 2, если меню-бар не подтвердился |
+| Валидация Windows-артефакта: PE-subsystem, запуск GUI `.exe` с временным `%LOCALAPPDATA%`, второй запуск, неизменность папки программы | готово, **не выполнено** | требует Windows |
+| `.github/workflows/windows.yml` — сборка, запуск и проверка на настоящем Windows-runner | готово, **не выполнялось** | требует push/PR |
+| Job `macos-artifact` в CI: сборка `.app`, smoke, сверка манифеста, выгрузка артефакта | готово, **не выполнялось** | требует push/PR |
+| `release.yml`: Windows теперь отдаёт два бинарника + installer, добавлен macOS-job | готово, **не выполнялось** | требует тега |
+| `proxy_workbench/desktop.py`: per-user пути, portable mode, миграция, worker command и cwd, подпись/нотаризация, обновление с backup и откатом | готово (предыдущая работа) | `tests/test_desktop_layout.py`, `test_desktop_migration.py`, `test_desktop_update.py`, `test_desktop_signing.py` |
 
-## Что изменилось в поведении
+## Матрица проверенных сборок
 
-- **Замороженная сборка больше не пишет `data/` рядом с исполняемым файлом.**
-  Раньше `paths.default_data()` для frozen возвращал
-  `Path(sys.executable).parent / 'data'`, что невозможно в `Program Files` и
-  внутри `.app`. Теперь установленная сборка использует per-user-папки, а
-  portable mode включается только явно. Исходники, `pipx` и Docker сохраняют
-  прежний `data/` рядом с проектом.
-- Появились отдельные `cache` и `logs`, которых раньше не было.
-- `macos_bundle()` определяет корень `.app` на два уровня выше каталога
-  исполняемого файла (раньше проверка искала `.app` на один уровень выше и
-  никогда не срабатывала).
+Собрано здесь, 26.09.2026, macOS 26.5.2, arm64, Python 3.14, PyInstaller 6.22.3.
+
+| Сборка | Где проверена | Что именно проверено | Подпись |
+| --- | --- | --- | --- |
+| wheel + `pipx` | CI (ubuntu/macOS/Windows) | `packaging/smoke.py` | нет |
+| `Start.bat` / `run.sh` | локально, `sh -n` + smoke | синтаксис и сквозной прогон | нет |
+| Docker CLI | CI | `--version`, `--help`, `clear-data --yes` | нет |
+| **macOS `Proxy Workbench.app` arm64** | **эта машина, живьём** | структура bundle; `ui/index.html` и `sources.json` внутри; helper меню-бара внутри и исполняем; запуск с временным `HOME`; страница с токеном на loopback-порту, выбранном ОС; меню-бар подтверждён логом helper'а (статус-элемент на экране, 9 пунктов, 5 действий); повторный запуск → «уже запущено», процессов 1 → 1; полный цикл collect → scan → API → gateway; **15/15 проверок поставки** (per-user, portable, миграция); bundle не изменён; после `SIGKILL` helper уходит сам | **ad-hoc, не подписан** |
+| macOS `.zip` / `.dmg` | эта машина | сборка, SHA-256 в манифесте, `verify_release.py` | нет |
+| Windows GUI `.exe` | **нигде** | только spec, статический разбор и чтение PE-заголовка | нет |
+| Windows CLI `.exe` | **нигде** | то же | нет |
+| Windows installer | **нигде** | только скрипт Inno Setup и его настройки | нет |
+| Windows: запуск, второй запуск, sleep/wake, меню-бар | **нигде** | подготовлено, но не проверялось | нет |
 
 ## Чего нет и не обещается
 
@@ -39,23 +58,22 @@
   ни Developer ID Application в связке ключей, ни учётных данных нотаризации:
   `signing_status.available = false`, `notarization_status.available = false`.
   Собранный bundle получает **ad-hoc** подпись, `spctl` его отклоняет, и он
-  честно записан в манифесте как `signed: false, kind: adhoc`.
-- **Автоматической загрузки обновлений нет.** Есть проверка, backup, проверка
-  схемы и откат плюс `--update-notice`. Публикующего сервера у проекта нет.
-- **Windows-сборки в этой сессии не собирались** — машина сборки macOS.
-  Installer тоже не собран: `iscc` не установлен.
-- **Intel и universal2 macOS не собираются** и не заявляются.
-- **Трей, автозапуск, sleep/wake и повторный запуск в существующий экземпляр
-  (F22) реализованы и проверены живым запуском на macOS** — 26.09.2026, macOS
-  26.5.2, arm64. Таблица проверок — ниже. **На Windows и Linux тот же слой
-  подготовлен, но не проверен:** машина сборки — macOS, и «здесь работает» не
-  является доказательством для другой ОС.
-- **Замороженная сборка macOS пока остаётся без меню-бара.** Helper собирается
-  из исходника, встроенного в `desktop.py`, через Xcode Command Line Tools; в
-  bundle он не положен, потому что `packaging/build_macos.py` и spec — не мои
-  файлы. Пока их не тронули, frozen-сборка честно пишет «меню-бар недоступен»
-  и работает без него. Точная правка — в
-  `docs/integration/HANDOFF/fix-desktop.md`.
+  честно записан в манифесте как `signed: false, kind: adhoc`. Этот проект не
+  создаёт, не покупает и не хранит signing credentials; пайплайн только
+  проверяет, есть ли уже имеющиеся.
+- **Автоматической загрузки обновлений нет.** Есть проверка происхождения,
+  backup, проверка схемы, откат и `--update-notice`. Публикующего сервера у
+  проекта нет.
+- **Windows-поставка не собрана и не запущена.** Машина сборки — macOS;
+  PyInstaller собирает под ту машину, на которой работает. Всё, что можно было
+  проверить без Windows, проверено (разбор и запуск spec, entry point,
+  `console=False`/`console=True`, ресурсы, PE-subsystem, передача путей
+  установщику, поведение при отсутствии `iscc`); всё, что нельзя, перечислено
+  в разделе «Что должен сделать Windows-runner».
+- **Intel и universal2 macOS не собираются** и не заявляются: для universal2
+  нужны оба среза и их слияние, а `build_macos.py` на это не претендует.
+- **Меню-бар есть только на macOS.** На Windows и Linux его нет, и в матрице
+  выше он не заявлен.
 - **Sleep/wake на Windows не определяется.** Там сон входит в монотонные часы,
   поэтому сравнение wall/monotonic его не видит, а нативного наблюдателя для
   Windows в этом слое нет. На macOS наблюдатель есть (NSWorkspace), на Linux
@@ -63,87 +81,72 @@
 - **Собственного окна нет.** Интерфейс остаётся страницей в браузере; новый
   desktop-фреймворк не вводился, потому что F23 разрешает его только при
   проверенном ограничении, а такого ограничения здесь не обнаружено. Меню-бар
-  — это NSStatusItem над той же страницей, а не второе приложение.
-
-## Фоновая работа (F22): что добавлено и чем проверено
-
-Слой живёт в `proxy_workbench/desktop.py` и не дублирует продукт: он читает то,
-что интерфейс и так публикует, и просит интерфейс действовать. Меню-бар — это
-маленький нативный helper на Swift, собираемый на машине из исходника,
-встроенного в `desktop.py`; он не знает ничего о продукте и получает все
-подписи и состояние по локальному сокету.
-
-| Что | Состояние | Чем проверено живым запуском (macOS 26.5.2, arm64) |
-| --- | --- | --- |
-| Меню-бар со статусом, паузой, открытием интерфейса и выходом | работает | `ps` показывает helper; сам helper отчитывается в журнал: `{"status_item": true, "window": true, "visible": true, "frame": [976, 1084, 50, 33], "menu_items": 10}`; меню отрисовано с 10 пунктами и 5 действиями |
-| Close ≠ quit | работает | страница получена по HTTP и отпущена — процесс жив и отвечает; `Выход` завершает приложение, порт закрыт, сокет удалён, запись экземпляра очищена, процессов не осталось |
-| Повторный запуск обращается к первому | работает | второй запуск напечатал «The application is already running: http://127.0.0.1:…/», вышел с кодом 0, число процессов `1 → 1` |
-| Второй экземпляр, запущенный старым способом (`gui.py`) | работает | хост видит занятый `gui-instance.lock`, открывает страницу и выходит: трей не мигает, rival не поднимается |
-| Автозапуск только по действию пользователя | работает | plist отсутствует после установки и первого запуска; появляется после щелчка в меню и исчезает после второго щелчка; `RunAtLoad=true`, `KeepAlive=false` |
-| Сон → пробуждение: `scheduler.mark_wake` | работает | в журнале `platform.wake → {"woke": true, "run_requests": 0}`; на реальном `Scheduler` тот же расписание, спавшее 6 часов, даёт **1 слитый запуск с `missed: 5` и `coalesced_after_sleep`**, а без отметки — **5 catch-up запусков** |
-| Сон → пробуждение: `jobs.mark_awake` | работает | на настоящем `JobStore`: `mark_suspended` пишет checkpoint, `mark_awake` возвращает в бюджет 3600 с; повторный вызов — no-op |
-| Смена сети отмечается, история не портится | работает | реальный `NWPathMonitor` в helper прислал `platform.network`; число строк в `results` до и после совпадает |
-| Недоступное хранилище секретов не роняет фон | работает | `keyring` не установлен → `vault.state = "session"`, фон продолжает; при `SecretVaultLocked` в меню появляется строка с действием пользователя |
-| Перенос старой папки при запуске, один раз | работает | при `PROXY_WORKBENCH_DATA` старый `data/` проекта перенесён (88 файлов), создан backup, напечатано сообщение, строка появилась в меню; повторный запуск не переносит заново |
-| Выход сообщает о подключённых клиентах | работает | `Quit. Connected clients: 0. Stopping the listeners…` в stdout и в журнале |
-| Нет orphan-процессов после `SIGKILL` | работает | helper умер сам, когда сокет закрылся; следующий запуск подхватил экземпляр и поднял новый helper |
-| **Windows и Linux** | **не проверено** | машина macOS. Подготовлены: control-канал через loopback + токен, `HKCU\…\Run`, `$XDG_CONFIG_HOME/autostart`. Меню-бара там нет |
-
-## Матрица проверенных сборок
-
-| Сборка | Где проверялась | Что проверено | Подпись |
-| --- | --- | --- | --- |
-| wheel | CI, Ubuntu/macOS/Windows | `packaging/smoke.py` | нет |
-| `Start.bat` / `run.sh` | локально | `sh -n`, smoke | нет |
-| Docker CLI | CI | `--version`, `--help`, `clear-data --yes` | нет |
-| Windows `.exe` (старый spec) | CI | `packaging/smoke.py` | нет |
-| **macOS `.app` arm64** | **эта машина, 25.09.2026** | структура bundle, наличие `ui/index.html` и `sources.json` внутри, запуск с временным `HOME`, отдача страницы с токеном, запись только в per-user-папку, неизменность bundle | **ad-hoc, не подписан** |
-| macOS `.dmg` / `.zip` | эта машина | сборка, SHA-256 в манифесте, `verify_release.py` | нет |
-| Windows GUI/CLI `.exe` | нигде | только дескрипторы и тесты | нет |
-| Windows installer | нигде | только скрипт Inno Setup и тест его настроек | нет |
+  — это `NSStatusItem` над той же страницей, а не второе приложение.
 
 ## Проверки, выполненные в этой работе
 
-Команды запускались из корня репозитория; полный `unittest discover -s tests`
-не запускался (по условию задачи его выполняет интегратор после сборки всех
-модулей).
+Живой запуск собранного macOS-артефакта — всё через процессы, сокеты и файлы,
+которые увидел бы пользователь:
 
 ```sh
-.venv/bin/python -m unittest tests.test_desktop_layout      # 24 теста, OK
-.venv/bin/python -m unittest tests.test_desktop_migration   # 14 тестов, OK
-.venv/bin/python -m unittest tests.test_desktop_update      # 34 теста, OK
-.venv/bin/python -m unittest tests.test_desktop_signing     # 27 тестов, OK
-.venv/bin/python -m unittest tests.test_packaging_release   # 25 тестов, OK
-.venv/bin/python packaging/build_macos.py --dist /tmp/pw-dist --pyinstaller <venv>/bin/pyinstaller
-.venv/bin/python packaging/verify_release.py /tmp/pw-dist/proxy-workbench-2.2.1-macos-arm64.manifest.json
+python packaging/build_macos.py --dist dist --no-dmg
+python packaging/verify_delivery.py "dist/Proxy Workbench.app"
+python packaging/verify_release.py dist/proxy-workbench-2.3.0-macos-arm64.manifest.json
+python packaging/smoke.py "dist/Proxy Workbench.app/Contents/MacOS/Proxy Workbench"
 ```
 
-Живой запуск фонового слоя (F22) — 48 из 48 проверок, все через `ps`, сокет и
-файлы, которые увидел бы пользователь; запускался настоящий продукт, а не
-модуль в изоляции:
+`build_macos.py` завершился кодом 0 и записал в манифест:
 
-```sh
-PROXY_WORKBENCH_DATA=/tmp/pwrun/data python -m proxy_workbench.desktop --no-browser --no-gateway --no-api
-PROXY_WORKBENCH_DATA=/tmp/pwrun/data python -m proxy_workbench.desktop --status
+```json
+"menu_bar": {"confirmed": true, "checked": true,
+             "helper": "…/Proxy Workbench.app/Contents/Frameworks/tray/proxy-workbench-tray",
+             "report": {"status_item": true, "visible": true, "frame": [1186, 1084, 50, 33], "menu_items": 9}},
+"verified": {"launched": true, "detail": {"bundle_unchanged": true,
+             "second_launch": {"exit_code": 0, "instances_before": 1, "instances_after": 1,
+                               "said": ["The application is already running: http://127.0.0.1:62033/"]}}}
 ```
 
-Меню-бар при этом проверяется не чтением исходников, а двумя независимыми
-фактами: процесс helper виден в `ps`, а сам helper пишет в
-`<logs>/tray.log`, что создал `NSStatusItem` с окном на экране. Скриншотом
-меню-бар не снимался: у процесса, который его запустил, нет прав Универсального
-доступа, и `System Events` отвечает отказом — это ограничение окружения, а не
-результат проверки.
+`verify_delivery.py` — 15 из 15 проверок `ok`: per-user адрес/data/cache/logs и
+неизменность папки программы; portable mode по маркеру (данные внутри копии
+`.app`, всё остальное в копии не изменено); перенос старой папки (9 файлов,
+база через SQLite backup, старая папка на месте, receipt называет рабочую
+копию, названный им backup существует, второй запуск не переносит заново — одна
+запись `migration.applied` в журнале).
 
-## Что должно произойти на интеграции
+Меню-бар проверяется не чтением исходников и не наличием файла, а двумя
+независимыми фактами: helper виден в `ps` отдельным процессом, и сам helper
+пишет в `<logs>/tray.log`, что нарисовал статус-элемент. Отдельно проверено,
+что после `kill -9` приложения helper выходит сам («exiting: the control socket
+was closed») и процессов не остаётся. Скриншотом меню-бар не снимался: у
+процесса, который его запустил, нет прав Универсального доступа, и
+`System Events` отвечает отказом — это ограничение окружения, а не результат
+проверки.
 
-1. Владелец `paths.py` переключает `default_data()` на `desktop.resolve_layout()`
-   для frozen-сборок (см. `docs/integration/HANDOFF/desktop.md`).
-2. Владелец `gui.py` начинает воркер с `desktop.child_cwd()` и
-   `desktop.worker_command()` вместо `cwd=ROOT.parent`.
-3. Владелец workflow добавляет job на macOS в `release.yml` и заменяет
-   Windows job на два бинарника.
-4. `CHANGELOG.md` получает запись в `## [Unreleased]`: macOS-поставка,
-   per-user-пути, portable mode, раздельные GUI/CLI на Windows.
+## Что должен сделать Windows-runner
 
-До пунктов 1–4 документация README/CHANGELOG описывает старую поставку, и
-это расхождение нужно закрыть до публикации релиза.
+Ниже — не пожелание, а то, что job в `.github/workflows/windows.yml` делает
+сейчас и что он падает, если не получилось:
+
+1. `python packaging/build_windows.py --dist dist --installer` на
+   `windows-2022`:
+   - собрать `proxy-workbench-gui.exe` (`console=False`) и
+     `proxy-workbench-cli.exe` (`console=True`), каждый со своим workpath;
+   - прочитать PE-subsystem у обоих и отказаться, если GUI не windowed или CLI
+     не console;
+   - запустить GUI `.exe` с пустым `%LOCALAPPDATA%`/`%APPDATA%`, дождаться
+     `gui-address.json`, забрать страницу по loopback, убедиться, что папка
+     программы не изменилась, и что второй запуск дошёл до первого
+     (`instances_before == instances_after`);
+   - записать `portable-README.txt` в `dist`, собрать portable-zip и, если
+     `iscc` есть на runner'е, per-user installer;
+   - записать манифест с `subsystems`, `verified` и `installer.built`.
+2. `python packaging/smoke.py dist/proxy-workbench-cli.exe` — сквозной цикл
+   CLI-бинарника.
+3. `python packaging/verify_release.py <manifest>` — пересчёт SHA-256 и проверка
+   подписи для каждого артефакта.
+4. Выгрузка артефактов job'ом.
+
+Чего job **не** делает и не будет: не подписывает (нужен сертификат в хранилище
+и `PROXY_WORKBENCH_SIGN_THUMBPRINT`), не проверяет меню-бар (его на Windows
+нет), не проверяет sleep/wake (наблюдателя для Windows в слое нет). Это
+ограничения продукта, а не недоработка job'а.

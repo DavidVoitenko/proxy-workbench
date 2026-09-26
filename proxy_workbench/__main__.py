@@ -1,14 +1,99 @@
-"""`proxy-workbench` / `python -m proxy_workbench`: the GUI without arguments, the CLI otherwise."""
+"""`proxy-workbench` / `python -m proxy_workbench`: one product, three layers.
+
+The rule is short and every packaged entry point uses it:
+
+* **no arguments** - the desktop host.  The application a user launches by
+  double-clicking is the process that owns the menu bar, the single instance,
+  the opt-in login item and the sleep/wake hooks (``proxy_workbench.desktop``).
+  Going straight to the interface instead would produce a page that dies with
+  its tab, which is exactly what F22 forbids;
+* **`gui`, or ``--no-desktop``** - the interface alone, with no menu bar and no
+  instance lock.  The escape hatch for a second window, a remote session and for
+  debugging the host;
+* **anything else** - the command line (``proxy_workbench.proxytool``), which is
+  the interface the wheel has always exposed and the one a frozen build re-runs
+  in a worker process.
+
+F23 asks for a shipped product, and the shipped entry point is this one: before
+this routing, a normal launch never reached the background layer at all.
+"""
 from __future__ import annotations
 
 import sys
 
+#: Arguments the desktop host owns: its own commands, its own flags, and the
+#: flags of the interface it hands over to.  An empty command line is the host
+#: too - that is the double-click.
+DESKTOP_ARGS = frozenset({
+    # host commands, answered without ever opening the interface
+    '--print-paths', '--portable', '--status', '--update-notice',
+    '--autostart', '--autostart-status', '--migrate-preview',
+    # host flags
+    '--background', '--no-tray',
+    # interface flags, forwarded to proxy_workbench.gui
+    '--data', '--port', '--api-port', '--no-api', '--no-browser',
+    '--gateway-port', '--gateway-host', '--gateway-token', '--no-gateway', '--lan',
+})
+
+#: The word that asks for the interface and nothing else.
+INTERFACE_ONLY = 'gui'
+
+#: Asks for the interface instead of the desktop host, with the host still
+#: available to whoever wants it.
+NO_DESKTOP = '--no-desktop'
+
+_CLI_COMMANDS = None
+
+
+def cli_commands():
+    """The command words the CLI accepts, read from the parser that defines them.
+
+    Read from the parser rather than copied here on purpose: a verb added to
+    ``proxytool`` must reach the CLI on its own, and a frozen build runs the
+    same entry point - its worker is this program with ``scan`` in front of it.
+    """
+    global _CLI_COMMANDS
+    if _CLI_COMMANDS is None:
+        from .proxytool import parser
+        for action in parser()._actions:
+            if getattr(action, 'dest', '') == 'command' and action.choices:
+                _CLI_COMMANDS = frozenset(action.choices)
+                break
+        else:
+            _CLI_COMMANDS = frozenset()
+    return _CLI_COMMANDS
+
+
+def resolve(argv):
+    """Decide which layer this invocation is for: ``('desktop'|'interface'|'cli', argv)``.
+
+    The decision is made on the whole command line, not on its first word: the
+    CLI accepts options before the verb (``proxy-workbench --workers 8 run``),
+    and routing on the first token would send that to the interface.
+    """
+    argv = list(argv)
+    if argv and argv[0] == INTERFACE_ONLY:
+        return 'interface', argv[1:]
+    if any(token in cli_commands() for token in argv):
+        return 'cli', argv
+    if not argv:
+        return 'desktop', argv
+    if NO_DESKTOP in argv:
+        return 'interface', [token for token in argv if token != NO_DESKTOP]
+    if argv[0] in DESKTOP_ARGS:
+        return 'desktop', argv
+    return 'cli', argv
+
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
-    if not argv or argv[0] == 'gui':
+    target, argv = resolve(argv)
+    if target == 'interface':
         from . import gui
-        return gui.main(argv[1:])
+        return gui.main(argv)
+    if target == 'desktop':
+        from . import desktop
+        return desktop.main(argv)
     from . import proxytool
     return proxytool.main(argv)
 

@@ -13,7 +13,8 @@ analysis = Analysis(
     [str(root / 'packaging' / 'cli_launcher.py')],
     pathex=[str(root)],
     datas=[(str(package / 'ui'), 'proxy_workbench/ui'), (str(package / 'sources.json'), 'proxy_workbench')],
-    hiddenimports=['socksio', 'proxy_workbench.gui', 'proxy_workbench.proxytool'],
+    hiddenimports=['socksio', 'proxy_workbench.gui', 'proxy_workbench.proxytool',
+                   'proxy_workbench.__main__'],
     excludes=['tkinter', 'unittest', 'pydoc'],
 )
 pyz = PYZ(analysis.pure)
