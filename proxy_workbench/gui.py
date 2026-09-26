@@ -25,7 +25,8 @@ import webbrowser
 
 import httpx
 
-from .branding import PRODUCT_ID, PRODUCT_NAME, PRODUCT_VERSION, REQUEST_PROFILES, SOURCES_URL
+from .branding import (PRODUCT_ID, PRODUCT_NAME, PRODUCT_VERSION, REQUEST_PROFILES,
+                        SOURCE_CATALOG_URL, SOURCES_URL)
 from . import proxytool as core
 from .maintenance import clear_runtime, exclusive_lock
 from .reputation import Denylist, normalize_zones
@@ -338,9 +339,21 @@ def read_snapshot(data, *, now=None):
 
 
 def defaults():
-    return dict(settings_version=2, targets=[dict(name='example.com', url='https://example.com/', statuses=[200],
+    # A fresh install already answers in the version-3 shape: the flat list of
+    # 55 pre-catalog URLs, each mapped onto its catalog record so the selection
+    # exists from the first start and nothing has to be guessed later.  The
+    # alias map walks the whole catalog, so it is built once per call rather
+    # than once per spec.
+    sources = json.loads((ROOT/'sources.json').read_text(encoding='utf-8'))
+    catalog = source_catalog.load_bundled()
+    aliases = source_catalog.legacy_aliases(catalog)
+    return dict(settings_version=3, targets=[dict(name='example.com', url='https://example.com/', statuses=[200],
                              contains='Example Domain', headers={}, method='GET')],
-                sources=json.loads((ROOT/'sources.json').read_text(encoding='utf-8')), use_sources=True,
+                sources=sources,
+                source_selection=dict(schema_version=1, catalog_revision=catalog['revision'],
+                                      selected_ids=[aliases[spec] for spec in sources if spec in aliases],
+                                      download_disabled_ids=[], sets=[], custom_sources=[]),
+                use_sources=True,
                 proxies='', attempts=3, timeout=8, workers=128, rate=100,
                 max_bytes=1048576, source_timeout=60, min_success=2/3, top=0, sort='recommended',
                 request_profile='workbench', denylist='',
@@ -355,20 +368,34 @@ def defaults():
 def validate(settings):
     if not isinstance(settings, dict):
         raise ValueError('Ожидаются настройки проверки.')
+    # A document written before the source catalog carries a flat list of URLs
+    # and no selection.  It is migrated here, on the one path every reader and
+    # every writer already goes through, so an old install is upgraded the
+    # first time anything reads its settings and never loses a URL or a pause
+    # doing it.  ``migrate_settings`` is idempotent, so a document that is
+    # already v3 is returned untouched.
+    if settings.get('settings_version') in (1, 2) or 'source_selection' not in settings:
+        settings = source_catalog.migrate_settings(settings)
     clean = defaults()
     clean.update({k: settings[k] for k in clean if k in settings})
     if clean['settings_version'] not in (1, 2, 3):
         raise ValueError('Неизвестная версия настроек.')
-    clean['settings_version'] = 2 if clean['settings_version'] == 1 else clean['settings_version']
+    clean['settings_version'] = 3
     # Version 3 carries the source-catalog selection made in the Sources tab;
     # it is produced by source_catalog.migrate_settings and must survive a
     # round-trip through validate, or every catalog write would silently lose
     # the user's selection.
     selection = settings.get('source_selection')
-    if selection is not None:
-        if not isinstance(selection, dict):
-            raise ValueError('source_selection: повреждённые поля.')
-        clean['source_selection'] = selection
+    if not isinstance(selection, dict) or not isinstance(selection.get('selected_ids'), list) \
+            or not isinstance(selection.get('download_disabled_ids', []), list):
+        raise ValueError('source_selection: повреждённые поля.')
+    selection = dict(selection, schema_version=1, custom_sources=list(selection.get('custom_sources') or []))
+    selection['selected_ids'] = list(dict.fromkeys(selection['selected_ids']))
+    selection['download_disabled_ids'] = [value for value in dict.fromkeys(selection.get('download_disabled_ids') or [])
+                                           if value in set(selection['selected_ids'])]
+    clean['source_selection'] = selection
+    if not isinstance(clean['sources'], list):
+        raise ValueError('Источники должны быть списком URL (до 5000).')
     if not isinstance(clean['request_profile'], str) or clean['request_profile'] not in REQUEST_PROFILES:
         raise ValueError('Неизвестный request-профиль.')
     if not isinstance(clean['denylist'], str) or len(clean['denylist']) > 2_000_000:
@@ -468,6 +495,36 @@ def validate(settings):
     return clean
 
 
+
+
+def save_settings(data, payload):
+    """The one writer of ``gui-settings.json``: validate, then atomic replace.
+
+    The GUI and the CLI both go through it (directly or through
+    ``source_management.write_settings``), so a selection changed from the
+    terminal is validated exactly like one changed in the browser and a crash
+    cannot leave a half-written selection behind.
+    """
+    settings = validate(payload)
+    core.atomic(Path(data)/'gui-settings.json',
+                json.dumps(settings, ensure_ascii=False, indent=2) + '\n')
+    return settings
+
+
+def read_settings(data):
+    """Current settings without a running server; ``None`` when unreadable.
+
+    ``source_management`` and the CLI use this to answer "what has the user
+    chosen" without booting the interface, so the migration in :func:`validate`
+    runs on the same path a running server would take.
+    """
+    app = App.__new__(App)
+    app.data = Path(data).resolve()
+    try:
+        return app.settings()
+    except (OSError, ValueError):
+        return None
+
 class App:
     def __init__(self, data):
         self.data = data.resolve()
@@ -553,7 +610,16 @@ class App:
                 stored['denylist'] = ''
             except (OSError, UnicodeError):
                 raise ValueError('Не удалось прочитать data/denylist.txt. Исправьте файл перед сохранением.') from None
-        return validate(stored)
+        legacy = isinstance(stored, dict) and stored.get('settings_version') in (1, 2)
+        result = validate(stored)
+        if legacy:
+            # The migration to the source-catalog selection is one atomic
+            # replace.  A crash before this point leaves the legacy file
+            # untouched and the next start repeats the migration, so an old
+            # install is never left half-converted.
+            core.atomic(settings_path, json.dumps(result, ensure_ascii=False, indent=2) + '\n')
+        return result
+
 
     def save(self, payload):
         if isinstance(payload, dict) and 'denylist' not in payload:
@@ -568,6 +634,15 @@ class App:
     # --- Source catalog: shared between UI, CLI and API ---
 
     CATALOG_FILE = 'source-catalog.json'
+    CATALOG_STATE_FILE = 'source-catalog-state.json'
+
+    def read_source_catalog_cache(self):
+        """The validators of the last accepted catalog, for a 304 next time."""
+        try:
+            state = json.loads((self.data/self.CATALOG_STATE_FILE).read_text(encoding='utf-8'))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            return {}
+        return state if isinstance(state, dict) else {}
 
     def source_document(self):
         """Last accepted remote catalog, or the bundled one when there is none.
@@ -805,65 +880,51 @@ class App:
         return source_id, item, False
 
     def preview_source(self, payload):
-        """Availability and format check. Never writes candidates or settings."""
+        """Availability and format check. Never writes candidates or settings.
+
+        The check runs the collector's own fetch path -- the same destination
+        validation, the same redirect rules, the same byte and record budgets
+        and the same adapter the profile names -- against a private temporary
+        database.  It used to be a second, simpler implementation: a plain
+        ``httpx.Client`` that followed redirects to anywhere, read the whole
+        body with no budget and parsed it with a default profile.  That made a
+        check able to reach a private address the collector would refuse, and
+        able to answer for a format the collector cannot read.
+        """
+        from . import proxytool
         settings = self.settings()
         source_id, plan, allow_private = self._preview_plan(payload, settings)
         if not source_catalog.collectable_source(plan):
             raise ValueError('Это не список прокси-адресов: формат источника не поддерживается сборщиком.')
-        endpoints = plan.get('endpoints') or [{}]
-        endpoint = endpoints[0]
-        url = endpoint.get('url') or plan.get('url')
-        adapter = endpoint.get('adapter') or plan.get('adapter') or {'kind': 'line'}
-        if not url:
-            raise ValueError('У источника нет доступного адреса.')
-        
-        try:
-            with httpx.Client(timeout=15.0, follow_redirects=True, headers={'User-Agent': 'ProxyWorkbench/Preview'}) as client:
-                resp = client.get(url)
-                body = resp.content
-                status_code = resp.status_code
-        except Exception as exc:
-            return source_management.preview_view({
-                'sources': [{
-                    'source_id': source_id,
-                    'http_state': 'http_error',
-                    'error': str(exc),
-                    'complete': False
-                }]
-            }, source_id, plan.get('name'))
+        report = self._preview_report(plan)
+        return source_management.preview_view(report, source_id, plan.get('name'))
 
-        candidates = []
-        parse_err = None
+    def _preview_report(self, plan):
+        """One checked source, through ``proxytool``, writing nothing."""
+        from . import proxytool
         try:
-            kind = adapter.get('kind', 'line')
-            if kind == 'line':
-                parsed = source_adapters.parse_line(body)
-                candidates = parsed.get('records', [])
-            else:
-                parser = source_adapters.PARSERS.get(kind, source_adapters.PARSERS['line'])
-                parsed = parser(body)
-                candidates = parsed.get('records', [])
-        except Exception as e:
-            parse_err = str(e)
+            db = self.read_db()
+        except sqlite3.Error:
+            db = None
+        if db is None:
+            db = proxytool.open_db(self.data / 'preview-check.sqlite3')
+            try:
+                report = self._run_preview(plan, db)
+            finally:
+                db.close()
+                path = self.data / 'preview-check.sqlite3'
+                for suffix in ('', '-wal', '-shm'):
+                    (path.parent / (path.name + suffix)).unlink(missing_ok=True)
+            return report
+        try:
+            return self._run_preview(plan, db)
+        finally:
+            db.close()
 
-        sample = [c.get('value') or str(c) for c in candidates[:20]]
-        return source_management.preview_view({
-            'sources': [{
-                'source_id': source_id,
-                'http_state': 'http_2xx_nonempty' if status_code == 200 and body else 'http_error',
-                'parse_state': 'confirmed' if candidates else ('invalid' if parse_err else 'empty'),
-                'complete': bool(candidates),
-                'status': status_code,
-                'format': adapter.get('kind', 'line'),
-                'bytes': len(body),
-                'recognized': len(candidates),
-                'accepted': len(candidates),
-                'sample': sample,
-                'error': parse_err
-            }],
-            'sample': sample,
-            'unique': len(set(sample))
-        }, source_id, plan.get('name'))
+    def _run_preview(self, plan, db):
+        from . import proxytool
+        return proxytool.run_preview(db, [plan], allow_private_sources=True,
+                                     allow_private_endpoints=True)
 
     # --- source recovery and scope exclusions -----------------------------
     #
@@ -1108,21 +1169,35 @@ class App:
         job = self.catalog_job
 
         def work():
-            url = os.environ.get('PROXY_WORKBENCH_SOURCES_URL', SOURCES_URL)
+            from . import proxytool
+            url = os.environ.get('PROXY_WORKBENCH_SOURCES_URL', SOURCE_CATALOG_URL)
             try:
                 job['stage'] = 'downloading'
-                with httpx.Client(timeout=20.0, follow_redirects=True) as client:
-                    resp = client.get(url)
-                    if resp.status_code == 304:
-                        job.update(running=False, stage='done', not_modified=True, error=None)
-                        return
-                    incoming = resp.json()
+                # The catalog is fetched by the same bounded, destination-
+                # validated owner as a proxy list, with the stored validators so
+                # a publisher with nothing new costs a 304 instead of a body.
+                # It used to be a plain ``httpx.Client`` that followed redirects
+                # anywhere and read the whole answer with no limit, which made
+                # this the one route in the app that could be pointed wherever.
+                current = self.source_document()
+                state = self.read_source_catalog_cache()
+                answer = proxytool.fetch_catalog(
+                    url, current=current, allow_private_sources=False,
+                    etag=state.get('etag'), last_modified=state.get('last_modified'))
+                if answer.get('state') == 'not_modified':
+                    job.update(running=False, stage='done', not_modified=True, error=None)
+                    return
                 job['stage'] = 'validating'
+                incoming = answer['catalog']
                 if not isinstance(incoming, dict):
                     raise ValueError('Каталог источников недоступен.')
-                diff = source_catalog.catalog_diff(self.source_document(), incoming)
+                diff = source_catalog.catalog_diff(current, incoming)
                 core.atomic(self.data/self.CATALOG_FILE, json.dumps(incoming, ensure_ascii=False))
                 self._catalog_cache = incoming
+                core.atomic(self.data/self.CATALOG_STATE_FILE, json.dumps(
+                    {'etag': answer.get('etag'), 'last_modified': answer.get('last_modified'),
+                     'body_sha256': answer.get('body_sha256'),
+                     'fetched_at': time.time()}, ensure_ascii=False))
                 job.update(running=False, stage='done', error=None, **diff)
             except Exception as exc:
                 reason = str(exc) if isinstance(exc, ValueError) else type(exc).__name__
@@ -4641,6 +4716,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond(200, self.app.toggle_source(payload))
             if path == '/api/sources/select':
                 return self.respond(200, self.app.select_source(payload))
+            if path == '/api/sources/remove':
+                return self.respond(200, self.app.remove_source(payload))
             if path == '/api/sources/recover':
                 return self.respond(200, self.app.recover_source(payload))
             if path == '/api/sources/add':

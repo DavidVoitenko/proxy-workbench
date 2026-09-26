@@ -14,8 +14,17 @@ PRODUCT_ID = "ProxyWorkbench"
 PRODUCT_VERSION = "2.3.0"
 DEFAULT_REQUEST_PROFILE = "workbench"
 PROJECT_URL = "https://github.com/DavidVoitenko/proxy-workbench"
-# Newest built-in source list, fetched only when the user asks for it.
+# Newest built-in source list, fetched only when the user asks for it.  This is
+# the flat list of URLs the app has always read; the catalog below is a
+# different document and has its own name, so neither can be mistaken for the
+# other.
 SOURCES_URL = "https://raw.githubusercontent.com/DavidVoitenko/proxy-workbench/main/sources.json"
+#: The source *catalog*: the versioned object of researched sources with roles,
+#: access conditions and adapters.  It is a different file from the flat list
+#: and must be published under its own name -- pointing the catalog update at
+#: ``sources.json`` downloads a list of URLs and fails validation, which is how
+#: "the catalog update does nothing" used to present itself.
+SOURCE_CATALOG_URL = "https://raw.githubusercontent.com/DavidVoitenko/proxy-workbench/main/proxy_workbench/source-catalog.json"
 
 REQUEST_PROFILES = {
     "workbench": {

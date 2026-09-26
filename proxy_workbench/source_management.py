@@ -1,9 +1,11 @@
 """Source catalog view shared by the GUI, the CLI and the read-only API.
 
 The module turns the catalog, the user's selection and the runtime tables into
-one bounded view.  It performs no network I/O and writes nothing:
+one bounded view.  It performs no network I/O and writes nothing of its own:
 ``proxytool.collect`` stays the only network and persistence boundary, and
-``gui.App`` stays the only writer of ``gui-settings.json``.
+``write_settings`` writes ``gui-settings.json`` only through ``gui.validate``
+plus the one atomic writer, so a selection changed from the terminal is
+identical to one changed from the page.
 
 Wording rule enforced here by construction: a row is never called working,
 alive or quality.  A source keeps five separate research statuses, the three
@@ -12,6 +14,8 @@ runtime fetch states, and the age of the data that is actually on disk.
 from __future__ import annotations
 
 from copy import deepcopy
+import json
+from pathlib import Path
 import sqlite3
 import time
 
@@ -916,15 +920,50 @@ def preview_view(report, source_id=None, name=None):
 
 
 def read_settings(data):
-    """Current settings through the one validator, or None when unreadable."""
+    """Current settings through the one validator, or ``None`` when unreadable.
+
+    Delegates to :mod:`gui`'s module-level reader when this tree has one, and
+    otherwise does the same two steps itself: read ``gui-settings.json`` and
+    hand it to :func:`gui.validate`.  The fallback exists because a caller that
+    only wants the current settings must not need a running server, and a
+    missing module-level helper would otherwise turn every read of the
+    selection into an ``AttributeError``.
+    """
     from . import gui
-    return gui.read_settings(data)
+    reader = getattr(gui, 'read_settings', None)
+    if callable(reader):
+        return reader(data)
+    path = Path(data) / 'gui-settings.json'
+    try:
+        stored = json.loads(path.read_text(encoding='utf-8')) if path.exists() else None
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    if stored is None:
+        stored = gui.defaults()
+    if not isinstance(stored, dict):
+        return None
+    try:
+        return gui.validate(stored)
+    except (OSError, ValueError):
+        return None
 
 
 def write_settings(data, settings):
-    """Persist a changed selection with the same validation the GUI uses."""
-    from . import gui
-    return gui.save_settings(data, settings)
+    """Persist a changed selection with the same validation the GUI uses.
+
+    The one writer of ``gui-settings.json`` for everything that is not a
+    running :class:`gui.App`: validate first, then one atomic replace, so a
+    document written from the terminal and one written from the page are
+    indistinguishable and a crash cannot leave half a selection behind.
+    """
+    from . import core, gui
+    writer = getattr(gui, 'save_settings', None)
+    if callable(writer):
+        return writer(data, settings)
+    clean = gui.validate(settings)
+    core.atomic(Path(data) / 'gui-settings.json',
+                json.dumps(clean, ensure_ascii=False, indent=2) + '\n')
+    return clean
 
 
 def apply_set(settings, set_id, catalog=None, *, keep_disabled=True):
