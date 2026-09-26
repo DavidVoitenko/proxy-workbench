@@ -816,6 +816,15 @@ const messages = {
     'results.selectionCleared': 'Selection cleared: the scope changed',
     'results.snapshotBroken': 'The published snapshot cannot be read; the table stays empty instead of showing unrelated rows.',
     'results.snapshotReason': 'Why the list is what it is: {reason}.',
+    'results.detail.ok': 'the set was built and accepted',
+    'results.detail.rejected': 'rows were rejected by the policy',
+    'results.detail.all_expired': 'every row expired; a new check is needed',
+    'results.detail.all_untrusted': 'no row has confirmed cleanliness',
+    'results.detail.all_failed': 'every row failed its measurement',
+    'results.detail.nothing_in_scope': 'the scope holds no address at all',
+    'results.detail.empty_no_match': 'nothing matched the filters',
+    'results.detail.no_snapshot': 'nothing has been published yet',
+    'results.detail.pointer_unreadable': 'the publication pointer cannot be read',
     'quick.title': 'Quick test',
     'quick.volume': 'Volume: {targets} services x {attempts} attempts, at most {requests} requests, {seconds}s total',
     'quick.skipped': 'Not measured: reputation, anonymity, speed',
@@ -2107,6 +2116,15 @@ const messages = {
     'results.selectionCleared': 'Выделение очищено: область изменилась',
     'results.snapshotBroken': 'Опубликованный снимок не читается; таблица остаётся пустой, а не показывает посторонние строки.',
     'results.snapshotReason': 'Почему список такой: {reason}.',
+    'results.detail.ok': 'набор собран и принят',
+    'results.detail.rejected': 'строки отклонены политикой',
+    'results.detail.all_expired': 'все строки истекли; нужна новая проверка',
+    'results.detail.all_untrusted': 'нет строк с подтверждённой чистотой',
+    'results.detail.all_failed': 'все строки провалили измерение',
+    'results.detail.nothing_in_scope': 'в области нет ни одного адреса',
+    'results.detail.empty_no_match': 'ничего не подошло под фильтры',
+    'results.detail.no_snapshot': 'публикации ещё нет',
+    'results.detail.pointer_unreadable': 'указатель публикации не читается',
     'quick.title': 'Быстрый тест',
     'quick.volume': 'Объём: {targets} сервисов x {attempts} попыток, не более {requests} запросов, {seconds} с суммарно',
     'quick.skipped': 'Не измеряется: репутация, анонимность, скорость',
@@ -6532,7 +6550,12 @@ function renderViewTabs(data) {
     // different reasons, and the page says which one it is instead of showing
     // an empty table with no explanation.
     const broken = Boolean(data && data.snapshot_state === 'broken');
-    const reason = data ? (data.state_detail_label || '') : '';
+    const detailId = data ? String(data.state_detail || '') : '';
+    // Prefer the UI-language label for a known state_detail id; fall back to
+    // the server-provided label (single language) for engine-new reasons.
+    const reason = detailId && messages.en['results.detail.' + detailId]
+      ? t('results.detail.' + detailId)
+      : (data ? (data.state_detail_label || '') : '');
     const explained = !broken && reason && String(data.state_detail) !== 'ok';
     hint.textContent = broken ? t('results.snapshotBroken')
       : (explained ? t('results.snapshotReason', {reason}) : t('results.selectionScopeHint'));

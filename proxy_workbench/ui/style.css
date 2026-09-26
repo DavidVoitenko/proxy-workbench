@@ -22239,3 +22239,1786 @@ summary {
   word-spacing: normal !important;
   letter-spacing: normal !important;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ALIGNMENT & TYPOGRAPHY HUNT — 2026-09-26 (round 8, Gemini)
+   Button height tiers (28/34/40), baseline-locked captions and unit badges,
+   gauge/stat-tile centering, hardened text blocks. Verified visually.
+   ═══════════════════════════════════════════════════════════════════════════ */
+/* ==========================================================================
+   PROXY WORKBENCH — DESKTOP ALIGNMENT & CENTERING HUNT (h1-alignment.css)
+   Linear / Raycast / Arc / Vercel Ultra-Clean Dark Engineering
+   Dark theme is the hero. Vanilla CSS only. ONE deliverable file.
+   Target Widths: 1200px - 2000px Desktop (Strictly non-breaking for 390px / 768px / 1440px).
+
+   DELIVERABLE: /tmp/pw-design/hunt/h1-alignment.css
+
+   SELECTOR VERIFICATION MANIFEST:
+   - Results Header:     .results-compact-header, .results-compact-actions,
+                         .results-compact-actions .view-tabs, #results-view-tabs,
+                         .view-tab, .view-count, .view-tools,
+                         #saved-views, .compact-select, #save-view, #delete-view,
+                         .columns-wrap, #columns-toggle, #open-matrix, #refresh-results,
+                         .results-scope-hint
+   - Section Headers:    .compact-block-title, .block-step-badge, .compact-block-title h2,
+                         .targets-header-actions, .condition-badge, #target-preset,
+                         .preset-select, .add-target-btn, #add-target, .btn-plus,
+                         .presets-segmented-wrapper, .segmented-control, .segmented-btn,
+                         .watch-keep-fresh-wrap, .watch-keep-fresh-label, .watch-unit-wrap,
+                         #watch
+   - Monitor Card:       .card.monitor, .radial-gauge-container, .radial-gauge-wrap,
+                         .radial-gauge-svg, .gauge-center-content, .gauge-percent,
+                         #gauge-percent, .gauge-caption, #gauge-caption,
+                         .metrics, .metrics.metrics-grid, .metric-card,
+                         .metric-header, .metric-icon, .metric-header small,
+                         .metric-value, #speed, #eta, .source-summary.live-passed,
+                         .secondary-btn-row, .recheck-actions-row, .recheck-btn
+   - Field Cards:        .clean-field-grid, .clean-field-grid label,
+                         .clean-field-grid label > span, .field-label-with-count,
+                         .clean-field-grid input, .clean-field-grid select,
+                         .country-field-wrapper, .country-input-box, #countries-box,
+                         .country-typeahead-input, .country-input-actions,
+                         .input-unit-wrap, .select-unit-wrap, .unit-badge
+   - Connection Path:    .connect-card, #connect-card, .connect-head, .connect-lan,
+                         .connect-steps, .connect-step, .connect-step::before,
+                         .connect-step-title, .connect-step-value, .connect-step-note,
+                         .endpoint-specs, #connect-disconnect
+   - Button System:      .button, .button.chip, .chip, .button.compact, .button.mini,
+                         .button.large, #start, .mission-btn-start, #stop,
+                         .mission-btn-stop, #resume, .ghost-btn, .recheck-btn,
+                         .filter-chip, .download-chip, .segmented-btn
+   ========================================================================== */
+
+/* ── 0. DESIGN TOKENS (Scoped Fallbacks with var(--x, fallback)) ─────────── */
+:root {
+  --pw-hunt-bg-surface:       var(--bg-surface, #131a26);
+  --pw-hunt-bg-card:          var(--bg-card, #0f1622);
+  --pw-hunt-bg-input:         var(--bg-input, #0b111a);
+  --pw-hunt-border:           var(--line, rgba(255, 255, 255, 0.08));
+  --pw-hunt-border-strong:    var(--line-strong, rgba(255, 255, 255, 0.16));
+  --pw-hunt-teal:             var(--teal, #10b981);
+  --pw-hunt-teal-bright:      var(--accent-300, #34d399);
+  --pw-hunt-teal-pale:        var(--teal-pale, rgba(16, 185, 129, 0.12));
+  --pw-hunt-teal-border:      var(--teal-border, rgba(16, 185, 129, 0.32));
+  --pw-hunt-teal-glow:        var(--teal-glow, rgba(16, 185, 129, 0.25));
+  --pw-hunt-ink:              var(--ink, #f8fafc);
+  --pw-hunt-ink-secondary:    var(--ink-secondary, #cbd5e1);
+  --pw-hunt-muted:            var(--muted, #8b9bb4);
+  --pw-hunt-faint:            var(--faint, #64748b);
+  --pw-hunt-danger:           var(--rose, #f43f5e);
+  --pw-hunt-danger-pale:      var(--rose-pale, rgba(244, 63, 94, 0.12));
+  --pw-hunt-danger-border:    var(--rose-border, rgba(244, 63, 94, 0.32));
+
+  /* Standard Button Scale Tokens */
+  --pw-btn-h-sm:              28px;
+  --pw-btn-pad-sm:            0 10px;
+  --pw-btn-radius-sm:         var(--radius-xs, 6px);
+  --pw-btn-font-sm:           11.5px;
+
+  --pw-btn-h-md:              34px;
+  --pw-btn-pad-md:            0 14px;
+  --pw-btn-radius-md:         var(--radius-sm, 8px);
+  --pw-btn-font-md:           12.5px;
+
+  --pw-btn-h-lg:              40px;
+  --pw-btn-pad-lg:            0 18px;
+  --pw-btn-radius-lg:         var(--radius-md, 10px);
+  --pw-btn-font-lg:           13.5px;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SURFACE 1: RESULTS HEADER GROUPS (.results-compact-actions)
+   - Equal container heights for View Tabs vs Tools group (34px line)
+   - Exact baseline alignment of tab texts, counters, selects, and action buttons
+   - Consistent horizontal & vertical rhythm (8px unified gap)
+   - Results scope hint wrapped cleanly below toolbar
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Header container alignment */
+.results-compact-header {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  flex-wrap: wrap !important;
+  gap: 12px !important;
+  margin-bottom: 14px !important;
+}
+
+.results-compact-header .results-title-group {
+  display: flex !important;
+  flex-direction: column !important;
+  justify-content: center !important;
+  min-height: 34px !important;
+}
+
+.results-compact-header .results-scope-hint {
+  flex-basis: 100% !important;
+  width: 100% !important;
+  margin: 4px 0 0 0 !important;
+}
+
+/* Actions wrapper: view tabs vs tools */
+.results-compact-actions {
+  display: flex !important;
+  flex-direction: row !important;
+  flex-wrap: wrap !important;
+  align-items: center !important;
+  gap: 10px !important;
+}
+
+/* 1a. View Tabs: strict 34px outer height matching controls */
+.results-compact-actions .view-tabs,
+#results-view-tabs.view-tabs {
+  height: var(--pw-btn-h-md, 34px) !important;
+  min-height: var(--pw-btn-h-md, 34px) !important;
+  max-height: var(--pw-btn-h-md, 34px) !important;
+  box-sizing: border-box !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 2px !important;
+  padding: 2px !important;
+  background: var(--pw-hunt-bg-surface, #131a26) !important;
+  border: 1px solid var(--pw-hunt-border, rgba(255, 255, 255, 0.08)) !important;
+  border-radius: var(--pw-btn-radius-md, 8px) !important;
+  flex: 0 0 auto !important;
+}
+
+/* View Tab items: strict 28px height inside 34px container (2px pad + 1px border) */
+.view-tabs .view-tab {
+  height: var(--pw-btn-h-sm, 28px) !important;
+  min-height: var(--pw-btn-h-sm, 28px) !important;
+  max-height: var(--pw-btn-h-sm, 28px) !important;
+  box-sizing: border-box !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 6px !important;
+  padding: 0 10px !important;
+  border: 1px solid transparent !important;
+  border-radius: var(--pw-btn-radius-sm, 6px) !important;
+  font-size: var(--pw-btn-font-sm, 11.5px) !important;
+  line-height: 1 !important;
+  white-space: nowrap !important;
+  vertical-align: middle !important;
+  cursor: pointer !important;
+  flex-shrink: 0 !important;
+}
+
+.view-tabs .view-tab .view-count {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  min-width: 14px !important;
+  height: 16px !important;
+  padding: 0 4px !important;
+  border-radius: 9999px !important;
+  font-size: 9.5px !important;
+  font-weight: 700 !important;
+  line-height: 1 !important;
+  font-variant-numeric: tabular-nums !important;
+}
+
+/* 1b. View Tools: equal 34px controls, baseline centered */
+.results-compact-actions .view-tools {
+  display: inline-flex !important;
+  flex-direction: row !important;
+  flex-wrap: wrap !important;
+  align-items: center !important;
+  gap: 8px !important;
+  row-gap: 8px !important;
+  min-height: var(--pw-btn-h-md, 34px) !important;
+  flex: 1 1 auto !important;
+}
+
+/* Universal 34px height for all tools in row */
+.view-tools select,
+.view-tools .compact-select,
+.view-tools #saved-views,
+.view-tools .button,
+.view-tools .chip,
+.view-tools #refresh-results {
+  height: var(--pw-btn-h-md, 34px) !important;
+  min-height: var(--pw-btn-h-md, 34px) !important;
+  max-height: var(--pw-btn-h-md, 34px) !important;
+  box-sizing: border-box !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  font-size: var(--pw-btn-font-md, 12.5px) !important;
+  line-height: 1 !important;
+  vertical-align: middle !important;
+  border-radius: var(--pw-btn-radius-md, 8px) !important;
+}
+
+/* Saved views select input */
+.view-tools #saved-views,
+.view-tools .compact-select {
+  padding: 0 28px 0 10px !important;
+  background-color: var(--pw-hunt-bg-input, #0b111a) !important;
+  border: 1px solid var(--pw-hunt-border, rgba(255, 255, 255, 0.08)) !important;
+  color: var(--pw-hunt-ink, #f8fafc) !important;
+  cursor: pointer !important;
+}
+
+/* Columns toggle dropdown wrapper */
+.view-tools .columns-wrap {
+  display: inline-flex !important;
+  align-items: center !important;
+  height: var(--pw-btn-h-md, 34px) !important;
+  position: relative !important;
+}
+
+.view-tools .columns-wrap #columns-toggle {
+  height: var(--pw-btn-h-md, 34px) !important;
+}
+
+/* Refresh button icon & text centering */
+.view-tools #refresh-results {
+  gap: 6px !important;
+  padding: 0 12px !important;
+}
+
+.view-tools #refresh-results span {
+  display: inline-flex !important;
+  align-items: center !important;
+  line-height: 1 !important;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SURFACE 2: SCAN SECTION HEADERS (Numbered Circle + Title + Right Controls)
+   - Vertical centering of circle (24px), title (28px height, line-height: 1) and right controls
+   - Fix Step 3 overflow bug: .watch-unit-wrap input reset from 34px to 28px
+   - Unified 28px control height across Steps 1, 2, and 3
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.compact-block-title {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  min-height: 36px !important;
+  gap: 12px !important;
+  padding-bottom: 12px !important;
+  margin-bottom: 14px !important;
+  border-bottom: 1px solid var(--pw-hunt-border, rgba(255, 255, 255, 0.07)) !important;
+}
+
+/* Section title + step number badge */
+.compact-block-title h2 {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 10px !important;
+  height: var(--pw-btn-h-sm, 28px) !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  font-size: 14px !important;
+  font-weight: 750 !important;
+  line-height: 1 !important;
+  color: var(--pw-hunt-ink, #f8fafc) !important;
+  vertical-align: middle !important;
+}
+
+.compact-block-title h2 > span:last-child {
+  display: inline-flex !important;
+  align-items: center !important;
+  line-height: 1 !important;
+}
+
+/* Numbered step circle: 24px centered badge */
+.compact-block-title .block-step-badge,
+.block-step-badge {
+  width: 24px !important;
+  height: 24px !important;
+  min-width: 24px !important;
+  min-height: 24px !important;
+  max-width: 24px !important;
+  max-height: 24px !important;
+  border-radius: 50% !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  font-family: var(--font-mono, monospace) !important;
+  font-size: 11px !important;
+  font-weight: 850 !important;
+  line-height: 1 !important;
+  vertical-align: middle !important;
+  margin: 0 !important;
+  box-sizing: border-box !important;
+}
+
+/* Step 1 Right Controls (.targets-header-actions) */
+.targets-header-actions {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  height: var(--pw-btn-h-sm, 28px) !important;
+}
+
+.targets-header-actions .condition-badge,
+.targets-header-actions .preset-select,
+.targets-header-actions #target-preset,
+.targets-header-actions .add-target-btn,
+.targets-header-actions #add-target {
+  height: var(--pw-btn-h-sm, 28px) !important;
+  min-height: var(--pw-btn-h-sm, 28px) !important;
+  max-height: var(--pw-btn-h-sm, 28px) !important;
+  box-sizing: border-box !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  font-size: var(--pw-btn-font-sm, 11.5px) !important;
+  line-height: 1 !important;
+  vertical-align: middle !important;
+  border-radius: var(--pw-btn-radius-sm, 6px) !important;
+}
+
+.targets-header-actions .add-target-btn span,
+.targets-header-actions .add-target-btn .btn-plus {
+  display: inline-flex !important;
+  align-items: center !important;
+  line-height: 1 !important;
+}
+
+/* Step 2 Right Controls (.presets-segmented-wrapper) */
+.presets-segmented-wrapper {
+  display: inline-flex !important;
+  align-items: center !important;
+  margin: 0 !important;
+  height: var(--pw-btn-h-sm, 28px) !important;
+}
+
+.compact-block-title .segmented-control {
+  height: var(--pw-btn-h-sm, 28px) !important;
+  min-height: var(--pw-btn-h-sm, 28px) !important;
+  max-height: var(--pw-btn-h-sm, 28px) !important;
+  box-sizing: border-box !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  padding: 2px !important;
+  border-radius: var(--pw-btn-radius-sm, 6px) !important;
+}
+
+.compact-block-title .segmented-btn {
+  height: 22px !important;
+  min-height: 22px !important;
+  max-height: 22px !important;
+  box-sizing: border-box !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 0 8px !important;
+  font-size: 11px !important;
+  line-height: 1 !important;
+  border-radius: 4px !important;
+}
+
+/* Step 3 Right Controls (.watch-keep-fresh-wrap) — FIX OVERFLOW BUG */
+.watch-keep-fresh-wrap {
+  display: inline-flex !important;
+  align-items: center !important;
+  height: var(--pw-btn-h-sm, 28px) !important;
+}
+
+.watch-keep-fresh-label {
+  display: inline-flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  gap: 8px !important;
+  height: var(--pw-btn-h-sm, 28px) !important;
+  margin: 0 !important;
+}
+
+.watch-keep-fresh-label > span {
+  display: inline-flex !important;
+  align-items: center !important;
+  line-height: 1 !important;
+  font-size: 10px !important;
+  font-weight: 750 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.06em !important;
+  color: var(--pw-hunt-muted, #8b9bb4) !important;
+}
+
+.watch-unit-wrap {
+  width: 90px !important;
+  height: var(--pw-btn-h-sm, 28px) !important;
+  min-height: var(--pw-btn-h-sm, 28px) !important;
+  max-height: var(--pw-btn-h-sm, 28px) !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  position: relative !important;
+  box-sizing: border-box !important;
+}
+
+/* OVERRIDE 34px input to 28px so it sits inside 28px container without clipping */
+.watch-unit-wrap input,
+#step-identity-card .watch-unit-wrap input {
+  height: var(--pw-btn-h-sm, 28px) !important;
+  min-height: var(--pw-btn-h-sm, 28px) !important;
+  max-height: var(--pw-btn-h-sm, 28px) !important;
+  line-height: 26px !important;
+  box-sizing: border-box !important;
+  font-size: var(--pw-btn-font-sm, 11.5px) !important;
+  padding: 0 34px 0 8px !important;
+  border-radius: var(--pw-btn-radius-sm, 6px) !important;
+}
+
+.watch-unit-wrap .unit-badge {
+  position: absolute !important;
+  right: 6px !important;
+  top: 50% !important;
+  transform: translateY(-50%) !important;
+  line-height: 1 !important;
+  margin: 0 !important;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SURFACE 3: THE MONITOR CARD (Gauge Centering, Stat Tiles Equal Heights, Labels Aligned)
+   - Pixel-perfect center alignment of radial gauge & concentric SVG rings
+   - Centering of percentage & progress caption within circular boundary
+   - Stat tiles (.metric-card) stretched to equal height with aligned labels
+   - Aligned metric numbers and action buttons
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* 3a. Radial Gauge Centering */
+.radial-gauge-container {
+  display: flex !important;
+  justify-content: center !important;
+  align-items: center !important;
+  width: 100% !important;
+  margin: 8px auto 12px auto !important;
+  padding: 6px 0 !important;
+  position: relative !important;
+  box-sizing: border-box !important;
+}
+
+.radial-gauge-wrap {
+  width: 120px !important;
+  height: 120px !important;
+  min-width: 120px !important;
+  min-height: 120px !important;
+  margin: 0 auto !important;
+  position: relative !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  box-sizing: border-box !important;
+  flex-shrink: 0 !important;
+}
+
+.radial-gauge-svg {
+  width: 120px !important;
+  height: 120px !important;
+  display: block !important;
+  margin: 0 auto !important;
+  position: relative !important;
+  z-index: 2 !important;
+}
+
+/* Inner content center locked */
+.gauge-center-content {
+  position: absolute !important;
+  inset: 0 !important;
+  margin: auto !important;
+  width: 96px !important;
+  height: 96px !important;
+  display: flex !important;
+  flex-direction: column !important;
+  justify-content: center !important;
+  align-items: center !important;
+  text-align: center !important;
+  box-sizing: border-box !important;
+  pointer-events: none !important;
+  z-index: 3 !important;
+}
+
+.gauge-percent,
+#gauge-percent {
+  font-family: var(--pw-bold-font-mono, monospace) !important;
+  font-size: 22px !important;
+  font-weight: 850 !important;
+  color: var(--pw-hunt-ink, #f8fafc) !important;
+  line-height: 1.05 !important;
+  text-align: center !important;
+  display: block !important;
+  width: 100% !important;
+  margin: 0 !important;
+}
+
+.gauge-caption,
+#gauge-caption {
+  font-size: 9px !important;
+  font-weight: 800 !important;
+  color: var(--pw-hunt-teal-bright, #34d399) !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.08em !important;
+  line-height: 1.2 !important;
+  text-align: center !important;
+  display: block !important;
+  width: 100% !important;
+  max-width: 90px !important;
+  margin: 4px auto 0 auto !important;
+  word-break: normal !important;
+  overflow-wrap: break-word !important;
+}
+
+/* 3b. Stat Tiles: Equal Heights & Aligned Labels */
+.metrics.metrics-grid {
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  gap: 10px !important;
+  margin-bottom: 12px !important;
+  align-items: stretch !important;
+}
+
+.metric-card {
+  display: flex !important;
+  flex-direction: column !important;
+  justify-content: space-between !important;
+  min-height: 76px !important;
+  height: 100% !important;
+  padding: 10px 12px !important;
+  box-sizing: border-box !important;
+  background: var(--pw-hunt-bg-surface, #131a26) !important;
+  border: 1px solid var(--pw-hunt-border, rgba(255, 255, 255, 0.08)) !important;
+  border-radius: var(--pw-btn-radius-md, 8px) !important;
+}
+
+.metric-header {
+  display: flex !important;
+  flex-direction: row !important;
+  align-items: center !important;
+  gap: 8px !important;
+  min-height: 28px !important;
+  width: 100% !important;
+}
+
+.metric-icon {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 26px !important;
+  height: 26px !important;
+  min-width: 26px !important;
+  min-height: 26px !important;
+  border-radius: var(--pw-btn-radius-sm, 6px) !important;
+  font-size: 13px !important;
+  line-height: 1 !important;
+  flex-shrink: 0 !important;
+}
+
+.metric-header small {
+  display: flex !important;
+  align-items: center !important;
+  flex: 1 1 auto !important;
+  margin: 0 !important;
+  font-size: 10px !important;
+  font-weight: 750 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.06em !important;
+  color: var(--pw-hunt-muted, #8b9bb4) !important;
+  line-height: 1.25 !important;
+}
+
+.metric-value,
+#speed.metric-value,
+#eta.metric-value {
+  display: block !important;
+  margin-top: auto !important;
+  font-family: var(--font-mono, monospace) !important;
+  font-size: 18px !important;
+  font-weight: 800 !important;
+  line-height: 1.1 !important;
+  letter-spacing: -0.02em !important;
+  color: var(--pw-hunt-ink, #f8fafc) !important;
+  font-variant-numeric: tabular-nums !important;
+}
+
+/* Secondary Actions Row in Monitor: #resume & #stop aligned */
+.secondary-btn-row {
+  display: flex !important;
+  gap: 8px !important;
+  margin-bottom: 8px !important;
+  align-items: center !important;
+}
+
+.secondary-btn-row .button,
+#resume.ghost-btn,
+#stop.mission-btn-stop {
+  flex: 1 1 0 !important;
+  height: var(--pw-btn-h-md, 34px) !important;
+  min-height: var(--pw-btn-h-md, 34px) !important;
+  max-height: var(--pw-btn-h-md, 34px) !important;
+  line-height: 1 !important;
+  border-radius: var(--pw-btn-radius-md, 8px) !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  box-sizing: border-box !important;
+}
+
+/* Recheck Row in Monitor: Equal 28px buttons */
+.recheck-actions-row {
+  display: flex !important;
+  gap: 8px !important;
+  align-items: center !important;
+}
+
+.recheck-actions-row .recheck-btn {
+  flex: 1 1 0 !important;
+  height: var(--pw-btn-h-sm, 28px) !important;
+  min-height: var(--pw-btn-h-sm, 28px) !important;
+  max-height: var(--pw-btn-h-sm, 28px) !important;
+  line-height: 1 !important;
+  padding: var(--pw-btn-pad-sm, 0 10px) !important;
+  border-radius: var(--pw-btn-radius-sm, 6px) !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 6px !important;
+  font-size: var(--pw-btn-font-sm, 11.5px) !important;
+  box-sizing: border-box !important;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SURFACE 4: FIELD CARDS IN "HOW TO CHECK" (Parameters & Filters)
+   - Captions aligned on one baseline across all grid columns
+   - Strict 34px equal input heights (override inline 32px on #countries-box)
+   - Unit badges centered vertically on the exact same axis
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Grid rhythm */
+.clean-field-grid {
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  gap: 12px 14px !important;
+  align-items: start !important;
+}
+
+/* Field label / wrapper column layout */
+.clean-field-grid label,
+.clean-field-grid .country-field-wrapper {
+  display: flex !important;
+  flex-direction: column !important;
+  justify-content: flex-start !important;
+  margin-bottom: 0 !important;
+  min-width: 0 !important;
+}
+
+/* 4a. Captions: Fixed 20px height & bottom-aligned to lock input baselines */
+.clean-field-grid label > span,
+.clean-field-grid .field-label-with-count,
+#step-params-card label > span {
+  display: flex !important;
+  align-items: flex-end !important;
+  height: 20px !important;
+  min-height: 20px !important;
+  max-height: 20px !important;
+  margin: 0 0 6px 0 !important;
+  padding: 0 !important;
+  font-size: 10px !important;
+  font-weight: 750 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.06em !important;
+  color: var(--pw-hunt-muted, #8b9bb4) !important;
+  line-height: 1.2 !important;
+  white-space: nowrap !important;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  box-sizing: border-box !important;
+}
+
+/* Override inline styles on Countries label */
+.clean-field-grid .field-label-with-count span {
+  font-size: 10px !important;
+  font-weight: 750 !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.06em !important;
+  color: var(--pw-hunt-muted, #8b9bb4) !important;
+  line-height: 1.2 !important;
+}
+
+/* 4b. Strict 34px Equal Input Heights */
+.clean-field-grid input,
+.clean-field-grid select,
+.clean-field-grid .country-input-box,
+.input-unit-wrap input,
+.select-unit-wrap select,
+#countries-box.country-input-box {
+  height: var(--pw-btn-h-md, 34px) !important;
+  min-height: var(--pw-btn-h-md, 34px) !important;
+  max-height: var(--pw-btn-h-md, 34px) !important;
+  line-height: 32px !important;
+  box-sizing: border-box !important;
+  font-size: var(--pw-btn-font-md, 12.5px) !important;
+  border-radius: var(--pw-btn-radius-sm, 6px) !important;
+  background-color: var(--pw-hunt-bg-surface, #131a26) !important;
+  border: 1px solid var(--pw-hunt-border, rgba(255, 255, 255, 0.08)) !important;
+  color: var(--pw-hunt-ink, #f8fafc) !important;
+  width: 100% !important;
+}
+
+/* Select inputs: arrow offset and no text clipping */
+.clean-field-grid select,
+.select-unit-wrap select {
+  padding: 0 28px 0 10px !important;
+  cursor: pointer !important;
+}
+
+/* Country input box internal vertical alignment */
+.clean-field-grid .country-input-box,
+#countries-box.country-input-box {
+  display: flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  padding: 0 8px !important;
+}
+
+.country-input-box .country-typeahead-input {
+  height: 100% !important;
+  line-height: 32px !important;
+  border: 0 !important;
+  background: transparent !important;
+  padding: 0 !important;
+  font-size: var(--pw-btn-font-md, 12.5px) !important;
+}
+
+.country-input-box .country-input-actions {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 4px !important;
+  height: 100% !important;
+}
+
+/* 4c. Unit Badges: Centered on input axis */
+.input-unit-wrap,
+.select-unit-wrap {
+  position: relative !important;
+  display: flex !important;
+  align-items: center !important;
+  width: 100% !important;
+}
+
+.input-unit-wrap input {
+  padding-right: 56px !important;
+}
+
+.input-unit-wrap .unit-badge {
+  position: absolute !important;
+  right: 8px !important;
+  top: 50% !important;
+  transform: translateY(-50%) !important;
+  height: 20px !important;
+  min-height: 20px !important;
+  max-height: 20px !important;
+  line-height: 18px !important;
+  padding: 0 6px !important;
+  background: var(--pw-hunt-bg-card, #0f1622) !important;
+  border: 1px solid var(--pw-hunt-border, rgba(255, 255, 255, 0.12)) !important;
+  border-radius: 4px !important;
+  font-family: var(--font-mono, monospace) !important;
+  font-size: 10px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.04em !important;
+  text-transform: uppercase !important;
+  color: var(--pw-hunt-muted, #8b9bb4) !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  pointer-events: none !important;
+  box-sizing: border-box !important;
+  white-space: nowrap !important;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SURFACE 5: GATEWAY CONNECTION-PATH CARDS
+   - Number circles (24px) strictly aligned side-by-side with titles on Row 1
+   - Equal card padding (14px uniform on all 4 sides)
+   - Consistent card heights in 5-step grid row
+   - Connecting hairline aligned with header center axis
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+#connect-card.card {
+  padding: 16px !important;
+  box-sizing: border-box !important;
+}
+
+.connect-head {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  min-height: 28px !important;
+  margin-bottom: 12px !important;
+}
+
+@media (min-width: 901px) {
+  /* 5-Column Grid on Desktop */
+  .connect-steps {
+    list-style: none !important;
+    display: grid !important;
+    grid-template-columns: repeat(5, minmax(0, 1fr)) !important;
+    gap: 14px !important;
+    margin: 12px 0 0 0 !important;
+    padding: 0 !important;
+    position: relative !important;
+    align-items: stretch !important;
+    counter-reset: connect-step-idx;
+  }
+
+  /* Each step card: Equal 14px padding, grid layout for circle + title on row 1 */
+  .connect-step {
+    counter-increment: connect-step-idx;
+    display: grid !important;
+    grid-template-columns: 24px 1fr !important;
+    grid-template-rows: 24px auto 1fr auto !important;
+    column-gap: 10px !important;
+    row-gap: 8px !important;
+    align-items: center !important;
+    padding: 14px !important;
+    box-sizing: border-box !important;
+    height: 100% !important;
+    background: var(--pw-hunt-bg-surface, #131a26) !important;
+    border: 1px solid var(--pw-hunt-border, rgba(255, 255, 255, 0.08)) !important;
+    border-radius: var(--pw-btn-radius-md, 8px) !important;
+    position: relative !important;
+  }
+
+  /* Number circle: Column 1, Row 1 */
+  .connect-step::before {
+    content: counter(connect-step-idx) !important;
+    grid-column: 1 !important;
+    grid-row: 1 !important;
+    position: static !important;
+    width: 24px !important;
+    height: 24px !important;
+    min-width: 24px !important;
+    min-height: 24px !important;
+    border-radius: 50% !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    font-family: var(--font-mono, monospace) !important;
+    font-size: 11px !important;
+    font-weight: 850 !important;
+    line-height: 1 !important;
+    margin: 0 !important;
+    box-sizing: border-box !important;
+    align-self: center !important;
+  }
+
+  /* Step Title: Column 2, Row 1 (strictly aligned with circle) */
+  .connect-step-title {
+    grid-column: 2 !important;
+    grid-row: 1 !important;
+    display: flex !important;
+    align-items: center !important;
+    height: 24px !important;
+    min-height: 24px !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    font-size: 12px !important;
+    font-weight: 700 !important;
+    line-height: 1 !important;
+    color: var(--pw-hunt-teal-bright, #34d399) !important;
+    align-self: center !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+  }
+
+  /* Content elements span full card width below title row */
+  .connect-step-value,
+  .connect-step-note,
+  .connect-step .endpoint-specs,
+  .connect-step button,
+  .connect-step #connect-disconnect {
+    grid-column: 1 / -1 !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+  }
+
+  .connect-step-value {
+    font-size: 11.5px !important;
+    line-height: 1.4 !important;
+    color: var(--pw-hunt-ink, #f8fafc) !important;
+  }
+
+  .connect-step-note {
+    font-size: 10px !important;
+    line-height: 1.3 !important;
+    color: var(--pw-hunt-faint, #64748b) !important;
+  }
+
+  .connect-step .endpoint-specs {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 4px !important;
+    font-size: 11px !important;
+    padding: 6px 8px !important;
+    background: var(--pw-hunt-bg-card, #0f1622) !important;
+    border-radius: var(--pw-btn-radius-sm, 6px) !important;
+    border: 1px solid var(--pw-hunt-border, rgba(255, 255, 255, 0.06)) !important;
+  }
+
+  .connect-step #connect-disconnect {
+    margin-top: auto !important;
+  }
+
+  /* Connecting hairline between cards at circle center height (14px pad + 12px half-circle = 26px) */
+  .connect-step:not(:last-child)::after {
+    content: "" !important;
+    position: absolute !important;
+    top: 25px !important;
+    right: -15px !important;
+    width: 14px !important;
+    height: 2px !important;
+    background: linear-gradient(90deg, rgba(52, 211, 153, 0.45), rgba(52, 211, 153, 0.15)) !important;
+    border: none !important;
+    z-index: 2 !important;
+    pointer-events: none !important;
+  }
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SURFACE 6: UNIVERSAL BUTTON SCALE (28px / 34px / 40px)
+   - Consistent height scale:
+       • Tier 1 (Small):  28px height, 0 10px padding, 6px border-radius
+       • Tier 2 (Medium): 34px height, 0 14px padding, 8px border-radius
+       • Tier 3 (Large):  40px height, 0 18px padding, 10px border-radius
+   - Universal vertical centering of button contents (inline-flex, line-height: 1)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* Universal button reset for alignment & centering */
+.button,
+button.button,
+a.button {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  box-sizing: border-box !important;
+  line-height: 1 !important;
+  white-space: nowrap !important;
+  text-decoration: none !important;
+  vertical-align: middle !important;
+}
+
+/* 6a. TIER 1: SMALL BUTTONS & CHIPS (28px) */
+.button.chip,
+.chip,
+.button.compact,
+.button.mini,
+.add-target-btn,
+#add-target,
+.catalog-actions .button.chip,
+.row-actions-group .chip,
+.row-actions-group button.chip,
+.row-actions-group a.chip,
+.recheck-btn,
+.filter-chip,
+.download-chip,
+.country-action-clear-btn,
+.region-chip {
+  height: var(--pw-btn-h-sm, 28px) !important;
+  min-height: var(--pw-btn-h-sm, 28px) !important;
+  max-height: var(--pw-btn-h-sm, 28px) !important;
+  padding: var(--pw-btn-pad-sm, 0 10px) !important;
+  border-radius: var(--pw-btn-radius-sm, 6px) !important;
+  font-size: var(--pw-btn-font-sm, 11.5px) !important;
+  line-height: 1 !important;
+  box-sizing: border-box !important;
+}
+
+/* 6b. TIER 2: MEDIUM / STANDARD BUTTONS (34px) */
+.button:not(.chip):not(.mini):not(.compact):not(.large):not(.mission-btn-start),
+.view-tools .button,
+.view-tools #save-view,
+.view-tools #delete-view,
+.view-tools #columns-toggle,
+.view-tools #open-matrix,
+.view-tools #refresh-results,
+.secondary-btn-row .button,
+#resume.ghost-btn,
+#stop.mission-btn-stop,
+.country-done-btn,
+#connect-disconnect {
+  height: var(--pw-btn-h-md, 34px) !important;
+  min-height: var(--pw-btn-h-md, 34px) !important;
+  max-height: var(--pw-btn-h-md, 34px) !important;
+  padding: var(--pw-btn-pad-md, 0 14px) !important;
+  border-radius: var(--pw-btn-radius-md, 8px) !important;
+  font-size: var(--pw-btn-font-md, 12.5px) !important;
+  line-height: 1 !important;
+  box-sizing: border-box !important;
+}
+
+/* 6c. TIER 3: LARGE / HERO BUTTONS (40px) */
+.button.large,
+#start.mission-btn-start,
+.mission-btn-start,
+.button.primary.full,
+.hero-cta-btn {
+  height: var(--pw-btn-h-lg, 40px) !important;
+  min-height: var(--pw-btn-h-lg, 40px) !important;
+  max-height: var(--pw-btn-h-lg, 40px) !important;
+  padding: var(--pw-btn-pad-lg, 0 18px) !important;
+  border-radius: var(--pw-btn-radius-lg, 10px) !important;
+  font-size: var(--pw-btn-font-lg, 13.5px) !important;
+  font-weight: 700 !important;
+  line-height: 1 !important;
+  box-sizing: border-box !important;
+}
+
+/* Internal icon alignment inside all buttons */
+.button svg,
+.button .btn-icon,
+.button .arrow-icon,
+.button .btn-plus,
+.button .recheck-btn-icon {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  vertical-align: middle !important;
+  flex-shrink: 0 !important;
+}
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   PRESERVE MOBILE (390px) & TABLET (768px) CONTRACT
+   Does not regress touch target heights or single-column wrapping on small viewports.
+   ═══════════════════════════════════════════════════════════════════════════ */
+@media (max-width: 680px) {
+  /* Allow toolbar to wrap gracefully on mobile */
+  .results-compact-actions {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 8px !important;
+    width: 100% !important;
+  }
+
+  .results-compact-actions .view-tabs {
+    width: 100% !important;
+  }
+
+  .results-compact-actions .view-tools {
+    width: 100% !important;
+  }
+
+  .clean-field-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+/* ==========================================================================
+   HUNT 2: TYPOGRAPHY & TEXT-BLOCK HARDENING (h2-typography.css)
+   Target File: /tmp/pw-design/hunt/h2-typography.css
+   Standards: Vanilla CSS, Dark-First, var(--x, fallback), Zero Layout Animations,
+              Responsive-safe (390px, 768px, 1440px+).
+   ========================================================================== */
+
+/* ── 0. TYPOGRAPHIC TOKENS (Scoped Root Defaults) ────────────────────────── */
+:root {
+  --pw-font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --pw-font-mono: ui-monospace, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  --pw-lh-tight: 1.2;
+  --pw-lh-normal: 1.45;
+  --pw-lh-relaxed: 1.55;
+  /* Micro-caps letter-spacing clamped <= 0.08em for Cyrillic stability */
+  --pw-ls-eyebrow: 0.06em;
+  --pw-ls-label: 0.04em;
+  --pw-ls-mono: 0em;
+}
+
+/* ==========================================================================
+   1. LIVE-STREAM, MONITOR & MAC-TERMINAL CARDS HARDENING
+   Task: Harden ALL paragraph and label texts that could inherit odd spacing.
+   Guarantees:
+   - Explicit text-align: left (start), normal word-spacing & letter-spacing.
+   - Sans stack for all paragraphs and explanatory messages.
+   - Mono stack strictly reserved for code, numbers, and terminal log stream.
+   ========================================================================== */
+
+/* ── 1.1 Live Inspection Stream (.live-ticker-card & .live-ticker-stream) ── */
+
+/* Header title block */
+.live-ticker-header {
+  text-align: left !important;
+}
+
+.ticker-title-left {
+  text-align: left !important;
+}
+
+.ticker-title-left strong {
+  font-family: var(--pw-font-sans, var(--font, system-ui, sans-serif)) !important;
+  text-align: left !important;
+  word-spacing: normal !important;
+  letter-spacing: normal !important;
+  line-height: var(--pw-lh-tight, 1.2) !important;
+}
+
+/* Subtitle / source descriptive paragraph:
+   Fixes style.css:9912 where mono font was inappropriately forced onto a paragraph */
+.live-feed-source,
+#live-feed-source {
+  font-family: var(--pw-font-sans, var(--font, system-ui, sans-serif)) !important;
+  font-size: 11px !important;
+  text-align: left !important;
+  word-spacing: normal !important;
+  letter-spacing: normal !important;
+  white-space: normal !important;
+  line-height: var(--pw-lh-normal, 1.45) !important;
+  color: var(--muted, #8b9bb4) !important;
+}
+
+/* Stream container:
+   Fixes style.css:7210 where font-family: var(--font-mono) caused child paragraphs
+   and status labels to inherit awkward monospace stretching */
+.live-ticker-stream,
+#live-ticker-list {
+  text-align: left !important;
+  word-spacing: normal !important;
+  letter-spacing: normal !important;
+}
+
+/* Stream idle / empty-state paragraph:
+   Fixes style.css:7214-7220 (text-align: center, font-family: inherit [mono], line-height: 1.4) */
+.ticker-empty {
+  font-family: var(--pw-font-sans, var(--font, system-ui, sans-serif)) !important;
+  text-align: left !important;
+  word-spacing: normal !important;
+  letter-spacing: normal !important;
+  white-space: normal !important;
+  line-height: var(--pw-lh-normal, 1.45) !important;
+  font-size: 11px !important;
+  color: var(--muted, #8b9bb4) !important;
+}
+
+/* Stream items row */
+.ticker-item {
+  text-align: left !important;
+  word-spacing: normal !important;
+  letter-spacing: normal !important;
+  align-items: center !important;
+}
+
+/* Stream badge (OK / FAIL / STATE) */
+.ticker-badge {
+  font-family: var(--pw-font-sans, var(--font, system-ui, sans-serif)) !important;
+  text-align: center !important;
+  word-spacing: normal !important;
+  letter-spacing: var(--pw-ls-label, 0.04em) !important;
+  line-height: var(--pw-lh-tight, 1.2) !important;
+}
+
+/* Stream data payload: IP:port, ping, reliability -> strictly mono */
+.ticker-text {
+  font-family: var(--pw-font-mono, var(--font-mono, ui-monospace, monospace)) !important;
+  text-align: left !important;
+  word-spacing: normal !important;
+  letter-spacing: var(--pw-ls-mono, 0em) !important;
+  font-variant-numeric: tabular-nums !important;
+  flex: 1 1 auto !important;
+}
+
+/* Stream status description label (e.g., "Connection timeout" / "Таймаут подключения") */
+.ticker-code {
+  font-family: var(--pw-font-sans, var(--font, system-ui, sans-serif)) !important;
+  text-align: left !important;
+  word-spacing: normal !important;
+  letter-spacing: normal !important;
+  line-height: var(--pw-lh-tight, 1.2) !important;
+  font-size: 10px !important;
+}
+
+/* ── 1.2 Mission Control Monitor (.card.monitor / .monitor) ──────────────── */
+
+/* Monitor card container */
+.monitor,
+.card.monitor {
+  text-align: left !important;
+  word-spacing: normal !important;
+  letter-spacing: normal !important;
+}
+
+/* Eyebrow & phase */
+.monitor-title {
+  text-align: left !important;
+}
+
+.monitor .eyebrow {
+  font-family: var(--pw-font-sans, var(--font, system-ui, sans-serif)) !important;
+  text-align: left !important;
+  word-spacing: normal !important;
+  letter-spacing: var(--pw-ls-eyebrow, 0.06em) !important;
+  line-height: var(--pw-lh-tight, 1.2) !important;
+}
+
+.monitor .phase {
+  font-family: var(--pw-font-sans, var(--font, system-ui, sans-serif)) !important;
+  text-align: left !important;
+  word-spacing: normal !important;
+  letter-spacing: normal !important;
+  line-height: var(--pw-lh-tight, 1.2) !important;
+}
+
+/* Radial Gauge numbers (mono) & caption (sans) */
+.gauge-percent {
+  font-family: var(--pw-font-mono, var(--font-mono, ui-monospace, monospace)) !important;
+  font-variant-numeric: tabular-nums !important;
+  letter-spacing: var(--pw-ls-mono, 0em) !important;
+  line-height: 1.1 !important;
+}
+
+.gauge-caption {
+  font-family: var(--pw-font-sans, var(--font, system-ui, sans-serif)) !important;
+  text-align: center !important;
+  word-spacing: normal !important;
+  letter-spacing: var(--pw-ls-label, 0.04em) !important;
+  line-height: var(--pw-lh-tight, 1.2) !important;
+  white-space: normal !important;
+  text-overflow: clip !important;
+  overflow-wrap: anywhere !important;
+  max-width: 120px !important;
+}
+
+/* Progress numbers -> strictly mono */
+.progress-number {
+  font-family: var(--pw-font-mono, var(--font-mono, ui-monospace, monospace)) !important;
+  font-variant-numeric: tabular-nums !important;
+  letter-spacing: var(--pw-ls-mono, 0em) !important;
+}
+
+.progress-number b,
+.progress-number span {
+  font-family: inherit !important;
+}
+
+/* Progress meta description paragraph */
+.progress-meta {
+  text-align: left !important;
+  word-spacing: normal !important;
+  letter-spacing: normal !important;
+}
+
+#progress-text {
+  font-family: var(--pw-font-sans, var(--font, system-ui, sans-serif)) !important;
+  text-align: left !important;
+  word-spacing: normal !important;
+  letter-spacing: normal !important;
+  line-height: var(--pw-lh-normal, 1.45) !important;
+  white-space: normal !important;
+}
+
+.progress-meta b,
+#percent {
+  font-family: var(--pw-font-mono, var(--font-mono, ui-monospace, monospace)) !important;
+  font-variant-numeric: tabular-nums !important;
+  letter-spacing: var(--pw-ls-mono, 0em) !important;
+}
+
+/* Metric mini-cards */
+.monitor .metric-header {
+  text-align: left !important;
+  word-spacing: normal !important;
+  letter-spacing: normal !important;
+}
+
+.monitor .metric-header small {
+  font-family: var(--pw-font-sans, var(--font, system-ui, sans-serif)) !important;
+  text-align: left !important;
+  word-spacing: normal !important;
+  letter-spacing: normal !important;
+  line-height: var(--pw-lh-tight, 1.2) !important;
+}
+
+.monitor .metric-value {
+  font-family: var(--pw-font-mono, var(--font-mono, ui-monospace, monospace)) !important;
+  font-variant-numeric: tabular-nums !important;
+  letter-spacing: var(--pw-ls-mono, 0em) !important;
+  line-height: var(--pw-lh-tight, 1.2) !important;
+}
+
+/* Source summaries */
+.source-summary {
+  text-align: left !important;
+  word-spacing: normal !important;
+  letter-spacing: normal !important;
+}
+
+.source-summary span,
+.live-passed-info span,
+.sources-summary span {
+  font-family: var(--pw-font-sans, var(--font, system-ui, sans-serif)) !important;
+  text-align: left !important;
+  word-spacing: normal !important;
+  letter-spacing: normal !important;
+  line-height: var(--pw-lh-tight, 1.2) !important;
+}
+
+.source-summary b,
+#live-passed,
+#source-count {
+  font-family: var(--pw-font-mono, var(--font-mono, ui-monospace, monospace)) !important;
+  font-variant-numeric: tabular-nums !important;
+  letter-spacing: var(--pw-ls-mono, 0em) !important;
+}
+
+/* Central job-detail explanatory paragraph:
+   Fixes style.css:7033-7043 (text-align: center, white-space: nowrap, text-overflow: ellipsis, line-height: 1.35)
+   and style.css:21063 (line-height: 1.35 !important) */
+#job-detail,
+#job-detail.hint {
+  font-family: var(--pw-font-sans, var(--font, system-ui, sans-serif)) !important;
+  text-align: left !important;
+  word-spacing: normal !important;
+  letter-spacing: normal !important;
+  white-space: normal !important;
+  text-overflow: clip !important;
+  overflow: visible !important;
+  line-height: var(--pw-lh-normal, 1.48) !important;
+  min-height: auto !important;
+  max-width: 100% !important;
+  margin: 6px 0 10px 0 !important;
+}
+
+/* Monitor action buttons typography */
+.mission-btn-start span,
+.secondary-btn-row .button,
+.recheck-btn {
+  font-family: var(--pw-font-sans, var(--font, system-ui, sans-serif)) !important;
+  word-spacing: normal !important;
+  letter-spacing: 0.02em !important;
+  line-height: var(--pw-lh-tight, 1.2) !important;
+}
+
+/* ── 1.3 Mac Terminal Log (.mac-terminal-card & .mac-terminal) ───────────── */
+
+/* Summary disclosure title */
+.mac-terminal-card > summary {
+  font-family: var(--pw-font-sans, var(--font, system-ui, sans-serif)) !important;
+  text-align: left !important;
+  word-spacing: normal !important;
+  letter-spacing: normal !important;
+  line-height: var(--pw-lh-normal, 1.35) !important;
+}
+
+/* Mac terminal top title bar */
+.mac-terminal-bar {
+  text-align: left !important;
+}
+
+.mac-terminal-title {
+  font-family: var(--pw-font-mono, var(--font-mono, ui-monospace, monospace)) !important;
+  text-align: left !important;
+  word-spacing: normal !important;
+  letter-spacing: normal !important;
+  line-height: var(--pw-lh-tight, 1.2) !important;
+}
+
+/* Height toggles -> mono numbers */
+.term-height-btn {
+  font-family: var(--pw-font-mono, var(--font-mono, ui-monospace, monospace)) !important;
+  font-variant-numeric: tabular-nums !important;
+  text-align: center !important;
+  word-spacing: normal !important;
+  letter-spacing: normal !important;
+  line-height: var(--pw-lh-tight, 1.2) !important;
+}
+
+/* LIVE badge */
+.mac-terminal-badge {
+  font-family: var(--pw-font-sans, var(--font, system-ui, sans-serif)) !important;
+  text-align: left !important;
+  word-spacing: normal !important;
+  letter-spacing: var(--pw-ls-eyebrow, 0.06em) !important;
+  line-height: var(--pw-lh-tight, 1.2) !important;
+}
+
+/* Log output payload -> strictly mono */
+pre#log,
+#log {
+  font-family: var(--pw-font-mono, var(--font-mono, "SF Mono", Menlo, Consolas, monospace)) !important;
+  text-align: left !important;
+  word-spacing: normal !important;
+  letter-spacing: 0 !important;
+  line-height: var(--pw-lh-relaxed, 1.55) !important;
+  tab-size: 2 !important;
+  white-space: pre-wrap !important;
+  word-break: break-all !important;
+}
+
+
+/* ==========================================================================
+   2. RU TYPOGRAPHY: UPPERCASE MICRO-CAPS LETTER-SPACING CLAMP (<= 0.08em)
+   Task: Uppercase Cyrillic micro-caps labels visually disintegrate when tracking
+   exceeds 0.08em. Clamp all occurrences of letter-spacing > 0.08em down to
+   safe optical values (0.04em - 0.06em).
+   ========================================================================== */
+
+/* 2.1 Sidebar section navigation label ("РАБОЧАЯ ОБЛАСТЬ")
+   Defects: style.css:426 (0.1em), style.css:9687 (0.11em), style.css:14321 (0.18em !important) */
+.nav-label,
+aside.sidebar .nav-label {
+  letter-spacing: var(--pw-ls-eyebrow, 0.06em) !important;
+}
+
+/* 2.2 Scan page section eyebrow
+   Defect: style.css:14681 (letter-spacing: 0.16em !important) */
+#page-scan .page-heading .eyebrow {
+  letter-spacing: var(--pw-ls-eyebrow, 0.06em) !important;
+}
+
+/* 2.3 Universal Eyebrow labels (Scan, Monitor, Gateway, Mobile, Help)
+   Defects: style.css:9483 (--pw-ls-eyebrow: 0.09em), style.css:9669 (0.09em) */
+.eyebrow,
+.eyebrow-gradient {
+  letter-spacing: var(--pw-ls-eyebrow, 0.06em) !important;
+}
+
+/* 2.4 Live Ticker Status Badge ("READY" / "ГОТОВ" / "LIVE")
+   Defect: style.css:9905 (letter-spacing: 0.1em) */
+.ticker-idle-badge {
+  letter-spacing: var(--pw-ls-eyebrow, 0.06em) !important;
+}
+
+/* 2.5 Table headers in Cyrillic ("ПРОКСИ", "СТАТУС", "ПИНГ", "ТИП", "СТРАНА")
+   Defect: style.css:16387 (letter-spacing: 0.09em !important) */
+.results-table thead th,
+thead th {
+  letter-spacing: var(--pw-ls-label, 0.04em) !important;
+}
+
+/* 2.6 Local Mode header badge ("ЛОКАЛЬНЫЙ РЕЖИМ")
+   Defect: style.css:9761 (letter-spacing: 0.09em) */
+.local-badge,
+.local-badge [data-i18n] {
+  letter-spacing: var(--pw-ls-label, 0.05em) !important;
+}
+
+/* 2.7 Gauge caption ("ГОТОВ" / "PROGRESS")
+   Defects: style.css:9831 (0.09em), style.css:15701 (0.12em) */
+.gauge-caption {
+  letter-spacing: var(--pw-ls-label, 0.04em) !important;
+}
+
+/* 2.8 Brand wordmark letterspaced caps
+   Defects: style.css:14279 (0.12em !important), style.css:14297 (0.1em !important), style.css:18226 (0.12em !important) */
+.brand span:last-child,
+aside.sidebar .brand span:last-child {
+  letter-spacing: 0.06em !important;
+}
+
+.brand b,
+aside.sidebar .brand b {
+  letter-spacing: 0.05em !important;
+}
+
+/* 2.9 Field labels micro-caps in clean-field-grid & step cards
+   Defect: style.css:16037 (0.07em !important) -> verify <= 0.08em */
+.clean-field-grid label > span,
+.clean-field-grid .field-label-with-count span,
+#step-params-card label > span,
+#step-identity-card label > span,
+.watch-keep-fresh-label > span,
+.advanced-accordion label > span {
+  letter-spacing: var(--pw-ls-label, 0.05em) !important;
+}
+
+
+/* ==========================================================================
+   3. TRUNCATED TEXTS & RUSSIAN STRING OVERFLOW HARDENING
+   Task: Find text-overflow: ellipsis on labels whose RU strings are longer
+   than EN and provide room, eliminate restrictive widths, or wrap.
+   ========================================================================== */
+
+/* 3.1 Local App Badge: "LOCAL APP" (9 chars) vs "ЛОКАЛЬНЫЙ РЕЖИМ" (15 chars)
+   Defects: style.css:12201 (max-width: 110px), style.css:18334 (max-width: 90px !important)
+   Cause: Rigid max-width forced ellipsis truncation: "ЛОКАЛЬНЫЙ РЕ..." */
+.local-badge [data-i18n] {
+  max-width: none !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+  white-space: nowrap !important;
+}
+
+.local-badge {
+  max-width: none !important;
+  width: auto !important;
+}
+
+/* 3.2 Mission Control Job Status Hint:
+   Defect: style.css:7040-7043 (white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-height: 16px)
+   Cause: Truncated multi-token Russian job summaries and instructions with ellipsis. */
+#job-detail,
+#job-detail.hint {
+  white-space: normal !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+  word-break: normal !important;
+  overflow-wrap: break-word !important;
+  min-height: auto !important;
+}
+
+/* 3.3 Form Field Labels in clean-field-grid:
+   "Attempts per service" -> "Попыток на сервис"
+   "Quick pre-check conns" -> "Быстрый префильтр соед."
+   "Timeout, seconds" -> "Таймаут, секунд"
+   "Success threshold" -> "Порог успешности"
+   Defects: style.css:6600-6602 (white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-height: 18px)
+   Cause: Grid cards truncated Cyrillic labels into ellipses in multi-column desktop layouts. */
+.clean-field-grid label > span,
+.clean-field-grid .field-label-with-count span,
+#step-params-card label > span,
+#step-identity-card label > span,
+.watch-keep-fresh-label > span,
+.advanced-accordion label > span {
+  white-space: normal !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+  word-break: normal !important;
+  overflow-wrap: break-word !important;
+  min-height: auto !important;
+  display: block !important;
+}
+
+/* 3.4 Recheck Action Buttons:
+   "Matching" (8 chars) vs "Подходящие" (10 chars, wide glyphs)
+   "Database" (8 chars) vs "Всю базу" (8 chars, 2 words)
+   Defects: style.css:7137-7155 (overflow: hidden; text-overflow: ellipsis; white-space: nowrap)
+   Cause: Ellipsis clipped "Подходящие" when monitor column narrowed. */
+.recheck-btn {
+  padding: 0 6px !important;
+  min-width: 0 !important;
+  font-size: 11px !important;
+  letter-spacing: 0.02em !important;
+  overflow: visible !important;
+}
+
+.recheck-btn span[data-i18n] {
+  overflow: visible !important;
+  text-overflow: clip !important;
+  white-space: nowrap !important;
+  min-width: auto !important;
+}
+
+/* 3.5 Quick Scenario Cards Headings:
+   "YouTube page + speed" -> "YouTube: страница и скорость"
+   "Anonymity screening" -> "Отбор по анонимности"
+   Defect: style.css:6064-6066 (white-space: nowrap; overflow: hidden; text-overflow: ellipsis) */
+.scenarios-grid.one-line-grid .scenario-card strong,
+.scenario-card strong {
+  white-space: normal !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+  word-break: normal !important;
+  overflow-wrap: break-word !important;
+  line-height: 1.25 !important;
+  display: block !important;
+}
+
+/* 3.6 Results toolbar field labels with counter badge:
+   Defect: style.css:2948-2950 (display: flex with white-space: nowrap and text-overflow: ellipsis) */
+.results-toolbar .field-label-with-count {
+  white-space: normal !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+}
+
+/* 3.7 Radial Gauge Caption:
+   Ensure multi-word Russian translations ("ПУСК", "ГОТОВ", "ПРОГРЕСС") wrap cleanly */
+.gauge-caption {
+  white-space: normal !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+  overflow-wrap: anywhere !important;
+  max-width: 120px !important;
+}
+
+
+/* ==========================================================================
+   4. LINE-HEIGHT STANDARDIZATION: PARAGRAPHS 1.45+, LABELS 1.2
+   Task: Eliminate squeezed line-heights on paragraphs (< 1.45) and normalize
+   label heights to 1.2 for precise, predictable vertical rhythm.
+   ========================================================================== */
+
+/* ── 4.1 Paragraphs & Explanatory Copy (>= 1.45) ────────────────────────── */
+
+/* Job details paragraph
+   Defect: style.css:7039 (1.35) & style.css:21063 (1.35 !important) */
+#job-detail,
+#job-detail.hint {
+  line-height: var(--pw-lh-normal, 1.48) !important;
+}
+
+/* Live ticker empty state paragraph
+   Defect: style.css:7218 (line-height: 1.4) */
+.ticker-empty {
+  line-height: var(--pw-lh-normal, 1.45) !important;
+}
+
+/* Callout block paragraph
+   Defect: style.css:2406 (line-height: 1.4) */
+.callout p {
+  line-height: var(--pw-lh-relaxed, 1.5) !important;
+}
+
+/* Pipeline steps & scenario meta hints
+   Defects: style.css:1682 (1.35), style.css:4481 (1.35), style.css:6810 (1.35) */
+.scenario-meta p,
+.pipeline-step-item span,
+.denylist-hint-text {
+  line-height: var(--pw-lh-normal, 1.45) !important;
+}
+
+/* General descriptive paragraphs across cards & surfaces */
+.card p,
+.monitor p,
+.hint,
+.help-subtext,
+.page-heading p,
+.results-title-group p,
+.scenarios-sub,
+.connect-step-value,
+.empty-table-desc,
+.browser-guide-card p,
+.storage-card-head p,
+.card.mini p,
+.faq-answer {
+  line-height: var(--pw-lh-normal, 1.48) !important;
+}
+
+/* ── 4.2 Labels, Badges & Micro-Copy (= 1.2) ────────────────────────────── */
+
+.gauge-caption {
+  line-height: var(--pw-lh-tight, 1.2) !important;
+}
+
+.monitor .metric-header small {
+  line-height: var(--pw-lh-tight, 1.2) !important;
+}
+
+.source-summary span,
+.live-passed-info span,
+.sources-summary span {
+  line-height: var(--pw-lh-tight, 1.2) !important;
+}
+
+.ticker-badge,
+.ticker-idle-badge,
+.mac-terminal-badge {
+  line-height: var(--pw-lh-tight, 1.2) !important;
+}
+
+.local-badge,
+.proto-tag,
+.unit-badge,
+.condition-badge,
+.stat-label,
+.country-bar-title {
+  line-height: var(--pw-lh-tight, 1.2) !important;
+}
+
+.clean-field-grid label > span,
+.clean-field-grid .field-label-with-count span,
+#step-params-card label > span,
+#step-identity-card label > span {
+  line-height: var(--pw-lh-tight, 1.2) !important;
+}
+
+.recheck-btn,
+.recheck-btn span[data-i18n] {
+  line-height: var(--pw-lh-tight, 1.2) !important;
+}
+
+
+/* ==========================================================================
+   5. WHITE-SPACE INTEGRITY (PREVENT SOURCE INDENTATION INJECTION)
+   Task: Guarantee that user-visible paragraphs NEVER inherit white-space: pre
+   or pre-wrap which would render literal HTML/JS template indentation spaces.
+   Ensure pre#log has strict wrapping and tab sizing.
+   ========================================================================== */
+
+/* Strict white-space: normal on all user-facing paragraphs, labels & summaries */
+.live-feed-source,
+.ticker-empty,
+#job-detail,
+#job-detail.hint,
+#progress-text,
+.progress-meta,
+.scenario-card strong,
+.clean-field-grid label > span,
+.clean-field-grid .field-label-with-count span,
+.results-title-group p,
+.results-scope-hint,
+.hint,
+.card p,
+.callout p {
+  white-space: normal !important;
+}
+
+/* Terminal Log Pre: Preserve line breaks safely without layout breakage */
+pre#log,
+#log {
+  white-space: pre-wrap !important;
+  word-break: break-all !important;
+  tab-size: 2 !important;
+  text-align: left !important;
+}
+
+
+/* ==========================================================================
+   6. RESPONSIVE BREAKPOINT CHECKS (390px, 768px, 1440px+)
+   Preserve layout sanity across all target desktop & mobile breakpoints.
+   ========================================================================== */
+
+/* Desktop & Wide Displays (1440px+) */
+@media (min-width: 1200px) {
+  .live-ticker-card {
+    min-width: 0;
+  }
+  .monitor-column {
+    min-width: 0;
+  }
+}
+
+/* Tablet / Intermediate (768px) */
+@media (max-width: 900px) and (min-width: 681px) {
+  .live-feed-source {
+    font-size: 10.5px !important;
+  }
+  .ticker-code {
+    font-size: 9.5px !important;
+  }
+}
+
+/* Mobile (390px) */
+@media (max-width: 680px) {
+  .local-badge [data-i18n] {
+    max-width: none !important;
+    white-space: nowrap !important;
+  }
+  #job-detail,
+  #job-detail.hint {
+    text-align: left !important;
+    line-height: var(--pw-lh-normal, 1.45) !important;
+  }
+  .ticker-empty {
+    text-align: left !important;
+  }
+}
+
+/* ── Mobile hero: text full-width, Save settings moves below ────────────── */
+@media (max-width: 480px) {
+  .hero-copy { flex: 1 1 100% !important; }
+  .save-settings-btn { flex: 0 0 auto !important; margin-top: 4px !important; }
+}
+@media (max-width: 480px) {
+  .page-heading { flex-wrap: wrap !important; row-gap: 10px !important; }
+  .page-heading-info { flex: 1 1 100% !important; }
+}
