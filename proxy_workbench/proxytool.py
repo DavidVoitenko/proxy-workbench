@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 import csv
 import hashlib
 import ipaddress
@@ -58,10 +58,14 @@ DEFAULT_SOURCE_MAX_LINE_BYTES = 64 * 1024
 DEFAULT_SOURCE_MAX_CANDIDATES = 500_000
 PREVIEW_MAX_CANDIDATES = 200_000
 DEFAULT_SOURCE_MAX_REDIRECTS = 5
+#: Pages one fetch of a paginated source will walk.  A provider that keeps
+#: returning full pages must not be able to hold a collection open forever.
+DEFAULT_SOURCE_PAGES = 200
 MAX_SOURCE_BYTES = 512 * 1024 * 1024
 MAX_SOURCE_LINE_BYTES = 16 * 1024 * 1024
 MAX_SOURCE_CANDIDATES = 10_000_000
 MAX_SOURCE_REDIRECTS = 20
+MAX_SOURCE_PAGES = 5_000
 SOURCE_REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 SOURCE_METADATA_HOSTS = frozenset({
     'metadata', 'metadata.google.internal', 'metadata.goog', 'metadata.azure.internal',
@@ -267,58 +271,119 @@ def _declared_response_length(response):
     return length if length >= 0 else None
 
 
-async def _read_bounded_body(response, budget, max_bytes):
+async def _read_bounded_body(response, budget, max_bytes, *, keep_prefix=False):
+    """Read a body within budget.
+
+    ``keep_prefix`` is the check's mode: past the budget it returns what it read
+    and the caller reports ``SOURCE_TRUNCATED`` as a fact about the check.  A
+    real collection passes ``keep_prefix=False`` and refuses the whole body, so
+    a public list cannot be walked into memory.  The prefix of a JSON array is
+    not valid JSON, so the difference is what keeps a truncated check from being
+    reported as "this source's format cannot be read".
+    """
     remaining = max_bytes - budget['used']
     declared = _declared_response_length(response)
+    truncated = False
+    # ``Content-Length`` already says the body is past the bound, so the read
+    # stops as soon as the bound is reached -- but not before: the flag is set
+    # here and the loop below only stops once it has actually filled up.
+    full = False
     if declared is not None and declared > remaining:
-        raise SourceFetchError('SOURCE_TOO_LARGE')
-    body = bytearray()
-    async for chunk in response.aiter_bytes():
-        if len(chunk) > remaining:
+        if not keep_prefix:
             raise SourceFetchError('SOURCE_TOO_LARGE')
-        body.extend(chunk)
-        budget['used'] += len(chunk)
-        remaining -= len(chunk)
+        truncated = True
+        full = True
+    body = bytearray()
+    try:
+        async for chunk in response.aiter_bytes():
+            if len(chunk) > remaining:
+                if not keep_prefix:
+                    raise SourceFetchError('SOURCE_TOO_LARGE')
+                chunk, truncated = chunk[:remaining], True
+            if chunk:
+                body.extend(chunk)
+                budget['used'] += len(chunk)
+                remaining -= len(chunk)
+            if full and not remaining:
+                break
+            if truncated and not full:
+                break
+    except httpx.HTTPError:
+        if not keep_prefix:
+            raise
+        # A check stops reading at its own bound, and the origin closes the
+        # connection when it does; the prefix it kept is the answer.
+        truncated = True
+    if truncated:
+        budget['truncated'] = True
     return bytes(body)
 
 
-async def _read_bounded_lines(response, budget, max_bytes, max_line_bytes, on_line):
+async def _read_bounded_lines(response, budget, max_bytes, max_line_bytes, on_line, *,
+                             keep_prefix=False):
     remaining = max_bytes - budget['used']
     declared = _declared_response_length(response)
+    truncated = False
+    # As in ``_read_bounded_body``: a declared length past the bound means the
+    # read stops *at* the bound, not before the first chunk.
+    full = False
     if declared is not None and declared > remaining:
-        raise SourceFetchError('SOURCE_TOO_LARGE')
+        if not keep_prefix:
+            raise SourceFetchError('SOURCE_TOO_LARGE')
+        truncated = True
+        full = True
     pending = bytearray()
     chunks = response.aiter_bytes()
-    async for chunk in chunks:
-        if len(chunk) > remaining:
-            raise SourceFetchError('SOURCE_TOO_LARGE')
-        pending.extend(chunk)
-        budget['used'] += len(chunk)
-        remaining -= len(chunk)
-        start = 0
-        while True:
-            newline = pending.find(b'\n', start)
-            carriage_return = pending.find(b'\r', start)
-            positions = [position for position in (newline, carriage_return) if position >= 0]
-            if not positions:
-                if len(pending) - start > max_line_bytes:
-                    raise SourceFetchError('SOURCE_LINE_TOO_LARGE')
+    try:
+        async for chunk in chunks:
+            if len(chunk) > remaining:
+                if not keep_prefix:
+                    raise SourceFetchError('SOURCE_TOO_LARGE')
+                chunk, truncated = chunk[:remaining], True
+            pending.extend(chunk)
+            budget['used'] += len(chunk)
+            remaining -= len(chunk)
+            start = 0
+            while True:
+                newline = pending.find(b'\n', start)
+                carriage_return = pending.find(b'\r', start)
+                positions = [position for position in (newline, carriage_return) if position >= 0]
+                if not positions:
+                    if len(pending) - start > max_line_bytes:
+                        if not keep_prefix:
+                            raise SourceFetchError('SOURCE_LINE_TOO_LARGE')
+                        truncated = True
+                    break
+                end = min(positions)
+                delimiter_length = 1
+                if pending[end:end + 1] == b'\r' and pending[end + 1:end + 2] == b'\n':
+                    delimiter_length = 2
+                line = bytes(pending[start:end])
+                start = end + delimiter_length
+                if len(line) > max_line_bytes:
+                    if not keep_prefix:
+                        raise SourceFetchError('SOURCE_LINE_TOO_LARGE')
+                    truncated = True
+                on_line(line)
+            if start:
+                del pending[:start]
+            if full and not remaining:
                 break
-            end = min(positions)
-            delimiter_length = 1
-            if pending[end:end + 1] == b'\r' and pending[end + 1:end + 2] == b'\n':
-                delimiter_length = 2
-            line = bytes(pending[start:end])
-            start = end + delimiter_length
-            if len(line) > max_line_bytes:
-                raise SourceFetchError('SOURCE_LINE_TOO_LARGE')
-            on_line(line)
-        if start:
-            del pending[:start]
-    if pending:
+            if truncated and not full:
+                break
+    except httpx.HTTPError:
+        if not keep_prefix:
+            raise
+        truncated = True
+    if pending and not truncated:
         if len(pending) > max_line_bytes:
-            raise SourceFetchError('SOURCE_LINE_TOO_LARGE')
-        on_line(bytes(pending))
+            if not keep_prefix:
+                raise SourceFetchError('SOURCE_LINE_TOO_LARGE')
+            truncated = True
+        else:
+            on_line(bytes(pending))
+    if truncated:
+        budget['truncated'] = True
 
 
 def _normalize_proxy(value, *, public_only):
@@ -817,8 +882,14 @@ class Rate:
 #: by ``source_adapters`` with the profile the catalog carries, never by a
 #: second parser here.
 CATALOG_ADAPTER_KINDS = ('json-records', 'fields', 'page-json', 'html-table')
+#: ``line`` is both: the catalog's own name for a plain list of addresses, and
+#: the streaming reader this tree has always used.  It was missing from the
+#: accepted kinds, and 77 of the 150 catalog records -- including four of the
+#: eight in the ``quick`` set -- name it, so every one of them was dropped from
+#: every selection before the collector was ever asked for it.
+LINE_KIND = 'line'
 SOURCE_KINDS = ('http', 'https', 'socks4', 'socks5', 'socks5h', 'auto', 'text', 'geonode',
-                'http-fields') + CATALOG_ADAPTER_KINDS
+                'http-fields', LINE_KIND) + CATALOG_ADAPTER_KINDS
 DETECT_PROTOCOLS = ('http', 'socks4', 'socks5')
 # ip:port inside free text: "1.2.3.4:8080", "1.2.3.4 8080", CSV and HTML table cells.
 LOOSE_ADDRESS = re.compile(r'(?<![\d.])(?:(https?|socks[45]h?)://)?(\d{1,3}(?:\.\d{1,3}){3})'
@@ -844,10 +915,11 @@ class SourcePlan:
     """
 
     __slots__ = ('source_id', 'url', 'kind', 'profile', 'family_id', 'publisher_id',
-                 'dataset_group', 'name', 'protocol', 'custom')
+                 'dataset_group', 'name', 'protocol', 'custom', 'legacy_specs', 'fallbacks')
 
     def __init__(self, source_id, url, kind='http', profile=None, *, family_id=None,
-                 publisher_id=None, dataset_group=None, name=None, protocol='http', custom=False):
+                 publisher_id=None, dataset_group=None, name=None, protocol='http', custom=False,
+                 legacy_specs=(), fallbacks=()):
         self.source_id = str(source_id)
         self.url = str(url)
         self.kind = str(kind)
@@ -858,6 +930,14 @@ class SourcePlan:
         self.name = name or self.source_id
         self.protocol = protocol
         self.custom = bool(custom)
+        #: The flat specs this record used to be addressed by.  A membership
+        #: row written under their hash belongs to this source, not to a
+        #: stranger that happens to share its URL.
+        self.legacy_specs = tuple(legacy_specs or ())
+        #: Other URLs the same publisher serves the same list from.  They are
+        #: the same source: a fallback that answered is not a second source,
+        #: and the provenance must not split into two.
+        self.fallbacks = tuple(fallbacks or ())
 
     @property
     def identity(self):
@@ -972,9 +1052,18 @@ def catalog_source_plans(settings, catalog=None, *, include_disabled=False):
     settings = source_catalog.migrate_settings(settings, catalog)
     selection = settings.get('source_selection', {}) if isinstance(settings, dict) else {}
     specs = {}
-    for item in (selection.get('specs') or []):
-        if isinstance(item, dict) and item.get('id'):
-            specs[item['id']] = item
+    # ``specs`` is ``{id: legacy spec}`` -- the exact string the user typed,
+    # which outranks what the catalog declares about the same URL.  It was read
+    # here as a list of records, so the map produced by ``migrate_settings``
+    # iterated as its own keys and every entry was skipped: the format the user
+    # chose was silently replaced by the catalog's.
+    raw_specs = selection.get('specs') or {}
+    if isinstance(raw_specs, dict):
+        specs = {key: value for key, value in raw_specs.items() if isinstance(value, str)}
+    else:
+        for item in raw_specs:
+            if isinstance(item, dict) and item.get('id'):
+                specs[item['id']] = item
     disabled = set(selection.get('download_disabled_ids') or ())
     plans = []
     for source_id in source_catalog.selection_ids(settings):
@@ -987,6 +1076,207 @@ def catalog_source_plans(settings, catalog=None, *, include_disabled=False):
         if plan is not None:
             plans.append(plan)
     return plans, settings
+
+
+def fetch_catalog(url, *, current=None, timeout=20, max_bytes=8 * 1024 * 1024,
+                  allow_private_sources=False, etag=None, last_modified=None):
+    """The single bounded owner for fetching a remote source catalog.
+
+    Synchronous, and deliberately so: the caller is a job thread, not a request
+    handler.  It reuses the same URL validation, DNS pinning, redirect and
+    downgrade policy as a proxy source, sends the stored validators so a
+    publisher that has nothing new costs a 304 instead of a body, and decodes
+    the answer only through the pure catalog validator -- no response data is
+    imported or evaluated.  The caller decides whether to accept it; this
+    function never writes anything.
+    """
+    from . import source_catalog
+    current_url = str(url or '').strip()
+    if not current_url:
+        raise ValueError('Не указан адрес каталога источников.')
+    try:
+        allowed_host = urlsplit(current_url).hostname
+    except ValueError:
+        allowed_host = None
+    validators = {}
+    if etag:
+        validators['If-None-Match'] = etag
+    if last_modified:
+        validators['If-Modified-Since'] = last_modified
+    for redirect_count in range(DEFAULT_SOURCE_MAX_REDIRECTS + 1):
+        try:
+            if allowed_host and urlsplit(current_url).hostname != allowed_host:
+                raise SourceFetchError('SOURCE_REDIRECT_HOST')
+            with httpx.Client(trust_env=False, verify=TLS, follow_redirects=False,
+                              timeout=timeout) as client:
+                with _source_stream_sync(client, current_url, allow_private_sources,
+                                         validators if not redirect_count else None) as response:
+                    if response.status_code == 304:
+                        return dict(state='not_modified', catalog=current, etag=etag,
+                                    last_modified=last_modified)
+                    if response.status_code in SOURCE_REDIRECT_STATUSES:
+                        location = response.headers.get('location')
+                        if not isinstance(location, str) or not location.strip():
+                            raise SourceFetchError('SOURCE_REDIRECT_INVALID')
+                        if redirect_count >= DEFAULT_SOURCE_MAX_REDIRECTS:
+                            raise SourceFetchError('SOURCE_REDIRECT_TOO_MANY')
+                        next_url = urljoin(current_url, location.strip())
+                        old_scheme = _parse_source_url(current_url)[0].scheme
+                        new_scheme = _parse_source_url(next_url)[0].scheme
+                        if old_scheme == 'https' and new_scheme != 'https':
+                            raise SourceFetchError('SOURCE_REDIRECT_DOWNGRADE')
+                        current_url = next_url
+                        continue
+                    if response.status_code >= 400:
+                        raise SourceFetchError('SOURCE_HTTP_ERROR',
+                                               retryable=response.status_code >= 500)
+                    body = _read_bounded_sync(response, max_bytes)
+                    catalog = source_catalog.decode_catalog_bytes(body, current, max_bytes=max_bytes)
+                    return dict(state='available', catalog=catalog,
+                                etag=response.headers.get('etag'),
+                                last_modified=response.headers.get('last-modified'),
+                                body_sha256=hashlib.sha256(body).hexdigest())
+        except SourceFetchError:
+            raise
+    raise SourceFetchError('SOURCE_REDIRECT_TOO_MANY')
+
+
+def _validate_source_destination_sync(value, allow_private=False):
+    """The synchronous twin of :func:`_validate_source_destination`.
+
+    Same rules, same answers, no event loop: a catalog is fetched by a
+    background thread, and a second policy is a second way to be wrong.
+    """
+    try:
+        parsed, host, port = _parse_source_url(value)
+    except ValueError as exc:
+        raise SourceFetchError('SOURCE_URL_INVALID') from exc
+    if allow_private:
+        return parsed, host, port, None
+    if _is_blocked_source_hostname(host):
+        raise SourceFetchError('SOURCE_PRIVATE_DESTINATION')
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        alternate = _source_ip_literal(host)
+        if alternate is not None:
+            if _is_blocked_source_ip(alternate):
+                raise SourceFetchError('SOURCE_PRIVATE_DESTINATION')
+            raise SourceFetchError('SOURCE_URL_INVALID')
+        address = None
+    if address is not None:
+        if _is_blocked_source_ip(address):
+            raise SourceFetchError('SOURCE_PRIVATE_DESTINATION')
+        return parsed, host, port, str(address)
+    try:
+        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except (OSError, ValueError) as exc:
+        raise SourceFetchError('SOURCE_DNS_ERROR', retryable=True) from exc
+    addresses = [entry[4][0] for entry in infos if entry[4]]
+    if not addresses or any(_is_blocked_source_ip(item) for item in addresses):
+        raise SourceFetchError('SOURCE_PRIVATE_DESTINATION' if addresses else 'SOURCE_DNS_ERROR',
+                               retryable=not addresses)
+    return parsed, host, port, str(addresses[0])
+
+
+@contextmanager
+def _source_stream_sync(client, url, allow_private=False, headers=None):
+    """The synchronous twin of :func:`_source_stream`, with the same policy.
+
+    A catalog is fetched by a background thread, so it gets the same
+    destination validation, the same DNS pinning and the same redirect refusal
+    as a source list -- a catalog URL must not be the one route in the app that
+    can be pointed anywhere.
+    """
+    _, hostname, _, address = _validate_source_destination_sync(url, allow_private)
+    request_headers = dict(headers or {})
+    if address is None:
+        with client.stream('GET', url, headers=request_headers) as response:
+            yield response
+        return
+    transport = PinnedSourceTransport(address, hostname)
+    pinned = httpx.Client(transport=transport, trust_env=False, verify=TLS,
+                          follow_redirects=False, timeout=15)
+    try:
+        with pinned.stream('GET', url, headers=request_headers) as response:
+            yield response
+    finally:
+        pinned.close()
+
+
+def _read_bounded_sync(response, max_bytes):
+    """Read a response body within ``max_bytes``, or refuse it."""
+    declared = _declared_response_length(response)
+    if declared is not None and declared > max_bytes:
+        raise SourceFetchError('SOURCE_TOO_LARGE')
+    body = bytearray()
+    for chunk in response.iter_bytes():
+        if len(body) + len(chunk) > max_bytes:
+            raise SourceFetchError('SOURCE_TOO_LARGE')
+        body.extend(chunk)
+    return bytes(body)
+
+
+def bundled_sources_path():
+    """The flat URL list the collector has always read by default."""
+    return ROOT / 'sources.json'
+
+
+def resolve_collect_sources(args, *, data=None, catalog=None):
+    """What ``collect`` and ``run`` actually fetch.
+
+    Three rules, in this order:
+
+    1. ``--no-sources`` fetches nothing.
+    2. An explicit ``--sources FILE`` is authoritative, whatever the file holds.
+       A user who names a list gets that list, never the catalog's opinion.
+    3. Otherwise the user's *selection* is what is fetched, each source as a
+       catalog record so it is read with its own adapter, limits and
+       provenance.  A user who has never chosen anything -- a stored document
+       with no ``source_selection`` at all -- keeps the pre-catalog flat list,
+       so the app never changes what it downloads behind someone's back.
+
+    Rule 3 is the one that was missing.  ``--sources`` defaults to the bundled
+    list of 55 URLs, so the flat list was never empty, so the selection was
+    never consulted: a source switched on in the catalog screen and nothing
+    else was silently never downloaded.  The migration written back here is
+    idempotent, which is what turns an old flat-URL tree into a selection once
+    and keeps every existing URL and every existing pause.
+    """
+    from . import source_catalog, source_management
+    data = getattr(args, 'data', None) if data is None else data
+    catalog = catalog if catalog is not None else sources_catalog(data)
+    explicit = getattr(args, 'sources', None)
+    if getattr(args, 'no_sources', False):
+        return []
+    bundled_default = explicit is not None and Path(explicit).resolve() == bundled_sources_path().resolve()
+    if not bundled_default:
+        return read_sources_file(explicit)
+    # The effective settings document: the stored one, or the defaults for an
+    # install that has never saved any.  ``read_settings`` migrates on the way,
+    # so an old flat-URL tree reads as the 55 catalog records it always meant
+    # and a tree that never chose anything reads as the default selection --
+    # the same 55 sources, now with adapters and provenance.
+    settings = source_management.read_settings(data) if data is not None else None
+    selection = settings.get('source_selection') if isinstance(settings, dict) else None
+    if not isinstance(selection, dict) or not selection.get('selected_ids'):
+        return read_sources_file(explicit)
+    _plans, migrated = catalog_source_plans(settings, catalog)
+    if data is not None:
+        write_source_settings(data, migrated)
+    custom = {item.get('id'): item for item in selection.get('custom_sources') or ()
+              if isinstance(item, dict)}
+    values = []
+    for source_id in source_catalog.selection_ids(migrated):
+        item = source_catalog.source_by_id(catalog, source_id, list(custom.values()))
+        if item is not None:
+            values.append(item)
+    return values
+
+
+def read_sources_file(path):
+    """The collector's ``--sources`` file, as a de-duplicated list of specs."""
+    return list(dict.fromkeys(json.loads(Path(path).read_text(encoding='utf-8'))))
 
 
 def source_plan_of(item, source_id=None, spec=None):
@@ -1003,19 +1293,154 @@ def source_plan_of(item, source_id=None, spec=None):
     url = endpoints[0].get('url') or ''
     if not url:
         return None
+    fallbacks = tuple(str(point.get('url')) for point in endpoints[1:]
+                      if isinstance(point, dict) and point.get('url'))
     adapter = item.get('adapter') or {}
     kind = str(adapter.get('kind') or 'line')
     if kind not in SOURCE_KINDS:
         return None
     profile = None
-    if kind in CATALOG_ADAPTER_KINDS:
+    if kind in CATALOG_ADAPTER_KINDS or kind == LINE_KIND:
         profile = {'kind': kind, 'profile': str(adapter.get('profile') or 'generic-v1'),
                    'config': dict(adapter.get('config') or {})}
     return SourcePlan(
         source_id, url, kind, profile,
         family_id=item.get('family_id'), publisher_id=(item.get('publisher') or {}).get('id'),
         dataset_group=source_catalog.dataset_group_of(item), name=item.get('name'),
-        custom=bool(item.get('custom')))
+        custom=bool(item.get('custom')),
+        legacy_specs=tuple(item.get('legacy_specs') or ()),
+        fallbacks=fallbacks)
+
+
+def _dedupe_sources(values):
+    """Drop a repeated source without asking a catalog record to be hashable.
+
+    ``dict.fromkeys`` is the obvious way to de-duplicate a source list and it
+    works only while every entry is a string.  A catalog record is a dict, and
+    one dict in the list raised ``TypeError: unhashable type: 'dict'`` before a
+    single byte was fetched, so the whole catalog half of the collector was
+    unreachable through its own documented entry point.  Identity is decided by
+    the same three things :func:`plan_of_legacy_spec` derives -- the id, the
+    URL and the adapter -- so a record and the plain string that names the same
+    list collapse into one fetch instead of two.
+    """
+    result, seen = [], set()
+    for value in values:
+        if isinstance(value, str):
+            key = (value.strip(),)
+        elif isinstance(value, SourcePlan):
+            key = (value.source_id, value.url, value.kind)
+        elif isinstance(value, dict):
+            adapter = value.get('adapter') if isinstance(value.get('adapter'), dict) else {}
+            url = ''
+            endpoints = value.get('endpoints')
+            if isinstance(endpoints, list) and endpoints and isinstance(endpoints[0], dict):
+                url = str(endpoints[0].get('url') or '')
+            key = (str(value.get('id') or ''), url, str(adapter.get('kind') or ''))
+        else:
+            key = (str(value),)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(value)
+    return result
+
+
+def plan_of_legacy_spec(value, url, kind, catalog=None):
+    """A flat ``kind URL`` string resolved against the catalog, or ``None``.
+
+    Two things a flat spec must not lose on its way into the collector:
+
+    * the *identity*.  ``source_key`` is a hash of the spec text, so the same
+      list collected from ``sources.json`` and from the catalog screen would be
+      two different sources with two disjoint sets of counters, and every
+      per-source view would show each of them half-empty.  A spec the catalog
+      owns is therefore fetched under the catalog's own id, and the membership
+      rows a previous flat run already wrote under the hash are re-stated under
+      the catalog id before the network is touched (see
+      :func:`adopt_legacy_membership`).
+    * the *format*.  A spec that names one of the four catalog formats and
+      carries no profile is still that format: ``source_adapters`` ships a
+      documented ``generic-v1`` profile for every one of them, and refusing it
+      made ``source add --source-format json-records`` produce a source the
+      collector then declined to read.
+    """
+    from . import source_catalog
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    catalog = catalog if catalog is not None else sources_catalog()
+    aliases = _legacy_aliases(catalog)
+    source_id = aliases.get(text) or aliases.get(kind + ' ' + url)
+    if source_id is not None:
+        item = source_catalog.source_by_id(catalog, source_id)
+        if item is not None:
+            plan = source_plan_of(item)
+            if plan is not None:
+                return plan
+    if kind not in CATALOG_ADAPTER_KINDS:
+        return None
+    # A registered format with no profile of its own: the kind's documented
+    # generic profile, never a second parser guessed at the fetch site.  The id
+    # is the catalog's own ``custom-`` form of the spec, so the same URL named
+    # once as a string and once through the catalog is one source, and any
+    # membership an older flat run wrote under the spec hash is adopted by
+    # :func:`adopt_legacy_membership`.
+    custom = source_catalog.custom_id(text)
+    return SourcePlan(custom, url, kind,
+                      {'kind': kind, 'profile': 'generic-v1', 'config': {}},
+                      family_id=custom, publisher_id='local',
+                      name=kind, custom=True, legacy_specs=(text,))
+
+
+def _legacy_aliases(catalog):
+    """``{flat spec: catalog id}``, built once per catalog object.
+
+    The map walks all 150 records; rebuilding it per source turned one run into
+    ``len(sources) x len(catalog)`` work.  ``source_catalog`` owns the cache so
+    the settings reader and the collector share one map instead of two.
+    """
+    from . import source_catalog
+    return source_catalog.legacy_aliases(catalog)
+
+
+def adopt_legacy_membership(db, plan):
+    """Re-state membership a flat run wrote under the hash under the catalog id.
+
+    Additive and idempotent by construction: an ``INSERT OR IGNORE`` for the
+    membership pair and an ``UPDATE ... WHERE source IS NULL`` for the metadata
+    the hash run left pointing at itself.  Running it twice, or on a database
+    that never had a flat run, changes nothing.
+    """
+    from . import source_catalog
+    legacy_specs = getattr(plan, 'legacy_specs', None) or ()
+    if not legacy_specs:
+        return 0
+    moved = 0
+    for spec in legacy_specs:
+        old_id = source_key(spec)
+        if old_id == plan.source_id:
+            continue
+        try:
+            rows = [row[0] for row in
+                    db.execute('SELECT proxy FROM candidate_seen WHERE source=?', (old_id,))]
+        except sqlite3.Error:
+            continue
+        if not rows:
+            continue
+        moved += len(rows)
+        for proxy in rows:
+            endpoint = db.execute('SELECT id FROM endpoints WHERE canonical=?', (proxy,)).fetchone()
+            endpoint_id = endpoint[0] if endpoint is not None else None
+            db.execute('INSERT OR IGNORE INTO candidate_seen(proxy, source, endpoint_id) VALUES (?,?,?)',
+                       (proxy, plan.source_id, endpoint_id))
+        db.execute('UPDATE candidate_meta SET source=? WHERE source=?', (plan.source_id, old_id))
+    if moved:
+        db.execute('INSERT OR REPLACE INTO source_identity(source_id, family_id, publisher_id, metadata_json)'
+                   ' VALUES (?,?,?,?) ON CONFLICT(source_id) DO UPDATE SET'
+                   ' family_id=excluded.family_id, publisher_id=excluded.publisher_id',
+                   (plan.source_id, plan.family_id, plan.publisher_id, json.dumps(plan.identity, sort_keys=True)))
+    return moved
 
 
 def loose_addresses(line):
@@ -1119,6 +1544,36 @@ def record_source_observation(db, run_id, plan, endpoint_url, *, started_at, end
          0, profile_digest, retry_after))
 
 
+def stored_generation(db, source_id, now=None, endpoint_id=''):
+    """The last good answer a source gave, with its age, or ``None``.
+
+    Read by the collector when the origin answers ``304 Not Modified``: the
+    conditional request proved the stored answer is still current, so the run
+    reports that answer instead of an empty one.  ``record_count`` is the number
+    the run counted when it was fetched; the age is measured from when it was
+    written, so "delivered 51 936, 4 minutes old" is a statement about the
+    source and not about this run.
+    """
+    clock = now or time.time
+    try:
+        state = _source_state_row(db, source_id, endpoint_id)
+        if state is not None and state.get('last_good_generation'):
+            row = db.execute('SELECT id, record_count, created_at FROM source_generation WHERE id=?',
+                             (state['last_good_generation'],)).fetchone()
+        else:
+            row = db.execute('SELECT id, record_count, created_at FROM source_generation'
+                             ' WHERE source_id=? AND last_good=1 ORDER BY id DESC LIMIT 1',
+                             (source_id,)).fetchone()
+    except sqlite3.Error:
+        return None
+    if row is None:
+        return None
+    created = float(row['created_at'] if isinstance(row, sqlite3.Row) else row[2] or 0)
+    return {'generation_id': int(row['id'] if isinstance(row, sqlite3.Row) else row[0]),
+            'rows': int(row['record_count'] if isinstance(row, sqlite3.Row) else row[1] or 0),
+            'age_seconds': max(0.0, clock() - created) if created else None}
+
+
 def record_source_generation(db, plan, observation_id, endpoints, *, state, now, endpoint_url=None,
                              profile_digest=None, estimated_bytes=0):
     """An immutable snapshot of what one source offered this time.
@@ -1158,10 +1613,15 @@ def record_source_state(db, plan, endpoint_url, *, now, etag=None, last_modified
     the transport, not a new one.
     """
     previous = previous or {}
-    failures = 0 if success else int(previous.get('consecutive_failures') or 0) + 1
+    # 304 is a working transport with a current answer, so it must not spend the
+    # failure budget: counting it as a failure quarantined a perfectly healthy
+    # source after three collections, and every collection after that stopped
+    # asking it at all.
+    healthy = bool(success or not_modified)
+    failures = 0 if healthy else int(previous.get('consecutive_failures') or 0) + 1
     backoff_until = None
     quarantine_until = previous.get('quarantine_until')
-    if not success:
+    if not healthy:
         backoff_until = now + _source_backoff_seconds(failures)
         if failures >= SOURCE_QUARANTINE_AFTER:
             quarantine_until = now + SOURCE_QUARANTINE_S
@@ -1170,8 +1630,8 @@ def record_source_state(db, plan, endpoint_url, *, now, etag=None, last_modified
     if success and generation:
         current, last_good = generation, generation
     values = (plan.source_id, '', final_url or endpoint_url, etag, last_modified, now,
-              now if success else previous.get('last_success_at'),
-              now if success else previous.get('last_body_at'),
+              now if healthy else previous.get('last_success_at'),
+              previous.get('last_body_at'),
               now if not_modified else previous.get('last_304_at'),
               current, last_good, failures, backoff_until, quarantine_until, retry_after, error)
     db.execute(
@@ -1227,17 +1687,19 @@ def _write_source_provenance(db, run_id, plan, url, *, started_at, clock, http_s
                              outcome, status, attempts, pages, nbytes, received, recognized,
                              accepted, rejected, duplicate, blocked, new_endpoints, partial,
                              error, body_sha256, delivered, values, previous, final_url, not_modified,
-                             etag=None, last_modified=None):
+                             etag=None, last_modified=None, stale=False):
     """Observation, generation and cache state of one fetch, in that order.
 
     The order matters and is the whole of "last good": the observation is
     written first because the generation points at it, and the state is written
     last because a generation id is what it has to store.  A failed or empty
     fetch writes an observation and touches no generation, so the previous
-    answer survives a provider outage.
+    answer survives a provider outage -- and reports itself as
+    ``stale_last_good`` rather than as a source that delivered nothing.
     """
     ended = clock()
-    cache_state = 'not_modified' if not_modified else ('last_good' if delivered else 'none')
+    cache_state = 'not_modified' if not_modified else (
+        'last_good' if delivered else ('stale_last_good' if stale else 'none'))
     record_source_observation(
         db, run_id, plan, final_url or url, started_at=started_at, ended_at=ended,
         http_state=http_state, parse_state=parse_state, cache_state=cache_state, outcome=outcome,
@@ -1267,7 +1729,9 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                   max_source_candidates=DEFAULT_SOURCE_MAX_CANDIDATES,
                   max_source_redirects=DEFAULT_SOURCE_MAX_REDIRECTS,
                   collection_id=None, origin='public', allow_private_endpoints=False,
-                  plans=None, now=None, record_provenance=True):
+                  plans=None, now=None, record_provenance=True,
+                  *, preview=False, bounded_prefix=False, max_pages=DEFAULT_SOURCE_PAGES,
+                  sleep=None, sample_limit=50):
     """Download every source and put the addresses into one collection.
 
     ``urls`` is the flat ``--sources`` list; ``plans`` is the same thing after
@@ -1278,6 +1742,14 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
     What a source offered is recorded, not just consumed: an observation with
     its counters, a generation (an immutable answer), and the cache validators
     plus backoff and quarantine of the next attempt (F13, F21).
+
+    ``preview`` runs the identical fetch/adapter/limit path against a private
+    temporary database, so a check of a source can answer every question a real
+    collection would and still not touch candidates, provenance or last-good.
+    ``bounded_prefix`` is that check's read mode: past the byte budget it keeps
+    the prefix it read and reports the truncation as a fact about the *check*,
+    where a real collection still refuses the whole body so a public list
+    cannot fill memory.
     """
     if not isinstance(allow_private_sources, bool):
         raise ValueError('allow_private_sources: ожидается bool')
@@ -1287,22 +1759,46 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
     max_source_line_bytes = _source_limit(max_source_line_bytes, 'max_source_line_bytes', maximum=MAX_SOURCE_LINE_BYTES)
     max_source_candidates = _source_limit(max_source_candidates, 'max_source_candidates', maximum=MAX_SOURCE_CANDIDATES)
     max_source_redirects = _source_limit(max_source_redirects, 'max_source_redirects', minimum=0, maximum=MAX_SOURCE_REDIRECTS)
+    if max_pages is not None:
+        max_pages = _source_limit(max_pages, 'max_pages', minimum=1, maximum=MAX_SOURCE_PAGES)
     line_limit = min(max_source_line_bytes, max_source_bytes)
 
     reports = []
     total_rows = 0
     denylist = denylist or Denylist.empty()
     clock = now or time.time
-    urls = list(dict.fromkeys(urls or ()))
+    if preview:
+        with tempfile.TemporaryDirectory(prefix='proxy-workbench-preview-') as directory:
+            temporary = open_db(Path(directory) / 'preview.sqlite3')
+            try:
+                answer = await collect(
+                    temporary, urls, inputs, timeout, on_progress, denylist, allow_private_sources,
+                    detect_protocols, max_source_bytes, max_source_line_bytes, max_source_candidates,
+                    max_source_redirects, collection_id=None, origin=origin,
+                    allow_private_endpoints=allow_private_endpoints, plans=plans, now=now,
+                    record_provenance=record_provenance, bounded_prefix=bounded_prefix,
+                    max_pages=max_pages, sleep=sleep)
+            finally:
+                sample = [row[0] for row in temporary.execute(
+                    'SELECT proxy FROM candidates ORDER BY proxy LIMIT ?', (int(sample_limit),))]
+                temporary.close()
+        answer['preview'] = True
+        answer['sample'] = sample
+        answer['limits'] = {'max_bytes': max_source_bytes, 'max_candidates': max_source_candidates}
+        return answer
     specs = []
-    for value in list(urls) + list(plans or ()):
+    for value in _dedupe_sources(list(urls or ()) + list(plans or ())):
         kind, url = source_spec(value)
         if isinstance(value, SourcePlan):
             specs.append((kind, url, value))
         elif isinstance(value, dict):
             specs.append((kind, url, source_plan_of(value)))
         else:
-            specs.append((kind, url, None))
+            plan = plan_of_legacy_spec(value, url, kind)
+            if plan is not None:
+                specs.append((kind, url, plan))
+            else:
+                specs.append((kind, url, None))
     run_id = f'src-{int(clock() * 1000)}-{os.getpid()}'
     # Collecting into a named list writes membership there; the public source
     # lists keep filling the public base.  Nothing is ever copied between the two.
@@ -1399,16 +1895,20 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
             nonlocal total_rows
             plan = plan or SourcePlan(source_key(url), url, kind, custom=True)
             if kind in CATALOG_ADAPTER_KINDS and not plan.profile:
-                # The string named a catalog format but carried no profile, so
-                # there is nothing to parse the body with.  Saying so is the
-                # only honest answer; guessing a parser is how a JSON page
-                # used to be reported as a broken list.
-                reports.append(dict(source=index, source_id=plan.source_id, rows=0, invalid=0,
-                                    blocked=0, pages=0, attempts=0, complete=False, format=kind,
-                                    error='SOURCE_ADAPTER_UNSUPPORTED'))
-                db.commit()
-                publish()
-                return
+                # The string named a catalog format but carried no profile.
+                # ``source_adapters`` ships a documented ``generic-v1`` profile
+                # for each of the four, so the format is readable and the only
+                # thing missing was a name; refusing here made
+                # ``source add --source-format json-records`` produce a source
+                # the collector then declined to fetch.  A format the adapters
+                # do not know still ends up here with no profile, because
+                # ``source_spec`` refuses unknown kinds earlier.
+                plan.profile = {'kind': kind, 'profile': 'generic-v1', 'config': {}}
+            if record_provenance:
+                # The identity a previous flat run wrote under the spec hash
+                # belongs to this catalog source, and the move is made before
+                # the network so it is visible even when the fetch fails.
+                adopt_legacy_membership(db, plan)
             key = plan.source_id
             count = invalid = blocked = pages = attempts = 0
             candidate_count = 0
@@ -1422,9 +1922,11 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
             state = _source_state_row(db, key) if record_provenance else None
             seen = {'values': set(), 'new': 0, 'duplicate': 0}
             received = recognized = status_code = 0
+            reject_reasons = {}
             body_digest = None
             final_url = url
             not_modified = False
+            fallback_used = False
             retry_after = None
             parse_state = 'pending'
             http_state = 'not_run'
@@ -1452,12 +1954,13 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                 candidate_count += 1
 
             def consume_line(raw):
-                nonlocal count, invalid, blocked
+                nonlocal count, invalid, blocked, recognized
                 if kind == 'text':
                     # Web pages may use any encoding and are mostly markup: keep only addresses.
                     for address in loose_addresses(raw.decode('utf-8', errors='replace')):
                         consume_candidate()
                         count += 1
+                        recognized += 1
                         outcome = add(address, source=key, seen=seen)
                         invalid += outcome == 'invalid'
                         blocked += outcome == 'blocked'
@@ -1470,6 +1973,7 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                     return
                 consume_candidate()
                 count += 1
+                recognized += 1
                 if kind == 'http-fields':
                     match = re.fullmatch(r"(\d{1,3}(?:\.\d{1,3}){3}:\d{1,5}):[A-Za-z][A-Za-z .'-]*", line.strip())
                     outcome = add(match[1], source=key, seen=seen) if match else 'invalid'
@@ -1479,18 +1983,29 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                     outcome = add(line, kind, source=key, seen=seen)
                 elif kind == 'line':
                     # The catalog's `line` adapter means a plain list of
-                    # addresses.  The protocol comes from the line when it
-                    # names one and is HTTP otherwise; trying every protocol on
-                    # every line is what `--detect-protocols` is for, and doing
-                    # it here would triple a remote list's footprint on a guess.
-                    outcome = add(line, source=key, seen=seen)
+                    # addresses, and its own record says how to read one: the
+                    # protocol the list publishes, whether the address is only
+                    # the first token of a line that also carries a note, and
+                    # whether the list is unlabelled.  Reading the record
+                    # instead of assuming HTTP is what makes a SOCKS5 list
+                    # arrive as SOCKS5 rather than as 5000 unusable HTTP rows.
+                    config = (plan.profile or {}).get('config') or {}
+                    if config.get('line_address') == 'first-token':
+                        # "address<tab>free-form note" is the one shape a line
+                        # list uses; only the leading token is the address.
+                        line = line.split(None, 1)[0]
+                    if config.get('legacy_kind') == 'auto' or config.get('default_protocol') == 'auto':
+                        outcome = add_detected(line, source=key, seen=seen)
+                    else:
+                        outcome = add(line, config.get('default_protocol') or 'http',
+                                      source=key, seen=seen)
                 else:
                     outcome = add(line, kind, source=key, seen=seen)
                 invalid += outcome == 'invalid'
                 blocked += outcome == 'blocked'
 
             def consume_record(record):
-                nonlocal count, invalid, blocked, endpoint_count
+                nonlocal count, invalid, blocked, recognized, endpoint_count
                 protocols = []
                 if isinstance(record, dict) and isinstance(record.get('protocols', []), list):
                     protocols = [protocol for protocol in record['protocols']
@@ -1499,6 +2014,7 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                     raise SourceFetchError('SOURCE_CANDIDATE_LIMIT')
                 consume_candidate()
                 count += 1
+                recognized += 1
                 accepted = False
                 blocked_here = False
                 if isinstance(record, dict):
@@ -1527,31 +2043,45 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                 nonlocal count, invalid, blocked, recognized
                 for record in result.get('records') or ():
                     if isinstance(record, str):
-                        value, country = record, None
+                        candidates, country = [record], None
                     elif isinstance(record, dict):
-                        # `source_adapters` returns a normalized record:
-                        # `values` are the addresses it read, `declared` is what
-                        # the *publisher* claimed.  A claim is stored as a claim
+                        # `source_adapters` returns a normalized record: `values`
+                        # are the addresses it read and `value` is the same
+                        # address without its protocol.  Only `values` are
+                        # stored.  Adding `value` as well would invent an HTTP
+                        # proxy in front of every SOCKS record, so a SOCKS-only
+                        # list would deliver twice its size and half of it would
+                        # not exist.  `declared` is what the *publisher* claimed;
+                        # a claim is stored as a claim
                         # (`country_source='source'`), never as a measurement.
-                        value = record.get('value') or ''
-                        alternatives = list(record.get('values') or ())
+                        candidates = [item for item in (record.get('values') or ()) if item]
+                        if not candidates and record.get('value'):
+                            candidates = [record['value']]
                         declared = record.get('declared') if isinstance(record.get('declared'), dict) else {}
                         country = declared.get('country') or record.get('country')
                     else:
                         continue
-                    if not value:
+                    if not candidates:
                         continue
                     consume_candidate()
                     count += 1
                     recognized += 1
                     outcomes = []
-                    for candidate in ([value] + [item for item in alternatives if item != value]):
+                    for candidate in candidates:
                         scheme = str(candidate).split('://')[0] if '://' in str(candidate) else None
                         outcomes.append(add(candidate, scheme if scheme in SCHEMES else 'http',
                                             country, key, seen=seen))
                     outcome = next((o for o in ('accepted', 'blocked') if o in outcomes), 'invalid')
                     invalid += outcome == 'invalid'
                     blocked += outcome == 'blocked'
+                # Records the adapter read and refused on sight -- a URL with
+                # credentials, a row without a port -- are rejections too.  A
+                # report that counted only what the barrier refused would say a
+                # list of unusable rows was empty.
+                for name, number in (result.get('rejects') or {}).items():
+                    if isinstance(number, int) and number > 0:
+                        reject_reasons[name] = reject_reasons.get(name, 0) + number
+                        invalid += number
 
             async def request_source(request_url, expected_page=None, headers=None):
                 current_url = request_url
@@ -1598,7 +2128,7 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                             # adapter needs the whole page, and its own byte
                             # budget is applied by `_read_bounded_body`.
                             nonlocal parse_state
-                            body = await _read_bounded_body(response, budget, max_source_bytes)
+                            body = await _read_bounded_body(response, budget, max_source_bytes, keep_prefix=bounded_prefix)
                             if not body.strip():
                                 # A 200 with no bytes is its own outcome, not a
                                 # broken format (area-sources §2.2).
@@ -1606,7 +2136,7 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                                 return None
                             return body
                         if kind == 'geonode':
-                            body = await _read_bounded_body(response, budget, max_source_bytes)
+                            body = await _read_bounded_body(response, budget, max_source_bytes, keep_prefix=bounded_prefix)
                             try:
                                 data = json.loads(body.decode('utf-8'))
                             except UnicodeDecodeError as exc:
@@ -1620,40 +2150,61 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                             return data
                         if kind == 'text':
                             # Whole page at once: HTML tables often split host and port across lines.
-                            consume_line(await _read_bounded_body(response, budget, max_source_bytes))
+                            consume_line(await _read_bounded_body(response, budget, max_source_bytes,
+                                                                 keep_prefix=bounded_prefix))
                             return None
-                        await _read_bounded_lines(response, budget, max_source_bytes, line_limit, consume_line)
+                        await _read_bounded_lines(response, budget, max_source_bytes, line_limit, consume_line,
+                                                   keep_prefix=bounded_prefix)
                         return None
                 raise SourceFetchError('SOURCE_REDIRECT_TOO_MANY')
 
             async with gate:
+                page_url = url
                 while True:
                     data = None
                     succeeded = False
-                    page_url = url
-                    headers = _source_headers(plan, state) if record_provenance else {}
+                    # The stored validators describe page one only: sending
+                    # them on page two would ask a provider whether *that* URL
+                    # changed, which it never said anything about.
+                    headers = _source_headers(plan, state) if (record_provenance and page == 1) else {}
                     if kind == 'geonode':
-                        parsed = urlsplit(url)
+                        parsed = urlsplit(page_url)
                         query = dict(parse_qsl(parsed.query))
                         query.update(page=str(page))
                         query.setdefault('limit', '500')
                         page_url = urlunsplit(parsed._replace(query=urlencode(query)))
-                    for retry in range(2):
-                        attempts += 1
-                        try:
-                            async with asyncio.timeout(timeout):
-                                data = await request_source(page_url, page, headers)
-                            succeeded = True
-                            error = None
-                            break
-                        except asyncio.CancelledError:
-                            raise
-                        except (httpx.HTTPError, TimeoutError, OSError, ValueError, OverflowError) as exc:
-                            error = exc.code if isinstance(exc, SourceFetchError) else type(exc).__name__
-                            if isinstance(exc, SourceFetchError) and not exc.retryable:
+                    # A mirror of the same list is the same source: it is tried
+                    # once, after the primary has failed its retry, and whatever
+                    # it delivers is credited to the same id -- two URLs, one
+                    # source, and the report says which one answered.
+                    candidates = [page_url]
+                    if page == 1 and plan.fallbacks:
+                        candidates.append(plan.fallbacks[0])
+                    for candidate in candidates:
+                        if candidate is not candidates[0]:
+                            fallback_used = True
+                            final_url = candidate
+                        for retry in range(2):
+                            attempts += 1
+                            try:
+                                async with asyncio.timeout(timeout):
+                                    data = await request_source(candidate, page, headers)
+                                page_url = candidate
+                                succeeded = True
+                                error = None
                                 break
-                            if retry == 0:
-                                await asyncio.sleep(1)
+                            except asyncio.CancelledError:
+                                raise
+                            except (httpx.HTTPError, TimeoutError, OSError, ValueError, OverflowError) as exc:
+                                error = exc.code if isinstance(exc, SourceFetchError) else type(exc).__name__
+                                if isinstance(exc, SourceFetchError) and not exc.retryable:
+                                    break
+                                if retry == 0:
+                                    # Injected so a test can exercise a retry
+                                    # without spending a wall-clock second.
+                                    await (sleep(1) if sleep is not None else asyncio.sleep(1))
+                        if succeeded:
+                            break
                     if not succeeded:
                         break
                     pages += 1
@@ -1673,6 +2224,21 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                         body_digest = hashlib.sha256(data).hexdigest()
                         limits = {'max_bytes': max_source_bytes,
                                   'max_records': max_source_candidates}
+                        if budget.get('truncated'):
+                            # The check stopped at its own bound.  The prefix of
+                            # a JSON document is not a valid document, so
+                            # whatever the parser makes of it, the report is
+                            # the check's truncation and never a verdict on the
+                            # source's format.
+                            try:
+                                consume_adapter_records(source_adapters.parse_page(
+                                    data, plan.profile or {'kind': kind},
+                                    page_context={'page': page}, limits=limits))
+                            except source_adapters.AdapterError:
+                                pass
+                            error = 'SOURCE_TRUNCATED'
+                            parse_state = 'partial'
+                            break
                         try:
                             result = source_adapters.parse_page(
                                 data, plan.profile or {'kind': kind},
@@ -1680,19 +2246,65 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                         except source_adapters.AdapterError as exc:
                             error = exc.args[0] if exc.args else 'SOURCE_ADAPTER_ERROR'
                             # A document that is refused for exceeding its
-                            # budget is not a broken document, and saying so is
-                            # the difference between "raise the limit" and
+                            # budget is not a broken document, and saying so
+                            # is the difference between "raise the limit" and
                             # "the source is malformed".
                             parse_state = ('budget_exceeded'
                                            if error in ('SOURCE_RECORD_LIMIT', 'SOURCE_TOO_LARGE')
                                            else 'invalid')
                             break
+                        except Exception:  # noqa: BLE001 - one bad source must not cancel the others
+                            # An adapter that raises something it never declared
+                            # is a broken adapter, not a broken source.  Letting
+                            # it out would tear down the whole run and lose
+                            # every other source's answer with it.
+                            error, parse_state = 'SOURCE_ADAPTER_ERROR', 'invalid'
+                            break
                         parse_state = str(result.get('state') or 'complete')
                         consume_adapter_records(result)
                         if result.get('truncated'):
                             error = result.get('reason') or 'SOURCE_RECORD_LIMIT'
-                        break
+                            break
+                        # The adapter's own pagination.  ``page_info`` and
+                        # ``next_page_url`` were in the tree from the start and
+                        # nothing called them, so a paginated catalog source
+                        # was read as its first page and reported as complete:
+                        # a source that publishes 162 records over two pages
+                        # contributed 100 and looked finished.
+                        try:
+                            info = source_adapters.page_info(
+                                json.loads(data.decode('utf-8')), plan.profile or {'kind': kind})
+                        except (source_adapters.AdapterError, UnicodeDecodeError, ValueError):
+                            info = {}
+                        if max_pages is not None and pages >= max_pages:
+                            if info.get('total') is not None and count < int(info['total']):
+                                error = 'SOURCE_PAGE_LIMIT'
+                            break
+                        if info.get('total') is not None and count >= int(info['total']):
+                            break
+                        if info.get('has_more') is False or not info.get('records'):
+                            if info.get('total') is not None and count < int(info['total']):
+                                error = 'SOURCE_PAGINATION_EMPTY'
+                            break
+                        try:
+                            following = source_adapters.next_page_url(
+                                page_url, info, plan.profile or {'kind': kind}, page + 1)
+                        except source_adapters.AdapterError as exc:
+                            error = exc.args[0] if exc.args else 'SOURCE_PAGINATION_NEXT_INVALID'
+                            break
+                        if not following:
+                            break
+                        page_url = following
+                        page += 1
+                        db.commit()
+                        await asyncio.sleep(.1)
+                        continue
                     if kind != 'geonode':
+                        break
+                    if max_pages is not None and pages >= max_pages:
+                        # The caller's own page budget, reported as a budget
+                        # rather than as a provider that stopped answering.
+                        error = 'SOURCE_PAGE_LIMIT'
                         break
                     batch = data['data']
                     try:
@@ -1720,7 +2332,12 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                     db.commit()
                     await asyncio.sleep(.1)
             total_rows += count
-            if not not_modified and error is None and parse_state == 'pending':
+            if bounded_prefix and budget.get('truncated'):
+                # A streaming read the check's own bound cut short.  The lines
+                # already recognised stay, and the list is reported as partial
+                # rather than complete.
+                error, parse_state = 'SOURCE_TRUNCATED', 'partial'
+            elif not not_modified and error is None and parse_state == 'pending':
                 parse_state = 'complete'
             # The three fetch states the source views know
             # (``source_management.FETCH_STATES``) are named here, not invented
@@ -1730,7 +2347,8 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                 http_state = 'not_modified'
             elif error is None:
                 http_state = 'empty_body' if parse_state == 'empty' else 'http_2xx_nonempty'
-            elif parse_state == 'budget_exceeded' or status_code == 429:
+            elif parse_state == 'budget_exceeded' or status_code == 429 or error in (
+                    'SOURCE_TRUNCATED', 'SOURCE_PAGE_LIMIT', 'SOURCE_RECORD_LIMIT'):
                 # The transport worked; the budget did not fit.  Reporting it as
                 # `http_error` would send the user to look at a provider that
                 # answered perfectly.
@@ -1738,12 +2356,42 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
             else:
                 http_state = 'http_error' if status_code else 'error'
             delivered = not not_modified and error is None and count > 0
+            served = stored_generation(db, key, clock) if not_modified else None
+            if served is not None:
+                # 304 is an answer, not the absence of one.  The source still
+                # offers everything its last good generation holds, so the run
+                # reports that set, with its age and an explicit marker, instead
+                # of counting zero rows and leaving the operator to wonder why a
+                # source that was fine yesterday delivered nothing today.  The
+                # counters this run measured stay at zero on purpose: nothing
+                # was read, and only what was read may be counted.
+                count = served['rows']
+                total_rows += served['rows']
+                parse_state = 'not_modified'
             report = dict(source=index, source_id=key, rows=count, invalid=invalid, blocked=blocked,
                           pages=pages, attempts=attempts, complete=error is None, error=error,
                           format=kind, http_state=http_state, parse_state=parse_state,
                           cache_state='none', new=seen['new'], duplicate=seen['duplicate'],
-                          accepted=len(seen['values']))
+                          accepted=len(seen['values']), recognized=recognized,
+                          rejected=invalid, reject_reasons=reject_reasons,
+                          bytes=budget.get('used', 0),
+                          partial=error in ('SOURCE_TRUNCATED', 'SOURCE_PAGE_LIMIT',
+                                            'SOURCE_RECORD_LIMIT'),
+                          truncated=bool(budget.get('truncated')),
+                          fallback_used=fallback_used,
+                          endpoint_url=final_url or url)
+            if served is not None:
+                report['served_from_cache'] = True
+                report['cache_age_seconds'] = served['age_seconds']
+                report['cache_generation'] = served['generation_id']
+                report['complete'] = True
             if record_provenance:
+                # A fetch that failed while a previous answer is still on disk
+                # serves that answer rather than reporting an empty source.
+                # "Stale" is the whole point: the data is real, its age is
+                # stated, and the failure is not hidden behind it.
+                served_after_failure = served is not None or (
+                    not delivered and stored_generation(db, key, clock) is not None)
                 observation = _write_source_provenance(
                     db, run_id, plan, url, started_at=started_at, clock=clock,
                     http_state=http_state, parse_state=parse_state, outcome=(
@@ -1758,8 +2406,12 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                     partial=error == 'SOURCE_RECORD_LIMIT', error=error,
                     body_sha256=body_digest, delivered=delivered, values=seen['values'],
                     etag=response_etag, last_modified=response_modified,
-                    previous=state, final_url=final_url, not_modified=not_modified)
+                    previous=state, final_url=final_url, not_modified=not_modified,
+                    stale=served_after_failure)
                 report.update(observation)
+            # Last, because the observation above is what names the outcome the
+            # source views filter on and it must agree with the error.
+            report['outcome'] = source_outcome(report)
             reports.append(report)
             db.commit()
             publish()
@@ -1773,6 +2425,62 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
     return dict(raw_rows=total_rows, unique=db.execute('SELECT count(*) FROM candidates').fetchone()[0],
                 blocked=sum(r.get('blocked', 0) for r in reports), denylist_error=denylist.error,
                 sources_total=len(specs), sources=reports)
+
+
+#: How a fetch error becomes the one-word outcome a source view can filter on.
+SOURCE_OUTCOMES = {
+    'SOURCE_TOO_LARGE': 'limit_exceeded', 'SOURCE_LINE_TOO_LARGE': 'limit_exceeded',
+    'SOURCE_RECORD_LIMIT': 'limit_exceeded', 'SOURCE_CANDIDATE_LIMIT': 'limit_exceeded',
+    'SOURCE_TRUNCATED': 'partial', 'SOURCE_PAGE_LIMIT': 'partial',
+    'SOURCE_QUARANTINED': 'unavailable', 'SOURCE_RATE_LIMITED': 'rate_limited',
+    'SOURCE_TIMEOUT': 'timeout', 'SOURCE_DEADLINE': 'partial',
+    'SOURCE_HTML_PLACEHOLDER': 'html_placeholder', 'SOURCE_INVALID_JSON': 'invalid_json',
+}
+
+
+def source_outcome(entry):
+    """The outcome word for one report row, in one place.
+
+    The catalog screen, the CLI and ``source_management.preview_view`` all have
+    to say the same thing about the same fetch, so the mapping lives beside the
+    collector that produces the errors and not in each reader.
+    """
+    if not isinstance(entry, dict):
+        return 'unavailable'
+    if entry.get('served_from_cache'):
+        return 'not_modified'
+    error = entry.get('error')
+    if not error:
+        return 'empty' if entry.get('parse_state') == 'empty' else 'available'
+    return SOURCE_OUTCOMES.get(error, 'unavailable')
+
+
+def run_preview(db, values, **kwargs):
+    """Check a list of sources (strings, plans or catalog records) and report.
+
+    The synchronous entry point the GUI uses: :func:`preview_collect` wrapped so
+    a request handler does not have to own an event loop.  ``db`` is only used
+    for its schema -- the check itself runs against a private temporary
+    database, so nothing it finds can reach the user's collection.
+    """
+    return asyncio.run(preview_collect(db, values, **kwargs))
+
+
+async def preview_collect(db, urls, timeout=60, denylist=None, allow_private_sources=False,
+                          *, sample_limit=50, max_source_bytes=PREVIEW_MAX_BYTES,
+                          max_source_candidates=PREVIEW_MAX_CANDIDATES, **kwargs):
+    """Check sources without writing anything a real collection would keep.
+
+    The same fetch, the same adapters and the same limits run against a private
+    temporary database, so a check can answer for every list the collector can
+    read and cannot leave candidates, provenance, observations or last-good
+    behind.  Past the byte budget the check keeps the prefix it managed to read
+    and says so; a real collection still refuses the whole body.
+    """
+    return await collect(db, urls, [], timeout, None, denylist, allow_private_sources,
+                         preview=True, bounded_prefix=True, sample_limit=sample_limit,
+                         max_source_bytes=max_source_bytes,
+                         max_source_candidates=max_source_candidates, **kwargs)
 
 
 def target_config(args, denylist=None):
@@ -6446,29 +7154,20 @@ def main(argv=None):
                 collect_denylist = Denylist.empty()
             profile = hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()[:20]
         if args.command in ('collect', 'run'):
-            urls = [] if args.no_sources else json.loads(args.sources.read_text(encoding='utf-8'))
-            if not isinstance(urls, list):
-                raise ValueError('sources: ожидается JSON-массив http(s) URL')
             # F13: without an explicit `--sources` the collection follows the
-            # user's *selection* in the source catalog, not a flat list of URLs.
-            # Before this, a run always asked for a list file and a source the
-            # user had switched on in the catalog was never downloaded.
-            plans = []
-            if not urls and not args.no_sources:
-                plans, migrated = catalog_source_plans(
-                    _source_settings(args.data), sources_catalog(args.data))
-                # `migrate_settings` is idempotent, so writing it back on every
-                # run is what turns an old flat-URL tree into a selection once
-                # and keeps every existing URL and every existing pause.
-                write_source_settings(args.data, migrated)
+            # user's *selection* in the source catalog, not the bundled flat
+            # list of 55 URLs.  Before this, a run always asked for a list file
+            # and a source the user had switched on in the catalog was never
+            # downloaded at all.
+            values = resolve_collect_sources(args, data=args.data)
             report = asyncio.run(stoppable(collect(
-                db, urls, args.input, args.source_timeout, update_progress, denylist=collect_denylist,
+                db, values, args.input, args.source_timeout, update_progress, denylist=collect_denylist,
                 allow_private_sources=args.allow_private_sources, detect_protocols=args.detect_protocols,
                 max_source_bytes=args.source_max_bytes,
                 max_source_line_bytes=args.source_max_line_bytes,
                 max_source_candidates=args.source_max_candidates,
                 max_source_redirects=args.source_max_redirects,
-                allow_private_endpoints=args.allow_private_endpoints, plans=plans), args.stop_file))
+                allow_private_endpoints=args.allow_private_endpoints), args.stop_file))
             atomic(args.data / 'sources-report.json', json.dumps(report, indent=2) + '\n')
             print(tr(f'Уникальных кандидатов в базе: {report["unique"]}', f'Unique candidates in the database: {report["unique"]}'), flush=True)
         if args.command in ('scan', 'run'):

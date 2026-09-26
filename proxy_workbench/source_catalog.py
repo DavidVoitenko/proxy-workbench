@@ -131,8 +131,16 @@ class CatalogError(ValueError):
 
 
 def bundled_path():
-    # The integration ships the built catalog under its own name so the legacy
-    # flat URL list keeps its meaning. Either name is accepted for a download.
+    """Where the packaged catalog lives, under either of the two names.
+
+    One convention, stated once: ``source-catalog.json`` is the catalog and
+    ``sources.json`` is the flat list of 55 URLs the app read before the
+    catalog existed.  The integration keeps both, so a package that still ships
+    only ``sources.json`` from an older build -- where that name *was* the
+    catalog -- is still read correctly.  The two meanings are never mixed: this
+    function never returns the flat list under the catalog's name, and
+    :func:`load_bundled` says so plainly when the file it found is the list.
+    """
     catalog_path = Path(__file__).with_name("source-catalog.json")
     if catalog_path.is_file():
         return catalog_path
@@ -581,6 +589,14 @@ def load_catalog(path=None, *, allow_research=True, allow_unsafe=True):
         raise
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise CatalogError(f"Не удалось прочитать каталог: {path}") from exc
+    if isinstance(value, list):
+        # A flat URL list is a valid settings document, never a catalog.  A
+        # package built before the two files were separated ships the list
+        # under this name, and saying which file is wrong is the difference
+        # between a fixable build problem and a dead Sources tab.
+        raise CatalogError(
+            f"{path.name} — это плоский список URL, а не каталог источников. "
+            f"Каталог должен лежать рядом с ним под именем source-catalog.json.")
     return validate_catalog(value, allow_research=allow_research, allow_unsafe=allow_unsafe)
 
 
@@ -637,7 +653,22 @@ def _canonical_legacy(value):
     return "http", str(value).strip()
 
 
+_ALIASES_CACHE = {}
+
+
 def legacy_aliases(catalog):
+    """``{flat spec: catalog id}`` for every way the app used to name a source.
+
+    The map is a full walk of the catalog, and both :func:`migrate_settings`
+    and ``gui.defaults`` need it on every settings read, so it is built once
+    per catalog object.  The cache holds a strong reference to the catalog it
+    was built from, so an ``id`` can never be recycled onto a different
+    document while its map is still live.
+    """
+    key = id(catalog)
+    cached = _ALIASES_CACHE.get(key)
+    if cached is not None and cached[0] is catalog:
+        return cached[1]
     aliases = {}
     for source in catalog["sources"]:
         for spec in source.get("legacy_specs", []):
@@ -647,6 +678,9 @@ def legacy_aliases(catalog):
             for spec in (url, "http " + url, "https " + url, "socks4 " + url,
                          "socks5 " + url, "auto " + url, "text " + url):
                 aliases.setdefault(spec, source["id"])
+    if len(_ALIASES_CACHE) > 4:
+        _ALIASES_CACHE.clear()
+    _ALIASES_CACHE[key] = (catalog, aliases)
     return aliases
 
 
