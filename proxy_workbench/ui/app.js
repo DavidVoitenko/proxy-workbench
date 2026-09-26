@@ -706,6 +706,7 @@ const messages = {
     'target.containsPlaceholder': 'For example: healthy',
     'target.advanced': 'Method, local headers and SHA-256',
     'target.method': 'Method',
+    'target.protocol': 'Protocol',
     'target.headers': 'Service headers — JSON',
     'target.headersHint': 'Only safe HTTP headers are allowed; values are not exported, but the request still goes through a public proxy.',
     'target.sha256': 'Response body SHA-256 (optional)',
@@ -1854,6 +1855,7 @@ const messages = {
     'target.containsPlaceholder': 'Например: healthy',
     'target.advanced': 'Метод, локальные заголовки и SHA-256',
     'target.method': 'Метод',
+    'target.protocol': 'Протокол',
     'target.headers': 'Заголовки сервиса — JSON',
     'target.headersHint': 'Разрешены только безопасные HTTP-заголовки; значения не экспортируются, но запрос всё равно идёт через публичный прокси.',
     'target.sha256': 'SHA-256 тела ответа (необязательно)',
@@ -3644,7 +3646,7 @@ function addTarget(target={}) {
       <input data-field="name" class="target-name-input" ${attr('aria-label', 'target.name')} ${attr('placeholder', 'target.name')} value="${esc(target.name || t('target.defaultName'))}" title="${esc(t('target.name'))}">
       
       <div class="target-url-group">
-        <select data-field="protocol" class="target-proto-select" title="Protocol">
+        <select data-field="protocol" class="target-proto-select" title="${esc(t('target.protocol'))}" aria-label="${esc(t('target.protocol'))}">
           <option value="https://"${proto === 'https://' ? ' selected' : ''}>https://</option>
           <option value="http://"${proto === 'http://' ? ' selected' : ''}>http://</option>
         </select>
@@ -3652,7 +3654,7 @@ function addTarget(target={}) {
       </div>
 
       <div class="target-col-method" title="${esc(t('target.method'))}">
-        <select data-field="method" class="target-method-select">
+        <select data-field="method" class="target-method-select" title="${esc(t('target.method'))}" aria-label="${esc(t('target.method'))}">
           <option value="GET"${initialMethod === 'GET' ? ' selected' : ''}>GET</option>
           <option value="HEAD"${initialMethod === 'HEAD' ? ' selected' : ''}>HEAD</option>
         </select>
@@ -5264,13 +5266,20 @@ async function details(summary) {
 }
 
 const detailsDialog = $('details-dialog');
-const closeDetailsBtn = $('close-details');
+// Play the exit animation (b-interactions layer) before actually closing.
+function closeDialogAnimated(dlg) {
+  if (!dlg || typeof dlg.close !== 'function') return;
+  if (dlg.classList.contains('dialog-closing')) return;
+  dlg.classList.add('dialog-closing');
+  setTimeout(() => {
+    dlg.classList.remove('dialog-closing');
+    try { dlg.close(); } catch {}
+  }, 170);
+}
 if (closeDetailsBtn) {
   closeDetailsBtn.onclick = (e) => {
     if (e) e.preventDefault();
-    if (detailsDialog && typeof detailsDialog.close === 'function') {
-      detailsDialog.close();
-    }
+    closeDialogAnimated(detailsDialog);
   };
 }
 
@@ -5285,14 +5294,14 @@ if (detailsDialog) {
         event.clientX <= rect.right
       );
       if (!isInDialog && typeof detailsDialog.close === 'function') {
-        detailsDialog.close();
+        closeDialogAnimated(detailsDialog);
       }
     }
   });
 
   window.addEventListener('keydown', event => {
     if (event.key === 'Escape' && detailsDialog.open && typeof detailsDialog.close === 'function') {
-      detailsDialog.close();
+      closeDialogAnimated(detailsDialog);
     }
   });
 
