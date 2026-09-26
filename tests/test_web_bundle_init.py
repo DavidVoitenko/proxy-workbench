@@ -25,6 +25,8 @@ import subprocess
 import unittest
 from pathlib import Path
 
+from tests.web_support import run_node
+
 APP_JS = Path(__file__).resolve().parents[1] / "proxy_workbench" / "ui" / "app.js"
 INDEX_HTML = Path(__file__).resolve().parents[1] / "proxy_workbench" / "ui" / "index.html"
 
@@ -109,10 +111,23 @@ globalThis.clearTimeout = () => {};
 def _run(script: str, timeout: int = 90) -> subprocess.CompletedProcess:
     # A classic script, because that is how index.html loads app.js: a repeated
     # `function` declaration is legal there and only ESM would reject it.
-    return subprocess.run(
-        [NODE, "-e", script],
-        capture_output=True, text=True, timeout=timeout, cwd=str(APP_JS.parents[2]),
-    )
+    return run_node(script, timeout=timeout, executable=NODE, cwd=str(APP_JS.parents[2]))
+
+
+@unittest.skipIf(NODE is None, "node is not installed")
+class NodeHarnessTests(unittest.TestCase):
+    def test_large_script_preserves_commonjs_and_unicode(self):
+        # Exceeds both Windows' command line and Linux's per-argument limits.
+        script = '/*' + ('x' * 300_000) + '*/\n' + """
+const assert = require('node:assert/strict');
+function repeated() { return 'old'; }
+function repeated() { return 'Проверено'; }
+assert.equal(typeof module.exports, 'object');
+process.stdout.write(repeated());
+"""
+        result = _run(script)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, 'Проверено')
 
 
 @unittest.skipIf(NODE is None, "node is not installed")

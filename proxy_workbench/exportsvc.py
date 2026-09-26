@@ -969,8 +969,8 @@ def render_snapshot_txt(rows: Sequence[Mapping[str, Any]], *, status: Mapping[st
         f"# expires_at: {status.get('expires_at')}",
         f"# max_age_seconds: {status.get('max_age_seconds')}",
         f"# rows: {len(rows)}",
-        f'# {tr("Этот статический файл не может отозвать сам себя. Проверяйте истёкшие строки заново:",
-               "This static file cannot revoke itself. Re-check rows past expires_at.")}',
+        '# ' + tr("Этот статический файл не может отозвать сам себя. Проверяйте истёкшие строки заново:",
+                  "This static file cannot revoke itself. Re-check rows past expires_at."),
     ]
     return '\n'.join(lines) + '\n' + render_txt(rows)
 
@@ -1477,7 +1477,7 @@ def _atomic_write(path: Path, content: str) -> None:
     """Replace one file in one step; a reader never sees a half-written pointer."""
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.name + '.tmp')
-    temporary.write_text(content, encoding='utf-8')
+    temporary.write_bytes(content.encode('utf-8'))
     os.replace(temporary, path)
 
 
@@ -1546,18 +1546,20 @@ def write_snapshot(directory: Any, rows: Sequence[Mapping[str, Any]], *, scope: 
         files['snapshot.txt'] = render_snapshot_txt(granted_rows, status=status.as_dict())
         for filename, content in files.items():
             target = generation / filename
-            target.write_text(content, encoding='utf-8')
+            # Manifest hashes describe bytes, so write those exact bytes.
+            # Text mode translates LF to CRLF on Windows and otherwise makes
+            # every freshly published generation fail its own verification.
+            raw = content.encode('utf-8')
+            target.write_bytes(raw)
             if options.readonly:
                 target.chmod(stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
-            raw = content.encode('utf-8')
             manifest[filename] = {'bytes': len(raw), 'sha256': hashlib.sha256(raw).hexdigest()}
         # status.json carries the manifest of everything else, so a reader that
         # pinned this generation can verify it without the pointer.
         report = status.as_dict()
         report['manifest'] = manifest
         target = generation / 'status.json'
-        target.write_text(json.dumps(report, indent=2, ensure_ascii=False, default=str) + '\n',
-                          encoding='utf-8')
+        target.write_bytes((json.dumps(report, indent=2, ensure_ascii=False, default=str) + '\n').encode('utf-8'))
         if options.readonly:
             target.chmod(stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
     except BaseException:

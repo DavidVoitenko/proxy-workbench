@@ -7755,7 +7755,7 @@ def read_selection_file(path):
 def main(argv=None):
     utf8_output()
     p = parser()
-    args = p.parse_args(argv)
+    args = p.parse_intermixed_args(argv)
     if (min(args.attempts, args.workers, args.max_bytes) < 1 or args.top < 0
             or not math.isfinite(args.rate) or args.rate < 0
             or not math.isfinite(args.timeout) or args.timeout <= 0

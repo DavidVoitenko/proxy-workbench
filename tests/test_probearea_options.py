@@ -204,10 +204,15 @@ class OwnProfileOnly(unittest.TestCase):
 
     def test_custom_ca_never_turns_tls_verification_off(self):
         import ssl
-        for bundle in (None, '/etc/ssl/cert.pem'):
+        import certifi
+        bundle_path = certifi.where()
+        self.assertTrue(Path(bundle_path).is_file())
+        for bundle in (None, bundle_path):
             context = pr.build_ssl_context(bundle)
             self.assertTrue(context.check_hostname)
             self.assertEqual(context.verify_mode, ssl.CERT_REQUIRED)
+            if bundle is not None:
+                self.assertTrue(context.get_ca_certs())
         plan = pr.build_plan({'mode': 'tcp', 'options': {'preset': 'frugal'}})
         self.assertNotIn('verify', plan.to_public()['options'])
 

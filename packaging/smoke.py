@@ -20,7 +20,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import httpx
-from verify_delivery import child_environment
+from verify_delivery import child_environment, stop as stop_process
 
 
 class MockProxy(BaseHTTPRequestHandler):
@@ -58,6 +58,16 @@ def read_json(path):
         return None
 
 
+def log_tail(path, limit=8000):
+    try:
+        with Path(path).open('rb') as handle:
+            handle.seek(0, 2)
+            handle.seek(max(0, handle.tell() - limit))
+            return handle.read().decode('utf-8', errors='replace')
+    except OSError:
+        return ''
+
+
 def main(command):
     if not command:
         raise SystemExit('pass an installed proxy-workbench command or executable')
@@ -72,9 +82,12 @@ def main(command):
     threading.Thread(target=mock.serve_forever, daemon=True).start()
     data = Path(tempfile.mkdtemp())
     env = child_environment(data / 'home', {'PROXY_WORKBENCH_DATA': str(data),
+                                         'PYTHONUNBUFFERED': '1',
                                          'HTTP_PROXY': '', 'HTTPS_PROXY': '', 'ALL_PROXY': '',
                                          'NO_PROXY': '127.0.0.1,localhost'})
     gui = None
+    gui_log = None
+    gui_log_path = data / 'smoke-desktop.log'
     client = None
     try:
         # An empty collect creates the database; then the mock proxy is added as a
@@ -91,15 +104,15 @@ def main(command):
                        check=True, timeout=120, capture_output=True, cwd=data, env=env)
         # Let the OS choose every port. Fixed CI ports made this smoke test fail
         # whenever another local test or a developer's service happened to use one.
+        gui_log = gui_log_path.open('wb')
         gui = subprocess.Popen([*command, '--no-browser', '--no-tray', '--port', '0', '--data', str(data),
                                 '--api-port', '0', '--gateway-port', '0'],
-                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, cwd=data, env=env)
+                               stdout=gui_log, stderr=subprocess.STDOUT, cwd=data, env=env)
 
         def process_check(callback, timeout=60):
             def checked():
                 if gui.poll() is not None:
-                    detail = gui.stdout.read().decode('utf-8', errors='replace')
-                    raise RuntimeError(f'GUI exited with code {gui.returncode}: {detail[-4000:]}')
+                    raise RuntimeError(f'GUI exited with code {gui.returncode}')
                 return callback()
             return wait_for(checked, timeout=timeout)
 
@@ -176,19 +189,19 @@ def main(command):
         scheduled = process_check(schedule_finished, timeout=60)
         assert scheduled['state'] == 'succeeded', scheduled
         print('smoke test passed')
+    except Exception:
+        if gui is not None:
+            print('Desktop child output:\n' + (log_tail(gui_log_path) or '<empty>'), file=sys.stderr)
+            print('Desktop journal:\n' + (log_tail(data / 'desktop-journal.jsonl') or '<not created>'),
+                  file=sys.stderr)
+        raise
     finally:
         if client is not None:
             client.close()
         if gui is not None:
-            if gui.poll() is None:
-                gui.terminate()
-            try:
-                gui.wait(10)
-            except subprocess.TimeoutExpired:
-                gui.kill()
-                gui.wait(10)
-            if gui.stdout is not None:
-                gui.stdout.close()
+            stop_process(gui, timeout=10)
+        if gui_log is not None:
+            gui_log.close()
         mock.shutdown()
         mock.server_close()
         shutil.rmtree(data, ignore_errors=True)
