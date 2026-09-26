@@ -1490,6 +1490,58 @@ def blocked_result(proxy, verdict):
                 checked_at=time.time(), samples=[], reputation=verdict)
 
 
+def exit_address_of(row):
+    """The exit address a row confirms, or ``''``.
+
+    The judge writes `anonymity.exit_ip`; a top-level `exit_ip` is accepted too,
+    because a row imported from elsewhere may carry it there.  A row without a
+    confirmed exit confirms nothing, and "no exit IP" is not "exit == proxy IP".
+    """
+    if not isinstance(row, dict):
+        return ''
+    anonymity = row.get('anonymity')
+    if isinstance(anonymity, dict):
+        value = anonymity.get('exit_ip')
+        if isinstance(value, str) and value:
+            return value
+    value = row.get('exit_ip')
+    return value if isinstance(value, str) else ''
+
+
+def measurement_requests(row):
+    """How many HTTP requests one measurement spent, for the resource budget.
+
+    A row without samples spent nothing known: a refused verdict and a proxy that
+    died before the first request are not charged with a request they never made.
+    """
+    if not isinstance(row, dict):
+        return 0
+    try:
+        return max(0, int(row.get('requests') or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def measurement_bytes(row):
+    """How many response bytes one measurement read, for the resource budget."""
+    if not isinstance(row, dict):
+        return 0
+    total = 0
+    for sample in row.get('samples') or ():
+        if isinstance(sample, dict):
+            try:
+                total += max(0, int(sample.get('bytes') or 0))
+            except (TypeError, ValueError):
+                continue
+    speed = row.get('speed')
+    if isinstance(speed, dict):
+        try:
+            total += max(0, int(speed.get('bytes') or 0))
+        except (TypeError, ValueError):
+            pass
+    return total
+
+
 async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_proxy, progress=True, on_progress=None, min_success=2/3, screen=None, denylist=None, min_anonymity='any', protocol='all', max_latency=None,
                countries=(), country_of=None, want=0, recheck_passing=False, prefilter=0, prefilter_timeout=3,
                exclude_hosting=False, provider_of=None, run_state=None,
@@ -1633,6 +1685,11 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
     # endpoints, N IPs and N confirmed exit IPs are different numbers, and the
     # caller names the one it means (F12, CONTRACTS §1.1).
     find = chain.FindPolicy(n=want, what=count_what)
+    # All three counts side by side, so a run that ends with `found=0` says which
+    # of the three units was unreachable instead of looking like an empty corpus
+    # (F12, F10 "why zero results").
+    unique_ips: set = set()
+    unique_exits: set = set()
     budget_stop = {'reason': ''}
 
     def over_budget():
@@ -1652,14 +1709,31 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
         return False
 
     def counted(row):
-        """What ``--want`` counts: endpoints, IPs or confirmed exit IPs.
+        """What ``--want`` counts: endpoints, unique IPs or confirmed exit IPs.
 
-        They are different numbers and the user picks one (F12, CONTRACTS §1.1).
-        A row without a confirmed exit is never counted as one.
+        Three different numbers, and the user names the one they mean (F12,
+        CONTRACTS §1.1).  ``ip`` counts the *host* of the proxy, so two ports on
+        one machine are one IP; ``exit`` counts the address the judge confirmed,
+        which is a different number again and is absent without a judge.  Reading
+        both from one expression (``1 if row.get('exit_ip')``) made them the same
+        number, and the key was in the wrong place: the judge writes
+        ``anonymity.exit_ip``, so even a confirmed exit was never seen.
+
+        All three sets are filled on every call, whatever the requested unit, so
+        the report can show the other two next to it.
         """
+        host = str(row.get('proxy') or '').partition('://')[2].rpartition(':')[0]
+        host = host.strip('[]').lower()
+        fresh_ip = bool(host) and host not in unique_ips
+        if host:
+            unique_ips.add(host)
+        exit_ip = exit_address_of(row)
+        fresh_exit = bool(exit_ip) and exit_ip not in unique_exits
+        if exit_ip:
+            unique_exits.add(exit_ip)
         if find.what == 'endpoint':
             return 1
-        return 1 if row.get('exit_ip') else 0
+        return int(fresh_ip) if find.what == 'ip' else int(fresh_exit)
 
     found = {'items': passed}
     observation_id = [None]
@@ -1765,15 +1839,28 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
                 if verdict is not None and verdict_blocks(verdict, strict):
                     row = blocked_result(proxy, verdict)
                 else:
+                    row = None
                     try:
                         # The resource gate is the single place that decides
                         # whether the next request is still affordable, in RAM,
                         # in open descriptors and against the global deadline.
-                        await gate.acquire()
+                        # It is also *charged* for what the measurement spent:
+                        # without `requests=`/`bytes=` the totals stayed 0 and
+                        # `--max-requests`/`--run-max-bytes` were silent no-ops
+                        # (F12, defect 23).
+                        await gate.acquire(fds=1)
                         try:
                             row = await probe(proxy, config, limiter)
                         finally:
-                            await gate.release()
+                            await gate.release(fds=1, requests=measurement_requests(row),
+                                               bytes=measurement_bytes(row))
+                    except chain.BudgetExhausted as exc:
+                        # The budget ended the run; it did not fail this address.
+                        # Recording it as UNREACHABLE would turn "we stopped" into
+                        # "the proxy is dead" and publish that lie.
+                        budget_stop['reason'] = exc.code
+                        ledger.release(proxy)
+                        continue
                     except Exception as exc:
                         # One malformed proxy must never stop the whole scan, and
                         # the reason it died is recorded with a stage so the
@@ -1807,16 +1894,24 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
         else:
             snapshot_state = 'complete'
             stop_reason = 'complete'
+        if find.enabled and not incomplete and found['items'] < find.n:
+            # The sweep finished and the requested unit is still short.  Saying
+            # `complete` alone left "N unique IPs" indistinguishable from a
+            # corpus of nothing; the reason names the unit that was unreachable.
+            stop_reason = ('want_unreachable_' + find.what if not found['items']
+                           else 'want_short_' + find.what)
+        counts = {'endpoints': passed, 'unique_ips': len(unique_ips),
+                  'exit_ips': len(unique_exits)}
         if run_state is not None:
             run_state.update(profile=profile, state=snapshot_state, stop_reason=stop_reason,
                              scope_candidates=total, checked=completed, pending=max(0, total - completed),
-                             passed=passed, found=found['items'], count_what=find.what)
+                             passed=passed, found=found['items'], count_what=find.what, **counts)
         if on_progress:
             on_progress(dict(phase='scanning', profile=profile, checked=completed, candidates=total, passed=passed,
                              pending=max(0, total - completed), state=snapshot_state, stop_reason=stop_reason,
                              scope_candidates=total, speed=round(speed, 2), found=found['items'],
                              eta_seconds=round(eta) if speed else None, workers=workers,
-                             reputation=status_counts, unreachable=unreachable))
+                             reputation=status_counts, unreachable=unreachable, **counts))
         if progress:
             print(tr(f'Проверено {completed}/{total}; {speed:.1f} прокси/с; осталось ~{eta / 60:.1f} мин', f'Checked {completed}/{total}; {speed:.1f} proxies/s; ~{eta / 60:.1f} min left'), flush=True)
 
@@ -2985,6 +3080,37 @@ def parser():
                            'не связан с --api-token; на сетевом bind генерируется, если не задан',
                            'gateway: client password for the gateway (or PROXY_WORKBENCH_GATEWAY_TOKEN); '
                            'unrelated to --api-token; generated on a network bind when not given'))
+    # F24: the second half of the requirement was a library nothing could reach.
+    # Every action that changes data is a two-call contract: it prints what would
+    # happen, and only `--apply` performs it.
+    p.add_argument('--apply', action='store_true',
+                   help=tr('backup: выполнить предпросмотренное действие (восстановление, откат, '
+                           'retention, очистка, перепривязка секретов)',
+                           'backup: run the previewed action (restore, rollback, retention, cleanup, '
+                           'secret rebind)'))
+    p.add_argument('--to-data', type=Path, default=None,
+                   help=tr('backup: папка назначения для восстановления или отката',
+                           'backup: target folder for a restore or a rollback'))
+    p.add_argument('--target', default='',
+                   help=tr('backup retention: через запятую observations,results',
+                           'backup retention: observations,results, comma separated'))
+    p.add_argument('--retention-hours', dest='retention_hours', type=float, default=0,
+                   help=tr('backup retention: удалять строки старше N часов',
+                           'backup retention: delete rows older than N hours'))
+    p.add_argument('--include-fresh', action='store_true',
+                   help=tr('backup retention: удалять и ещё не истёкшие строки по возрасту',
+                           'backup retention: delete rows that have not expired yet, by age'))
+    p.add_argument('--keep-newest', type=int, default=0,
+                   help=tr('backup retention: сохранить N самых свежих строк',
+                           'backup retention: keep the N newest rows'))
+    p.add_argument('--vacuum', action='store_true',
+                   help=tr('backup retention: выполнить VACUUM после удаления',
+                           'backup retention: run VACUUM after deleting'))
+    p.add_argument('--keep-lock', action='store_true',
+                   help=tr('backup cleanup: не удалять файл блокировки', 'backup cleanup: keep the lock file'))
+    p.add_argument('--mapping', type=Path, default=None,
+                   help=tr('backup rebind: JSON-файл соответствия access_id -> secret_ref',
+                           'backup rebind: JSON file mapping access_id -> secret_ref'))
 
     # Management commands.  These are the user path to the modules the engine is
     # built on: an import, a source, a key, a pool, a schedule, a profile, a
@@ -3765,15 +3891,142 @@ def _cmd_preset(workbench, args, action):
 
 
 def _cmd_backup(workbench, args, action):
-    """``backup create|list`` -- a restorable copy with a manifest (F24)."""
+    """``backup create|list|verify|preview|restore|rollback|retention|cleanup|rebind``.
+
+    Only `create` and `list` existed, so the rest of F24 -- the restore preview
+    into a new data path, retention/cleanup with a preview, the rollback of a
+    migration and the secret rebind after a restore -- was a library nothing
+    could reach: `grep` over the product found no caller of `db.restore`,
+    `db.retention_preview`, `db.apply_retention`, `db.cleanup`, `db.rollback` or
+    `db.rebind_secrets`.  A `backup create` nobody could use is not a backup.
+    Every destructive step is a two-call contract: the first prints what *would*
+    happen, the second applies it only with ``--apply``.
+    """
+    from . import db as store
+    backup_dir = workbench.backup_dir
     if action in ('create', 'now'):
         manifest = workbench.backup_create(reason='manual')
         return emit(args, manifest.to_dict() if hasattr(manifest, 'to_dict') else str(manifest),
                     tr(f'Резервная копия: {manifest.path} (sha256 {manifest.sha256[:16]}…)',
                        f'backup: {manifest.path} (sha256 {manifest.sha256[:16]}…)'))
-    rows = workbench.backup_list()
-    return emit(args, rows, '\n'.join(f"{row['name']} {row['size']} байт" for row in rows)
-                or tr('Резервных копий нет.', 'no backups yet'))
+    if action in ('list', ''):
+        rows = workbench.backup_list()
+        return emit(args, rows, '\n'.join(f"{row['name']} {row['size']} байт" for row in rows)
+                    or tr('Резервных копий нет.', 'no backups yet'))
+    if action == 'verify':
+        found = store.list_backups(backup_dir)
+        if not found:
+            return emit(args, {'checked': 0}, tr('Резервных копий нет.', 'no backups yet'))
+        checked = [{'path': item.path, 'ok': store.verify_backup(item)} for item in found]
+        broken = [item['path'] for item in checked if not item['ok']]
+        if broken:
+            raise WorkbenchError(tr('Копия повреждена или не совпадает: ' + ', '.join(broken),
+                                    'a backup is corrupt or does not match: ' + ', '.join(broken)),
+                                 'E_DATA_BACKUP_FAILED')
+        return emit(args, {'checked': len(checked), 'ok': True},
+                    tr(f'Проверено копий: {len(checked)}', f'backups checked: {len(checked)}'))
+    if action in ('preview', 'restore', 'rollback'):
+        return _cmd_backup_restore(workbench, args, action)
+    if action in ('retention', 'cleanup'):
+        return _cmd_backup_cleanup(workbench, args, action)
+    if action == 'rebind':
+        return _cmd_backup_rebind(workbench, args)
+    raise WorkbenchError(tr(f'Неизвестное действие backup: {action}', f'unknown backup action: {action}'),
+                         'E_VALIDATION_FIELD')
+
+
+def _backup_target(args, workbench):
+    """Where a restore would put its files.  Always explicit: a restore never
+    guesses the folder it overwrites."""
+    target = getattr(args, 'to_data', None)
+    if not target:
+        raise WorkbenchError(tr('Укажите папку назначения: --to-data ПАПКА',
+                                'name the target folder: --to-data PATH'), 'E_VALIDATION_FIELD')
+    return Path(target)
+
+
+def _cmd_backup_restore(workbench, args, action):
+    from . import db as store
+    target = _backup_target(args, workbench)
+    if action == 'rollback':
+        # Rollback restores the file a pre-migration backup recorded, so it takes
+        # that backup by name (or the newest one) and the target folder.
+        # `args.items[0]` is the action itself; a named backup is the first
+        # positional after it.
+        wanted = next((item for item in (args.items or [])[1:] if item), '')
+        if not wanted:
+            found = store.list_backups(workbench.backup_dir)
+            if not found:
+                raise WorkbenchError(tr('Нет резервной копии для отката.',
+                                        'no backup to roll back to.'), 'E_STATE_NOT_FOUND')
+            wanted = found[0]
+        report = store.rollback(wanted, target, apply=bool(args.apply))
+    elif action == 'restore':
+        report = store.restore(workbench.data, target, apply=bool(args.apply),
+                               reason='restore')
+    else:
+        preview = store.restore_preview(workbench.data, target, reason='restore')
+        return emit(args, preview.to_dict(),
+                    tr('Предпросмотр восстановления; добавьте --apply, чтобы выполнить.',
+                       'restore preview; add --apply to run it.'))
+    if not args.apply:
+        return emit(args, report.preview.to_dict(),
+                    tr('Предпросмотр отката; добавьте --apply, чтобы выполнить.',
+                       'rollback preview; add --apply to run it.'))
+    if report.preview.conflicts and not report.verified:
+        raise WorkbenchError(
+            tr('В папке назначения есть файлы с теми же именами: '
+               + ', '.join(report.preview.conflicts),
+               'the target folder already holds files with these names: '
+               + ', '.join(report.preview.conflicts)), 'E_PATH_CONFLICT')
+    return emit(args, report.to_dict(), report.note or tr('Восстановлено.', 'restored.'))
+
+
+def _retention_policy(args):
+    from . import db as store
+    include = tuple(name.strip() for name in (getattr(args, 'target', '') or '').split(',')
+                    if name.strip()) or ('observations', 'results')
+    hours = getattr(args, 'retention_hours', 0) or 0
+    return store.RetentionPolicy(
+        max_age_seconds=(hours * 3600 if hours > 0 else None),
+        expired_only=not bool(getattr(args, 'include_fresh', False)),
+        include=include,
+        keep_newest=int(getattr(args, 'keep_newest', 0) or 0))
+
+
+def _cmd_backup_cleanup(workbench, args, action):
+    from . import db as store
+    if action == 'cleanup':
+        if not args.apply:
+            return emit(args, store.cleanup_preview(workbench.data).to_dict(),
+                        tr('Предпросмотр очистки данных; добавьте --apply, чтобы удалить.',
+                           'data cleanup preview; add --apply to delete.'))
+        report = store.cleanup(workbench.data, apply=True,
+                               keep_lock=bool(getattr(args, 'keep_lock', False)))
+        return emit(args, report.to_dict(), tr('Очистка данных выполнена.', 'data cleanup applied.'))
+    policy = _retention_policy(args)
+    # The connection is the workbench's own: it closes it on exit, and closing it
+    # here made `Workbench.close()` fail on an already closed handle.
+    conn = workbench.conn
+    if not args.apply:
+        return emit(args, store.retention_preview(conn, policy).to_dict(),
+                    tr('Предпросмотр retention; добавьте --apply, чтобы удалить.',
+                       'retention preview; add --apply to delete.'))
+    report = store.apply_retention(conn, policy, vacuum=bool(getattr(args, 'vacuum', False)))
+    return emit(args, report.to_dict(), tr('Retention применена.', 'retention applied.'))
+
+
+def _cmd_backup_rebind(workbench, args):
+    """Re-point the vault after a restore into a new data path (F24, F18)."""
+    from . import db as store
+    mapping = json.loads(Path(args.mapping).read_text(encoding='utf-8')) \
+        if getattr(args, 'mapping', None) else {}
+    report = store.rebind_secrets(workbench.data, mapping, dry_run=not args.apply)
+    body = report.to_dict() if hasattr(report, 'to_dict') else {'report': str(report)}
+    if not args.apply:
+        return emit(args, body, tr('Предпросмотр перепривязки секретов.',
+                                   'secret rebind preview.'))
+    return emit(args, body, tr('Секреты перепривязаны.', 'secrets rebound.'))
 
 
 def _cmd_geo(workbench, args, action):
