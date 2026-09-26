@@ -28,12 +28,26 @@ class PathTests(unittest.TestCase):
         self.assertEqual(paths.worker_command('scan')[1:], ['-u', '-m', 'proxy_workbench', 'scan'])
 
     def test_entry_point_dispatch(self):
+        """No arguments is the desktop host; ``gui`` is the interface; a verb is the CLI.
+
+        This test used to expect an empty command line to open the interface.
+        That was true before the background layer existed, and it stopped being
+        true the moment the shipped entry point became the desktop host (F22/F23):
+        the application a user double-clicks is the process that owns the menu
+        bar, the single instance and the login item.  Routing it straight to the
+        page is exactly what a shipped product must not do -- the window would
+        die with its tab.  ``gui`` is still the way to ask for the page alone.
+        """
         with mock.patch('proxy_workbench.gui.main', return_value=None) as gui_main, \
+                mock.patch('proxy_workbench.desktop.main', return_value=0) as desktop_main, \
                 mock.patch('proxy_workbench.proxytool.main', return_value=0) as cli_main:
-            entry.main([])
-            entry.main(['gui', '--no-browser'])
+            self.assertEqual(entry.main([]), 0)
+            self.assertEqual(entry.main(['gui', '--no-browser']), None)
+            self.assertEqual(entry.main(['--no-desktop', '--no-browser']), None)
             self.assertEqual(entry.main(['export', '--top', '5']), 0)
-        self.assertEqual([call.args for call in gui_main.call_args_list], [([],), (['--no-browser'],)])
+        self.assertEqual([call.args for call in gui_main.call_args_list],
+                         [(['--no-browser'],), (['--no-browser'],)])
+        self.assertEqual([call.args for call in desktop_main.call_args_list], [([],)])
         cli_main.assert_called_once_with(['export', '--top', '5'])
 
 

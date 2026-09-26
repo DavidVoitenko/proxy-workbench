@@ -215,12 +215,29 @@ class CapabilityMatrixTests(unittest.TestCase):
                 else:
                     self.assertNotEqual(item['outcome'], '')
 
-    def test_unmeasured_transports_are_declared_unsupported(self):
+    def test_measured_capabilities_name_their_endpoint_budget_and_outcome(self):
+        """A capability that is measured names where, at what cost, and what came back.
+
+        The three entries this replaces were asserted ``supported=False`` while
+        the probe ladder had already gained a real endpoint, a budget and an
+        outcome for each of them: a websocket upgrade with a pong, a connection
+        held open, a media segment fetched.  Declaring them unmeasured was true
+        when the product only ever issued a GET and became false when F20
+        landed, so the assertion had pinned the absence rather than the honesty.
+        """
         matrix = {item['id']: item for item in pr.capability_matrix()}
         for name in ('websocket_handshake', 'long_lived_connection', 'media_manifest_segment',
-                     'udp_transport', 'http2_or_http3'):
+                     'http_api_assertions'):
+            with self.subTest(capability=name):
+                self.assertTrue(matrix[name]['supported'])
+                self.assertNotEqual(matrix[name]['endpoint'], '—')
+                self.assertNotEqual(matrix[name]['budget'], '—')
+                self.assertNotEqual(matrix[name]['outcome'], '')
+        # Still not measured, and still said so with an outcome instead of a promise.
+        for name in ('udp_transport', 'http2_or_http3', 'calls_video_any_service'):
             with self.subTest(capability=name):
                 self.assertFalse(matrix[name]['supported'])
+                self.assertNotEqual(matrix[name]['outcome'], '')
         for name in ('http_transfer', 'bandwidth', 'anonymity_judge', 'dns_reputation'):
             with self.subTest(capability=name):
                 self.assertTrue(matrix[name]['supported'])

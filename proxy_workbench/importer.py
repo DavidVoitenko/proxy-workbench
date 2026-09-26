@@ -35,7 +35,7 @@ import time
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Callable, Sequence
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, urlunsplit
 
 from proxy_workbench import db
 from proxy_workbench import geoip
@@ -437,21 +437,56 @@ def _names_the_header(mapping: ColumnMapping, record: Sequence) -> bool:
 
 
 # --- endpoint model ---------------------------------------------------------
+#: The two things an import may be allowed to do, each on its own axis.
+#:
+#: ``public_only`` says which *destinations* the list may name, and
+#: ``credentials`` says what happens to userinfo.  They were one decision
+#: before, which is why an importer written when "there is no secret store yet"
+#: refused everything: a hostname, a private address and a password were all
+#: the same case.  ``secrets.AccessStore`` exists now, so the two axes are
+#: separate and a caller that wants a private collection without a secret
+#: store can ask for exactly that.
+PUBLIC_ONLY = 'public_only'
+PRIVATE_ALLOWED = 'private_allowed'
+CREDENTIALS_REFUSE = 'refuse'
+CREDENTIALS_STORE = 'store'
+
+
 @dataclass(frozen=True)
-class EndpointPolicy:
+class DestinationPolicy:
     """What an import is allowed to contain.
 
-    `public_only=True` (default) refuses hostnames and non-global addresses at
-    parse time, because the only end to end consumer today — the collector
-    normalizer `proxytool.normalize()` — drops them later, and accepting them
-    here would be exactly defect 10.  Setting it to False is an explicit,
-    recorded choice of a private collection, and the report says so.
+    ``public_only=True`` (the default) refuses hostnames and non-global
+    addresses at parse time, because the collector normalizer
+    ``proxytool.normalize()`` drops them later, and accepting them here would
+    be exactly defect 10.  Setting it to False is an explicit, recorded choice
+    of a private collection, and the report says so.
+
+    ``credentials`` says what to do with userinfo.  The default refuses it,
+    which is what every surface has always done.  ``store`` moves the value
+    into ``secrets.AccessStore`` instead of into the URL: the address lands in
+    the collection without its secret, and the secret lives in the vault with
+    its own access id and revision.
     """
 
     public_only: bool = True
+    credentials: str = CREDENTIALS_REFUSE
+
+    def __post_init__(self):
+        if self.credentials not in (CREDENTIALS_REFUSE, CREDENTIALS_STORE):
+            raise ImportProblem('credentials должен быть refuse или store.',
+                                code=CODE_FIELD, detail={'credentials': self.credentials})
+
+    @property
+    def stores_credentials(self) -> bool:
+        return self.credentials == CREDENTIALS_STORE
 
 
-DEFAULT_POLICY = EndpointPolicy(public_only=True)
+#: The historical name of the same policy object, kept because the CLI, the GUI
+#: and the API all name it.  They are one class, not two rules.
+EndpointPolicy = DestinationPolicy
+
+DEFAULT_POLICY = DestinationPolicy(public_only=True)
 
 
 @dataclass(frozen=True)
@@ -475,12 +510,43 @@ def _parts(canonical: str) -> Parsed:
     return Parsed(canonical, scheme, host, int(port), ip_version)
 
 
-def _classify(value: str, policy: EndpointPolicy):
-    """Return (Parsed, None) or (None, reason_code).  One decision for all paths."""
+def _split_credentials(value: str):
+    """``(address, username, password)`` -- userinfo separated from the address.
+
+    The secret never travels on into the URL: ``normalize_custom`` refuses
+    credentials structurally, so the import can accept a line with them while
+    the row in the database holds the address alone.
+    """
+    text = str(value or '').strip()
+    if '://' not in text:
+        text = 'http://' + text
+    parsed = urlsplit(text)
+    if parsed.username is None and parsed.password is None:
+        return value, None, None
+    host = parsed.hostname or ''
+    if ':' in host and not host.startswith('['):
+        host = '[' + host + ']'
+    netloc = host + (f':{parsed.port}' if parsed.port else '')
+    address = urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment))
+    return address, parsed.username, parsed.password
+
+
+def _classify(value: str, policy: DestinationPolicy):
+    """Return (Parsed, None) or (None, reason_code).  One decision for all paths.
+
+    Returns ``(Parsed, reason, credentials)`` when the policy keeps secrets:
+    the caller routes them to ``secrets.AccessStore``.  The old two-value shape
+    is unchanged for the refusing case, so every caller that does not care
+    about credentials keeps working.
+    """
     if _has_credentials(value):
-        # F04 owns upstream credentials and there is no secret store yet, so the
-        # only honest answer today is an immediate, uniform refusal.
-        return None, ROW_CREDENTIALS
+        if not policy.stores_credentials:
+            return None, ROW_CREDENTIALS
+        address, username, password = _split_credentials(value)
+        parsed, reason = _classify(address, policy)
+        if parsed is None:
+            return None, reason
+        return parsed, None, (username, password)
     canonical = proxytool.normalize_custom(value)
     if canonical is None:
         return None, CODE_FORMAT
@@ -538,10 +604,17 @@ class ImportRow:
     duplicate_of: int | None = None
     present: bool = False
     sample: str = ''
+    #: ``(username, password)`` taken out of the userinfo, when the policy says
+    #: to store them.  The value is **never** serialized: `to_dict` reports
+    #: only that a credential was present, because a preview travels to a GUI
+    #: and to a log.
+    credentials: tuple | None = None
 
     def to_dict(self) -> dict:
         data = {'line': self.line, 'state': self.state, 'reason': self.reason,
                 'sample': self.sample}
+        if self.credentials:
+            data['has_credentials'] = True
         if self.canonical:
             data['canonical'] = self.canonical
         if self.detail:
@@ -619,13 +692,15 @@ def _line_row(number: int, line: str, require_scheme: bool, policy: EndpointPoli
     if require_scheme and '://' not in line:
         return ImportRow(number, REJECTED, CODE_FORMAT,
                          detail='в строке URI обязателен протокол', sample=sample)
-    parsed, reason = _classify(line, policy)
+    result = _classify(line, policy)
+    parsed, reason = result[0], result[1]
+    credentials = result[2] if len(result) > 2 else None
     if parsed is None:
         return ImportRow(number, REJECTED, reason, sample=sample)
     return ImportRow(number, VALID, canonical=parsed.canonical,
                      endpoint_id=endpoint_id(parsed.canonical), scheme=parsed.scheme,
                      host=parsed.host, port=parsed.port, ip_version=parsed.ip_version,
-                     sample=sample)
+                     sample=sample, credentials=credentials)
 
 
 def _parse_txt(text: str, require_scheme: bool, policy: EndpointPolicy) -> list:
@@ -645,8 +720,12 @@ def _cell_row(number: int, cells: dict, credentials: tuple, columns: Sequence,
     """
     sample = _cells_sample(cells)
     host, port = cells.get('host', ''), cells.get('port', '')
-    if credentials or (host and _has_credentials(host)):
-        # userinfo in the address itself is a credential, not a missing column
+    if not policy.stores_credentials and (credentials or (host and _has_credentials(host))):
+        # userinfo in the address itself is a credential, not a missing column.
+        # A policy that stores secrets splits both forms off in `_classify`, so
+        # neither reaches this refusal; a policy that refuses them must refuse
+        # a *column* and a *userinfo in the address* the same way, which is what
+        # "one decision for all paths" means.
         return ImportRow(number, REJECTED, ROW_CREDENTIALS,
                          detail=(f'колонки: {", ".join(credentials)}' if credentials
                                  else 'userinfo в адресе'), sample=sample)
@@ -659,13 +738,18 @@ def _cell_row(number: int, cells: dict, credentials: tuple, columns: Sequence,
     else:
         scheme = cells.get('scheme', '').strip().lower()
         value = f'{scheme}://{host}:{port}' if scheme else f'{host}:{port}'
-    parsed, reason = _classify(value, policy)
+    column_credentials = ((cells.get('username') or cells.get('user') or ''),
+                          (cells.get('password') or cells.get('pass') or '')) if credentials else None
+    result = _classify(value, policy)
+    parsed, reason = result[0], result[1]
+    inline = result[2] if len(result) > 2 else None
     if parsed is None:
         return ImportRow(number, REJECTED, reason, sample=sample)
     return ImportRow(number, VALID, canonical=parsed.canonical,
                      endpoint_id=endpoint_id(parsed.canonical), scheme=parsed.scheme,
                      host=parsed.host, port=parsed.port, ip_version=parsed.ip_version,
-                     country=_country(cells.get('country', '')), sample=sample)
+                     country=_country(cells.get('country', '')), sample=sample,
+                     credentials=inline or column_credentials)
 
 
 def _cells_sample(cells: dict) -> str:
@@ -1177,9 +1261,18 @@ def commit(conn: sqlite3.Connection, plan: Preview, *, allow_partial: bool = Fal
                        ' VALUES (?, ?, ?, ?)', (plan.collection_id, row.endpoint_id, stamp, origin))
             if on_progress:
                 on_progress('membership', index, total)
+        # Credentials the policy asked to keep go to the secret store, not into
+        # the address: the row above is already written without them, and the
+        # vault gets its own access id, revision and verifier.
+        stored_credentials = _store_credentials(conn, plan)
+        if stored_credentials:
+            counts_extra = {'credentials_stored': stored_credentials}
+        else:
+            counts_extra = {}
         revision = current + 1
         report = _report(plan, 'committed', current, revision,
-                         [before[identifier] for identifier in removed_ids], stamp, started)
+                         [before[identifier] for identifier in removed_ids], stamp, started,
+                         extra=counts_extra)
         conn.execute('INSERT INTO import_batch(id, collection_id, created_at, state, report_json, revision)'
                    ' VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET state = excluded.state,'
                    ' report_json = excluded.report_json, revision = excluded.revision,'
@@ -1196,11 +1289,44 @@ def commit(conn: sqlite3.Connection, plan: Preview, *, allow_partial: bool = Fal
         raise
 
 
+def _store_credentials(conn: sqlite3.Connection, plan: Preview) -> int:
+    """Put the credentials of the imported rows into the secret store.
+
+    ``secrets.AccessStore`` is the owner of an access identity: the import
+    never writes a secret anywhere else and never keeps one in the URL.  An
+    access that already exists for the endpoint and revision is left alone --
+    a second import of the same list must not silently rotate a secret.
+    """
+    rows = [row for row in plan.valid if row.credentials]
+    if not rows or not plan.policy.stores_credentials:
+        return 0
+    try:
+        from . import secrets as secretstore
+        store = secretstore.AccessStore(conn, secretstore.SessionVault())
+    except Exception:  # noqa: BLE001 - a missing vault is a configuration state
+        return 0
+    stored = 0
+    for row in rows:
+        username, password = row.credentials
+        if not username and not password:
+            continue
+        if store.list_for_endpoint(row.endpoint_id):
+            continue
+        try:
+            store.create(row.endpoint_id, row.scheme, username=username or None,
+                         password=password or None)
+            stored += 1
+        except Exception:  # noqa: BLE001 - one bad secret must not undo the import
+            continue
+    return stored
+
+
 def _report(plan: Preview, state: str, before: int, after: int, removed, stamp: float,
-            started: float) -> ImportReport:
+            started: float, extra: dict | None = None) -> ImportReport:
     counts = dict(plan.counts)
     counts['added'] = len(plan.added)
     counts['removed'] = len(removed)
+    counts.update(extra or {})
     rejected = tuple({'line': row.line, 'reason': row.reason, 'sample': row.sample}
                      for row in plan.rejected)
     return ImportReport(

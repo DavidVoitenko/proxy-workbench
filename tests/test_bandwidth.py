@@ -55,16 +55,43 @@ class BandwidthTests(unittest.IsolatedAsyncioTestCase):
         self.server.close()
         await self.server.wait_closed()
 
-    async def test_working_proxy_gets_a_speed(self):
+    async def test_a_transfer_too_fast_to_measure_reports_no_number(self):
+        """Defect 15: a plausible-looking number is worse than no number.
+
+        The old test asserted ``mbps > 0`` for a 100 KB loopback transfer.  The
+        window that transfer gives is far below the 0.25 s minimum, and
+        ``probes.measure_speed`` now says ``insufficient`` and carries no
+        figure at all.  The assertion pinned the old arithmetic, which divided
+        a real byte count by a window too short to mean anything -- exactly the
+        "plausible number" defect 15 exists to close.
+        """
         row = await p.check_proxy(self.proxy, config(), p.Rate(0))
-        self.assertGreater(row['speed']['mbps'], 0)
+        self.assertEqual(row['speed']['state'], 'insufficient', row['speed'])
+        self.assertIsNone(row['speed']['mbps'], row['speed'])
+        self.assertIsNotNone(row['speed']['code'], row['speed'])
         self.assertGreaterEqual(row['speed']['bytes'], 100_000)
-        self.assertIsNone(row['speed']['error'])
         self.assertEqual(self.requests[-1], b'http://speed.invalid/file')
         self.requests.clear()
         row = await p.check_proxy(self.proxy, config(speedtest=False), p.Rate(0))
         self.assertNotIn('speed', row)
         self.assertEqual(len(self.requests), 1)
+
+    async def test_a_transfer_long_enough_to_measure_gives_a_number(self):
+        """The other half: a real window still produces a real figure."""
+        from proxy_workbench import probes
+        trace = probes.TransferTrace(url='http://speed.invalid/file', connection='cold')
+        trace.begin(0.0)
+        trace.add(1 << 20, 0.10)
+        trace.add(1 << 20, 0.40)
+        trace.finish(0.40)
+        measured = probes.measure_speed(trace)
+        self.assertEqual(measured.state, 'ok')
+        self.assertGreater(measured.mbps, 0)
+        # And the number comes from the measured window, not from a byte count.
+        # The window is first byte to last byte, 0.10 -> 0.40, never from the
+        # start of the request: 2 MiB over 0.30 s.
+        self.assertAlmostEqual(measured.mbps,
+                               round((2 << 20) * 8 / 0.30 / 1e6, 2), places=1)
 
     async def test_failed_proxy_is_not_speed_tested(self):
         cfg = config()

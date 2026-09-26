@@ -163,11 +163,29 @@ class JudgeTransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('anonymity', dead)
 
     async def test_detect_own_ips_from_direct_judge(self):
+        """A self-hosted judge echoes loopback and LAN addresses, and they count.
+
+        This test used to assert that a judge echoing only ``10.1.2.3`` raises,
+        because ``extract_public_ips`` was called with the default
+        ``global_only=True``.  That default is right for a public judge and
+        wrong for a self-hosted one: a judge on the same machine answers with
+        the loopback address it saw, and dropping it left the baseline empty --
+        which then made every endpoint look ``elite`` for want of a comparison
+        (or ``unknown``, because the judge could not be verified).  The call
+        now passes ``global_only=False`` and the judge's own addresses are still
+        subtracted, so its server address never becomes ours.
+        """
         body = [f'REMOTE_ADDR = {OWN_IP}\nSERVER_ADDR = 127.0.0.1\n']
         server, url = await self.serve(lambda request: body[0])
         async with server:
             self.assertEqual(await p.detect_own_ips(scan_config(judge=url + '/azenv')), {OWN_IP})
+            # A LAN-only echo is now a baseline, not a refusal.
             body[0] = 'REMOTE_ADDR = 10.1.2.3\n'
+            self.assertEqual(await p.detect_own_ips(scan_config(judge=url + '/azenv')),
+                             {'10.1.2.3'})
+            # A judge that shows no address at all still refuses: an empty
+            # baseline would make every leak undetectable.
+            body[0] = 'nothing here\n'
             with self.assertRaises(ValueError):
                 await p.detect_own_ips(scan_config(judge=url + '/azenv'))
 

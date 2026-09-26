@@ -58,7 +58,7 @@ UPDATE_MANIFEST_ENV = 'PROXY_WORKBENCH_UPDATE_MANIFEST'
 # Mirrors db.SCHEMA_VERSION.  The real number is read from db at run time; this
 # value is only the fallback for a tree where the storage layer is absent, and
 # tests/test_desktop_signing.py fails when the two disagree.
-FALLBACK_SCHEMA_VERSION = 15
+FALLBACK_SCHEMA_VERSION = 18
 UPDATE_STATE_NAME = 'update-state.json'
 BACKUP_PREFIX = 'pre-update-'
 READ_CHUNK = 1024 * 1024
@@ -3293,6 +3293,16 @@ def main(argv=None):
     if argv and argv[0] in ('--print-paths', '--portable', '--update-notice', '--autostart',
                             '--autostart-status', '--status', '--migrate-preview'):
         return _host_command(argv)
+    if any(token in ('-h', '--help', '--version') for token in argv):
+        # `--help` and `--version` ask a question and change nothing, so they
+        # must be answered whether or not the application is already running.
+        # `__main__` routes `--data ... --help` here, because `--data` is one of
+        # this host's own flags; without this a running instance swallowed the
+        # question and answered "already running", which is a true sentence
+        # about the wrong thing.  The parser prints and exits, so the lock is
+        # never taken.
+        from . import proxytool
+        return proxytool.main(argv)
     layout = resolve_layout()
     try:
         ensure_layout(layout)

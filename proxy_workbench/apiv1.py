@@ -51,6 +51,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from .branding import PRODUCT_NAME, PRODUCT_VERSION
 from .i18n import tr
+from . import apikeys
 
 API_PREFIX = '/v1'
 API_VERSION = '1.0.0'
@@ -1198,10 +1199,16 @@ ROUTES = (
     Route('DELETE', '/v1/collections/{id}/members/{endpoint_id}', 'collections.member_remove',
           'collections.write', 'remove a member of one collection only', mutating=True,
           scope=(('collection', 'id'),), body=(), tags=('collections',)),
+    # ``allow_private_endpoints`` is the same explicit, recorded choice the CLI
+    # has as ``--allow-private-endpoints``: without it ``importer.DEFAULT_POLICY``
+    # refuses hostnames, private addresses and the RFC 5737 ranges, so a user's
+    # own gateway list was accepted by the form and dropped by the importer
+    # (defect 10).  The choice is written to the audit log.
     Route('POST', '/v1/collections/{id}/imports/preview', 'imports.preview', 'import.read',
           'validate an import without changing anything', scope=(('collection', 'id'),),
           body=(Field('format', 'string', choices=('txt', 'uri', 'csv', 'json'), default='txt'),
                 Field('content', 'string', required=True, max_len=8 * 1024 * 1024),
+                Field('allow_private_endpoints', 'bool'),
                 Field('mapping', 'object', shape=(Field('endpoint', 'string', max_len=64),
                                                   Field('country', 'string', max_len=64)))),
           tags=('collections',)),
@@ -1211,6 +1218,8 @@ ROUTES = (
           body=(Field('format', 'string', choices=('txt', 'uri', 'csv', 'json'), default='txt'),
                 Field('content', 'string', required=True, max_len=8 * 1024 * 1024),
                 Field('mode', 'string', choices=('merge', 'replace'), default='merge'),
+                Field('allow_private_endpoints', 'bool'),
+                Field('allow_partial', 'bool'),
                 Field('revision', 'int', minimum=1), Field('preview_digest', 'string', max_len=128)),
           tags=('collections',)),
     Route('POST', '/v1/collections/{id}/merge', 'collections.merge', 'collections.write',
@@ -2041,7 +2050,15 @@ class ApiV1:
             self.slots.release()
         response = self._response(route, request, result, principal, extra_headers, query)
         if idem_key:
-            self.idempotency.put(bucket, idem_key, digest, response)
+            # Never keep an answer that carries a secret shown once.  `Response`
+            # is frozen and its `body` is already serialized bytes, so the
+            # `OneShotBody` marker the service returned is gone by now; the
+            # cache is the second and last place the value can be taken out.
+            # Storing the untouched response here is what let a replay of the
+            # same `POST /v1/keys` hand the full `pwk_...` secret out a second
+            # time, long after the one moment CONTRACTS §5.1 allows it.
+            self.idempotency.put(bucket, idem_key, digest,
+                                 apikeys.without_one_shot_response(response))
         self._audit(route, request, params, principal, 'ok', None, body)
         if route.async_job:
             self.stats['jobs_submitted'] += 1
