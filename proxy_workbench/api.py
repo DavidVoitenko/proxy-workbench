@@ -1166,6 +1166,7 @@ class WorkbenchService(apiv1.Service):
     def _op_collections_create(self, call):
         from . import db as schema
         body = call.body or {}
+        _refuse_unsupported_allow_private(body)
         name = str(body.get('name') or '').strip()
         if not name:
             raise apiv1.field_error('name', tr('имя коллекции обязательно',
@@ -1186,6 +1187,7 @@ class WorkbenchService(apiv1.Service):
         from . import db as schema
         identifier = call.params.get('id')
         body = call.body or {}
+        _refuse_unsupported_allow_private(body)
         expected = call.expected_revision
         conn = self.writable_connection()
         try:
@@ -1851,28 +1853,51 @@ class WorkbenchService(apiv1.Service):
         return self._with_workbench(action)
 
     def _op_pools_start(self, call):
-        """Starting a pool means filling it, not only writing a state word.
+        """Starting a pool means filling it and then keeping it filled.
 
         `start` used to save `STATE_EMPTY` and return: the pool stayed 0/desired
         until something else refilled it, and nothing else did (F14, §7.13).  The
         save itself was broken too -- it passed a whole `PoolStatus` where
         `save_status` wants the state string and two keywords, so the route
         answered 500.
+
+        The first refill is here, and so is the watch that keeps doing it:
+        `pools.watch` was written, tested and started by nobody, so a pool that
+        lost members after the first refill stayed lost.  The loop is started by
+        the same call that starts the pool and stopped by the same ``pause``,
+        which is what makes "watch restores the pool" true rather than a
+        function nobody reaches.
         """
         def action(workbench):
+            from . import pools as pools_module
             pool_id = str(call.params.get('id'))
             store = workbench.pools()
             started = pools_state_for('start', store.status(pool_id))
             store.save_status(pool_id, started.state,
                               deficit_reason=started.deficit_reason,
                               next_attempt_at=started.next_attempt_at)
-            return _status_dict(workbench.pool_refill(pool_id,
-                                                      pool_candidate_source(workbench.conn)))
+            body = _status_dict(workbench.pool_refill(
+                pool_id, pool_candidate_source(workbench.conn)))
+            if _pool_watch_asked(call):
+                body['watch'] = pools_module.watch_registry(self.data).start(
+                    pool_id, source_factory=pool_candidate_source,
+                    budget=call_budget(call))
+            else:
+                body['watch'] = pools_module.watch_registry(self.data).stop(pool_id)
+            body['watching'] = body['watch']['watching']
+            return body
         return self._with_workbench(action)
 
     def _op_pools_pause(self, call):
-        return self._with_workbench(lambda workbench: self._pool_transition(
-            workbench, call.params.get('id'), 'pause'))
+        def action(workbench):
+            body = self._pool_transition(workbench, call.params.get('id'), 'pause')
+            # The watch belongs to the pool, so pausing the pool stops it.
+            from . import pools as pools_module
+            body['watch'] = pools_module.watch_registry(self.data).stop(
+                str(call.params.get('id')))
+            body['watching'] = body['watch']['watching']
+            return body
+        return self._with_workbench(action)
 
     def _pool_transition(self, workbench, pool_id, action):
         store = workbench.pools()
@@ -2428,6 +2453,98 @@ class WorkbenchService(apiv1.Service):
             return json.loads(path.read_text(encoding='utf-8'))
         except (OSError, UnicodeError, ValueError):
             return None
+
+    # -- source comparison (F21) --------------------------------------------
+
+    def _op_sources_compare(self, call):
+        return self._with_workbench(lambda workbench: self._compare_sources(workbench, call))
+
+    def _op_sources_compare_suppliers(self, call):
+        return self._with_workbench(lambda workbench: self._compare_suppliers(workbench, call))
+
+    def _op_sources_compare_cohorts(self, call):
+        return self._with_workbench(lambda workbench: self._compare_cohorts(workbench, call))
+
+    def _comparison_cohort(self, workbench, call, sources, *, default_label=''):
+        """The one cohort these three routes share, built from the same numbers.
+
+        A comparison is only meaningful inside a window, one profile revision
+        and one admission threshold.  Without them a client would be asking
+        two different questions and reading one answer, so the window defaults
+        to the span of the observations that actually exist and a database
+        with none is refused instead of compared over an invented window.
+        """
+        body = call.body or {}
+        spec = dict(body.get('cohort') or {})
+        for name in ('start', 'end', 'profile_id', 'profile_revision', 'collection_id',
+                     'min_success', 'label'):
+            if body.get(name) is not None:
+                spec[name] = body[name]
+        spec.setdefault('label', default_label)
+        return workbench.source_cohort(sources, **spec)
+
+    def _comparison_criterion(self, call):
+        body = call.body or {}
+        return {name: body[name] for name in ('family_jaccard', 'sample_floor')
+                if body.get(name) is not None}
+
+    def _comparison_survival(self, workbench, sources, cohort, call):
+        body = call.body or {}
+        windows = body.get('survival_windows')
+        if not body.get('survival') and not windows:
+            return []
+        from . import sourcedesk
+        steps = sourcedesk.survival_across_windows(
+            workbench.conn, sources=tuple(sorted(sources)),
+            profile_id=cohort.profile_id, profile_revision=cohort.profile_revision,
+            collection_id=cohort.collection_id, min_success=cohort.min_success,
+            start=cohort.start, end=cohort.end, count=max(2, int(windows or 3)))
+        return [step.as_dict() for step in steps]
+
+    def _compare_sources(self, workbench, call):
+        sources = _compare_source_ids(call)
+        cohort = self._comparison_cohort(workbench, call, sources, default_label='window-1')
+        report = workbench.source_comparison(sources, cohort=cohort, **self._comparison_criterion(call))
+        body = report.as_dict()
+        body['survival'] = self._comparison_survival(workbench, sources, cohort, call)
+        return body
+
+    def _compare_suppliers(self, workbench, call):
+        body = call.body or {}
+        left, right = str(body.get('left') or ''), str(body.get('right') or '')
+        sources = _compare_source_ids(call) or [left, right]
+        cohort = self._comparison_cohort(workbench, call, (left, right), default_label='suppliers')
+        report = workbench.source_supplier_comparison(
+            left, right, cohort=cohort, **self._comparison_criterion(call))
+        answer = report.as_dict()
+        answer['survival'] = self._comparison_survival(workbench, (left, right), cohort, call)
+        return answer
+
+    def _compare_cohorts(self, workbench, call):
+        body = call.body or {}
+        sources = _compare_source_ids(call)
+        specs = [item for item in (body.get('cohorts') or ()) if isinstance(item, dict)]
+        cohorts = []
+        for index, item in enumerate(specs):
+            # A window given in the body is used as it stands; one that is not
+            # falls back to the span of the observations, so a client that only
+            # says "the two periods I care about" still gets a real window.
+            spec = {name: item[name] for name in COHORT_KEYS if item.get(name) is not None}
+            spec.setdefault('label', f'window-{index + 1}')
+            cohorts.append(workbench.source_cohort(sources, **spec))
+        # ``compare_cohorts`` refuses to average windows that are not
+        # comparable and says why; the breakdowns still come back, so a client
+        # can show the per-window rows next to the reason.
+        answer = workbench.source_cohort_comparison(
+            sources, tuple(cohorts), **self._comparison_criterion(call))
+        for comparison in answer['cohorts']:
+            comparison['survival'] = self._comparison_survival(
+                workbench, sources,
+                workbench.source_cohort(sources, **{
+                    name: comparison['cohort'][name] for name in COHORT_KEYS
+                    if comparison['cohort'].get(name) is not None}),
+                call)
+        return answer
 
     # -- gateway ------------------------------------------------------------
 
@@ -3088,6 +3205,92 @@ def collection_kind(value):
     if text not in COLLECTION_KINDS:
         raise apiv1.field_error('kind', tr('public или own', 'public or own'))
     return COLLECTION_KINDS[text]
+
+
+#: The routes that really decide whether a collection may hold private addresses.
+#: ``allow_private_endpoints`` reaches ``importer.DEFAULT_POLICY``, is recorded in
+#: the audit log and is the choice the CLI spells ``--allow-private-endpoints``.
+PRIVATE_ENDPOINTS_FIELD = 'allow_private_endpoints'
+
+
+#: The keys of one F21 cohort, in the order ``Workbench.source_cohort`` takes
+#: them.  Read from the engine so a rename there cannot leave this building a
+#: different window than the one the function documents.
+COHORT_KEYS = ('start', 'end', 'profile_id', 'profile_revision', 'collection_id',
+               'min_success', 'label')
+
+
+def _pool_watch_asked(call):
+    """Whether ``start`` was asked to keep the pool filled.
+
+    The default is yes: F14 asks for a pool that *maintains* its size, and a
+    loop that a client has to switch on separately is a pool that quietly stops
+    being maintained.  ``watch: false`` is the honest way to fill a pool once
+    and leave it there.
+    """
+    body = call.body or {}
+    return body.get('watch', True) is not False
+
+
+def call_budget(call):
+    """The budget object of a request, as ``pools.refill`` takes it."""
+    budget = (call.body or {}).get('budget')
+    return dict(budget) if isinstance(budget, dict) and budget else None
+
+
+def _compare_source_ids(call):
+    """The publisher ids of a comparison, as the body stated them."""
+    body = call.body or {}
+    raw = body.get('sources') or []
+    if isinstance(raw, str):
+        raw = [raw]
+    wanted = tuple(dict.fromkeys(str(item).strip() for item in raw if str(item).strip()))
+    if not wanted:
+        raise apiv1.field_error(
+            'sources', tr('нужен хотя бы один источник для сравнения',
+                          'at least one source is needed for a comparison'))
+    return wanted
+
+
+def _refuse_unsupported_allow_private(body):
+    """Refuse a collection-level ``allow_private`` instead of dropping it.
+
+    ``allow_private`` was declared on ``POST /v1/collections`` and
+    ``PATCH /v1/collections/{id}`` while the ``collections`` table has no such
+    column (CONTRACTS section 3.3, migration 2).  The handlers read ``name``
+    and ``kind``, ignored the flag and answered 200, so a client that sent
+    ``{"name": "priv", "kind": "own", "allow_private": true}`` was told the
+    collection was created and then kept sending private addresses to an import
+    that refuses them.  F07 says a parameter is never ignored silently, and
+    the cheaper of the two honest answers is a refusal that names the field
+    that does work.
+
+    Implementing the flag for real is not a matter of adding a column: the
+    policy has to reach every path that writes a member -- ``members``,
+    ``imports``, ``merge`` and ``replace`` -- and each of them is a different
+    writer.  A flag that is stored but not consulted is the same silent lie
+    with a longer fuse, so the field stays refused until the schema and the
+    membership writers can honour it together.
+    """
+    if not isinstance(body, dict) or 'allow_private' not in body:
+        return
+    value = body.get('allow_private')
+    if value is None or value is False:
+        # The schema's own default: nothing was asked for, so nothing is
+        # refused.  Only an affirmative request can be the wrong promise.
+        return
+    raise apiv1.field_error(
+        'allow_private',
+        tr('у коллекции нет такого поля: `collections` хранит только имя и вид, '
+           'а приватные адреса разрешаются импорту',
+           'a collection has no such column: `collections` stores only a name '
+           'and a kind, and private addresses are decided at import time'),
+        action=tr(f'передайте `{PRIVATE_ENDPOINTS_FIELD}: true` в '
+                  f'`POST /v1/collections/{{id}}/imports` или '
+                  f'`POST /v1/collections/{{id}}/imports/preview`',
+                  f'send `{PRIVATE_ENDPOINTS_FIELD}: true` to '
+                  f'`POST /v1/collections/{{id}}/imports` or '
+                  f'`POST /v1/collections/{{id}}/imports/preview` instead'))
 
 
 #: The kinds a key's resource scope is expressed in (CONTRACTS §5.3: a key is

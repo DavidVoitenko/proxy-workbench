@@ -1102,6 +1102,29 @@ CHECK_BODY = (COLLECTION_FIELD,
                                                Field('max_seconds', 'int', minimum=1),
                                                Field('max_cost', 'float', minimum=0))),
               Field('notes', 'string', max_len=512))
+#: One cohort of F21: a window, one profile revision and one admission
+#: threshold.  A comparison is only meaningful inside one of these, and the
+#: route that takes several says so instead of averaging them.
+COHORT_FIELDS = (Field('start', 'float', minimum=0), Field('end', 'float', minimum=0),
+                 Field('profile_id', 'string', max_len=128),
+                 Field('profile_revision', 'int', minimum=1),
+                 Field('collection_id', 'string', max_len=128),
+                 Field('min_success', 'float', minimum=0, maximum=1),
+                 Field('label', 'string', max_len=128))
+#: The three F21 routes share one body so the same question cannot be answered
+#: with different terms depending on which route the client happened to pick.
+COMPARE_BODY = (Field('sources', 'list', required=True, min_items=1, max_items=256,
+                      max_len=128),
+                Field('start', 'float', minimum=0), Field('end', 'float', minimum=0),
+                Field('profile_id', 'string', max_len=128),
+                Field('profile_revision', 'int', minimum=1),
+                Field('collection_id', 'string', max_len=128),
+                Field('min_success', 'float', minimum=0, maximum=1),
+                Field('family_jaccard', 'float', minimum=0, maximum=1),
+                Field('sample_floor', 'int', minimum=0, maximum=1000000),
+                Field('survival', 'bool'),
+                Field('survival_windows', 'int', minimum=2, maximum=64),
+                Field('cohort', 'object', shape=COHORT_FIELDS))
 KEY_BODY = (Field('name', 'string', required=True, max_len=128),
             Field('purpose', 'string', max_len=256),
             Field('permissions', 'list', required=True, max_items=32),
@@ -1269,6 +1292,22 @@ ROUTES = (
                 Field('force', 'bool')), tags=('sources',)),
     Route('GET', '/v1/sources/{id}/refresh/{job_id}', 'sources.refresh_status', 'sources.read',
           'state of a refresh job', tags=('sources',)),
+    # F21: the comparison.  These are reads -- nothing is collected, nothing is
+    # measured and no address is contacted -- so they need ``sources.read`` and
+    # answer 200 with the report rather than 202 with a job id.
+    Route('POST', '/v1/sources/compare', 'sources.compare', 'sources.read',
+          'compare publishers inside one cohort: overlap, unique contribution, cost, bias',
+          body=COMPARE_BODY, tags=('sources',)),
+    Route('POST', '/v1/sources/compare/suppliers', 'sources.compare_suppliers', 'sources.read',
+          'compare two of your own suppliers on identical terms',
+          body=COMPARE_BODY + (Field('left', 'string', required=True, max_len=128),
+                               Field('right', 'string', required=True, max_len=128)),
+          tags=('sources',)),
+    Route('POST', '/v1/sources/compare/cohorts', 'sources.compare_cohorts', 'sources.read',
+          'compare the same sources across several windows, and say why they are not one number',
+          body=COMPARE_BODY + (Field('cohorts', 'list', required=True, min_items=2, max_items=32,
+                                     shape=COHORT_FIELDS),),
+          tags=('sources',)),
 
     # --- profiles -----------------------------------------------------------
     Route('GET', '/v1/profiles/presets', 'profiles.presets', 'profiles.read',
@@ -1406,7 +1445,14 @@ ROUTES = (
                     Field('cooldown_s', 'int', minimum=0, maximum=86400))),
                 Field('revision', 'int', minimum=1)), tags=('pools',)),
     Route('POST', '/v1/pools/{id}/start', 'pools.start', 'pools.write', 'start maintaining a pool',
-          mutating=True, body=(), scope=(('pool', 'id'),), tags=('pools',)),
+          mutating=True,
+          body=(Field('watch', 'bool', default=True),
+                Field('budget', 'object', shape=(Field('max_requests', 'int', minimum=1),
+                                                Field('max_seconds', 'int', minimum=1)))),
+          scope=(('pool', 'id'),), tags=('pools',)),
+    # ``pause`` stops the pool *and* the watch that was started with it: the
+    # two are one thing, and a loop that outlived the pool it maintains would
+    # refill a pool the user believes is off.
     Route('POST', '/v1/pools/{id}/pause', 'pools.pause', 'pools.write', 'pause a pool',
           mutating=True, body=(), scope=(('pool', 'id'),), tags=('pools',)),
     # A refill reads stored rows and rewrites membership: it is a local, bounded
