@@ -24022,3 +24022,17 @@ pre#log,
   .page-heading { flex-wrap: wrap !important; row-gap: 10px !important; }
   .page-heading-info { flex: 1 1 100% !important; }
 }
+
+/* ── Fix: view-tab underline indicator removed ─────────────────────────────
+   The bold layer already marks the active tab with a gradient pill + ring.
+   The motion layer's ::after underline had no positioning context on the
+   tab, so its glowing bar detached and bled under the neighbouring tab
+   (the "съехавшая" green smear). The pill is the single active indicator. */
+.view-tab { position: relative; }
+.view-tab::after { display: none !important; }
+@media (max-width: 680px) {
+  #saved-views {
+    text-overflow: ellipsis !important;
+    overflow: hidden !important;
+  }
+}
