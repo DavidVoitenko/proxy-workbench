@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import socket
 import subprocess
 import sys
 import tempfile
@@ -24,8 +25,7 @@ import urllib.error
 import urllib.request
 
 REPO = os.path.dirname(os.path.abspath(__file__))
-PY = os.path.join(REPO, ".venv", "bin", "python")
-PORT = 18772
+PY = sys.executable
 
 results: list[tuple[str, str, str, str]] = []
 
@@ -49,16 +49,20 @@ class Server:
 
     def __init__(self, token: str):
         self.token = token
+        with socket.socket() as reserved:
+            reserved.bind(('127.0.0.1', 0))
+            port = reserved.getsockname()[1]
         self.proc = subprocess.Popen(
             [PY, "-m", "proxy_workbench", "serve", "--data", DATA,
-             "--host", "127.0.0.1", "--port", str(PORT), "--api-token", token],
+             "--host", "127.0.0.1", "--port", str(port), "--api-token", token],
             cwd=REPO, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
         )
-        self.base = f"http://127.0.0.1:{PORT}"
+        self.base = f"http://127.0.0.1:{port}"
+        self.client = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
     def wait_up(self, timeout: float = 30.0) -> bool:
-        deadline = time.time() + timeout
-        while time.time() < deadline:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline and self.proc.poll() is None:
             code, _ = self.call("/status", token=self.token)
             if code is not None:
                 return True
@@ -81,7 +85,7 @@ class Server:
             Server._idem += 1
             req.add_header("Idempotency-Key", f"functional-acceptance-{Server._idem}")
         try:
-            with urllib.request.urlopen(req, data=payload, timeout=10) as r:
+            with self.client.open(req, data=payload, timeout=10) as r:
                 text = r.read().decode("utf-8", "replace")
                 return (r.status, text) if raw else (r.status, json.loads(text or "{}"))
         except urllib.error.HTTPError as e:
@@ -99,6 +103,9 @@ class Server:
             self.proc.wait(timeout=5)
         except Exception:
             self.proc.kill()
+            self.proc.wait(timeout=5)
+        if self.proc.stdout:
+            self.proc.stdout.close()
 
 
 # --------------------------------------------------------------------------
@@ -236,7 +243,7 @@ def check_scopes(server: Server, admin_token: str | None) -> None:
 def check_cli_features() -> None:
     print("\n=== ФУНКЦИИ ЧЕРЕЗ CLI ===")
 
-    sample = os.path.join(tempfile.gettempdir(), "pw_acceptance_list.txt")
+    sample = os.path.join(DATA, "acceptance-list.txt")
     with open(sample, "w", encoding="utf-8") as fh:
         fh.write("# список для приёмки\n1.2.3.4:8080\n5.6.7.8:3128\nплохая строка\n1.2.3.4:8080\n")
 
@@ -299,13 +306,15 @@ def main() -> int:
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
 
-    DATA = tempfile.mkdtemp(prefix="pw-accept-")
+    temporary = tempfile.TemporaryDirectory(prefix="pw-accept-")
+    DATA = temporary.name
     print(f"Функциональная приёмка. Изолированные данные: {DATA}")
 
     server = Server(token="legacy-readonly-token-for-acceptance")
     if not server.wait_up():
         print("Продукт не поднялся — приёмка невозможна.")
         server.stop()
+        temporary.cleanup()
         return 2
     print("Продукт поднялся, обращаемся к нему по HTTP.")
 
@@ -320,6 +329,7 @@ def main() -> int:
         check_gui_features()
     finally:
         server.stop()
+        temporary.cleanup()
 
     tally: dict[str, int] = {}
     for _, _, verdict, _ in results:

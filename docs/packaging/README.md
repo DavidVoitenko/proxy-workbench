@@ -105,10 +105,11 @@ receipt, backup, второй запуск не переносит заново)
 `proxy-workbench-<версия>-macos-arm64.dmg` и
 `proxy-workbench-<версия>-macos-arm64.manifest.json`.
 
-**Intel и universal2.** `build_macos.py` намеренно отказывается собирать
-не-`arm64`: `universal2` требует собрать оба среза и объединить их, и этот
-скрипт не делает вид, что делает. Пока universal2 нет, на Intel работает
-wheel или `Start.command`.
+**Intel и universal2.** `build_macos.py` собирает `arm64` и `x86_64` на
+соответствующей архитектуре; CI использует отдельные Apple Silicon и Intel
+runners. Архитектура проверяется до упаковки и передаётся PyInstaller.
+`universal2` пока не поддерживается: для него нужны оба среза. Wheel и
+`Start.command` работают на обеих архитектурах.
 
 **Подпись и нотаризация macOS.** На машине, где велась разработка, результат
 проверки такой:

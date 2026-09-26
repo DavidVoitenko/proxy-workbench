@@ -570,7 +570,8 @@ def build_view(catalog, selection, runtime=None, query=None, *, redact=True, now
         wanted = filters.get(key)
         if wanted:
             wanted = {value.strip() for value in wanted.split(',') if value.strip()}
-            rows = [row for row in rows if wanted & set(row[values])]
+            rows = [row for row in rows
+                    if wanted & ({row[values]} if isinstance(row[values], str) else set(row[values]))]
     if filters.get('access'):
         # Accepts the group the UI shows and the raw catalog access kind.
         wanted = {value.strip() for value in filters['access'].split(',') if value.strip()}
@@ -886,7 +887,8 @@ def preview_view(report, source_id=None, name=None):
     entry = sources[0] if sources else {}
     rejects = {reason: count for reason, count in (entry.get('reject_reasons') or {}).items() if count}
     error = entry.get('error')
-    limits = {'max_bytes': proxytool.PREVIEW_MAX_BYTES, 'max_candidates': proxytool.PREVIEW_MAX_CANDIDATES}
+    limits = report.get('limits') or {
+        'max_bytes': proxytool.PREVIEW_MAX_BYTES, 'max_candidates': proxytool.PREVIEW_MAX_CANDIDATES}
     return {
         'preview': True,
         'source_id': source_id or entry.get('source_id'),

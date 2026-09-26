@@ -70,7 +70,16 @@ def executable(bundle):
 
 def child_environment(home, extra=None):
     """A per-user environment for the launched artifact."""
-    env = dict(os.environ, HOME=str(home), PROXY_WORKBENCH_LANG='en', BROWSER='true')
+    env = dict(os.environ, HOME=str(home), PROXY_WORKBENCH_LANG='en', BROWSER='true',
+               PYTHON_KEYRING_BACKEND='keyring.backends.null.Keyring')
+    # Verification must never inherit the developer's real data/portable
+    # overrides or migrate a previous installation into a throwaway build.
+    for name in ('PROXY_WORKBENCH_DATA', 'PROXY_WORKBENCH_CACHE', 'PROXY_WORKBENCH_LOGS',
+                 'PROXY_WORKBENCH_PORTABLE', 'PROXY_WORKBENCH_PREVIOUS_DATA',
+                 'PROXY_WORKBENCH_UPDATE_MANIFEST'):
+        env.pop(name, None)
+    env.update(XDG_DATA_HOME=str(home / 'data'), XDG_CACHE_HOME=str(home / 'cache'),
+               XDG_STATE_HOME=str(home / 'state'), XDG_CONFIG_HOME=str(home / 'config'))
     if os.name == 'nt':
         env['LOCALAPPDATA'] = str(home / 'Local')
         env['APPDATA'] = str(home / 'Roaming')
@@ -83,7 +92,11 @@ def launch(program, env, *, data=None, extra=()):
     """Start the artifact and wait until it has published its page address."""
     command = [str(program), '--no-browser', '--port', '0', '--api-port', '0', '--no-gateway', *extra]
     process = subprocess.Popen(command, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    address = _wait_for(Path(data) / 'gui-address.json', process, START_TIMEOUT_S)
+    try:
+        address = _wait_for(Path(data) / 'gui-address.json', process, START_TIMEOUT_S)
+    except BaseException:
+        stop(process)
+        raise
     return process, address
 
 
@@ -119,21 +132,22 @@ def tree_state(folder, skip=()):
                   and not str(path.relative_to(folder)).startswith(tuple(skip)))
 
 
-def per_user_folders(home):
+def per_user_folders(home, environ=None):
     """The folders the product promises to use, per platform."""
     home = Path(home)
+    environ = child_environment(home) if environ is None else environ
     if os.name == 'nt':
-        local = Path(os.environ.get('LOCALAPPDATA') or home / 'AppData' / 'Local')
-        roaming = Path(os.environ.get('APPDATA') or local)
+        local = Path(environ.get('LOCALAPPDATA') or home / 'AppData' / 'Local')
+        roaming = Path(environ.get('APPDATA') or local)
         return dict(data=local / 'proxy-workbench', cache=local / 'proxy-workbench' / 'Cache',
                     logs=roaming / 'proxy-workbench' / 'Logs')
     if sys.platform == 'darwin':
         return dict(data=home / 'Library' / 'Application Support' / 'proxy-workbench',
                     cache=home / 'Library' / 'Caches' / 'proxy-workbench',
                     logs=home / 'Library' / 'Logs' / 'proxy-workbench')
-    return dict(data=home / '.local' / 'share' / 'proxy-workbench',
-                cache=home / '.cache' / 'proxy-workbench',
-                logs=home / '.local' / 'state' / 'proxy-workbench' / 'logs')
+    return dict(data=Path(environ.get('XDG_DATA_HOME') or home / '.local' / 'share') / 'proxy-workbench',
+                cache=Path(environ.get('XDG_CACHE_HOME') or home / '.cache') / 'proxy-workbench',
+                logs=Path(environ.get('XDG_STATE_HOME') or home / '.local' / 'state') / 'proxy-workbench' / 'logs')
 
 
 def check_per_user(program, report, folder_of):
@@ -209,7 +223,11 @@ def check_migration(program, report, folder_of):
     home = Path(tempfile.mkdtemp(prefix='pw-migrate-'))
     legacy = Path(tempfile.mkdtemp(prefix='pw-legacy-')) / 'data'
     (legacy / 'nested').mkdir(parents=True)
-    (legacy / 'proxies.sqlite3').write_bytes(b'SQLite format 3\x00legacy')
+    import sqlite3
+    with sqlite3.connect(legacy / 'proxies.sqlite3') as connection:
+        connection.execute('CREATE TABLE delivery_marker(value TEXT)')
+        connection.execute("INSERT INTO delivery_marker VALUES ('older run')")
+    connection.close()
     (legacy / 'gui-preferences.json').write_text('{"legacy": true}', encoding='utf-8')
     (legacy / 'nested' / 'note.txt').write_text('older run', encoding='utf-8')
     folders = per_user_folders(home)

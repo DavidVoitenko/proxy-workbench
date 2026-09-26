@@ -550,6 +550,20 @@ class JobStore:
     @contextlib.contextmanager
     def _write(self):
         conn = self._conn
+        if conn.in_transaction:
+            # The scanner writes a result and its observation before moving
+            # the item. Keep those changes atomic instead of attempting a
+            # nested BEGIN (or implicitly committing them via isolation_level).
+            conn.execute('SAVEPOINT workbench_job_write')
+            try:
+                yield conn
+            except BaseException:
+                conn.execute('ROLLBACK TO SAVEPOINT workbench_job_write')
+                conn.execute('RELEASE SAVEPOINT workbench_job_write')
+                raise
+            else:
+                conn.execute('RELEASE SAVEPOINT workbench_job_write')
+            return
         saved = conn.isolation_level
         if saved is not None:
             conn.isolation_level = None

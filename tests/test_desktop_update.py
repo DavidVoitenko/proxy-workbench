@@ -276,7 +276,7 @@ class HostCommandTests(unittest.TestCase):
             code = desktop.main(['--print-paths'])
         self.assertEqual(code, 0)
         payload = json.loads(printed.call_args[0][0])
-        self.assertEqual(payload['layout']['data'], str(root / 'Данные'))
+        self.assertEqual(payload['layout']['data'], str((root / 'Данные').resolve()))
 
     def test_update_notice_without_a_manifest_explains_itself(self):
         with mock.patch.dict('os.environ', {}, clear=False), \

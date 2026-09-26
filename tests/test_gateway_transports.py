@@ -139,9 +139,11 @@ class TransportTests(GatewayCase):
     async def test_socks4a_carries_the_name(self):
         up = await self.socks_upstream('socks4a')
         self.publish([up.url])
-        _server, address = await self.start()
+        _server, address = await self.start(connect_timeout=0.5)
         granted, _reader, writer = await self.socks_client(address, target_host='localhost')
+        self.addAsyncCleanup(shutdown, writer)
         self.assertTrue(granted)
+        self.assertEqual(up.user_id, b'', 'the hostname must follow the empty USERID field')
         self.assertEqual(up.targets[-1]['mode'], 'socks4a-name')
         self.assertEqual(up.targets[-1]['host'], 'localhost')
         await shutdown(writer)

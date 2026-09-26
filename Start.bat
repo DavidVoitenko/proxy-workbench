@@ -13,12 +13,7 @@ if exist .venv\Scripts\python.exe (
     goto fail
   )
 ) else (
-  py -3 -c "import sys; sys.exit(0 if sys.version_info >= (3,11) else 1)"
-  if errorlevel 1 (
-    echo Python 3.11+ with the Python Launcher is required.
-    goto fail
-  )
-  py -3 -m venv .venv
+  call :create_venv
   if errorlevel 1 (
     echo Could not create .venv. Check folder permissions and Python installation.
     goto fail
@@ -36,10 +31,24 @@ if not "%REQUIREMENTS_HASH%"=="%CURRENT_HASH%" (
   )
   > .venv\.dependencies-ready echo %REQUIREMENTS_HASH%
 )
-.venv\Scripts\python gui.py
+.venv\Scripts\python -m proxy_workbench %*
 if errorlevel 1 goto fail
 exit /b 0
 :fail
 echo Proxy Workbench could not start.
-pause
+if "%PROXY_WORKBENCH_PAUSE_ON_ERROR%"=="1" pause
+exit /b 1
+
+:create_venv
+py -3 -c "import sys; sys.exit(0 if sys.version_info >= (3,11) else 1)" >nul 2>nul
+if not errorlevel 1 (
+  py -3 -m venv .venv
+  exit /b
+)
+python -c "import sys; sys.exit(0 if sys.version_info >= (3,11) else 1)" >nul 2>nul
+if not errorlevel 1 (
+  python -m venv .venv
+  exit /b
+)
+echo Python 3.11+ is required. Install Python and add it to PATH.
 exit /b 1

@@ -26,7 +26,7 @@ class ResearchCollectIntegrationTests(unittest.IsolatedAsyncioTestCase):
     def setUpClass(cls):
         missing = [sample for sample in REQUIRED_SAMPLES if not (SAMPLES / f'{sample}.bin').is_file()]
         if missing:
-            raise SkipTest(f'исходные образцы исследования не найдены: {", ".join(missing)}')
+            raise unittest.SkipTest(f'исходные образцы исследования не найдены: {", ".join(missing)}')
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -138,6 +138,31 @@ class ResearchCollectIntegrationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(by_index[index]['format'], kind)
             if kind != 'geonode':
                 self.assertTrue(by_index[index]['complete'], by_index[index])
+
+
+class SyntheticCollectIntegrationTests(ResearchCollectIntegrationTests):
+    """Every collection format also runs without the optional research folder."""
+
+    @classmethod
+    def setUpClass(cls):
+        pass
+
+    def sample(self, source_id):
+        line = b'11.1.1.1:8080\n11.1.1.2:3128\n'
+        records = [{'ip': '11.2.2.1', 'port': 8080, 'protocol': 'http', 'protocols': ['http']}]
+        if source_id in ('new-009',):
+            return json.dumps(records).encode()
+        if source_id in ('new-045', 'cur-55'):
+            return json.dumps({'data': records, 'page': 1, 'limit': 1, 'total': 2}).encode()
+        if source_id == 'new-026':
+            return b'ip,port,protocol,country\n11.3.3.1,8080,http,DE\n'
+        if source_id in ('new-010', 'cur-52'):
+            return (b'<table><tr><th>IP Address</th><th>Port</th><th>Protocol</th></tr>'
+                    b'<tr><td data-ip="MTEuNC40LjE=">11.4.4.1</td>'
+                    b'<td data-port="ODA4MA==">8080</td><td>http</td></tr></table>')
+        if source_id == 'cur-08':
+            return b'11.5.5.1:8080:Germany\n'
+        return line
 
 
 class CatalogHonestyTests(unittest.TestCase):

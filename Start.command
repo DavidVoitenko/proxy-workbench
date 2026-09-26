@@ -1,3 +1,3 @@
 #!/bin/sh
 cd "$(dirname "$0")" || exit 1
-exec ./run.sh gui
+exec ./run.sh "$@"

@@ -1238,8 +1238,31 @@ def commit(conn: sqlite3.Connection, plan: Preview, *, allow_partial: bool = Fal
     keep_ids = plan.keep_ids
     removed_ids = _sorted(before, set(before) - set(keep_ids)) if plan.mode == 'replace' else []
     total = len(plan.valid) + (1 if plan.mode == 'replace' else 0)
+    credential_store = None
     try:
         conn.execute('BEGIN IMMEDIATE')
+        # The preview can wait behind another writer. Recheck under the write
+        # lock, otherwise two imports both consume the same revision and a
+        # replace can delete membership added while this call was waiting.
+        existing = load_report(conn, plan.batch_id)
+        if existing is not None and existing.state == 'committed':
+            conn.rollback()
+            return replace(existing, replayed=True)
+        current = collection_revision(conn, plan.collection_id)
+        if current != plan.collection_revision:
+            raise ImportRevisionConflict(
+                'Коллекция изменилась после предпросмотра; повторите предпросмотр.',
+                detail={'collection_id': plan.collection_id,
+                        'expected': plan.collection_revision, 'current': current})
+        before = _members(conn, plan.collection_id)
+        removed_ids = _sorted(before, set(before) - set(keep_ids)) if plan.mode == 'replace' else []
+        if plan.mode == 'replace' and (
+                set(removed_ids) != set(plan.removed_ids)
+                or not set(plan.unchanged) <= set(before.values())):
+            raise ImportRevisionConflict(
+                'Состав коллекции изменился после предпросмотра; повторите его.',
+                detail={'collection_id': plan.collection_id,
+                        'expected': len(plan.removed_ids), 'current': len(removed_ids)})
         for index, row in enumerate(plan.valid, 1):
             _check_cancel(should_cancel)
             _upsert_endpoint(conn, row, stamp)
@@ -1264,7 +1287,11 @@ def commit(conn: sqlite3.Connection, plan: Preview, *, allow_partial: bool = Fal
         # Credentials the policy asked to keep go to the secret store, not into
         # the address: the row above is already written without them, and the
         # vault gets its own access id, revision and verifier.
-        stored_credentials = _store_credentials(conn, plan)
+        if plan.policy.stores_credentials and any(row.credentials for row in plan.valid):
+            from . import secrets as secretstore
+            credential_store = secretstore.AccessStore(
+                conn, secretstore.vault_for_database(conn), commit=False)
+        stored_credentials = _store_credentials(credential_store, plan)
         if stored_credentials:
             counts_extra = {'credentials_stored': stored_credentials}
         else:
@@ -1280,16 +1307,32 @@ def commit(conn: sqlite3.Connection, plan: Preview, *, allow_partial: bool = Fal
                    (plan.batch_id, plan.collection_id, report.created_at, report.state,
                     report.to_json(), revision))
         conn.commit()
-        return report
     except ImportCancelled as exc:
         _rollback(conn, plan, 'cancelled', exc, stamp)
+        if credential_store is not None:
+            credential_store.rollback_pending()
         raise
     except Exception as exc:
         _rollback(conn, plan, 'failed', exc, stamp)
+        if credential_store is not None:
+            credential_store.rollback_pending()
         raise
+    # The batch is already committed. A vault-finalization failure must retain
+    # that fact and its staged references for reconcile(), not rewrite history
+    # to "failed" after SQLite can no longer roll it back.
+    if credential_store is not None:
+        try:
+            credential_store.finish_pending()
+        except Exception as exc:
+            if hasattr(exc, 'detail'):
+                exc.detail = {**(getattr(exc, 'detail', None) or {}),
+                              'committed': True, 'batch_id': plan.batch_id,
+                              'next': 'reconcile the credential vault'}
+            raise
+    return report
 
 
-def _store_credentials(conn: sqlite3.Connection, plan: Preview) -> int:
+def _store_credentials(store, plan: Preview) -> int:
     """Put the credentials of the imported rows into the secret store.
 
     ``secrets.AccessStore`` is the owner of an access identity: the import
@@ -1298,12 +1341,7 @@ def _store_credentials(conn: sqlite3.Connection, plan: Preview) -> int:
     a second import of the same list must not silently rotate a secret.
     """
     rows = [row for row in plan.valid if row.credentials]
-    if not rows or not plan.policy.stores_credentials:
-        return 0
-    try:
-        from . import secrets as secretstore
-        store = secretstore.AccessStore(conn, secretstore.SessionVault())
-    except Exception:  # noqa: BLE001 - a missing vault is a configuration state
+    if not rows or store is None:
         return 0
     stored = 0
     for row in rows:
@@ -1312,12 +1350,9 @@ def _store_credentials(conn: sqlite3.Connection, plan: Preview) -> int:
             continue
         if store.list_for_endpoint(row.endpoint_id):
             continue
-        try:
-            store.create(row.endpoint_id, row.scheme, username=username or None,
-                         password=password or None)
-            stored += 1
-        except Exception:  # noqa: BLE001 - one bad secret must not undo the import
-            continue
+        store.create(row.endpoint_id, row.scheme, username=username or None,
+                     password=password or None)
+        stored += 1
     return stored
 
 
@@ -1355,11 +1390,17 @@ def _delete_absent(conn: sqlite3.Connection, collection_id: str, keep: list) -> 
     if not keep:
         conn.execute('DELETE FROM membership WHERE collection_id = ?', (collection_id,))
         return
-    for start in range(0, len(keep), DELETE_CHUNK):
-        chunk = keep[start:start + DELETE_CHUNK]
+    # Chunk the rows to remove, never the NOT IN keep set: intersecting two
+    # disjoint keep chunks deletes every existing member of a large import.
+    kept = set(keep)
+    removed = [row[0] for row in conn.execute(
+        'SELECT endpoint_id FROM membership WHERE collection_id = ?', (collection_id,))
+        if row[0] not in kept]
+    for start in range(0, len(removed), DELETE_CHUNK):
+        chunk = removed[start:start + DELETE_CHUNK]
         placeholders = ','.join('?' * len(chunk))
         conn.execute(f'DELETE FROM membership WHERE collection_id = ? '
-                   f'AND endpoint_id NOT IN ({placeholders})', (collection_id, *chunk))
+                   f'AND endpoint_id IN ({placeholders})', (collection_id, *chunk))
 
 
 def _check_cancel(should_cancel: Callable[[], bool] | None) -> None:

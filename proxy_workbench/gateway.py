@@ -1056,11 +1056,14 @@ async def open_tunnel(proxy, host, port, forward=False, ssl_context=None, creden
             # invent one: a row whose access is not a SOCKS4 identity simply
             # gets no credential here.
             if scheme == 'socks4a':
-                # SOCKS4a: DSTIP 0.0.0.x marks a hostname in the USERID field.
+                # SOCKS4a: DSTIP 0.0.0.x marks a hostname AFTER the
+                # NUL-terminated USERID (empty for an unauthenticated row).
                 name = host.encode('idna')
                 if len(name) > 255:
                     raise UpstreamError('SOCKS4A_NAME_TOO_LONG')
-                writer.write(struct.pack('>BBH4s', 4, 1, port, b'\x00\x00\x00\x01') + name + b'\x00')
+                if not name or b'\x00' in name:
+                    raise UpstreamError('SOCKS4A_BAD_NAME')
+                writer.write(socks4.connect_request(b'\x00\x00\x00\x01', port) + name + b'\x00')
             else:
                 ip = await resolve(host, port, socket.AF_INET)
                 writer.write(socks4.connect_request(ipaddress.IPv4Address(ip).packed, port))
@@ -1076,7 +1079,7 @@ async def open_tunnel(proxy, host, port, forward=False, ssl_context=None, creden
             writer.write(greeting)
             await writer.drain()
             answer = await read_exactly(reader, 2)
-            if answer[0] != 5 or answer[1] not in (0, 2):
+            if answer[0] != 5 or answer[1] not in (0, 2) or answer[1] not in greeting[2:]:
                 raise UpstreamError('SOCKS5_AUTH')
             if answer[1] == 2:
                 # RFC 1929.  A rejection ends in the same error as "no
@@ -1100,11 +1103,15 @@ async def open_tunnel(proxy, host, port, forward=False, ssl_context=None, creden
             writer.write(b'\x05\x01\x00' + target + struct.pack('>H', port))
             await writer.drain()
             reply = await read_exactly(reader, 4)
+            if reply[0] != 5 or reply[2] != 0 or reply[3] not in (1, 3, 4):
+                raise UpstreamError('SOCKS5_BAD_REPLY')
             if reply[1] != 0:
                 raise UpstreamError(f'SOCKS5_REJECTED_{reply[1]}')
             skip = {1: 4, 4: 16}.get(reply[3])
             if skip is None:
                 skip = (await read_exactly(reader, 1))[0]
+                if not skip:
+                    raise UpstreamError('SOCKS5_BAD_REPLY')
             await read_exactly(reader, skip + 2)
         else:
             raise UpstreamError('UNSUPPORTED')
@@ -1402,6 +1409,8 @@ class Gateway:
         upstream_reader, upstream_writer = upstream
         proxy = lease.proxy
         state = {'ended': False, 'scored': False}
+        transfers = []
+        received = []
         task = asyncio.current_task()
         if task is not None:
             self.streams[task] = lease
@@ -1415,6 +1424,14 @@ class Gateway:
             state['scored'] = True
             self.pool.outcome(proxy, kind)
 
+        def saw_bytes(total):
+            if not received:
+                received.append(total)
+                score('tunnel_bytes')
+
+        def sent_bytes(total):
+            state['sent'] = True
+
         try:
             if first:
                 guard = ReplayGuard()
@@ -1423,7 +1440,19 @@ class Gateway:
                 except UpstreamError:
                     self.pool.stats['replay_refused'] += 1
                     raise
+                await upstream_writer.drain()
+                # An upstream may wait for the body before producing any
+                # response.  Upload concurrently, including when the client
+                # waits for 100 Continue before sending its first body byte.
+                transfers.append(asyncio.create_task(
+                    pipe(client_reader, upstream_writer, self.idle_timeout,
+                         on_bytes=sent_bytes, state=state)))
                 status, head, reason = await response_head(upstream_reader, self.response_timeout)
+                while status is not None and 100 <= status < 200 and status != 101:
+                    client_writer.write(head)
+                    await client_writer.drain()
+                    # Only the final response supplies the health verdict.
+                    status, head, reason = await response_head(upstream_reader, self.response_timeout)
                 if reason == 'head' and status is None:
                     # Bytes arrived, but not an HTTP answer: whatever is at the
                     # other end of this proxy is not an HTTP proxy for us.
@@ -1461,8 +1490,7 @@ class Gateway:
                     score('response')
                 if head and status is not None:
                     client_writer.write(head)
-                    with contextlib.suppress(OSError):
-                        await client_writer.drain()
+                    await client_writer.drain()
                 elif reason in ('head', 'closed', 'timeout', 'oversized'):
                     # The client asked for an HTTP request and got no usable
                     # answer.  Forwarding whatever arrived, or a bare disconnect,
@@ -1474,22 +1502,22 @@ class Gateway:
                               'The chosen proxy did not answer the request.').encode()
                     with contextlib.suppress(OSError):
                         await self._refuse(client_writer, status_line, body)
-            received = []
-
-            def saw_bytes(total):
-                if not received:
-                    received.append(total)
-                    score('tunnel_bytes')
-
-            def sent_bytes(total):
-                state['sent'] = True
-
-            await asyncio.wait_for(
-                asyncio.gather(pipe(client_reader, upstream_writer, self.idle_timeout,
-                                    on_bytes=sent_bytes, state=state),
-                               pipe(upstream_reader, client_writer, self.idle_timeout,
-                                    on_bytes=saw_bytes, state=state)),
-                self.max_session or None)
+                    # A generated 502/504 ends this exchange.  Never append a
+                    # late upstream reply or keep uploading after that error.
+                    return
+            if not transfers:
+                transfers.append(asyncio.create_task(
+                    pipe(client_reader, upstream_writer, self.idle_timeout,
+                         on_bytes=sent_bytes, state=state)))
+            download = asyncio.create_task(pipe(upstream_reader, client_writer, self.idle_timeout,
+                                                on_bytes=saw_bytes, state=state))
+            transfers.append(download)
+            # Forward requests ask the upstream to close after its response.
+            # Its EOF therefore ends the exchange even if an upload is still
+            # pending (for example after an early 413).  Tunnels retain their
+            # independent half-close semantics in both directions.
+            await asyncio.wait_for(download if first else asyncio.gather(*transfers),
+                                   self.max_session or None)
             if not received and not first:
                 # Nothing came back.  A client that opened a socket and left is
                 # not evidence against the proxy, so only a client that really
@@ -1505,6 +1533,8 @@ class Gateway:
         except OSError:
             self.pool.stats['closed_idle'] += 1
         finally:
+            for transfer in transfers:
+                transfer.cancel()
             if task is not None:
                 self.streams.pop(task, None)
             upstream_writer.close()
@@ -1513,6 +1543,9 @@ class Gateway:
             lease.credentials = None
             lease.release()
             self.closed_sessions += 1
+            # Release synchronously before another cancellation can interrupt
+            # waiting for the child tasks to finish unwinding.
+            await asyncio.gather(*transfers, return_exceptions=True)
 
     # --- client side ---------------------------------------------------------
 

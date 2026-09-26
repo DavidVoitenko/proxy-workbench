@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import contextvars
 import hashlib
 import inspect
 import ipaddress
@@ -46,7 +47,7 @@ import math
 import time
 import tracemalloc
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, AsyncIterator, Awaitable, Callable, Iterable, Iterator, Mapping, Sequence
 
 __all__ = [
@@ -407,6 +408,7 @@ class ResourceGate:
         self._peak_ram = 0
         self._requests = 0
         self._bytes = 0
+        self._reserved_bytes = 0
         self._blocked_waits = 0
         self._cpu_start = clock.cpu()
 
@@ -497,6 +499,8 @@ class ResourceGate:
         waited = False
         async with self._cond:
             while True:
+                self.check_totals()
+                self._check_affordable(reservation)
                 if (self._inflight < self._limit()
                         and self._fds + reservation.fds <= self.budgets.max_open_fds
                         and self._ram + reservation.ram <= self.budgets.max_ram_bytes):
@@ -543,6 +547,71 @@ class ResourceGate:
                                peak_fds=self._peak_fds, peak_ram_bytes=self._peak_ram,
                                requests=self._requests, bytes=self._bytes, cpu_s=self.cpu_s,
                                blocked_waits=self._blocked_waits)
+
+
+CURRENT_REQUEST_BUDGET = contextvars.ContextVar('scan_request_budget', default=None)
+
+
+class RequestBudget:
+    """A stage's actual I/O, sharing atomic request/byte reservations with peers.
+
+    Entering replaces the stage's estimate with per-request accounting. Unused
+    byte reservations are returned; callers waiting for them are not out of
+    budget until the bytes have actually been consumed.
+    """
+
+    def __init__(self, gate: ResourceGate, reservation: Reservation):
+        self.gate = gate
+        self.reservation = reservation
+        self.active = False
+        self.requests = 0
+        self.bytes = 0
+        self.exhausted: BudgetExhausted | None = None
+
+    def __enter__(self):
+        if not self.active:
+            self.gate._requests -= self.reservation.requests
+            self.active = True
+        self._token = CURRENT_REQUEST_BUDGET.set(self)
+        return self
+
+    def __exit__(self, *_):
+        CURRENT_REQUEST_BUDGET.reset(self._token)
+
+    def check(self):
+        if self.exhausted is not None:
+            raise self.exhausted
+
+    async def reserve(self, max_bytes: int) -> Reservation:
+        gate = self.gate
+        async with gate._cond:
+            while True:
+                try:
+                    self.check()
+                    gate.check_totals()
+                except BudgetExhausted as exc:
+                    self.exhausted = exc
+                    raise
+                available = gate.remaining_bytes()
+                if available is not None:
+                    available -= gate._reserved_bytes
+                    if available <= 0:
+                        await gate._cond.wait()
+                        continue
+                cap = max(0, int(max_bytes))
+                if available is not None:
+                    cap = min(cap, available)
+                gate._requests += 1
+                gate._reserved_bytes += cap
+                self.requests += 1
+                return Reservation(requests=1, bytes=cap)
+
+    async def settle(self, reservation: Reservation, consumed: int) -> None:
+        async with self.gate._cond:
+            self.gate._reserved_bytes -= reservation.bytes
+            self.gate._bytes += consumed
+            self.bytes += consumed
+            self.gate._cond.notify_all()
 
 
 @dataclass(frozen=True)
@@ -861,6 +930,7 @@ class StageLimit:
     remaining_bytes: int | None = None
     remaining_s: float | None = None
     deadline_s: float | None = None
+    budget: RequestBudget | None = field(default=None, repr=False, compare=False)
 
     def to_public(self) -> dict:
         return {'stage': self.stage, 'target_id': self.target_id, 'max_requests': self.max_requests,
@@ -1392,6 +1462,8 @@ class PipelineConfig:
     #: in the unit ``find.what`` names: a stored verdict nobody re-measured cannot
     #: be recounted by the chain, so it cannot be double counted either.
     initial_met: int = 0
+    initial_ips: frozenset[str] = frozenset()
+    initial_exit_ips: frozenset[str] = frozenset()
     priors: PriorIndex | None = None
     runners: Runners = Runners()
     normalize: Callable[[str], str | None] = normalize_default
@@ -1525,8 +1597,8 @@ class Pipeline:
         self._addresses: set[str] = set()
         self._ips: set[str] = set()
         self._passed_addresses: set[str] = set()
-        self._passed_ips: set[str] = set()
-        self._passed_exit_ips: set[str] = set()
+        self._passed_ips: set[str] = set(config.initial_ips)
+        self._passed_exit_ips: set[str] = set(config.initial_exit_ips)
         self._find_satisfied = False
         self._queue_high_water = 0
         self._started = 0.0
@@ -1538,8 +1610,7 @@ class Pipeline:
         self._admitted_at_start: set[str] = set()
         self._deadline: float | None = None
         #: What the caller had already confirmed when the chain was built.  It
-        #: is spent by the first run and gone afterwards, so a resumed run of the
-        #: same chain cannot count the same stored verdicts a second time.
+        #: remains a fixed base across runs; new results are cumulative as well.
         self._seed = config.initial_met
 
     # -- public API ---------------------------------------------------------
@@ -1716,7 +1787,6 @@ class Pipeline:
             self._time_to_n = 0.0
         else:
             self._find_satisfied = False
-        self._seed = 0
         if self._find_satisfied:
             # The caller already holds the N it asked for.  Nothing is read and
             # nothing is measured: the chain stops before its first item instead
@@ -2151,11 +2221,17 @@ class Pipeline:
             # rather than as a measurement that failed.
             self._stop('budget_exhausted', exc.code)
             return StageOutcome(stage, False, code=exc.code, detail=exc.message)
+        budget = RequestBudget(gate, reservation)
+        limit = replace(limit, budget=budget)
         try:
             try:
                 outcome = _coerce_outcome(await runner(item, stage=stage, limit=limit), stage)
+                budget.check()
             except asyncio.CancelledError:
                 raise
+            except BudgetExhausted as exc:
+                self._stop('budget_exhausted', exc.code)
+                outcome = StageOutcome(stage, False, code=exc.code, detail=exc.message)
             except Exception as exc:
                 # One broken proxy, one broken runner call: the item fails and
                 # the chain continues.  A pipeline error keeps its stable
@@ -2165,8 +2241,16 @@ class Pipeline:
                 outcome = StageOutcome(stage, False, code=code, detail=str(exc)[:200])
             self.concurrency.observe(outcome.ok, outcome.latency_s)
         finally:
-            await gate.release(reservation, requests=max(0, outcome.requests) if outcome else 0,
-                               bytes=0 if outcome is None else outcome.bytes)
+            if budget.active:
+                reservation = replace(reservation, requests=0)
+            if budget.requests or budget.exhausted:
+                if outcome is not None:
+                    outcome = replace(outcome, requests=budget.requests, bytes=budget.bytes)
+                await gate.release(reservation)
+            else:
+                # Injected runners that do no metered I/O retain their contract.
+                await gate.release(reservation, requests=max(0, outcome.requests) if outcome else 0,
+                                   bytes=0 if outcome is None else outcome.bytes)
         if outcome is None:  # pragma: no cover - only reachable via cancellation
             raise ValidationError(E_VALIDATION_FIELD, f'Этап {stage!r} не дал результата.')
         return outcome
@@ -2324,8 +2408,8 @@ class Pipeline:
         if policy.what == 'endpoint':
             return self._seed + self._counters.passed_endpoints
         if policy.what == 'ip':
-            return self._seed + len(self._passed_ips)
-        return self._seed + len(self._passed_exit_ips)
+            return self._seed + len(self._passed_ips - self.config.initial_ips)
+        return self._seed + len(self._passed_exit_ips - self.config.initial_exit_ips)
 
     def _advance_find(self, result: ItemResult) -> None:
         """Count toward N in exactly one of the three units the caller asked

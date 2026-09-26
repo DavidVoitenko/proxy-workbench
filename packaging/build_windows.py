@@ -36,6 +36,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from proxy_workbench import desktop
 from release_manifest import build_manifest, write_manifest
+from verify_delivery import child_environment
 
 GUI_EXE = 'proxy-workbench-gui.exe'
 CLI_EXE = 'proxy-workbench-cli.exe'
@@ -218,8 +219,7 @@ def verify_launch(gui, *, timeout=120):
     """
     import tempfile
     home = Path(tempfile.mkdtemp(prefix='pw-win-'))
-    env = dict(os.environ, LOCALAPPDATA=str(home / 'Local'), APPDATA=str(home / 'Roaming'),
-               PROXY_WORKBENCH_LANG='en')
+    env = child_environment(home)
     before = _folder_state(gui.parent)
     process = subprocess.Popen([str(gui), '--no-browser', '--port', '0', '--api-port', '0', '--no-gateway'],
                                env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -253,14 +253,16 @@ def _second_launch(gui, env, timeout):
     second = subprocess.run([str(gui), '--no-browser', '--port', '0'], env=env,
                             capture_output=True, text=True, timeout=timeout)
     after = _instances(gui)
+    if second.returncode != 0 or before < 1 or after != before:
+        raise BuildError(f'second launch failed: exit={second.returncode}, instances={before}->{after}')
     said = [line.strip() for line in ((second.stdout or '') + (second.stderr or '')).splitlines() if line.strip()]
     return dict(exit_code=second.returncode, said=said[-1:] if said else [],
-                instances_before=before, instances_after=after, one_instance=after <= before)
+                instances_before=before, instances_after=after, one_instance=True)
 
 
 def _instances(gui):
     """How many copies of this executable are running, by process image name."""
-    image = str(gui).rsplit('\\', 1)[-1]
+    image = Path(gui).name
     try:
         done = subprocess.run(['tasklist', '/FI', f'IMAGENAME eq {image}', '/NH'],
                               capture_output=True, text=True, timeout=30)

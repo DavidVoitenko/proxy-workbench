@@ -3684,7 +3684,68 @@
         "tags": [
           "sources"
         ],
-        "parameters": [],
+        "parameters": [
+          {
+            "name": "filter",
+            "in": "query",
+            "required": false,
+            "style": "deepObject",
+            "explode": true,
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "cursor": {
+                  "type": "string",
+                  "maxLength": 512
+                },
+                "limit": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 500
+                },
+                "offset": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 100000
+                },
+                "q": {
+                  "type": "string",
+                  "maxLength": 200
+                },
+                "set": {
+                  "type": "string",
+                  "maxLength": 100
+                },
+                "category": {
+                  "type": "string",
+                  "maxLength": 100
+                },
+                "protocol": {
+                  "type": "string",
+                  "maxLength": 100
+                },
+                "format": {
+                  "type": "string",
+                  "maxLength": 100
+                },
+                "access": {
+                  "type": "string",
+                  "maxLength": 100
+                },
+                "state": {
+                  "type": "string",
+                  "maxLength": 100
+                },
+                "sort": {
+                  "type": "string",
+                  "maxLength": 100
+                }
+              }
+            },
+            "description": "unknown parameters are rejected"
+          }
+        ],
         "responses": {
           "200": {
             "description": "result",
@@ -3695,6 +3756,9 @@
                 }
               }
             }
+          },
+          "304": {
+            "description": "not modified, see ETag"
           },
           "400": {
             "description": "documented error with a stable E_* code",
@@ -3779,7 +3843,44 @@
                 "limit": {
                   "type": "integer",
                   "minimum": 1,
-                  "maximum": 1000
+                  "maximum": 500
+                },
+                "offset": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 100000
+                },
+                "q": {
+                  "type": "string",
+                  "maxLength": 200
+                },
+                "set": {
+                  "type": "string",
+                  "maxLength": 100
+                },
+                "category": {
+                  "type": "string",
+                  "maxLength": 100
+                },
+                "protocol": {
+                  "type": "string",
+                  "maxLength": 100
+                },
+                "format": {
+                  "type": "string",
+                  "maxLength": 100
+                },
+                "access": {
+                  "type": "string",
+                  "maxLength": 100
+                },
+                "state": {
+                  "type": "string",
+                  "maxLength": 100
+                },
+                "sort": {
+                  "type": "string",
+                  "maxLength": 100
                 }
               }
             },

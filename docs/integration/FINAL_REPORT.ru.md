@@ -1,5 +1,8 @@
 # Итоговый отчёт: Proxy Workbench 2.3.0
 
+Это исторический снимок предыдущего прохода. Актуальные исправления и проверки:
+[объединение main и проверка 26.09.2026](VERIFICATION-2026-09-26.ru.md).
+
 Ветка `integration/ultra-2026-09-25`, HEAD `d9056e5`. Версия продукта:
 `proxy_workbench/branding.py:14` → `PRODUCT_VERSION = "2.3.0"`.
 

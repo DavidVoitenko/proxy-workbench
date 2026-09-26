@@ -33,6 +33,7 @@ concurrency:
 env:
   PYTHONDONTWRITEBYTECODE: "1"
   PYTHONUTF8: "1"
+  PYTHON_KEYRING_BACKEND: keyring.backends.null.Keyring
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
   ALL_PROXY: ""
   HTTP_PROXY: ""

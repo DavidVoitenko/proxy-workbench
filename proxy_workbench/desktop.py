@@ -24,6 +24,7 @@ and nobody else's, and a machine that fell asleep has to be told about it.
 """
 from __future__ import annotations
 
+import argparse
 import contextlib
 from contextlib import closing
 from dataclasses import dataclass, field
@@ -58,7 +59,7 @@ UPDATE_MANIFEST_ENV = 'PROXY_WORKBENCH_UPDATE_MANIFEST'
 # Mirrors db.SCHEMA_VERSION.  The real number is read from db at run time; this
 # value is only the fallback for a tree where the storage layer is absent, and
 # tests/test_desktop_signing.py fails when the two disagree.
-FALLBACK_SCHEMA_VERSION = 18
+FALLBACK_SCHEMA_VERSION = 19
 UPDATE_STATE_NAME = 'update-state.json'
 BACKUP_PREFIX = 'pre-update-'
 READ_CHUNK = 1024 * 1024
@@ -266,22 +267,24 @@ def resolve_layout(environ=None, *, frozen_=None, executable=None, platform=None
 
     override = environ.get(DATA_ENV)
     if override:
-        data = Path(override).expanduser()
-        cache = Path(environ.get(CACHE_ENV) or data / 'cache').expanduser()
-        logs = Path(environ.get(LOGS_ENV) or data / 'logs').expanduser()
+        data = Path(override).expanduser().resolve()
+        cache = Path(environ.get(CACHE_ENV) or data / 'cache').expanduser().resolve()
+        logs = Path(environ.get(LOGS_ENV) or data / 'logs').expanduser().resolve()
         return Layout(data, cache, logs, 'environment', data, tr(
             f'путь задан переменной {DATA_ENV}', f'path set by {DATA_ENV}'))
 
     if _portable_requested(environ, root):
         return _portable_layout(root, tr('portable mode включён явно', 'portable mode was requested explicitly'))
 
-    if is_frozen or not is_writable_dir(root):
+    checkout = _is_checkout(package)
+    write_root = package.parent if checkout and not is_frozen else root
+    if is_frozen or not is_writable_dir(write_root):
         data, cache, logs = _per_user_bases(environ, home, platform)
         return Layout(data, cache, logs, 'per-user', data, tr(
             'установленная сборка: папки пользователя',
             'installed build: per-user folders'))
 
-    if _is_checkout(package):
+    if checkout:
         data = package.parent / 'data'
         return Layout(data, data / 'cache', data / 'logs', 'checkout', package.parent, tr(
             'исходники проекта: data/ рядом с проектом', 'source checkout: data/ next to the project'))
@@ -467,6 +470,8 @@ def plan_migration(layout, *, environ=None, executable=None, package=None, sourc
         if not path.is_file() or path.is_symlink():
             continue
         relative = path.relative_to(candidate)
+        if relative.as_posix() in ('proxies.sqlite3-wal', 'proxies.sqlite3-shm', 'proxies.sqlite3-journal'):
+            continue
         size = path.stat().st_size
         existing = layout.data / relative
         if existing.is_file() and not _same_content(path, existing):
@@ -496,9 +501,15 @@ def apply_migration(plan, *, execute=False):
                                receipt=None, preview=True)
     copied, errors = [], []
     backup = _copy_tree(plan.source, plan.backup, database=plan.source / 'proxies.sqlite3')
+    if backup is None:
+        return MigrationResult(applied=False, source=plan.source, target=plan.target,
+                               errors=(tr('Не удалось создать резервную копию; перенос не выполнен.',
+                                          'Could not create the backup; migration was not applied.'),))
     try:
         for relative, _size in plan.items:
-            source_file = plan.source / relative
+            # The snapshot contains committed WAL data; copying the original
+            # main database here would silently discard those transactions.
+            source_file = backup / relative
             destination = plan.target / relative
             try:
                 destination.parent.mkdir(parents=True, exist_ok=True)
@@ -1315,17 +1326,18 @@ class InstanceLock:
             # Not "a+b": an append handle would put every published record at
             # the end of the file and the record a second launch reads would be
             # two JSON objects glued together.
-            handle = self.path.open('r+b') if self.path.exists() else self.path.open('w+b')
+            # O_CREAT without O_TRUNC also avoids two simultaneous first
+            # launches truncating each other's published record.
+            handle = os.fdopen(os.open(self.path, os.O_RDWR | os.O_CREAT | getattr(os, 'O_BINARY', 0), 0o600), 'r+b')
         except OSError:
             return False
         try:
             if os.name == 'nt':
                 import msvcrt
-                handle.seek(0, os.SEEK_END)
-                if handle.tell() == 0:
-                    handle.write(b'\0')
-                    handle.flush()
-                handle.seek(0)
+                # Windows byte locks forbid other processes from *reading*
+                # those bytes. Lock beyond the JSON record so second launches
+                # can still read the control address while the owner is alive.
+                handle.seek(0x7FFFFFFF)
                 msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
             else:
                 import fcntl
@@ -1365,7 +1377,7 @@ class InstanceLock:
         try:
             if os.name == 'nt':
                 import msvcrt
-                handle.seek(0)
+                handle.seek(0x7FFFFFFF)
                 with contextlib.suppress(OSError):
                     msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
             else:
@@ -1397,6 +1409,7 @@ class ControlServer:
         self.token = token or secrets.token_hex(16)
         self.address = ''
         self.socket_path = layout.data / CONTROL_SOCKET_NAME
+        self._socket_dir = None
         self._socket = None
         self._thread = None
         self._stop = threading.Event()
@@ -1410,6 +1423,12 @@ class ControlServer:
                 self._socket.bind(('127.0.0.1', 0))
                 self.address = f'tcp://127.0.0.1:{self._socket.getsockname()[1]}'
             else:
+                # macOS permits only 104 bytes for a UNIX socket address.
+                # A normal Unicode home/data path can exceed that limit.
+                if len(os.fsencode(self.socket_path)) > 100:
+                    self._socket_dir = Path(tempfile.mkdtemp(
+                        prefix='pw-control-', dir='/tmp' if Path('/tmp').is_dir() else None))
+                    self.socket_path = self._socket_dir / 'control.sock'
                 self.socket_path.parent.mkdir(parents=True, exist_ok=True)
                 with contextlib.suppress(OSError):
                     self.socket_path.unlink()
@@ -1427,9 +1446,10 @@ class ControlServer:
         return self.address
 
     def _serve(self):
+        listener = self._socket
         while not self._stop.is_set():
             try:
-                connection, _ = self._socket.accept()
+                connection, _ = listener.accept()
             except socket.timeout:
                 continue
             except OSError:
@@ -1480,6 +1500,9 @@ class ControlServer:
         if self.platform != 'win32':
             with contextlib.suppress(OSError):
                 self.socket_path.unlink()
+            if self._socket_dir is not None:
+                with contextlib.suppress(OSError):
+                    self._socket_dir.rmdir()
 
 
 def _restrict(path):
@@ -2619,7 +2642,16 @@ def run_startup_migration(layout, *, environ=None, executable=None, package=None
     and a receipt that names which copy is live.  It repeats only when the old
     folder actually changed, which is why the record is kept next to the data.
     """
-    roots = legacy_data_roots(layout, environ=environ, executable=executable, package=package)
+    environ = os.environ if environ is None else environ
+    # A custom data folder is a separate workspace, not permission to import
+    # the current checkout or another installation into it.
+    previous = environ.get('PROXY_WORKBENCH_PREVIOUS_DATA')
+    if previous:
+        roots = (Path(previous).expanduser(),)
+    elif layout.mode == 'per-user':
+        roots = legacy_data_roots(layout, environ=environ, executable=executable, package=package)
+    else:
+        roots = ()
     if not roots:
         return dict(applied=False, reason=tr('старой папки нет', 'there is no legacy folder'))
     preferences = read_preferences(layout)
@@ -2682,6 +2714,7 @@ def interface_holder(layout):
             import fcntl
             fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
+        handle.close()
         return True
     try:
         if os.name == 'nt':
@@ -2739,8 +2772,6 @@ class DesktopHost:
         self.platform_state = dict(last_wake=None, last_sleep=None, slept_s=0.0,
                                    network=list(network_fingerprint()), network_changed_at=None,
                                    network_state='')
-        self._engine = None
-        self._engine_connection = None
         self._quitting = False
         self._network_reports = 0
         self._wake_lock = threading.Lock()
@@ -2777,7 +2808,8 @@ class DesktopHost:
         running = self.running_instance()
         if running is not None:
             answer = control_request(running.control, running.token,
-                                     dict(action='activate', source='second-launch', argv=self.argv))
+                                     dict(action='activate', source='second-launch', argv=self.argv,
+                                          open_browser=not self.background and '--no-browser' not in self.argv))
             if answer.get('ok'):
                 url = running.url or str(answer.get('url') or '')
                 print(tr(f'Приложение уже запущено: {url}',
@@ -2785,7 +2817,8 @@ class DesktopHost:
                 journal(self.layout, 'instance.forwarded', pid=running.pid, url=url)
                 return 0
         url = published_url(self.layout)
-        self.open_interface(url or None)
+        if not self.background and '--no-browser' not in self.argv:
+            self.open_interface(url or None)
         print(tr(f'Приложение уже запущено{": " + url if url else ""}; повторный запуск ничего не изменил.',
                  f'The application is already running{": " + url if url else ""}; this launch changed nothing.'),
               flush=True)
@@ -2803,7 +2836,7 @@ class DesktopHost:
         if not interface_holder(self.layout):
             return -1
         url = published_url(self.layout)
-        if not self.background:
+        if not self.background and '--no-browser' not in self.argv:
             self.open_interface(url or None)
         print(tr(f'Приложение уже запущено{": " + url if url else ""} (эта копия закрыта, данные те же).',
                  f'The application is already running{": " + url if url else ""} '
@@ -2818,7 +2851,6 @@ class DesktopHost:
             self.observer.stop()
         if self.control is not None:
             self.control.stop()
-        self._close_engine()
         self.lock.release()
         journal(self.layout, 'instance.released', pid=os.getpid())
 
@@ -2838,8 +2870,8 @@ class DesktopHost:
         from . import gui
         original = gui.make_server
 
-        def capture(data, port=0):
-            server = original(data, port)
+        def capture(data, port=0, **options):
+            server = original(data, port, **options)
             self.adopt(server)
             return server
 
@@ -2972,7 +3004,8 @@ class DesktopHost:
         if action in ('status', 'hello'):
             return self.status()
         if action == 'activate':
-            self.open_interface()
+            if request.get('open_browser', True):
+                self.open_interface()
             return dict(self.status(), bye=False)
         if action in ('pause', 'stop'):
             return dict(self.status(), **self.pause_run())
@@ -3128,29 +3161,16 @@ class DesktopHost:
         return record
 
     def tick_after_wake(self):
-        """``Scheduler.mark_wake`` plus the tick that acts on it."""
-        connection, engine = self._engine_pair()
-        if engine is None:
-            return dict(error=tr('расписания недоступны', 'the schedules are unavailable'))
+        """Coalesce missed intervals and submit them through the same runner."""
         try:
-            return wake_tick(engine)
+            return self.schedule_tick(woke=True)
         except Exception as exc:
             return dict(error=f'{type(exc).__name__}: {exc}')
 
-    def _engine_pair(self):
-        if self._engine is None:
-            try:
-                self._engine_connection, self._engine = open_schedule_engine(self.layout)
-            except Exception:
-                return None, None
-        return self._engine_connection, self._engine
-
-    def _close_engine(self):
-        connection, self._engine_connection = self._engine_connection, None
-        self._engine = None
-        if connection is not None:
-            with contextlib.suppress(sqlite3.Error):
-                connection.close()
+    def schedule_tick(self, *, woke=False):
+        """Wake and headless timers share one durable dispatcher."""
+        from .schedule_runtime import runtime_for
+        return runtime_for(self.layout.data).tick(woke=woke)
 
     def on_network(self, previous=None, current=None, status='', source='address'):
         """A new network path: measurements from the old one are not this one.
@@ -3290,6 +3310,14 @@ def main(argv=None):
     browser and headless paths keep working exactly as before.
     """
     argv = list(sys.argv[1:] if argv is None else argv)
+    # Resolve --data before taking the instance lock. Otherwise two folders
+    # share one host, while its interface and journal point at different data.
+    data_parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
+    data_parser.add_argument('--data')
+    options, host_argv = data_parser.parse_known_args(argv)
+    if options.data is not None:
+        os.environ[DATA_ENV] = str(Path(options.data).expanduser().resolve())
+    argv = host_argv
     if argv and argv[0] in ('--print-paths', '--portable', '--update-notice', '--autostart',
                             '--autostart-status', '--status', '--migrate-preview'):
         return _host_command(argv)
@@ -3447,6 +3475,9 @@ def _copy_tree(source, destination, database=None):
         for path in sorted(source.rglob('*')):
             if not path.is_file() or path.is_symlink():
                 continue
+            if database is not None and str(path) in {str(database) + ending
+                                                      for ending in ('-wal', '-shm', '-journal')}:
+                continue
             target = destination / path.relative_to(source)
             target.parent.mkdir(parents=True, exist_ok=True)
             if database is not None and path == Path(database):
@@ -3460,7 +3491,7 @@ def _copy_tree(source, destination, database=None):
 
 def _snapshot_database(source, target):
     try:
-        with closing(sqlite3.connect(f'file:{source}?mode=ro', uri=True)) as reader, \
+        with closing(sqlite3.connect(Path(source).resolve().as_uri() + '?mode=ro', uri=True)) as reader, \
                 closing(sqlite3.connect(target)) as writer:
             reader.backup(writer)
     except sqlite3.Error:

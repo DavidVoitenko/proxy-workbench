@@ -43,7 +43,7 @@ import re
 import sqlite3
 import threading
 import time
-from collections import Counter
+from collections import Counter, deque
 from collections.abc import Iterable as _Iterable
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -1377,11 +1377,13 @@ def watch(store: PoolStore, pool_id: str, source: Callable[..., Sequence[Candida
     if ticks is not None:
         ticks = _count(ticks, 'ticks')
     face = clock or Clock()
-    statuses = []
+    # Background watches can run for months. Only finite invocations need the
+    # entire history; consumers already receive every status via on_status.
+    statuses = deque(maxlen=100) if ticks is None else []
     tick = 0
     while ticks is None or tick < ticks:
         at = face.now()
-        stored = store.get(pool_id)
+        stored = store.require(pool_id)
         if stored.next_attempt_at is not None and at < stored.next_attempt_at:
             controller = _Controller(store, stored, store.collection_kind(stored.collection_id), now=at,
                                      work=_Work(0, stored.policy.scan_limit), verify=None)
@@ -1394,7 +1396,7 @@ def watch(store: PoolStore, pool_id: str, source: Callable[..., Sequence[Candida
         tick += 1
         if ticks is None or tick < ticks:
             face.sleep(stored.policy.interval_seconds)
-    return statuses
+    return list(statuses)
 
 
 class _Stopped(Exception):
@@ -1497,7 +1499,10 @@ class WatchRegistry:
             self._stops[key] = stop
             self._ticks[key] = 0
             self._errors.pop(key, None)
-        thread.start()
+            # Publish a running thread atomically with the registry entry.
+            # Otherwise a second start can observe is_alive() == False and
+            # launch a duplicate watcher before this call starts its thread.
+            thread.start()
         return {'pool_id': key, 'watching': True, 'started': True, 'reason': '',
                 'ticks': 0}
 
@@ -1522,7 +1527,7 @@ class WatchRegistry:
         with self._lock:
             return {'watching': {key: {'ticks': self._ticks.get(key, 0),
                                        'error': self._errors.get(key, '')}
-                                 for key, thread in sorted(self._threads.items())},
+                                 for key, thread in sorted(self._threads.items()) if thread.is_alive()},
                     'errors': dict(self._errors)}
 
     def stop_all(self, *, timeout: float = 5.0) -> None:
@@ -1535,32 +1540,37 @@ class WatchRegistry:
         def on_status(status):
             with self._lock:
                 self._ticks[pool_id] = self._ticks.get(pool_id, 0) + 1
+                if status.state == STATE_ERROR:
+                    self._errors[pool_id] = status.deficit_reason or STATE_ERROR
             # The stop event is the pause path; an error state is the other
             # honest end: a pool that cannot be filled stays unwatched instead
             # of being retried forever behind the user's back.
             return not (stop.is_set() or status.state == STATE_ERROR)
 
         try:
-            while not stop.is_set():
-                store = None
-                try:
-                    store = self._open_store()
-                    # Built here, on this thread's connection: see `start`.
-                    ticker = source_factory(store.conn) if source_factory is not None else source
-                    watch(store, pool_id, ticker, verify=verify, budget=budget,
-                          clock=_InterruptibleClock(stop, self._clock), on_status=on_status)
-                finally:
-                    if store is not None:
-                        with contextlib.suppress(Exception):
-                            store.conn.close()
-                with self._lock:
-                    if self._stops.get(pool_id) is not stop:
-                        return
+            if stop.is_set():
+                return
+            store = None
+            try:
+                store = self._open_store()
+                # Built here, on this thread's connection: see `start`.
+                ticker = source_factory(store.conn) if source_factory is not None else source
+                watch(store, pool_id, ticker, verify=verify, budget=budget,
+                      clock=_InterruptibleClock(stop, self._clock), on_status=on_status)
+            finally:
+                if store is not None:
+                    with contextlib.suppress(Exception):
+                        store.conn.close()
         except _Stopped:
             return
         except Exception as exc:  # noqa: BLE001 - a watcher must not die silently
             with self._lock:
                 self._errors[pool_id] = f'{type(exc).__name__}: {exc}'
+        finally:
+            with self._lock:
+                if self._threads.get(pool_id) is threading.current_thread():
+                    self._threads.pop(pool_id, None)
+                    self._stops.pop(pool_id, None)
 
 
 #: The one registry of the process.  Both ways a user starts a pool -- the
@@ -1569,18 +1579,20 @@ class WatchRegistry:
 #: without a store: the module must be importable before any database exists,
 #: and the first surface to start a pool binds its data folder.
 WATCHES = WatchRegistry()
+_WATCH_REGISTRIES: dict[str, WatchRegistry] = {}
+_WATCH_REGISTRIES_LOCK = threading.Lock()
 
 
 def watch_registry(data=None) -> WatchRegistry:
-    """The process-wide registry, pointed at ``data`` the first time it is asked.
-
-    Both the API server and the GUI know their data folder before they serve a
-    request, so the binding happens at start-up rather than inside a tick.
-    """
-    if data is not None:
-        target = Path(data) / 'proxies.sqlite3'
-        WATCHES._open_store = lambda: PoolStore.open(target)
-    return WATCHES
+    """Share watches within a data folder, never across independent databases."""
+    if data is None:
+        return WATCHES
+    target = (Path(data) / 'proxies.sqlite3').resolve()
+    with _WATCH_REGISTRIES_LOCK:
+        key = str(target)
+        if key not in _WATCH_REGISTRIES:
+            _WATCH_REGISTRIES[key] = WatchRegistry(lambda: PoolStore.open(target))
+        return _WATCH_REGISTRIES[key]
 
 
 def refill_all(store: PoolStore, source: Callable[..., Sequence[Candidate]], *, now: float | None = None,

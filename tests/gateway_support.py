@@ -338,16 +338,18 @@ class GatewayCase(unittest.IsolatedAsyncioTestCase):
             head = await reader.readexactly(8)
             port = struct.unpack('>H', head[2:4])[0]
             address = head[4:8]
-            # In SOCKS4a the USERID field carries the hostname instead of a user.
-            field = b''
-            while (chunk := await reader.readexactly(1)) != b'\x00':
-                field += chunk
-            writer.write(b'\x00\x5a' + b'\x00' * 6)
+            # SOCKS4a adds a second NUL-terminated field AFTER USERID.
+            up.user_id = (await reader.readuntil(b'\x00'))[:-1]
             if address[:3] == b'\x00\x00\x00' and address[3] != 0:
+                name = (await reader.readuntil(b'\x00'))[:-1]
                 up.mode = 'socks4a-name'
-                return field.decode('idna'), port
-            up.mode = 'socks4-ipv4'
-            return ipaddress.IPv4Address(address).compressed, port
+                host = name.decode('idna')
+            else:
+                up.mode = 'socks4-ipv4'
+                host = ipaddress.IPv4Address(address).compressed
+            writer.write(b'\x00\x5a' + b'\x00' * 6)
+            await writer.drain()
+            return host, port
         greeting = await reader.readexactly(2)
         await reader.readexactly(greeting[1])
         writer.write(b'\x05\x00')

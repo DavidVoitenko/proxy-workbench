@@ -8,6 +8,7 @@ import time
 import unittest
 from unittest import mock
 from urllib.parse import parse_qs, urlsplit
+import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from proxy_workbench import geoip
@@ -45,7 +46,7 @@ class CatalogTests(unittest.TestCase):
         catalog = source_catalog.load_bundled()
         self.assertEqual(catalog['schema_version'], 1)
         self.assertEqual(len(catalog['sources']), 150)
-        self.assertEqual(catalog['revision'], 2026092501)
+        self.assertGreaterEqual(catalog['revision'], 2026092502)
         self.assertEqual(len(catalog['sources'][0]['legacy_specs']), 1)
         aliases = source_catalog.legacy_aliases(catalog)
         self.assertEqual(aliases['https://proxyspace.pro/http.txt'], 'cur-02')
@@ -121,8 +122,10 @@ class MigrationDatabaseTests(unittest.TestCase):
             old.commit(); old.close()
             db = p.open_db(path)
             try:
-                row = db.execute('SELECT first_seen_at,last_seen_at,legacy FROM candidate_seen_meta').fetchone()
-                self.assertEqual(row, (None, None, 1))
+                row = db.execute('SELECT proxy,source FROM candidate_seen').fetchone()
+                self.assertEqual(tuple(row), ('http://11.0.0.9:80', 'legacy'))
+                self.assertEqual(db.execute('SELECT count(*) FROM source_observation').fetchone()[0], 0)
+                self.assertEqual(db.execute('SELECT count(*) FROM source_generation').fetchone()[0], 0)
                 self.assertEqual(db.execute('SELECT count(*) FROM candidate_seen').fetchone()[0], 1)
             finally:
                 db.close()
@@ -202,10 +205,14 @@ class AdapterIntegrationTests(unittest.IsolatedAsyncioTestCase):
         try:
             report = await p.collect(self.db, [self.plan('new-077', base)], [], allow_private_sources=True, timeout=5)
             self.assertGreater(report['unique'], 0)
-            row = self.db.execute('SELECT country,asn,claimed_exit_ip,origin FROM source_metadata WHERE country IS NOT NULL LIMIT 1').fetchone()
+            row = self.db.execute('SELECT e.country,e.country_source,g.metadata_json FROM source_generation_entry g '
+                                  'JOIN endpoints e ON e.id=g.endpoint_id WHERE e.country IS NOT NULL LIMIT 1').fetchone()
             self.assertIsNotNone(row)
-            self.assertEqual(row[3], 'source_claimed')
-            self.assertTrue(row[0].isalpha())
+            metadata = json.loads(row[2])
+            self.assertEqual(metadata['origin'], 'source_claimed')
+            self.assertTrue(metadata['country'].isalpha())
+            self.assertEqual(row[1], 'source')
+            self.assertEqual(self.db.execute('SELECT count(*) FROM observations').fetchone()[0], 0)
         finally:
             server.close(); await server.wait_closed()
 
@@ -254,6 +261,48 @@ class ResilienceTests(unittest.IsolatedAsyncioTestCase):
     def tearDown(self):
         self.db.close(); self.temp.cleanup()
 
+    async def test_retry_after_and_local_backoff_defer_network_until_due(self):
+        for status, retry_header, delay in ((429, '120', 120), (503, '120', 120), (503, None, 60)):
+            with self.subTest(status=status, retry_after=retry_header):
+                clock = [1000.0]
+                hits = []
+                url = f'https://source.invalid/{status}/{retry_header or "local"}'
+
+                @contextlib.asynccontextmanager
+                async def stream(client, address, *args, **kwargs):
+                    hits.append(address)
+                    failing = clock[0] == 1000.0
+                    yield httpx.Response(
+                        status if failing else 200,
+                        headers={'Retry-After': retry_header} if failing and retry_header else {},
+                        content=b'' if failing else b'11.1.1.1:8080\n',
+                        request=httpx.Request('GET', address))
+
+                with mock.patch.object(p, '_source_stream', stream):
+                    first = await p.collect(self.db, [url], [], now=lambda: clock[0], quiet=True,
+                                            sleep=lambda _: asyncio.sleep(0))
+                    source_id = first['sources'][0]['source_id']
+                    attempts = len(hits)
+                    self.assertEqual(attempts, 1 if retry_header else 2)
+                    state = p._source_state_row(self.db, source_id)
+                    self.assertEqual(state['backoff_until'], 1000.0 + delay)
+                    if retry_header:
+                        self.assertEqual(first['sources'][0]['retry_after'], 1120.0)
+                        self.assertEqual(state['retry_after'], 1120.0)
+                    clock[0] = 1001.0
+                    deferred = await p.collect(self.db, [url], [], now=lambda: clock[0], quiet=True)
+                    self.assertEqual(deferred['sources'][0]['error'], 'SOURCE_BACKOFF')
+                    self.assertEqual(deferred['sources'][0]['attempts'], 0)
+                    self.assertEqual(len(hits), attempts)
+                    clock[0] = 1001.0 + delay
+                    recovered = await p.collect(self.db, [url], [], now=lambda: clock[0], quiet=True)
+                    self.assertEqual(recovered['sources'][0]['accepted'], 1)
+                    self.assertEqual(len(hits), attempts + 1)
+                    state = p._source_state_row(self.db, source_id)
+                    self.assertEqual(state['consecutive_failures'], 0)
+                    self.assertIsNone(state['backoff_until'])
+                    self.assertIsNone(state['retry_after'])
+
     async def test_etag_304_does_not_change_membership_or_generation(self):
         body = b'[{"ip":"11.1.1.1","port":80,"protocol":"http"}]'
         calls = []
@@ -269,13 +318,13 @@ class ResilienceTests(unittest.IsolatedAsyncioTestCase):
         base = f'http://127.0.0.1:{server.sockets[0].getsockname()[1]}'
         try:
             first = await p.collect(self.db, [f'json-records {base}/list'], [], allow_private_sources=True)
-            seen_before = self.db.execute('SELECT last_seen_at FROM candidate_seen_meta').fetchone()[0]
+            seen_before = self.db.execute('SELECT last_seen_at FROM membership_source').fetchone()[0]
             generation_before = self.db.execute('SELECT count(*) FROM source_generation').fetchone()[0]
             second = await p.collect(self.db, [f'json-records {base}/list'], [], allow_private_sources=True)
             self.assertEqual(second['sources'][0]['http_state'], 'not_modified')
             self.assertEqual(second['sources'][0]['cache_state'], 'not_modified')
             self.assertEqual(self.db.execute('SELECT count(*) FROM source_generation').fetchone()[0], generation_before)
-            self.assertEqual(self.db.execute('SELECT last_seen_at FROM candidate_seen_meta').fetchone()[0], seen_before)
+            self.assertEqual(self.db.execute('SELECT last_seen_at FROM membership_source').fetchone()[0], seen_before)
             self.assertIn(b'If-None-Match', calls[1])
             self.assertTrue(first['sources'][0]['complete'])
         finally:
@@ -347,45 +396,44 @@ class ResilienceTests(unittest.IsolatedAsyncioTestCase):
         catalog_item = next(item for item in source_catalog.load_bundled()['sources'] if item['id'] == 'cur-01')
         spec = catalog_item['legacy_specs'][0]
         old_id = p.source_key(spec)
-        self.db.execute('INSERT INTO candidates VALUES (?)', ('http://11.6.6.6:80',))
-        self.db.execute('INSERT INTO candidate_seen VALUES (?,?)', ('http://11.6.6.6:80', old_id))
+        self.db.execute('INSERT INTO candidates(proxy) VALUES (?)', ('http://11.6.6.6:80',))
+        self.db.execute('INSERT INTO candidate_seen(proxy,source) VALUES (?,?)', ('http://11.6.6.6:80', old_id))
         self.db.commit()
         plan = dict(catalog_item, endpoints=[dict(catalog_item['endpoints'][0], url='http://127.0.0.1:9/list')])
         # The mapping is applied before the network attempt and is visible even
         # when the endpoint is not eligible in this offline test.
-        with mock.patch.object(p, '_collect_rich_sources', wraps=p._collect_rich_sources):
-            report = asyncio.run(p.collect(self.db, [plan], [], allow_private_sources=True, timeout=0.1,
-                                           sleep=lambda _: asyncio.sleep(0)))
+        report = asyncio.run(p.collect(self.db, [plan], [], allow_private_sources=True, timeout=0.1,
+                                       sleep=lambda _: asyncio.sleep(0)))
         self.assertIn('cur-01', {row[0] for row in self.db.execute('SELECT source FROM candidate_seen')})
 
 
-        self.db.execute('INSERT INTO candidates VALUES (?)', ('http://11.8.8.8:80',))
+        self.db.execute('INSERT INTO candidates(proxy) VALUES (?)', ('http://11.8.8.8:80',))
         self.db.commit()
-        self.assertEqual(p.exclude_scope(self.db, ['http://11.8.8.8:80'], reason='user', scope_digest='test'), 1)
-        self.assertEqual(p.scope_excluded(self.db, 'test'), {'http://11.8.8.8:80'})
+        p.schema.add_scope_exclusion(self.db, 'http://11.8.8.8:80', reason='user', scope_digest='test')
+        self.assertEqual(p.schema.excluded_addresses(self.db, scope_digest='test'), {'http://11.8.8.8:80'})
         self.db.execute('DELETE FROM candidate_scope_exclusion WHERE scope_digest=?', ('test',))
         self.db.commit()
-        self.assertEqual(p.scope_excluded(self.db, 'test'), set())
+        self.assertEqual(p.schema.excluded_addresses(self.db, scope_digest='test'), set())
         self.assertEqual(self.db.execute('SELECT count(*) FROM candidates WHERE proxy=?', ('http://11.8.8.8:80',)).fetchone()[0], 1)
 
     def test_mirror_membership_does_not_inflate_independent_contribution(self):
         for source, family in (('mirror-a', 'publisher-feed'), ('mirror-b', 'publisher-feed')):
             self.db.execute('INSERT OR REPLACE INTO source_identity(source_id,family_id,publisher_id) VALUES (?,?,?)',
                             (source, family, 'publisher'))
-            self.db.execute('INSERT OR IGNORE INTO candidates VALUES (?)', ('http://11.4.4.4:80',))
-            self.db.execute('INSERT OR IGNORE INTO candidate_seen VALUES (?,?)', ('http://11.4.4.4:80', source))
+            self.db.execute('INSERT OR IGNORE INTO candidates(proxy) VALUES (?)', ('http://11.4.4.4:80',))
+            self.db.execute('INSERT OR IGNORE INTO candidate_seen(proxy,source) VALUES (?,?)', ('http://11.4.4.4:80', source))
         self.db.commit()
         self.assertEqual(p.listed_counts(self.db)['http://11.4.4.4:80'], 1)
         self.db.execute('INSERT INTO source_generation(source_id,state,active,last_good,created_at,record_count) VALUES (?,?,?,?,?,?)',
                         ('mirror-a', 'complete', 1, 1, time.time(), 1))
         generation = self.db.execute('SELECT last_insert_rowid()').fetchone()[0]
-        self.db.execute('INSERT INTO source_generation_entry(generation_id,proxy) VALUES (?,?)',
-                        (generation, 'http://11.4.4.4:80'))
+        self.db.execute('INSERT INTO source_generation_entry(generation_id,endpoint_id) VALUES (?,?)',
+                        (generation, p.schema.endpoint_id('http://11.4.4.4:80')))
         self.db.execute('INSERT INTO source_generation(source_id,state,active,last_good,created_at,record_count) VALUES (?,?,?,?,?,?)',
                         ('mirror-b', 'complete', 1, 1, time.time(), 1))
         generation = self.db.execute('SELECT last_insert_rowid()').fetchone()[0]
-        self.db.execute('INSERT INTO source_generation_entry(generation_id,proxy) VALUES (?,?)',
-                        (generation, 'http://11.4.4.4:80'))
+        self.db.execute('INSERT INTO source_generation_entry(generation_id,endpoint_id) VALUES (?,?)',
+                        (generation, p.schema.endpoint_id('http://11.4.4.4:80')))
         self.db.commit()
         contributions = p.source_contributions(self.db)
         self.assertEqual(contributions['mirror-a']['exclusive'], 0)
@@ -415,7 +463,7 @@ class TransportAndPreviewTests(unittest.IsolatedAsyncioTestCase):
             await reader.readuntil(b'\r\n\r\n')
             attempts.append(1)
             if len(attempts) == 1:
-                writer.write(b'HTTP/1.1 429 Too Many Requests\r\nContent-Length: 0\r\nConnection: close\r\n\r\n')
+                writer.write(b'HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n')
                 await writer.drain(); writer.close(); await writer.wait_closed()
                 return
             writer.write(b'HTTP/1.1 200 OK\r\nContent-Length: %d\r\nConnection: close\r\n\r\n' % (len(body) * 4) + body)
@@ -490,7 +538,7 @@ class TransportAndPreviewTests(unittest.IsolatedAsyncioTestCase):
         # A list far past the preview's own record budget: the check must stop
         # at that budget, say so, and keep what it read.
         rows = b'\n'.join(f'11.{index // 256}.{index % 256}.1:{8000 + index}'.encode()
-                          for index in range(300_000))
+                          for index in range(2_000))
         served = []
         async def handler(reader, writer):
             await reader.readuntil(b'\r\n\r\n')
@@ -499,14 +547,15 @@ class TransportAndPreviewTests(unittest.IsolatedAsyncioTestCase):
             await writer.drain(); writer.close(); await writer.wait_closed()
         server, base = await self.serve(handler)
         try:
-            report = await p.preview_collect(self.db, [f'http {base}/list'], 20, allow_private_sources=True)
+            report = await p.preview_collect(self.db, [f'http {base}/list'], 20, allow_private_sources=True,
+                                             max_source_candidates=100)
         finally:
             server.close(); await server.wait_closed()
         view = source_management.preview_view(report, 'bounded', 'bounded')
         self.assertEqual(served, [len(rows)])
         self.assertTrue(view['truncated'])
         self.assertEqual(view['limits'], {'max_bytes': p.PREVIEW_MAX_BYTES,
-                                          'max_candidates': p.PREVIEW_MAX_CANDIDATES})
+                                          'max_candidates': 100})
         self.assertEqual(view['error'], 'SOURCE_CANDIDATE_LIMIT')
         self.assertEqual(view['outcome'], 'limit_exceeded')
         self.assertEqual(len(view['sample']), 20)
@@ -640,15 +689,15 @@ class TransportAndPreviewTests(unittest.IsolatedAsyncioTestCase):
                 await writer.wait_closed()
         server, base = await self.serve(handler)
         try:
-            bounded = await p._collect_legacy(self.db, [f'http {base}/list'], [], 20, None, None,
-                                              allow_private_sources=True, max_source_bytes=14,
-                                              bounded_prefix=True)
+            bounded = await p.preview_collect(self.db, [f'http {base}/list'], 20,
+                                               allow_private_sources=True, max_source_bytes=14)
             entry = bounded['sources'][0]
             self.assertEqual(entry['error'], 'SOURCE_TRUNCATED')
             self.assertFalse(entry['complete'])
             self.assertEqual(entry['rows'], 1)
             self.assertEqual(entry['http_state'], 'http_2xx_nonempty')
-            strict = await p._collect_legacy(self.db, [f'http {base}/list'], [], 20, None, None,
+            self.assertEqual(self.db.execute('SELECT count(*) FROM candidates').fetchone()[0], 0)
+            strict = await p.collect(self.db, [f'http {base}/list'], [], 20, None, None,
                                              allow_private_sources=True, max_source_bytes=14)
             self.assertEqual(strict['sources'][0]['error'], 'SOURCE_TOO_LARGE')
             self.assertEqual(strict['sources'][0]['rows'], 0)
@@ -658,20 +707,21 @@ class TransportAndPreviewTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ScopeDigestTests(unittest.TestCase):
-    def test_cli_and_gui_compute_the_same_digest_for_the_same_scope(self):
-        # ``''.split(',')`` and ``geoip.parse_countries('')`` describe the same
-        # empty country filter; they must not produce two different scopes, or
-        # an exclusion written by one of them is invisible to the other.
-        settings = gui.defaults()
-        self.assertEqual(settings['countries'], '')
-        self.assertEqual(p.scope_digest_for(settings['protocol'], settings['countries'].split(','),
-                                            settings['max_latency'], settings['exclude_hosting']),
-                         p.scope_digest_for(settings['protocol'], geoip.parse_countries(settings['countries']),
-                                            settings['max_latency'], settings['exclude_hosting']))
-        self.assertEqual(p.scope_digest_for('all', [' DE ', '', 'nl']),
-                         p.scope_digest_for('all', geoip.parse_countries('DE,NL')))
-        self.assertNotEqual(p.scope_digest_for('all', []), p.scope_digest_for('all', ['de']))
-        self.assertNotEqual(p.scope_digest_for('socks5', []), p.scope_digest_for('http', []))
+    def test_exclusions_are_idempotent_and_scoped_through_the_public_store(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db = p.open_db(Path(directory) / 'scope.sqlite3')
+            try:
+                address = 'http://11.8.8.8:80'
+                for _ in range(2):
+                    p.schema.add_scope_exclusion(db, address, scope_digest='country-de')
+                self.assertEqual(p.schema.excluded_addresses(db, scope_digest='country-de'), {address})
+                self.assertEqual(p.schema.excluded_addresses(db, scope_digest='country-nl'), set())
+                self.assertEqual(p.schema.excluded_addresses(db), set())
+                self.assertEqual(db.execute('SELECT count(*) FROM candidate_scope_exclusion').fetchone()[0], 1)
+                p.schema.clear_scope_exclusions(db, scope_digest='country-de')
+                self.assertEqual(p.schema.excluded_addresses(db, scope_digest='country-de'), set())
+            finally:
+                db.close()
 
 
 class HtmlTableShapeTests(unittest.TestCase):

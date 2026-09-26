@@ -702,12 +702,12 @@ class TargetProfile:
         return value
 
 
-def _validate_url(value, name, *, allow_private=False):
+def _validate_url(value, name, *, allow_private=False, schemes=('http', 'https')):
     if not isinstance(value, str) or not value.strip() or len(value) > 2048:
         raise ProbeError(E_VALIDATION_FIELD, f'{name}: ожидается http(s) URL.')
     url = value.strip()
     parsed = urlsplit(url)
-    if parsed.scheme not in ('http', 'https') or not parsed.hostname or parsed.username or parsed.password:
+    if parsed.scheme not in schemes or not parsed.hostname or parsed.username or parsed.password:
         raise ProbeError(E_VALIDATION_FIELD, f'{name}: нужен http(s) URL без userinfo.')
     try:
         port = parsed.port
@@ -2496,7 +2496,9 @@ def validate_capability(data) -> CapabilitySpec:
     _reject_unknown(data, ('kind', 'id', 'url', 'dns_mode', 'scope', 'reuse', 'budget'),
                     'Проверка возможности')
     kind = _choice(data.get('kind'), 'Проверка возможности: kind', CAPABILITY_KINDS, required=True)
-    url = _validate_url(data.get('url'), f'Проверка возможности ({kind}): url')
+    url = _validate_url(data.get('url'), f'Проверка возможности ({kind}): url',
+                        schemes=('http', 'https', 'ws', 'wss') if kind == 'websocket'
+                        else ('http', 'https'))
     limits = CAPABILITY_LIMITS[kind]
     raw = data.get('budget') or {}
     if not isinstance(raw, dict):

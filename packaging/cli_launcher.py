@@ -16,9 +16,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from desktop_launcher import point_data_at_a_writable_folder
 from proxy_workbench.__main__ import main as entry
 
 if __name__ == '__main__':
-    point_data_at_a_writable_folder()
     raise SystemExit(entry())
