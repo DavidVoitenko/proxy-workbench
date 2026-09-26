@@ -436,6 +436,29 @@ MIN_FRESHNESS_SECONDS = 2 * 60 * 60
 #: exist at all.
 PUBLIC_ACCESS_ID = 'default'
 PUBLIC_ACCESS = core.Access(PUBLIC_ACCESS_ID, 1)
+
+
+def as_access(value):
+    """One access identity in the shape the admission contract reads.
+
+    The vault's record (`secrets.Access`) and the contract's own `core.Access` are
+    two dataclasses with the same meaning, and passing the vault's one used to
+    raise `AttributeError: 'Access' object has no attribute 'access_id'` at the
+    first row: a caller that had a real credential identity could not measure
+    with it.  The credential value is never touched here -- only the identity and
+    its revision travel into a row (F04).
+    """
+    if value is None:
+        return PUBLIC_ACCESS
+    if isinstance(value, core.Access):
+        return value
+    identifier = getattr(value, 'access_id', None) or getattr(value, 'id', None)
+    if isinstance(identifier, str) and identifier:
+        return core.Access(identifier, int(getattr(value, 'access_revision', 0) or 0))
+    if isinstance(value, (tuple, list)) and len(value) == 2:
+        return core.Access(str(value[0]), int(value[1] or 0))
+    raise ValueError('Не удалось прочитать идентичность доступа: ожидается Access, '
+                     '(access_id, access_revision) или None')
 PROTOCOL_EXPORTS = {'http': 'http.txt', 'https': 'https.txt', 'socks4': 'socks4.txt', 'socks5': 'socks5.txt'}
 PROTOCOL_ALIASES = {'socks5h': 'socks5'}
 
@@ -1579,7 +1602,7 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
     # GUI, the API and the gateway, or a consumer could mix two measurements
     # (CONTRACTS §1.2 rules 1-2).
     collection_id = ensure_collection(db, collection_id)
-    access = access or PUBLIC_ACCESS
+    access = as_access(access)
     network_id = snapshot_network(config)
     admission_policy = core.Policy(
         max_age_seconds=float(max_age_seconds if max_age_seconds else MIN_FRESHNESS_SECONDS),
@@ -2298,7 +2321,7 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
     directory.mkdir(parents=True, exist_ok=True)
     published_at = time.time()
     collection_id = ensure_collection(db, collection_id)
-    access = access or PUBLIC_ACCESS
+    access = as_access(access)
     max_age_seconds = float(max_age_seconds if max_age_seconds else MIN_FRESHNESS_SECONDS)
     countries = frozenset(countries or ())
     network_id = snapshot_network(cfg)
@@ -2929,7 +2952,8 @@ def parser():
                                 description=tr(f'{PRODUCT_NAME}: сбор и полная проверка публичных прокси под HTTP-сервис', f'{PRODUCT_NAME}: collect public proxies and fully check them against your HTTP services'))
     p.add_argument('--version', action='version', version=f'{PRODUCT_NAME} {PRODUCT_VERSION}')
     p.add_argument('command', choices=['collect', 'scan', 'run', 'export', 'get', 'test', 'serve', 'gateway', 'clear-data', 'update-geoip',
-                                      'import', 'source', 'api-key', 'pool', 'schedule', 'profile', 'preset', 'backup', 'geo'],
+                                      'import', 'source', 'api-key', 'pool', 'schedule', 'profile',
+                                      'preset', 'backup', 'geo', 'diagnose'],
                    help=tr('run — собрать и проверить; collect — только собрать; scan — только проверить; '
                            'export — пересобрать файлы; get — вывести готовые прокси; test — проверить свои прокси; '
                            'serve — локальное API; gateway — ротирующий прокси; '
@@ -3352,7 +3376,7 @@ def test_proxies(args):
 #: Commands that talk to the modules through :class:`Workbench` instead of
 #: driving a scan.  They run under the same data lock, on the same database.
 MANAGEMENT_COMMANDS = ('import', 'source', 'api-key', 'pool', 'schedule', 'profile',
-                       'preset', 'backup', 'geo')
+                       'preset', 'backup', 'geo', 'diagnose')
 
 
 def management_command(args):
@@ -3371,6 +3395,7 @@ def management_command(args):
                 'import': _cmd_import, 'source': _cmd_source, 'api-key': _cmd_api_key,
                 'pool': _cmd_pool, 'schedule': _cmd_schedule, 'profile': _cmd_profile,
                 'preset': _cmd_preset, 'backup': _cmd_backup, 'geo': _cmd_geo,
+                'diagnose': _cmd_diagnose,
             }[args.command]
             return handler(workbench, args, action)
     except WorkbenchError as exc:
@@ -4027,6 +4052,133 @@ def _cmd_backup_rebind(workbench, args):
         return emit(args, body, tr('Предпросмотр перепривязки секретов.',
                                    'secret rebind preview.'))
     return emit(args, body, tr('Секреты перепривязаны.', 'secrets rebound.'))
+
+
+def _diagnose_inputs(workbench, args):
+    """The pieces every diagnostic reads: stored rows, export status, source reports."""
+    profile = None
+    rows = []
+    conn = workbench.conn
+    latest = conn.execute('SELECT id FROM profiles ORDER BY created_at DESC LIMIT 1').fetchone()
+    if latest is not None:
+        profile = str(latest[0])
+        for (payload,) in conn.execute('SELECT payload FROM results WHERE profile=?',
+                                       (profile,)).fetchall():
+            try:
+                rows.append(json.loads(payload))
+            except (TypeError, ValueError):
+                continue
+    status = _diagnose_status(workbench)
+    sources = []
+    report = Path(args.data) / 'sources-report.json'
+    if report.is_file():
+        try:
+            sources.append(json.loads(report.read_text(encoding='utf-8')))
+        except (OSError, ValueError):
+            sources = []
+    return profile, rows, status, sources
+
+
+def _diagnose_status(workbench):
+    """The status document of the current export generation.
+
+    `current.json` is a *pointer* -- a generation name and a manifest. The funnel
+    reads the run itself (`state`, `stop_reason`, `exported`, `checked`), which
+    lives in the generation's `status.json`; handing it the pointer made every
+    total empty and `explain_zero` answer "nothing to explain" for a run that had
+    measured nothing.
+    """
+    exports = Path(workbench.data) / 'exports'
+    manifest = export_manifest(exports) or {}
+    generation = manifest.get('generation')
+    if isinstance(generation, str) and generation and '/' not in generation:
+        target = exports / 'generations' / generation / 'status.json'
+        if target.is_file():
+            try:
+                loaded = json.loads(target.read_text(encoding='utf-8'))
+                if isinstance(loaded, dict):
+                    return loaded
+            except (OSError, ValueError):
+                pass
+    legacy = exports / 'status.json'
+    if legacy.is_file():
+        try:
+            loaded = json.loads(legacy.read_text(encoding='utf-8'))
+            if isinstance(loaded, dict):
+                return loaded
+        except (OSError, ValueError):
+            pass
+    return {}
+
+
+def _cmd_diagnose(workbench, args, action):
+    """``diagnose funnel|zero|control|health|bundle`` -- F10, F25.
+
+    The diagnostic layer was written and tested, and the product never called it:
+    `build_bundle`, `health_report`, `build_funnel`, `explain_zero`, `check_control`
+    and `fixture_recipe` appeared in `tests/` and nowhere else, and the module's
+    only use in the product was `diagnostics.classification(exc)`.  So a user
+    asking "why did I get zero proxies" had a traceback and nothing else.  Every
+    action is a read; `bundle` writes a redacted file and says where.
+    """
+    from . import diagnostics
+    profile, rows, status, sources = _diagnose_inputs(workbench, args)
+    if action in ('', 'funnel'):
+        body = diagnostics.build_funnel(rows, status=status, sources=sources).to_dict()
+        text = '\n'.join(
+            [tr(f'Профиль: {profile or "—"}; состояние: {body.get("set_state") or "—"}; '
+                f'остановка: {body.get("stop_reason") or "—"}',
+                f'profile: {profile or "—"}; state: {body.get("set_state") or "—"}; '
+                f'stop: {body.get("stop_reason") or "—"}')]
+            + [f'  {stage}: {json.dumps(value, ensure_ascii=False, default=str)}'
+               for stage, value in (body.get('stages') or {}).items()])
+        return emit(args, body, text)
+    if action == 'zero':
+        funnel = diagnostics.build_funnel(rows, status=status, sources=sources)
+        zero = diagnostics.explain_zero(funnel)
+        # One shape either way: `zero` is the explanation or null, never a body
+        # that changes type depending on the outcome.
+        if zero is None:
+            return emit(args, {'zero': None},
+                        tr('Нулевой результат не объясняется: в воронке есть прошедшие строки.',
+                           'the empty result is not explained: some rows passed the funnel'))
+        return emit(args, {'zero': zero.to_dict()}, zero.render())
+    if action == 'control':
+        config = target_config(args, denylist=Denylist.empty()) if (args.url or args.config) else None
+        targets = (config or {}).get('targets') or ()
+        verdict = diagnostics.check_control(targets=targets)
+        body = verdict.to_dict()
+        return emit(args, body, tr(
+            f'Контроль: {body.get("state")} ({body.get("checked")} проверок, {body.get("code")})',
+            f'control: {body.get("state")} ({body.get("checked")} checks, {body.get("code")})'))
+    if action == 'health':
+        body = diagnostics.health_report(version=PRODUCT_VERSION,
+                                         schema_version=schema.SCHEMA_VERSION,
+                                         max_age_seconds=MIN_FRESHNESS_SECONDS).to_dict()
+        problems = [item for item in body.get('checks', []) if item.get('state') != 'ok']
+        return emit(args, body, tr(
+            f'Здоровье: проверок {len(body.get("checks", []))}, проблем {len(problems)}',
+            f'health: {len(body.get("checks", []))} checks, {len(problems)} problems'))
+    if action == 'bundle':
+        funnel = diagnostics.build_funnel(rows, status=status, sources=sources)
+        bundle = diagnostics.build_bundle(
+            environment={'product': PRODUCT_NAME, 'version': PRODUCT_VERSION},
+            status=status, rows=rows, sources=sources, funnel=funnel,
+            zero=diagnostics.explain_zero(funnel))
+        target = Path(args.data) / 'diagnostics' / 'bundle.json'
+        target.parent.mkdir(parents=True, exist_ok=True)
+        # `preview()` is the same document that `save()` would write, so the file
+        # on disk is exactly what the caller was shown before anything was kept.
+        atomic(target, json.dumps(bundle.preview(), ensure_ascii=False, indent=1, default=str))
+        return emit(args, {'path': str(target), 'redactions': bundle.redactions,
+                           'schema_version': bundle.schema_version,
+                           'sample_size': bundle.sample_size,
+                           'total_size': bundle.total_size,
+                           'truncated': bundle.truncated},
+                    tr(f'Диагностический пакет: {target} (выводов {len(bundle.redactions)})',
+                       f'diagnostic bundle: {target} ({len(bundle.redactions)} redactions)'))
+    raise WorkbenchError(tr(f'Неизвестное действие diagnose: {action}',
+                            f'unknown diagnose action: {action}'), 'E_VALIDATION_FIELD')
 
 
 def _cmd_geo(workbench, args, action):
