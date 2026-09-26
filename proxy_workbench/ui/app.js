@@ -46,16 +46,16 @@ const messages = {
     'help.s3.bullet2': 'Anonymity level rating (Elite / Anonymous)',
     'help.s3.bullet3': 'Local subnet and IP denylist filter',
     'help.linkDenylist': 'Manage denylist',
-    'help.s4.bullet1': 'Rotating gateway 127.0.0.1:8899',
-    'help.s4.bullet2': 'Instant Telegram & browser connection',
-    'help.s4.bullet3': 'Exports to TXT, CSV, JSON, PAC, Clash, Sing-Box',
+    'help.s4.bullet1': 'Rotating gateway for local TCP clients',
+    'help.s4.bullet2': 'Authenticated LAN mode can share the gateway with a phone',
+    'help.s4.bullet3': 'Fail-closed exports to TXT, CSV, JSON, PAC, Clash, Sing-Box',
     'help.linkGateway': 'Open Gateway',
     'help.faqTitle': 'Frequently Asked Questions',
     'help.faqSubtitle': 'Everything you need to know about proxies and privacy',
     'help.faq1Q': 'What is a proxy and why do I need it?',
     'help.faq1A': 'A proxy acts as an intermediary between your device and the internet. Websites see the proxy\'s IP address instead of your real IP, allowing you to bypass regional restrictions, access blocked services, and protect your privacy.',
     'help.faq2Q': 'What is the difference between HTTP and SOCKS5?',
-    'help.faq2A': 'HTTP/HTTPS proxies are designed for web browsers and websites. SOCKS5 is universal: it works with any application, handles DNS resolution through the proxy, supports UDP, and is ideal for Telegram, voice calls, and games.',
+    'help.faq2A': 'HTTP/HTTPS proxies are designed for web browsers and websites. SOCKS5 handles TCP streams and DNS through the proxy. This local gateway does not implement SOCKS5 UDP ASSOCIATE, Telegram calls and games that require UDP are not supported here.',
     'help.faq3Q': 'Why do free proxies stop working after some time?',
     'help.faq3A': 'Public proxies are hosted on servers worldwide and can be overloaded or restarted. Proxy Workbench includes an automatic Keep-Fresh (Watch) mode that continually re-checks working proxies every few minutes in the background, keeping your pool 100% active!',
     'help.faq4Q': 'How does the Local Rotating Gateway (127.0.0.1:8899) work?',
@@ -82,6 +82,7 @@ const messages = {
     'sidebar.data': 'Data and results are stored<br>in the local data folder.',
     'common.saveSettings': 'Save settings',
     'common.close': 'Close',
+    'common.delete': 'Delete',
     'common.cancel': 'Cancel',
     'scan.eyebrow': 'FIND. CHECK. SAVE.',
     'scan.title': 'Proxies for your tasks',
@@ -98,8 +99,8 @@ const messages = {
     'check.timeoutHint': 'Limit for a single request',
     'check.threshold': 'Success threshold',
     'check.thresholdHint': 'Applied to each service separately',
-    'threshold.twoThirds': 'At least ⅔ of attempts',
-    'threshold.all': 'All attempts (strict)',
+    'threshold.twoThirds': 'At least 2/3 of attempts',
+    'threshold.all': 'All attempts (100% strict)',
     'threshold.one': 'At least 1 per service',
     'check.advanced': 'Performance and response size',
     'check.workers': 'Parallel checks',
@@ -119,6 +120,8 @@ const messages = {
     'identity.strict': 'Strict mode',
     'identity.strictHint': 'Do not export if a DNSBL did not respond.',
     'identity.denylist': 'Local denylist',
+    'identity.local': 'Local denylist',
+    'identity.localHint': 'IPs or CIDR blocks permanently excluded from tests and exports.',
     'identity.denylistPlaceholder': '11.0.0.0/24\nhttp://11.0.0.1:8080\n# comment',
     'identity.denylistHint': 'IP, CIDR or exact proxy address. Stored only in data/denylist.txt and never included in the code.',
     'identity.applyDenylist': 'Apply the local denylist during collection, checks and export',
@@ -142,11 +145,11 @@ const messages = {
     'monitor.passed': 'Matching proxies',
     'monitor.sources': 'Connected sources',
     'monitor.start': 'Find and check',
-    'monitor.resume': 'Continue database',
+    'monitor.resume': 'Continue',
     'monitor.resumeTitle': 'Check the remaining database addresses with the current settings',
     'monitor.stop': 'Stop',
     'monitor.recheck': 'Recheck the whole database',
-    'monitor.callout': 'Progress is saved when you stop. “Continue database” skips checks already completed for the same profile.',
+    'monitor.callout': 'Progress is saved when you stop. “Continue” skips checks already completed for the same profile.',
     'mini.title': 'Results that fit your service',
     'mini.text': 'We check the real HTTP response through the proxy. DNSBL and the local denylist flag potentially dirty addresses but do not determine anonymity.',
     'mini.link': 'Open ranking',
@@ -161,7 +164,7 @@ const messages = {
     'phase.exporting': 'Saving',
     'phase.waiting': 'Waiting for the next re-check',
     'progress.nextCheck': 'Next re-check of working proxies at {time}',
-    'watch.label': 'Keep fresh: re-check every, min',
+    'watch.label': 'Keep fresh: re-check every',
     'watch.hint': '0 — off. Otherwise, after the check the app keeps running and re-checks the working proxies on this schedule, so exports, the API and the rotating proxy stay fresh.',
     'phase.complete': 'Complete',
     'phase.partial': 'Partial snapshot',
@@ -214,6 +217,7 @@ const messages = {
     'results.reason.recheck_passing': 'matching-proxy refresh',
     'results.reason.stopped': 'stopped before the full scope',
     'results.reason.error': 'operation failed',
+    'results.reason.expired': 'snapshot expired',
     'results.selectionReport': 'Selected export: {exported} of {requested} written · {missing} unavailable, stale or excluded by a filter.',
     'results.diagnostic': 'Last unfinished run: {status} ({reason}) · checked {checked} of {candidates}. The current published export was kept.',
     'results.localFiltered': ' · filtered locally: {count}',
@@ -226,6 +230,7 @@ const messages = {
     'results.copyProxy': 'Copy proxy address',
     'gateway.title': 'Rotating Proxy Gateway',
     'gateway.online': 'Online',
+    'gateway.offline': 'Offline',
     'results.noneYet': 'No results yet. Start a check on the first tab.',
     'results.noneMatching': 'No matching proxies for these conditions yet.',
     'results.total': '{count} matching',
@@ -239,7 +244,16 @@ const messages = {
     'col.cleanliness': 'Cleanliness',
     'col.anonymity': 'Anonymity',
     'monitor.recheckPassing': 'Re-check only matching proxies (fast)',
-    'sort.uptime': 'Uptime: passed most re-checks first',
+    'monitor.recheckPassingShort': 'Matching',
+    'monitor.recheckShort': 'Database',
+    'monitor.recheckPassingTitle': 'Re-check only matching proxies that passed thresholds',
+    'monitor.recheckTitle': 'Re-check all database addresses with current settings',
+    'sort.recommended': 'Recommended (quality + uptime)',
+    'sort.quality': 'Quality (speed + response)',
+    'sort.speed': 'Speed (fastest ping)',
+    'sort.stability': 'Stability (lowest jitter)',
+    'sort.uptime': 'Uptime (most verified)',
+    'sort.bandwidth': 'Bandwidth (Mbit/s)',
     'results.byUptime': 'By uptime',
     'col.uptime': 'Uptime',
     'col.uptimeHint': 'Passed re-checks / all checks',
@@ -248,7 +262,7 @@ const messages = {
     'col.country': 'Country',
     'preset.label': 'Preset:',
     'preset.quick': '⚡ Quick',
-    'preset.balanced': '⚖ Balanced',
+    'preset.balanced': '⚖️ Balanced',
     'preset.thorough': '🔬 Thorough',
     'preset.hint': 'Quick: 1 attempt, short timeouts, more workers. Thorough: 5 attempts, patient timeouts.',
     'preset.applied': 'Preset applied. Save or start a scan to use it.',
@@ -259,6 +273,7 @@ const messages = {
     'unit.sec': 'sec',
     'unit.attempts': 'tries',
     'unit.workers': 'threads',
+    'unit.threads': 'threads',
     'unit.conns': 'conns',
     'unit.bytes': 'bytes',
     'unit.pcs': 'pcs',
@@ -278,6 +293,10 @@ const messages = {
     'provider.exclude': 'Skip hosting providers and data centres (needs the provider database)',
     'provider.hosting': 'hosting',
     'col.provider': 'Provider',
+    'col.age': 'Age',
+    'col.check': 'Select',
+    'col.num': '#',
+    'col.actions': 'Actions',
     'geo.hint': 'Needed for country filters, the Country and Provider columns and hiding hosting providers. The free DB-IP Country Lite and ASN Lite files are downloaded once into the local data folder; lookups then work offline. Geonode sources already include countries.',
     'geo.download': 'Download / update',
     'geo.downloading': 'Downloading the country database…',
@@ -293,6 +312,9 @@ const messages = {
     'filter.allProtocols': 'All protocols',
     'filter.maxLatency': 'Max latency, ms',
     'filter.maxLatencyHint': '0 — no limit',
+    'filter.excludeHosting': 'Hosting:',
+    'filter.keepHosting': 'Keep all',
+    'filter.excludeHostingAction': 'Exclude',
     'filter.searchPlaceholder': 'Search by address or port',
     'filter.copyPage': 'Copy this page',
     'download.pacHint': 'Browser auto-config: the 10 best proxies in order',
@@ -345,7 +367,9 @@ const messages = {
     'toast.settingsImported': 'Settings loaded and saved.',
     'toast.settingsBad': 'This file does not contain Proxy Workbench settings.',
     'gateway.label': 'Rotating proxy for browsers and apps:',
-    'gateway.hint': 'Set it as an HTTP or SOCKS5 proxy anywhere. Every new connection goes through the next working proxy from the latest export; failed ones are skipped automatically.',
+    'gateway.hint': 'Set it as an HTTP or SOCKS5 proxy anywhere. Every new TCP connection goes through the next working proxy from the latest export; failed ones are skipped automatically. UDP is not supported by this local gateway.',
+    'gateway.mobileUnavailable': 'Phone QR is available only in authenticated LAN mode. Restart the GUI with --gateway-host 0.0.0.0 and allow the port in the firewall.',
+    'gateway.qrTooLong': 'The gateway address is too long for a QR code; use Copy address instead.',
     'gateway.stats': '{proxies} in rotation · {connections} connections',
     'toast.gatewayCopied': 'Proxy address copied.',
     'api.label': 'API for your programs:',
@@ -619,19 +643,83 @@ const messages = {
     'nav.mobile': 'Mobile & Clients',
     'scenario.title': 'One-Click Quick Scenarios',
     'scenario.subtitle': 'Preconfigured smart templates for popular workflows',
-    'scenario.telegram': 'Telegram & Calls',
-    'scenario.telegramDesc': 'SOCKS5 proxies with low jitter for unblocked messaging and calls',
-    'scenario.youtube': 'YouTube & 4K Video',
-    'scenario.youtubeDesc': 'Bandwidth testing in Mbit/s with high throughput for 4K streaming',
-    'scenario.anon': 'Elite Privacy',
+    'scenario.telegram': 'Telegram web page',
+    'scenario.telegramDesc': 'Checks the public web page through the proxy; calls and the app protocol are not measured',
+    'scenario.youtube': 'YouTube page + speed',
+    'scenario.youtubeDesc': 'Page answer plus a separate download sample in Mbit/s; not a video quality guarantee',
+    'scenario.anon': 'Anonymity screening',
     'scenario.anonDesc': 'Judge verified anonymity with strict DNSBL blacklist filtering',
-    'scenario.scrape': 'Fast Scraping',
+    'scenario.scrape': 'High-throughput sweep',
     'scenario.scrapeDesc': '256 threads, 2s connect timeout, quick prefiltering for big lists',
     'scenario.custom': 'Custom Pro',
     'scenario.customDesc': 'Manual control over all check, identity and export parameters',
     'scenario.applied': 'Scenario applied. Click Find and check to begin.',
+    'scenario.customUnchanged': 'Custom settings unchanged; adjust the fields manually.',
     'monitor.liveStream': 'Live Inspection Stream',
     'monitor.liveStreamIdle': 'Checked proxies appear here in real time with ping and status.',
+    'monitor.liveStreamSource': 'Real measurement events, one per finished check',
+    'monitor.job': 'Job',
+    'code.title': 'Code',
+    'view.label': 'View',
+    'view.fresh': 'Fresh',
+    'view.stale': 'Expired',
+    'view.failed': 'Failed',
+    'view.unknown': 'Unknown time',
+    'view.all': 'All rows',
+    'results.views': 'Saved views',
+    'results.viewSave': 'Save view',
+    'results.viewName': 'View name',
+    'results.viewApplied': 'View applied: {name}',
+    'results.viewSaved': 'View saved: {name}',
+    'results.viewDeleted': 'View deleted',
+    'results.scope': 'Bulk scope',
+    'scope.page': 'This page',
+    'scope.selected': 'Selected',
+    'scope.allMatching': 'All matching',
+    'results.columns': 'Columns',
+    'results.columnsSaved': 'Columns saved',
+    'results.matrix': 'Targets matrix',
+    'results.matrixHint': 'One row per proxy, one column per checked service.',
+    'results.matrixClose': 'Close matrix',
+    'results.tag': 'Tag',
+    'results.untag': 'Remove tag',
+    'results.note': 'Note',
+    'results.favorite': 'Favourite',
+    'results.unfavorite': 'Unfavourite',
+    'results.exclude': 'Exclude from my list',
+    'results.include': 'Return to my list',
+    'results.bulkRecheck': 'Re-check',
+    'results.bulkRecheckHint': 'Full re-check: the stored row and its freshness are updated.',
+    'results.bulkDone': '{op}: {count} rows',
+    'results.undo': 'Undo',
+    'results.undone': 'Undone: {summary}',
+    'results.nothingUndo': 'Nothing to undo',
+    'results.history': 'Recent actions',
+    'results.freshness': 'Freshness',
+    'results.tagInput': 'Tag name',
+    'results.noteInput': 'Note text',
+    'results.selectionScopeHint': 'A selection belongs to the current scope. Changing filters or the generation clears it.',
+    'results.selectionCleared': 'Selection cleared: the scope changed',
+    'results.snapshotBroken': 'The published snapshot cannot be read; the table stays empty instead of showing unrelated rows.',
+    'quick.title': 'Quick test',
+    'quick.volume': 'Volume: {targets} services x {attempts} attempts, at most {requests} requests, {seconds}s total',
+    'quick.skipped': 'Not measured: reputation, anonymity, speed',
+    'quick.recheckFull': 'Full re-check',
+    'quick.storedNo': 'The stored row is not changed by this test',
+    'connect.title': 'Connection path',
+    'connect.pool': '1. Pool',
+    'connect.client': '2. App or browser',
+    'connect.fields': '3. Fields',
+    'connect.route': '4. Route control',
+    'connect.disconnect': '5. Disconnect',
+    'connect.generation': 'Snapshot',
+    'connect.routeText': 'Every new TCP connection rotates to the next working proxy. UDP is not supported.',
+    'connect.disconnectText': 'Remove the proxy settings in your app, or stop the rotating proxy here.',
+    'connect.stopGateway': 'Stop rotating proxy',
+    'connect.gatewayStopped': 'Rotating proxy stopped',
+    'connect.lanOptIn': 'LAN mode is off: the rotating proxy listens on this computer only.',
+    'connect.probeNote': 'The live feed and the quick test are Workbench probes, not your client traffic.',
+    'toast.scopeChanged': 'The scope changed; the action was not applied',
     'monitor.gaugeTitle': 'OVERALL PROGRESS',
     'monitor.proxiesFound': 'Matching proxies',
     'filter.all': 'All Alive',
@@ -639,7 +727,7 @@ const messages = {
     'filter.socks5': '🔒 SOCKS5',
     'filter.http': '🌐 HTTP/S',
     'filter.elite': '🛡️ Elite',
-    'filter.clean': '🧹 Clean IP',
+    'filter.clean': '🧹 Verified clean IP',
     'filter.withSpeed': '🚀 With Speed',
     'results.test': 'Test',
     'results.testing': 'Testing…',
@@ -661,30 +749,49 @@ const messages = {
     'results.copyJson': 'JSON object',
     'results.geoBarTitle': 'Country Distribution',
     'gateway.heading': 'Local Rotating Proxy Gateway',
-    'gateway.lead': 'Single local endpoint 127.0.0.1:8899 that rotates every new connection through your pool of verified proxies.',
-    'gateway.protocols': 'HTTP & SOCKS5 Simultaneous',
+    'gateway.lead': 'A local endpoint that rotates TCP connections through your pool of verified proxies. Use authenticated LAN mode to share it with a phone on the same network.',
+    'gateway.protocols': 'HTTP & SOCKS5 TCP',
     'gateway.tabTelegram': 'Telegram',
     'gateway.tabCurl': 'cURL',
     'gateway.tabPython': 'Python',
     'gateway.tabBrowser': 'Browser & Apps',
     'gateway.openTelegram': 'Open in Telegram Desktop',
-    'gateway.qrHint': 'Scan with phone camera to connect Telegram mobile:',
+    'gateway.qrHint': 'With authenticated LAN mode, scan this QR to add the SOCKS5 gateway to Telegram mobile:',
     'gateway.copyCode': 'Copy Code',
     'gateway.copy': 'Copy address',
     'mobile.heading': 'Mobile Profiles & Client Configs',
-    'mobile.lead': 'Ready-to-use configs for sing-box, Clash, Telegram, and mobile devices with split routing.',
+    'mobile.lead': 'Client configs are fail-closed: an empty or expired pool blocks traffic instead of silently using DIRECT. The local gateway supports TCP, not UDP calls.',
     'mobile.singboxTitle': 'sing-box (iOS & Android)',
-    'mobile.singboxDesc': 'Smart split routing: Russian banks & domestic services direct, Telegram & blocked traffic through fastest proxies.',
+    'mobile.singboxDesc': 'Client config with an automatic proxy group; verify the client version and routing rules before enabling TUN mode.',
     'mobile.clashTitle': 'Clash / Mihomo',
-    'mobile.clashDesc': 'Auto-failover URLTest proxy group with fastest latency selection.',
+    'mobile.clashDesc': 'Fail-closed URLTest group with fastest-latency selection; no implicit DIRECT fallback.',
     'mobile.telegramTitle': 'Telegram Mobile',
-    'mobile.telegramDesc': 'Scan the QR code with iOS or Android to immediately add working SOCKS5 proxy.',
+    'mobile.telegramDesc': 'Use the authenticated LAN QR for a TCP SOCKS5 connection. Calls and other UDP traffic are not provided by this gateway.',
     'mobile.copyConfig': 'Copy Config',
     'mobile.downloadConfig': 'Download File',
     'mobile.qrCode': 'QR Code for Phone',
     'mobile.guideTitle': 'How to setup on Mobile',
-    'mobile.guideIos': '1. Install sing-box or Shadowrocket from App Store. 2. Import config or scan QR code. 3. Enable TUN VPN mode.',
-    'mobile.guideAndroid': '1. Install sing-box or Hiddify from Google Play. 2. Add profile via QR or file. 3. Connect.',
+    'mobile.guideIos': '1. Install a supported client. 2. Import the fail-closed config or authenticated LAN QR. 3. Enable TUN mode after reviewing its rules.',
+    'mobile.guideAndroid': '1. Install a supported client. 2. Add the config or authenticated LAN QR. 3. Connect; UDP applications need a different tunnel.',
+    'tb.order': 'Order:',
+    'tb.proto': 'Proto:',
+    'tb.anon': 'Anon:',
+    'tb.min': 'Success:',
+    'tb.latency': 'Max latency:',
+    'tb.top': 'Top:',
+    'tb.hosting': 'Hosting:',
+    'tb.copyPage': 'Copy page',
+    'gateway.poolSize': 'Proxies in pool',
+    'gateway.activeConns': 'Active sessions',
+    'gateway.lanModeTitle': 'LAN Mode Inactive',
+    'gateway.mobileUnavailableShort': 'Run GUI with --gateway-host 0.0.0.0 to enable mobile QR',
+    'mobile.guideLead': 'Step-by-step instructions for popular mobile proxy clients',
+    'mobile.ios1': 'Install sing-box or Shadowrocket from the App Store',
+    'mobile.ios2': 'Import downloaded config file or scan LAN QR code',
+    'mobile.ios3': 'Review routing rules and enable TUN VPN mode',
+    'mobile.android1': 'Install sing-box or Hiddify from Google Play',
+    'mobile.android2': 'Add profile via imported file or scan LAN QR code',
+    'mobile.android3': 'Tap Connect to route traffic through the proxy pool',
     'toast.banned': 'Added {count} proxies to local denylist.',
     'toast.tested': 'Proxy test completed.',
     'region.top': '⭐ Top 5',
@@ -723,16 +830,16 @@ const messages = {
     'help.s3.bullet2': 'Определение анонимности (Elite / Anonymous)',
     'help.s3.bullet3': 'Локальный черный список нежелательных сетей',
     'help.linkDenylist': 'Черный список',
-    'help.s4.bullet1': 'Ротирующий шлюз 127.0.0.1:8899',
-    'help.s4.bullet2': 'Быстрое подключение Telegram и браузера',
-    'help.s4.bullet3': 'Экспорт в TXT, CSV, JSON, PAC, Clash, Sing-Box',
+    'help.s4.bullet1': 'Ротирующий шлюз для локальных TCP-клиентов',
+    'help.s4.bullet2': 'Защищённый режим LAN позволяет подключить телефон',
+    'help.s4.bullet3': 'Экспорт с безопасным отказом при пустом пуле',
     'help.linkGateway': 'Открыть шлюз',
     'help.faqTitle': 'Частые вопросы и ответы',
     'help.faqSubtitle': 'Всё, что нужно знать о прокси и безопасности',
     'help.faq1Q': 'Что такое прокси и для чего они нужны?',
     'help.faq1A': 'Прокси выступает промежуточным узлом между вашим устройством и интернетом. Сайты видят адрес прокси вместо вашего реального IP, что позволяет открывать заблокированные ресурсы, обходить ограничения провайдеров и сохранять приватность.',
     'help.faq2Q': 'В чём разница между HTTP, HTTPS и SOCKS5?',
-    'help.faq2A': 'HTTP/HTTPS прокси предназначены для веб-страниц и браузеров. SOCKS5 — универсальный протокол: он работает с любыми программами, пропускает любой сетевой трафик, поддерживает голосовые звонки и идеально подходит для Telegram.',
+    'help.faq2A': 'HTTP/HTTPS прокси предназначены для веб-страниц и браузеров. SOCKS5 передаёт TCP-потоки и DNS через прокси. Этот локальный шлюз не реализует SOCKS5 UDP ASSOCIATE, поэтому звонки Telegram и игры, которым нужен UDP, здесь не поддерживаются.',
     'help.faq3Q': 'Почему бесплатные прокси со временем перестают работать?',
     'help.faq3A': 'Публичные прокси работают на серверах по всему миру и могут перегружаться или отключаться. В Proxy Workbench есть функция «Авто-перепроверка» (Watch mode): она в фоне регулярно проверяет рабочие прокси каждые N минут, поэтому в вашем списке всегда только живые адреса!',
     'help.faq4Q': 'Как работает локальный шлюз (127.0.0.1:8899)?',
@@ -759,6 +866,7 @@ const messages = {
     'sidebar.data': 'Данные и результаты хранятся<br>в локальной папке data.',
     'common.saveSettings': 'Сохранить настройки',
     'common.close': 'Закрыть',
+    'common.delete': 'Удалить',
     'common.cancel': 'Отмена',
     'scan.eyebrow': 'НАЙТИ. ПРОВЕРИТЬ. СОХРАНИТЬ.',
     'scan.title': 'Прокси под ваши задачи',
@@ -775,8 +883,8 @@ const messages = {
     'check.timeoutHint': 'Лимит одного запроса',
     'check.threshold': 'Порог успешности',
     'check.thresholdHint': 'Отдельно для каждого сервиса',
-    'threshold.twoThirds': 'Не менее ⅔ попыток',
-    'threshold.all': 'Все попытки (строго)',
+    'threshold.twoThirds': 'Не менее 2/3 попыток',
+    'threshold.all': 'Все попытки (100% строго)',
     'threshold.one': 'Хотя бы 1 на сервис',
     'check.advanced': 'Производительность и размер ответа',
     'check.workers': 'Параллельных проверок',
@@ -796,6 +904,8 @@ const messages = {
     'identity.strict': 'Строгий режим',
     'identity.strictHint': 'Не экспортировать, если DNSBL не ответил.',
     'identity.denylist': 'Локальный denylist',
+    'identity.local': 'Локальный denylist',
+    'identity.localHint': 'IP и CIDR, навсегда исключённые из проверок и экспорта.',
     'identity.denylistPlaceholder': '11.0.0.0/24\nhttp://11.0.0.1:8080\n# комментарий',
     'identity.denylistHint': 'IP, CIDR или точный адрес прокси. Хранится только в data/denylist.txt и не включается в код.',
     'identity.applyDenylist': 'Применять локальный denylist при сборе, проверке и экспорте',
@@ -819,11 +929,11 @@ const messages = {
     'monitor.passed': 'Подходящих прокси',
     'monitor.sources': 'Подключено источников',
     'monitor.start': 'Найти и проверить',
-    'monitor.resume': 'Продолжить базу',
+    'monitor.resume': 'Продолжить',
     'monitor.resumeTitle': 'Проверить оставшиеся адреса базы с текущими настройками',
     'monitor.stop': 'Остановить',
     'monitor.recheck': 'Перепроверить всю базу заново',
-    'monitor.callout': 'При остановке прогресс сохраняется. «Продолжить базу» пропускает уже завершённые проверки того же профиля.',
+    'monitor.callout': 'При остановке прогресс сохраняется. «Продолжить» пропускает уже завершённые проверки того же профиля.',
     'mini.title': 'Результат — под ваш сервис',
     'mini.text': 'Проверяем настоящий HTTP-ответ через прокси. DNSBL и локальный denylist отмечают потенциально грязные адреса, но не определяют анонимность.',
     'mini.link': 'Открыть рейтинг',
@@ -838,7 +948,7 @@ const messages = {
     'phase.exporting': 'Сохранение',
     'phase.waiting': 'Ждём следующую перепроверку',
     'progress.nextCheck': 'Следующая перепроверка рабочих прокси в {time}',
-    'watch.label': 'Держать свежим: перепроверять каждые, мин',
+    'watch.label': 'Держать свежим: каждые',
     'watch.hint': '0 — выключено. Иначе после проверки приложение продолжает работать и перепроверяет рабочие прокси по этому расписанию, чтобы экспорт, API и ротирующий прокси оставались свежими.',
     'phase.complete': 'Завершено',
     'phase.partial': 'Частичный снимок',
@@ -891,6 +1001,7 @@ const messages = {
     'results.reason.recheck_passing': 'обновление подходящих прокси',
     'results.reason.stopped': 'остановлено до завершения всей области',
     'results.reason.error': 'операция завершилась ошибкой',
+    'results.reason.expired': 'снимок истёк',
     'results.selectionReport': 'Выбранных экспортировано: {exported} из {requested} · недоступно, устарело или отсечено фильтром: {missing}.',
     'results.diagnostic': 'Последний незавершённый проход: {status} ({reason}) · проверено {checked} из {candidates}. Текущий опубликованный экспорт сохранён.',
     'results.localFiltered': ' · локально отсечено: {count}',
@@ -903,6 +1014,7 @@ const messages = {
     'results.copyProxy': 'Скопировать адрес прокси',
     'gateway.title': 'Шлюз с ротацией прокси',
     'gateway.online': 'В сети',
+    'gateway.offline': 'Отключен',
     'results.noneYet': 'Ещё нет результатов. Запустите проверку на первой вкладке.',
     'results.noneMatching': 'По этим условиям пока нет подходящих прокси.',
     'results.total': '{count} подходящих',
@@ -916,7 +1028,16 @@ const messages = {
     'col.cleanliness': 'Чистота',
     'col.anonymity': 'Анонимность',
     'monitor.recheckPassing': 'Перепроверить только подходящие (быстро)',
-    'sort.uptime': 'Живучесть: чаще проходили перепроверки',
+    'monitor.recheckPassingShort': 'Подходящие',
+    'monitor.recheckShort': 'Всю базу',
+    'monitor.recheckPassingTitle': 'Перепроверить только адреса, прошедшие отбор',
+    'monitor.recheckTitle': 'Перепроверить всю базу заново',
+    'sort.recommended': 'Рекомендуемые (качество + аптайм)',
+    'sort.quality': 'Качество (скорость + отклик)',
+    'sort.speed': 'Скорость (минимальный пинг)',
+    'sort.stability': 'Стабильность (мин. разброс)',
+    'sort.uptime': 'Живучесть (проверенные)',
+    'sort.bandwidth': 'Пропускная способность (Mbit/s)',
     'results.byUptime': 'По живучести',
     'col.uptime': 'Живучесть',
     'col.uptimeHint': 'Пройдено перепроверок / всего проверок',
@@ -925,7 +1046,7 @@ const messages = {
     'col.country': 'Страна',
     'preset.label': 'Пресет:',
     'preset.quick': '⚡ Быстро',
-    'preset.balanced': '⚖ Баланс',
+    'preset.balanced': '⚖️ Баланс',
     'preset.thorough': '🔬 Тщательно',
     'preset.hint': 'Быстро: 1 попытка, короткие таймауты, больше воркеров. Тщательно: 5 попыток, терпеливые таймауты.',
     'preset.applied': 'Пресет применён. Сохраните настройки или запустите проверку.',
@@ -936,6 +1057,7 @@ const messages = {
     'unit.sec': 'сек',
     'unit.attempts': 'шт.',
     'unit.workers': 'потоков',
+    'unit.threads': 'потоков',
     'unit.conns': 'соед.',
     'unit.bytes': 'байт',
     'unit.pcs': 'шт.',
@@ -955,6 +1077,10 @@ const messages = {
     'provider.exclude': 'Пропускать хостинг-провайдеров и дата-центры (нужна база провайдеров)',
     'provider.hosting': 'хостинг',
     'col.provider': 'Провайдер',
+    'col.age': 'Возраст',
+    'col.check': 'Выбор',
+    'col.num': '№',
+    'col.actions': 'Действия',
     'geo.hint': 'Нужна для фильтра по странам, колонок «Страна» и «Провайдер» и скрытия хостинг-провайдеров. Бесплатные файлы DB-IP Country Lite и ASN Lite скачиваются один раз в локальную папку data, дальше поиск работает офлайн. Источники Geonode уже содержат страну.',
     'geo.download': 'Скачать / обновить',
     'geo.downloading': 'Скачиваем базу стран…',
@@ -970,6 +1096,9 @@ const messages = {
     'filter.allProtocols': 'Все протоколы',
     'filter.maxLatency': 'Макс. задержка, мс',
     'filter.maxLatencyHint': '0 — без ограничения',
+    'filter.excludeHosting': 'Хостинг:',
+    'filter.keepHosting': 'Оставить все',
+    'filter.excludeHostingAction': 'Исключить',
     'filter.searchPlaceholder': 'Поиск по адресу или порту',
     'filter.copyPage': 'Скопировать страницу',
     'download.pacHint': 'Автонастройка браузера: 10 лучших прокси по порядку',
@@ -1022,7 +1151,9 @@ const messages = {
     'toast.settingsImported': 'Настройки загружены и сохранены.',
     'toast.settingsBad': 'В этом файле нет настроек Proxy Workbench.',
     'gateway.label': 'Ротирующий прокси для браузера и программ:',
-    'gateway.hint': 'Укажите его как HTTP- или SOCKS5-прокси где угодно. Каждое новое соединение идёт через следующий рабочий прокси из последнего экспорта; неработающие пропускаются автоматически.',
+    'gateway.hint': 'Укажите его как HTTP- или SOCKS5-прокси где угодно. Каждое новое TCP-соединение идёт через следующий рабочий прокси из последнего экспорта; неработающие пропускаются автоматически. UDP этот локальный шлюз не поддерживает.',
+    'gateway.mobileUnavailable': 'QR для телефона доступен только в защищённом режиме LAN. Перезапустите GUI с --gateway-host 0.0.0.0 и разрешите порт в брандмауэре.',
+    'gateway.qrTooLong': 'Адрес шлюза слишком длинный для QR-кода; используйте копирование адреса.',
     'gateway.stats': 'в ротации {proxies} · соединений {connections}',
     'toast.gatewayCopied': 'Адрес прокси скопирован.',
     'api.label': 'API для своих программ:',
@@ -1159,24 +1290,24 @@ const messages = {
     'cat.previewTitle': 'Предпросмотр: {name}',
     'cat.previewNote': 'Только доступность и формат. Эти адреса не проверялись как прокси и не попадают в базу.',
     'cat.previewFailed': 'Проверка не завершилась: {reason}.',
-    'cat.previewTruncated': 'Проверка остановилась на своём пределе ({bytes} байт, {records} записей); остальной список не прочитан.',
-    'cat.addTitle': 'Добавить адрес своего списка',
+    'cat.previewTruncated': 'Проверка остановилась по собственному лимиту ({bytes} байт, {records} записей); остаток списка не считывался.',
+    'cat.addTitle': 'Добавить свой адрес списка',
     'cat.addUrl': 'Адрес списка',
     'cat.addKind': 'Формат данных',
-    'cat.addPrivate': 'Разрешить локальные адреса (только для своих тестовых сервисов)',
+    'cat.addPrivate': 'Разрешить локальные адреса (только для собственных тестовых служб)',
     'cat.addPreview': 'Предпросмотр',
     'cat.addSubmit': 'Добавить в мой набор',
-    'cat.addDone': 'Добавлен {id}. Посмотрите предпросмотр перед следующим сбором.',
-    'cat.addExists': 'Такой адрес с таким форматом уже есть в вашем наборе.',
-    'cat.excludeTitle': 'Исключить уже полученные адреса источника {id}?',
-    'cat.excludeBody': 'По умолчанию исключаются только адреса, которых нет у других источников в этом срезе. Адреса остаются в базе, история сохраняется — они только исключаются из текущего scope. Отменить можно, очистив исключения scope.',
-    'cat.excludeShared': 'Исключить также адреса, которые дают и другие источники',
-    'cat.excludeDone': 'Из текущего scope исключено {count} из {total} адресов этого источника.',
+    'cat.addDone': 'Добавлен {id}. Проверьте его перед следующим сбором.',
+    'cat.addExists': 'Этот адрес с таким форматом уже есть в наборе.',
+    'cat.excludeTitle': 'Исключить уже полученные адреса {id}?',
+    'cat.excludeBody': 'По умолчанию исключаются только адреса, которые в этом срезе не предлагает никакой другой источник. Адреса остаются в базе, история сохраняется — они убираются только из текущей области экспорта. Действие можно отменить очисткой исключений.',
+    'cat.excludeShared': 'Исключать и адреса, которые отдают другие источники тоже',
+    'cat.excludeDone': 'Из текущего scope исключено адресов этого источника: {count} из {total}.',
     'cat.scopeClear': 'Очистить исключения scope',
     'cat.scopeCleared': 'Исключения scope очищены: {count}.',
     'cat.group.public_free': 'Публичные бесплатные',
-    'cat.group.permanent_free_quota': 'Постоянные бесплатные тарифы',
-    'cat.group.free_with_key': 'Бесплатные с ключом',
+    'cat.group.permanent_free_quota': 'Постоянный free-тариф',
+    'cat.group.free_with_key': 'Бесплатные с API-ключом',
     'cat.group.trial': 'Пробный период (trial), не постоянный тариф',
     'cat.group.paid': 'Платные',
     'cat.group.own_infrastructure': 'Собственный сервер',
@@ -1296,19 +1427,83 @@ const messages = {
     'nav.mobile': 'Мобильные клиенты',
     'scenario.title': 'Умные экспресс-сценарии',
     'scenario.subtitle': 'Готовые смарт-шаблоны под популярные задачи',
-    'scenario.telegram': 'Telegram и звонки',
-    'scenario.telegramDesc': 'SOCKS5 прокси с минимальным джиттером для звонков и обхода блокировок',
-    'scenario.youtube': 'YouTube и видео',
-    'scenario.youtubeDesc': 'Замер реальной скорости в Mbit/s для стабильного 1080p/4K видео',
-    'scenario.anon': 'Elite Приватность',
+    'scenario.telegram': 'Telegram: веб-страница',
+    'scenario.telegramDesc': 'Проверяет публичную веб-страницу через прокси; звонки и протокол приложения не измеряются',
+    'scenario.youtube': 'YouTube: страница и скорость',
+    'scenario.youtubeDesc': 'Ответ страницы и отдельный замер скорости в Mbit/s; это не гарантия качества видео',
+    'scenario.anon': 'Отбор по анонимности',
     'scenario.anonDesc': 'Проверка скрытности через Judge и жесткая фильтрация по черным спискам',
-    'scenario.scrape': 'Турбо-сбор',
+    'scenario.scrape': 'Массовый обход',
     'scenario.scrapeDesc': '256 потоков, 2с таймаут, мгновенный отсев для десятков тысяч адресов',
     'scenario.custom': 'Экспертный',
     'scenario.customDesc': 'Полный ручной контроль всех сетевых параметров и фильтров',
     'scenario.applied': 'Сценарий применён. Нажмите «Найти и проверить» для запуска.',
+    'scenario.customUnchanged': 'Пользовательские настройки не изменены; измените поля вручную.',
     'monitor.liveStream': 'Живая лента проверок',
     'monitor.liveStreamIdle': 'Проверяемые адреса отображаются здесь с пингом и статусом.',
+    'monitor.liveStreamSource': 'Реальные события измерений: одно на завершённую проверку',
+    'monitor.job': 'Задание',
+    'code.title': 'Код',
+    'view.label': 'Представление',
+    'view.fresh': 'Свежие',
+    'view.stale': 'Истёкшие',
+    'view.failed': 'Ошибки',
+    'view.unknown': 'Время неизвестно',
+    'view.all': 'Все строки',
+    'results.views': 'Сохранённые представления',
+    'results.viewSave': 'Сохранить представление',
+    'results.viewName': 'Название представления',
+    'results.viewApplied': 'Применено представление: {name}',
+    'results.viewSaved': 'Представление сохранено: {name}',
+    'results.viewDeleted': 'Представление удалено',
+    'results.scope': 'Область массовых операций',
+    'scope.page': 'Текущая страница',
+    'scope.selected': 'Выделенное',
+    'scope.allMatching': 'Все подходящие',
+    'results.columns': 'Колонки',
+    'results.columnsSaved': 'Колонки сохранены',
+    'results.matrix': 'Матрица целей',
+    'results.matrixHint': 'Строка — прокси, столбец — проверенный сервис.',
+    'results.matrixClose': 'Закрыть матрицу',
+    'results.tag': 'Тег',
+    'results.untag': 'Снять тег',
+    'results.note': 'Заметка',
+    'results.favorite': 'В избранное',
+    'results.unfavorite': 'Убрать из избранного',
+    'results.exclude': 'Исключить из моего списка',
+    'results.include': 'Вернуть в мой список',
+    'results.bulkRecheck': 'Перепроверить',
+    'results.bulkRecheckHint': 'Полная перепроверка: строка результата и её свежесть обновятся.',
+    'results.bulkDone': '{op}: строк — {count}',
+    'results.undo': 'Отменить',
+    'results.undone': 'Отменено: {summary}',
+    'results.nothingUndo': 'Отменять нечего',
+    'results.history': 'Последние действия',
+    'results.freshness': 'Свежесть',
+    'results.tagInput': 'Название тега',
+    'results.noteInput': 'Текст заметки',
+    'results.selectionScopeHint': 'Выделение относится к текущей области. Смена фильтров или поколения очищает его.',
+    'results.selectionCleared': 'Выделение очищено: область изменилась',
+    'results.snapshotBroken': 'Опубликованный снимок не читается; таблица остаётся пустой, а не показывает посторонние строки.',
+    'quick.title': 'Быстрый тест',
+    'quick.volume': 'Объём: {targets} сервисов x {attempts} попыток, не более {requests} запросов, {seconds} с суммарно',
+    'quick.skipped': 'Не измеряется: репутация, анонимность, скорость',
+    'quick.recheckFull': 'Полная перепроверка',
+    'quick.storedNo': 'Сохранённая строка этим тестом не меняется',
+    'connect.title': 'Путь подключения',
+    'connect.pool': '1. Пул',
+    'connect.client': '2. Приложение или браузер',
+    'connect.fields': '3. Поля',
+    'connect.route': '4. Контроль маршрута',
+    'connect.disconnect': '5. Отключение',
+    'connect.generation': 'Снимок',
+    'connect.routeText': 'Каждое новое TCP-соединение ротируется на следующий рабочий прокси. UDP не поддерживается.',
+    'connect.disconnectText': 'Уберите настройки прокси в приложении или остановите ротирующий прокси здесь.',
+    'connect.stopGateway': 'Остановить ротирующий прокси',
+    'connect.gatewayStopped': 'Ротирующий прокси остановлен',
+    'connect.lanOptIn': 'Режим LAN выключен: ротирующий прокси слушает только этот компьютер.',
+    'connect.probeNote': 'Лента и быстрый тест — это пробы Workbench, а не трафик вашего клиента.',
+    'toast.scopeChanged': 'Область изменилась, действие не выполнено',
     'monitor.gaugeTitle': 'ОБЩИЙ ПРОГРЕСС',
     'monitor.proxiesFound': 'Подходящих прокси',
     'filter.all': 'Все живые',
@@ -1316,7 +1511,7 @@ const messages = {
     'filter.socks5': '🔒 SOCKS5',
     'filter.http': '🌐 HTTP/S',
     'filter.elite': '🛡️ Elite',
-    'filter.clean': '🧹 Чистый IP',
+    'filter.clean': '🧹 Проверенно чистый IP',
     'filter.withSpeed': '🚀 Со скоростью',
     'results.test': 'Тест',
     'results.testing': 'Проверка…',
@@ -1338,30 +1533,49 @@ const messages = {
     'results.copyJson': 'JSON объект',
     'results.geoBarTitle': 'Распределение по странам',
     'gateway.heading': 'Локальный ротирующий шлюз',
-    'gateway.lead': 'Единая локальная точка 127.0.0.1:8899, автоматически распределяющая запросы по пулу живых проверенных прокси.',
-    'gateway.protocols': 'HTTP и SOCKS5 одновременно',
+    'gateway.lead': 'Локальная точка, которая распределяет TCP-соединения по пулу проверенных прокси. Для телефона включите защищённый режим LAN.',
+    'gateway.protocols': 'HTTP и SOCKS5 TCP',
     'gateway.tabTelegram': 'Telegram',
     'gateway.tabCurl': 'cURL',
     'gateway.tabPython': 'Python',
     'gateway.tabBrowser': 'Браузеры',
     'gateway.openTelegram': 'Открыть в Telegram Desktop',
-    'gateway.qrHint': 'Наведите камеру смартфона для подключения Telegram на телефоне:',
+    'gateway.qrHint': 'В защищённом режиме LAN отсканируйте QR, чтобы добавить SOCKS5-шлюз в Telegram:',
     'gateway.copyCode': 'Скопировать код',
     'gateway.copy': 'Скопировать адрес',
     'mobile.heading': 'Мобильные профили и клиенты',
-    'mobile.lead': 'Готовые конфигурации для sing-box, Clash, Telegram и телефонов с умной раздельной маршрутизацией.',
+    'mobile.lead': 'Конфигурации клиентов закрыты при пустом или просроченном пуле: трафик блокируется, а не уходитDIRECT. Локальный шлюз поддерживает TCP, но не UDP-звонки.',
     'mobile.singboxTitle': 'sing-box (iOS и Android)',
-    'mobile.singboxDesc': 'Раздельное туннелирование: российские сервисы и банки идут напрямую, Telegram и заблокированные сайты — через прокси.',
+    'mobile.singboxDesc': 'Конфигурация с автоматической группой прокси; перед TUN проверьте версию клиента и правила маршрутизации.',
     'mobile.clashTitle': 'Clash / Mihomo',
-    'mobile.clashDesc': 'Группа прокси с автоматическим переключением на самый быстрый узел (URLTest).',
+    'mobile.clashDesc': 'Группа URLTest с выбором fastest latency и безопасным отказом вместо скрытого DIRECT.',
     'mobile.telegramTitle': 'Telegram на смартфоне',
-    'mobile.telegramDesc': 'Отсканируйте QR-код камерой iPhone или Android для мгновенного добавления прокси в Telegram.',
+    'mobile.telegramDesc': 'Используйте QR защищённого LAN-режима для TCP SOCKS5. Звонки и другой UDP-трафик шлюз не обеспечивает.',
     'mobile.copyConfig': 'Скопировать конфиг',
     'mobile.downloadConfig': 'Скачать файл',
     'mobile.qrCode': 'QR-код для телефона',
     'mobile.guideTitle': 'Инструкция по настройке',
-    'mobile.guideIos': '1. Установите sing-box или Shadowrocket из App Store. 2. Импортируйте конфиг или QR-код. 3. Включите режим TUN VPN.',
-    'mobile.guideAndroid': '1. Установите sing-box или Hiddify из Google Play. 2. Добавьте профиль через QR или файл. 3. Подключитесь.',
+    'mobile.guideIos': '1. Установите поддерживаемый клиент. 2. Импортируйте безопасный конфиг или QR защищённого LAN. 3. Проверьте правила и включите TUN.',
+    'mobile.guideAndroid': '1. Установите поддерживаемый клиент. 2. Добавьте конфиг или QR защищённого LAN. 3. Подключитесь; для UDP нужен другой туннель.',
+    'tb.order': 'Порядок:',
+    'tb.proto': 'Протокол:',
+    'tb.anon': 'Анонимность:',
+    'tb.min': 'Успех:',
+    'tb.latency': 'Макс. пинг:',
+    'tb.top': 'Топ:',
+    'tb.hosting': 'Хостинг:',
+    'tb.copyPage': 'Скопировать страницу',
+    'gateway.poolSize': 'Прокси в пуле',
+    'gateway.activeConns': 'Активных сессий',
+    'gateway.lanModeTitle': 'Режим LAN не активен',
+    'gateway.mobileUnavailableShort': 'Запустите GUI с --gateway-host 0.0.0.0 для QR',
+    'mobile.guideLead': 'Пошаговая инструкция для популярных мобильных клиентов',
+    'mobile.ios1': 'Установите sing-box или Shadowrocket из App Store',
+    'mobile.ios2': 'Импортируйте скачанный конфиг или отсканируйте LAN QR-код',
+    'mobile.ios3': 'Проверьте правила маршрутизации и включите режим TUN',
+    'mobile.android1': 'Установите sing-box или Hiddify из Google Play',
+    'mobile.android2': 'Добавьте профиль через файл конфига или LAN QR-код',
+    'mobile.android3': 'Нажмите «Подключить» для маршрутизации трафика',
     'toast.banned': 'Добавлено {count} прокси в локальный черный список.',
     'toast.tested': 'Проверка прокси завершена.',
     'region.top': '⭐ Топ-5',
@@ -1511,6 +1725,11 @@ const serverLog = text => lang === 'en' ? String(text).split('\n').map(serverTex
 
 function applyI18n(root=document) {
   root.querySelectorAll('[data-i18n]').forEach(node => {
+    if (node.classList.contains('gateway-status-badge')) {
+      const isOnline = Boolean(typeof state !== 'undefined' && state && state.gateway && state.gateway.address);
+      node.textContent = isOnline ? t('gateway.online') : t('gateway.offline');
+      return;
+    }
     const key = node.dataset.i18n;
     if (key === 'unit.ms') {
       node.textContent = lang === 'ru' ? 'мс' : 'ms';
@@ -1608,17 +1827,22 @@ function formatLogTerminal(text) {
 let toastHideTimer;
 
 function toast(message, error=false) {
-  if (!message || !String(message).trim()) return;
+  if (message === null || message === undefined) return;
+  const text = String(message).trim();
+  if (!text) return; // NEVER show with empty text
+
   clearTimeout(toastTimer);
   clearTimeout(toastHideTimer);
   const node = $('toast');
   if (!node) return;
+
   node.classList.remove('toast-hiding');
   node.className = error ? 'error' : '';
-  node.innerHTML = `<span class="toast-icon">${error ? '✕' : '✓'}</span><span class="toast-msg">${esc(message)}</span>`;
+  node.style.pointerEvents = 'none'; // Never block clicks
+  node.innerHTML = `<span class="toast-icon">${error ? '✕' : '✓'}</span><span class="toast-msg">${esc(text)}</span>`;
   node.hidden = false;
 
-  // Restart CSS animation
+  // Restart CSS animation for smooth slide down + fade
   node.style.animation = 'none';
   void node.offsetWidth;
   node.style.animation = '';
@@ -1630,7 +1854,7 @@ function toast(message, error=false) {
       node.classList.remove('toast-hiding');
       node.textContent = '';
     }, 240);
-  }, error ? 8000 : 4000);
+  }, 3500);
 }
 
 async function api(path, body) {
@@ -1654,7 +1878,7 @@ function showTab(name) {
   });
   const label = $('page-label');
   if (label) label.textContent = t('nav.' + name) || name;
-  window.scrollTo({top: 0, behavior: 'smooth'});
+  window.scrollTo({top: 0, behavior: 'instant'});
   if (name === 'results') loadResults();
   if (name === 'sources' && typeof reloadCatalog === 'function') reloadCatalog();
 }
@@ -1687,6 +1911,71 @@ const TARGET_PRESETS = [
   {name:'Cloudflare', url:'https://www.cloudflare.com/cdn-cgi/trace', statuses:[200], contains:'ip='}
 ];
 
+function isTargetMatchingPreset(targetNode, preset) {
+  if (!targetNode || !preset) return false;
+  const nameInput = targetNode.querySelector('[data-field="name"]');
+  const urlInput = targetNode.querySelector('[data-field="url"]');
+  const name = nameInput ? nameInput.value.trim().toLowerCase() : '';
+  const url = urlInput ? urlInput.value.trim().toLowerCase() : '';
+  const presetName = preset.name.toLowerCase();
+  const cleanPresetUrl = preset.url.replace(/^https?:\/\//i, '').toLowerCase();
+
+  if (name && (name === presetName || name.includes(presetName) || presetName.includes(name))) return true;
+  if (url && (url === cleanPresetUrl || url === preset.url.toLowerCase())) return true;
+  if (targetNode.dataset.presetName && targetNode.dataset.presetName.toLowerCase() === presetName) return true;
+  return false;
+}
+
+function findTargetNodeForPreset(preset) {
+  const container = $('targets');
+  if (!container) return null;
+  for (const child of container.children) {
+    if (isTargetMatchingPreset(child, preset)) {
+      return child;
+    }
+  }
+  return null;
+}
+
+function syncQuickServiceChips() {
+  const chipsContainer = $('quick-services-chips');
+  if (!chipsContainer) return;
+
+  TARGET_PRESETS.forEach(preset => {
+    const btn = chipsContainer.querySelector(`[data-preset-name="${preset.name}"]`);
+    if (!btn) return;
+    const existingNode = findTargetNodeForPreset(preset);
+    const isActive = Boolean(existingNode);
+    btn.classList.toggle('active', isActive);
+    btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+    const iconSpan = btn.querySelector('.service-chip-icon');
+    if (iconSpan) {
+      iconSpan.textContent = isActive ? '✓' : '＋';
+    }
+  });
+}
+
+function togglePresetTarget(preset) {
+  const existingNode = findTargetNodeForPreset(preset);
+  if (existingNode) {
+    const container = $('targets');
+    if (container && container.children.length <= 1) {
+      toast(t('error.needTarget') || (lang === 'ru' ? 'Нужен хотя бы один сервис' : 'At least one service is required'), true);
+      return;
+    }
+    existingNode.classList.add('removing');
+    setTimeout(() => {
+      if (existingNode.parentNode) existingNode.remove();
+      syncQuickServiceChips();
+      toast(lang === 'ru' ? `Отключен сервис: ${preset.name}` : `Disabled service: ${preset.name}`);
+    }, 150);
+  } else {
+    addTarget({...preset, headers:{}, method:'GET'});
+    syncQuickServiceChips();
+    toast(lang === 'ru' ? `Включен сервис: ${preset.name}` : `Enabled service: ${preset.name}`);
+  }
+}
+
 function fillPresets() {
   const select = $('target-preset');
   if (select) {
@@ -1702,10 +1991,21 @@ function fillPresets() {
       const preset = TARGET_PRESETS[Number(select.value)];
       select.value = '';
       if (!preset) return;
-      addTarget({...preset, headers:{}, method:'GET'});
-      toast(t('presets.added', {name:preset.name}));
+      togglePresetTarget(preset);
     };
   }
+
+  const TARGET_ICONS = {
+    'Google': '🔍',
+    'YouTube': '🎬',
+    'Telegram': '✈️',
+    'Discord': '💬',
+    'Instagram': '📷',
+    'OpenAI API': '🤖',
+    'GitHub': '🐙',
+    'Wikipedia': '📖',
+    'Cloudflare': '☁️'
+  };
 
   const chipsContainer = $('quick-services-chips');
   if (chipsContainer) {
@@ -1714,13 +2014,16 @@ function fillPresets() {
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'quick-service-chip';
-      btn.innerHTML = `<span class="service-chip-plus">＋</span> ${esc(preset.name)}`;
-      btn.onclick = () => {
-        addTarget({...preset, headers:{}, method:'GET'});
-        toast(t('presets.added', {name:preset.name}));
+      btn.dataset.presetName = preset.name;
+      const sEmoji = TARGET_ICONS[preset.name] || '🌐';
+      btn.innerHTML = `<span class="service-chip-icon">＋</span> <span class="service-chip-emoji">${sEmoji}</span> <span class="service-chip-name">${esc(preset.name)}</span>`;
+      btn.onclick = (e) => {
+        e.preventDefault();
+        togglePresetTarget(preset);
       };
       chipsContainer.appendChild(btn);
     });
+    syncQuickServiceChips();
   }
 }
 fillPresets();
@@ -2392,7 +2695,9 @@ function syncAllPresetChips() {
 }
 
 function addTarget(target={}) {
-  if ($('targets').children.length >= 20) {
+  const targetsContainer = $('targets');
+  if (!targetsContainer) return;
+  if (targetsContainer.children.length >= 20) {
     toast(t('error.maxTargets'), true);
     return;
   }
@@ -2402,30 +2707,58 @@ function addTarget(target={}) {
   const attr = (name, key) => `${name}="${esc(t(key))}" data-i18n-${name}="${key}"`;
   const initialMethod = (target.method || 'GET').toUpperCase();
 
+  let proto = 'https://';
+  let cleanUrl = String(target.url || '').trim();
+  if (/^https:\/\//i.test(cleanUrl)) {
+    proto = 'https://';
+    cleanUrl = cleanUrl.replace(/^https:\/\//i, '');
+  } else if (/^http:\/\//i.test(cleanUrl)) {
+    proto = 'http://';
+    cleanUrl = cleanUrl.replace(/^http:\/\//i, '');
+  }
+
+  const sName = (target.name || '').toLowerCase();
+  let sIcon = '🌐';
+  if (sName.includes('youtube')) sIcon = '🎬';
+  else if (sName.includes('telegram')) sIcon = '✈️';
+  else if (sName.includes('google')) sIcon = '🔍';
+  else if (sName.includes('discord')) sIcon = '💬';
+  else if (sName.includes('github')) sIcon = '🐙';
+  else if (sName.includes('cloudflare')) sIcon = '☁️';
+  else if (sName.includes('instagram')) sIcon = '📷';
+  else if (sName.includes('wiki')) sIcon = '📖';
+  else if (sName.includes('openai')) sIcon = '🤖';
+
   node.innerHTML = `
-    <div class="target-head">
-      <div class="target-head-left">
-        <span class="target-icon">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="10"/>
-            <line x1="2" y1="12" x2="22" y2="12"/>
-            <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
-          </svg>
-        </span>
-        <input data-field="name" class="target-name-input" ${attr('aria-label', 'target.name')} ${attr('placeholder', 'target.name')} value="${esc(target.name || t('target.defaultName'))}">
+    <div class="target-main-row">
+      <span class="target-icon" title="${esc(target.name || 'Service')}">${sIcon}</span>
+      <input data-field="name" class="target-name-input" ${attr('aria-label', 'target.name')} ${attr('placeholder', 'target.name')} value="${esc(target.name || t('target.defaultName'))}" title="${esc(t('target.name'))}">
+      
+      <div class="target-url-group">
+        <select data-field="protocol" class="target-proto-select" title="Protocol">
+          <option value="https://"${proto === 'https://' ? ' selected' : ''}>https://</option>
+          <option value="http://"${proto === 'http://' ? ' selected' : ''}>http://</option>
+        </select>
+        <input data-field="url" class="mono-input target-url-input" type="text" placeholder="domain.com/path" value="${esc(cleanUrl)}">
       </div>
-      <div class="target-head-actions">
-        <div class="target-method-badge" data-method="${initialMethod}">
-          <select data-field="method" class="target-method-select" title="${esc(t('target.method'))}">
-            <option value="GET">GET</option>
-            <option value="HEAD">HEAD</option>
-          </select>
-        </div>
+
+      <div class="target-col-method" title="${esc(t('target.method'))}">
+        <select data-field="method" class="target-method-select">
+          <option value="GET"${initialMethod === 'GET' ? ' selected' : ''}>GET</option>
+          <option value="HEAD"${initialMethod === 'HEAD' ? ' selected' : ''}>HEAD</option>
+        </select>
+      </div>
+
+      <div class="target-col-status" title="${esc(t('target.statuses'))}">
+        <span class="target-status-label">HTTP</span>
+        <input data-field="statuses" type="text" class="mono-input target-status-input" ${attr('placeholder', 'target.statusesPlaceholder')} value="${esc(target.statuses ? (target.statuses.length === 100 && target.statuses[0] === 200 ? '200' : target.statuses.join(', ')) : '200')}">
+      </div>
+
+      <div class="target-col-actions">
+        <button type="button" class="target-btn-advanced" data-toggle-advanced title="${esc(t('target.advanced'))}">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        </button>
         <button type="button" data-remove class="target-remove-btn" ${attr('title', 'target.remove')} ${attr('aria-label', 'target.remove')}>
-          <svg class="target-remove-icon icon-cross" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="18" y1="6" x2="6" y2="18"></line>
-            <line x1="6" y1="6" x2="18" y2="18"></line>
-          </svg>
           <svg class="target-remove-icon icon-trash" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="3 6 5 6 21 6"></polyline>
             <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
@@ -2435,88 +2768,83 @@ function addTarget(target={}) {
         </button>
       </div>
     </div>
-    <div class="target-body">
-      <label class="target-url-label">
-        <span ${text('target.url')}</span>
-        <div class="url-input-wrap">
-          <span class="url-prefix-badge">https://</span>
-          <input data-field="url" class="mono-input" type="url" placeholder="https://..." value="${esc(target.url || '')}">
-        </div>
-      </label>
-      <div class="target-compact-grid">
-        <label>
-          <span ${text('target.statuses')}</span>
-          <div class="input-unit-wrap compact">
-            <input data-field="statuses" class="mono-input" ${attr('placeholder', 'target.statusesPlaceholder')} value="${esc(target.statuses ? (target.statuses.length === 100 && target.statuses[0] === 200 ? '200-299' : target.statuses.join(', ')) : '200-299')}">
-            <span class="unit-badge code-badge">HTTP</span>
-          </div>
-        </label>
-        <label>
+
+    <div class="target-advanced-drawer hidden">
+      <div class="target-drawer-grid">
+        <label class="drawer-field">
           <span ${text('target.contains')}</span>
-          <div class="input-unit-wrap compact">
-            <input data-field="contains" class="mono-input" ${attr('placeholder', 'target.containsPlaceholder')} value="${esc(target.contains || '')}">
-            <span class="unit-badge text-badge">text</span>
-          </div>
+          <input data-field="contains" class="mono-input" ${attr('placeholder', 'target.containsPlaceholder')} value="${esc(target.contains || '')}">
+        </label>
+        <label class="drawer-field">
+          <span ${text('target.sha256')}</span>
+          <input data-field="sha256" class="mono-input" value="${esc(target.sha256 || '')}" ${attr('placeholder', 'target.sha256Placeholder')}>
+        </label>
+        <label class="drawer-field drawer-field-full">
+          <span ${text('target.headers')}</span>
+          <textarea data-field="headers" rows="1" spellcheck="false" class="mono-textarea" placeholder="{}">${esc(JSON.stringify(target.headers || {}))}</textarea>
         </label>
       </div>
-      <details class="advanced target-advanced">
-        <summary class="target-advanced-summary">
-          <span class="target-advanced-summary-text" ${text('target.advanced')}</span>
-          <span class="target-accordion-chevron" aria-hidden="true">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-              <path d="m6 9 6 6 6-6"/>
-            </svg>
-          </span>
-        </summary>
-        <div class="target-advanced-anim">
-          <div class="target-advanced-content">
-            <label>
-              <span ${text('target.headers')}</span>
-              <textarea data-field="headers" rows="2" spellcheck="false" class="mono-textarea">${esc(JSON.stringify(target.headers || {}))}</textarea>
-              <small ${text('target.headersHint')}</small>
-            </label>
-            <label>
-              <span ${text('target.sha256')}</span>
-              <input data-field="sha256" class="mono-input" value="${esc(target.sha256 || '')}" ${attr('placeholder', 'target.sha256Placeholder')}>
-            </label>
-          </div>
-        </div>
-      </details>
     </div>`;
 
-  const methodSelect = node.querySelector('[data-field="method"]');
-  const methodBadge = node.querySelector('.target-method-badge');
-  methodSelect.value = initialMethod;
-  methodBadge.dataset.method = initialMethod;
-  methodSelect.onchange = () => {
-    methodBadge.dataset.method = methodSelect.value;
-  };
+  node.dataset.presetName = target.name || '';
+  node.dataset.targetUrl = target.url || '';
 
+  const advBtn = node.querySelector('[data-toggle-advanced]');
+  const drawer = node.querySelector('.target-advanced-drawer');
+  if (advBtn && drawer) {
+    advBtn.onclick = () => {
+      drawer.classList.toggle('hidden');
+      advBtn.classList.toggle('active', !drawer.classList.contains('hidden'));
+    };
+    // Keep target card compact by default!
+    const hasCustomRules = Boolean(target.sha256 || (target.headers && Object.keys(target.headers).length));
+    if (hasCustomRules) {
+      advBtn.classList.add('has-rules');
+    }
+  }
+
+  const protoSelect = node.querySelector('[data-field="protocol"]');
   const urlInput = node.querySelector('[data-field="url"]');
-  const prefixBadge = node.querySelector('.url-prefix-badge');
-  const updatePrefix = () => {
-    if (!prefixBadge) return;
-    const v = urlInput.value.trim();
-    if (/^http:\/\//i.test(v)) {
-      prefixBadge.textContent = 'http://';
-      prefixBadge.classList.add('http-mode');
-    } else {
-      prefixBadge.textContent = 'https://';
-      prefixBadge.classList.remove('http-mode');
-    }
-  };
-  urlInput.oninput = updatePrefix;
-  updatePrefix();
 
-  node.querySelector('[data-remove]').onclick = () => {
-    if ($('targets').children.length === 1) {
-      toast(t('error.needTarget'), true);
-      return;
-    }
-    node.classList.add('removing');
-    setTimeout(() => node.remove(), 220);
-  };
-  $('targets').appendChild(node);
+  if (urlInput) {
+    urlInput.oninput = () => {
+      let v = urlInput.value.trim();
+      if (/^https:\/\//i.test(v)) {
+        if (protoSelect) protoSelect.value = 'https://';
+        urlInput.value = v.replace(/^https:\/\//i, '');
+      } else if (/^http:\/\//i.test(v)) {
+        if (protoSelect) protoSelect.value = 'http://';
+        urlInput.value = v.replace(/^http:\/\//i, '');
+      }
+      syncQuickServiceChips();
+    };
+  }
+
+  const nameInput = node.querySelector('[data-field="name"]');
+  if (nameInput) {
+    nameInput.oninput = () => {
+      syncQuickServiceChips();
+    };
+  }
+
+  const removeBtn = node.querySelector('[data-remove]');
+  if (removeBtn) {
+    removeBtn.onclick = () => {
+      const container = $('targets');
+      if (!container) return;
+      if (container.children.length <= 1) {
+        toast(t('error.needTarget'), true);
+        return;
+      }
+      node.classList.add('removing');
+      setTimeout(() => {
+        if (node.parentNode) node.remove();
+        syncQuickServiceChips();
+      }, 150);
+    };
+  }
+  targetsContainer.appendChild(node);
+  syncQuickServiceChips();
 }
 
 function statuses(raw) {
@@ -2533,36 +2861,53 @@ function statuses(raw) {
 }
 
 function zones() {
-  return $('dnsbl-zones').value.split(/[\s,]+/).map(value => value.trim()).filter(Boolean);
+  const el = $('dnsbl-zones');
+  return el ? el.value.split(/[\s,]+/).map(value => value.trim()).filter(Boolean) : [];
 }
 
 function getSettings() {
   const copy = {...settings};
-  for (const key of numeric) copy[key.replace('-', '_')] = Number($(key).value);
-  copy.sort = $('sort').value;
-  copy.use_sources = $('use_sources').checked;
-  copy.detect_protocols = $('detect_protocols').checked;
-  copy.exclude_hosting = $('exclude_hosting').checked;
-  copy.sources = $('sources').value.split('\n').map(value => value.trim()).filter(Boolean);
-  copy.proxies = $('proxies').value;
-  copy.denylist = $('denylist').value;
-  copy.request_profile = $('request-profile').value;
-  copy.anonymity = {judge_url: $('judge-url').value.trim()};
-  copy.speedtest = {url: $('speedtest-url').value.trim(), max_bytes: (settings.speedtest && settings.speedtest.max_bytes) || 5000000};
-  copy.min_anonymity = $('min_anonymity').value;
-  copy.protocol = $('protocol').value;
-  copy.countries = $('countries').value;
-  copy.fail_fast = $('fail_fast').checked;
+  const val = (id, fallback='') => {
+    const el = $(id);
+    return el ? el.value : fallback;
+  };
+  const checked = id => {
+    const el = $(id);
+    return el ? el.checked : false;
+  };
+
+  for (const key of numeric) {
+    const el = $(key);
+    if (el) copy[key.replace('-', '_')] = Number(el.value);
+  }
+  copy.sort = val('sort', copy.sort || 'recommended');
+  copy.use_sources = checked('use_sources');
+  copy.detect_protocols = checked('detect_protocols');
+  copy.exclude_hosting = checked('exclude_hosting');
+  copy.sources = val('sources').split('\n').map(value => value.trim()).filter(Boolean);
+  copy.proxies = val('proxies');
+  copy.denylist = val('denylist');
+  copy.request_profile = val('request-profile', 'workbench');
+  copy.anonymity = {judge_url: val('judge-url').trim()};
+  copy.speedtest = {url: val('speedtest-url').trim(), max_bytes: (settings.speedtest && settings.speedtest.max_bytes) || 5000000};
+  copy.min_anonymity = val('min_anonymity', 'any');
+  copy.protocol = val('protocol', 'all');
+  copy.countries = val('countries');
+  copy.fail_fast = checked('fail_fast');
   const zoneValues = zones();
   copy.reputation = {
-    local_enabled: $('local-denylist-enabled').checked,
-    dnsbl_enabled: $('dnsbl-enabled').checked && zoneValues.length > 0,
+    local_enabled: checked('local-denylist-enabled'),
+    dnsbl_enabled: checked('dnsbl-enabled') && zoneValues.length > 0,
     dnsbl_zones: zoneValues,
-    timeout: Number($('reputation-timeout').value),
-    strict: $('strict-clean').checked
+    timeout: Number(val('reputation-timeout', 2.5)),
+    strict: checked('strict-clean')
   };
-  copy.targets = [...$('targets').children].map(node => {
-    const value = key => node.querySelector(`[data-field="${key}"]`).value.trim();
+  const targetsWrap = $('targets');
+  copy.targets = targetsWrap ? [...targetsWrap.children].map(node => {
+    const value = key => {
+      const el = node.querySelector(`[data-field="${key}"]`);
+      return el ? el.value.trim() : '';
+    };
     let headers;
     try {
       headers = JSON.parse(value('headers') || '{}');
@@ -2571,9 +2916,11 @@ function getSettings() {
     }
     let url = value('url');
     if (!url) throw new Error(t('error.urlRequired'));
-    if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
-    return {name:value('name'), url, method:value('method'), statuses:statuses(value('statuses')), contains:value('contains') || null, sha256:value('sha256') || null, headers};
-  });
+    const protoEl = node.querySelector('[data-field="protocol"]');
+    const proto = protoEl ? protoEl.value : 'https://';
+    if (!/^https?:\/\//i.test(url)) url = proto + url;
+    return {name:value('name'), url, method:value('method') || 'GET', statuses:statuses(value('statuses')), contains:value('contains') || null, sha256:value('sha256') || null, headers};
+  }) : [];
   return copy;
 }
 
@@ -2586,9 +2933,13 @@ function updateIdentity() {
   if (profSummary) profSummary.textContent = known ? t('profile.' + profile) : t('profile.fallback');
   const profDesc = $('profile-description');
   if (profDesc) profDesc.textContent = known ? t('profileDesc.' + profile, {version:PRODUCT_VERSION}) : t('profileDesc.fallback');
+  const dnsblPane = $('clean-pane-dnsbl');
   const dnsblFields = $('dnsbl-fields');
   const dnsblEnabled = $('dnsbl-enabled');
-  if (dnsblFields && dnsblEnabled) dnsblFields.classList.toggle('hidden', !dnsblEnabled.checked);
+  if (dnsblEnabled) {
+    if (dnsblPane) dnsblPane.classList.toggle('dnsbl-disabled', !dnsblEnabled.checked);
+    if (dnsblFields) dnsblFields.classList.toggle('dnsbl-disabled', !dnsblEnabled.checked);
+  }
 }
 
 function fill(value) {
@@ -2663,15 +3014,30 @@ function updateSourceCount() {
 }
 
 async function save() {
+  const saveBtn = $('save-settings');
   try {
     settings = await api('/api/settings', getSettings());
     toast(t('toast.saved'));
+    if (saveBtn) {
+      saveBtn.classList.add('saved');
+      setTimeout(() => saveBtn.classList.remove('saved'), 1600);
+    }
     updateIdentity();
     updateSourceCount();
     syncResultControls();
   } catch (error) {
     toast(error.message, true);
   }
+}
+
+function resultHostingFilter() {
+  return $('result-hosting') && $('result-hosting').value === 'exclude' ? 'hide' : '';
+}
+
+function activeQuickFilter() {
+  const chip = document.querySelector('#results-filter-chips .filter-chip.active');
+  const value = chip ? chip.dataset.filter : '';
+  return ['clean', 'speed', 'http'].includes(value) ? value : '';
 }
 
 async function start(action, selection=null) {
@@ -2687,7 +3053,8 @@ async function start(action, selection=null) {
       value.max_latency = Number($('result-max-latency') ? $('result-max-latency').value : 0) || 0;
       value.countries = $('result-country') ? $('result-country').value : '';
       request.q = $('result-search') ? $('result-search').value.trim() : '';
-      request.hosting = $('result-hosting') ? $('result-hosting').value : 'any';
+      request.quick = activeQuickFilter();
+      request.hosting = resultHostingFilter();
       if (selection !== null) request.selection = selection;
     } else {
       syncResultControls();
@@ -2729,7 +3096,8 @@ function duration(seconds) {
 }
 
 function reputationStatus(row) {
-  return (row && row.reputation && row.reputation.status) || 'clean';
+  const status = row && row.reputation && row.reputation.status;
+  return ['clean', 'listed', 'unknown', 'local_denied'].includes(status) ? status : 'unknown';
 }
 
 function reputationLabel(status) {
@@ -2762,10 +3130,15 @@ function reputationBadge(row) {
   return `<span class="cleanliness cleanliness-${esc(status)}"><span class="badge-icon">${icon}</span><span>${esc(reputationLabel(status))}</span></span>`;
 }
 
+function ageCell(row) {
+  if (row.age_seconds === null || row.age_seconds === undefined) return '—';
+  return duration(Number(row.age_seconds));
+}
+
 function latencyBadge(valMs) {
   if (valMs == null || isNaN(valMs) || valMs === '') return '<span class="cell-dim">—</span>';
   const num = Number(valMs);
-  const cls = num < 300 ? 'lat-good' : num < 800 ? 'lat-warn' : 'lat-bad';
+  const cls = num < 250 ? 'lat-fast' : num <= 700 ? 'lat-neutral' : 'lat-dim';
   return `<span class="latency-cell ${cls}"><span class="lat-dot"></span><span class="lat-val">${esc(ms(num.toFixed(0)))}</span></span>`;
 }
 
@@ -2779,36 +3152,45 @@ function anonymityCounts(report) {
 function makeQR(dataStr) {
   if (!dataStr) return '';
   const bytes = new TextEncoder().encode(dataStr);
-  const len = bytes.length;
-  const VERSIONS = [
-    {v:1, total:26, ec:10, cap:14, align:[]},
-    {v:2, total:44, ec:16, cap:26, align:[6,18]},
-    {v:3, total:70, ec:26, cap:42, align:[6,22]},
-    {v:4, total:100, ec:36, cap:62, align:[6,26]},
-    {v:5, total:134, ec:48, cap:84, align:[6,30]},
-    {v:6, total:172, ec:64, cap:106, align:[6,34]},
-    {v:7, total:196, ec:72, cap:122, align:[6,22,38]},
-    {v:8, total:242, ec:88, cap:152, align:[6,24,42]}
+  // Reed-Solomon level M tables. Each item is [block count, total codewords,
+  // data codewords] for one block shape. The mobile URL is deliberately kept
+  // within versions 1..10; returning an empty QR is safer than a truncated
+  // code that a phone cannot decode.
+  const RS = [
+    [[1, 26, 16]], [[1, 44, 28]], [[1, 70, 44]], [[2, 50, 32]],
+    [[2, 67, 43]], [[4, 43, 27]], [[4, 49, 31]],
+    [[2, 60, 38], [2, 61, 39]], [[3, 58, 36], [2, 59, 37]],
+    [[4, 69, 43], [1, 70, 44]]
   ];
-  let ver = VERSIONS.find(v => v.cap >= len);
-  if (!ver) ver = VERSIONS[VERSIONS.length - 1];
-  const size = ver.v * 4 + 17;
+  const ALIGN = [[], [6, 18], [6, 22], [6, 26], [6, 30], [6, 34],
+                 [6, 22, 38], [6, 24, 42], [6, 26, 46], [6, 28, 50]];
+  const countBits = version => version < 10 ? 8 : 16;
+  const dataCodewords = version => RS[version - 1].reduce((sum, block) => sum + block[0] * block[2], 0);
+  let version = 0;
+  for (let candidate = 1; candidate <= RS.length; candidate++) {
+    if (4 + countBits(candidate) + bytes.length * 8 <= dataCodewords(candidate) * 8) {
+      version = candidate;
+      break;
+    }
+  }
+  if (!version) return '';
+  const size = version * 4 + 17;
 
   const bits = [];
-  const addBits = (val, count) => {
-    for (let i = count - 1; i >= 0; i--) bits.push((val >> i) & 1);
+  const addBits = (value, count) => {
+    for (let i = count - 1; i >= 0; i--) bits.push((value >>> i) & 1);
   };
-  addBits(4, 4);
-  addBits(len, 8);
-  for (const b of bytes) addBits(b, 8);
-  for (let i = 0; i < 4 && bits.length < ver.cap * 8; i++) bits.push(0);
-  while (bits.length % 8 !== 0) bits.push(0);
+  addBits(4, 4);                         // byte mode
+  addBits(bytes.length, countBits(version));
+  bytes.forEach(byte => addBits(byte, 8));
+  const capacityBits = dataCodewords(version) * 8;
+  for (let i = 0; i < 4 && bits.length < capacityBits; i++) bits.push(0);
+  while (bits.length % 8) bits.push(0);
   let pad = 0xec;
-  while (bits.length < ver.cap * 8) {
+  while (bits.length < capacityBits) {
     addBits(pad, 8);
     pad = pad === 0xec ? 0x11 : 0xec;
   }
-
   const data = [];
   for (let i = 0; i < bits.length; i += 8) {
     let byte = 0;
@@ -2826,110 +3208,139 @@ function makeQR(dataStr) {
     x = (x << 1) ^ (x >= 128 ? 0x11d : 0);
   }
   const gfMul = (a, b) => (a === 0 || b === 0) ? 0 : exp[log[a] + log[b]];
-
-  let gen = [1];
-  for (let i = 0; i < ver.ec; i++) {
-    const next = new Array(gen.length + 1).fill(0);
-    for (let j = 0; j < gen.length; j++) {
-      next[j] ^= gfMul(gen[j], exp[i]);
-      next[j + 1] ^= gen[j];
+  const blocks = [];
+  let offset = 0;
+  for (const [count, total, dataCount] of RS[version - 1]) {
+    for (let i = 0; i < count; i++) {
+      const block = data.slice(offset, offset + dataCount);
+      offset += dataCount;
+      const errorLength = total - dataCount;
+      let generator = [1];
+      for (let root = 0; root < errorLength; root++) {
+        const next = Array(generator.length + 1).fill(0);
+        for (let j = 0; j < generator.length; j++) {
+          next[j] ^= gfMul(generator[j], exp[root]);
+          next[j + 1] ^= generator[j];
+        }
+        generator = next;
+      }
+      generator.reverse();
+      const work = [...block, ...Array(errorLength).fill(0)];
+      for (let i = 0; i < block.length; i++) {
+        const factor = work[i];
+        if (factor) {
+          for (let j = 0; j < generator.length; j++) {
+            work[i + j] ^= gfMul(generator[j], factor);
+          }
+        }
+      }
+      blocks.push({data: block, error: work.slice(block.length)});
     }
-    gen = next;
+  }
+  const codewords = [];
+  const maxData = Math.max(...blocks.map(block => block.data.length));
+  const maxError = Math.max(...blocks.map(block => block.error.length));
+  for (let i = 0; i < maxData; i++) {
+    for (const block of blocks) if (i < block.data.length) codewords.push(block.data[i]);
+  }
+  for (let i = 0; i < maxError; i++) {
+    for (const block of blocks) if (i < block.error.length) codewords.push(block.error[i]);
   }
 
-  const rem = new Array(ver.ec).fill(0);
-  for (let i = 0; i < data.length; i++) {
-    const factor = data[i] ^ rem[0];
-    for (let j = 0; j < ver.ec - 1; j++) {
-      rem[j] = rem[j + 1] ^ gfMul(gen[j + 1], factor);
-    }
-    rem[ver.ec - 1] = gfMul(gen[ver.ec], factor);
-  }
-
-  const allCodewords = [...data, ...rem];
-  const grid = Array.from({length: size}, () => new Int8Array(size).fill(-1));
-  const isFunction = Array.from({length: size}, () => new Uint8Array(size));
-
-  const setFinder = (r, c) => {
+  const grid = Array.from({length: size}, () => Array(size).fill(null));
+  const isFunction = Array.from({length: size}, () => Array(size).fill(false));
+  const setFunction = (row, column, value) => {
+    grid[row][column] = Boolean(value);
+    isFunction[row][column] = true;
+  };
+  const setFinder = (row, column) => {
     for (let dr = -1; dr <= 7; dr++) {
       for (let dc = -1; dc <= 7; dc++) {
-        const nr = r + dr, nc = c + dc;
-        if (nr < 0 || nr >= size || nc < 0 || nc >= size) continue;
+        const r = row + dr, c = column + dc;
+        if (r < 0 || r >= size || c < 0 || c >= size) continue;
         const inBox = dr >= 0 && dr <= 6 && dc >= 0 && dc <= 6;
-        const isBlack = inBox && (dr === 0 || dr === 6 || dc === 0 || dc === 6 || (dr >= 2 && dr <= 4 && dc >= 2 && dc <= 4));
-        grid[nr][nc] = isBlack ? 1 : 0;
-        isFunction[nr][nc] = 1;
+        const black = inBox && (dr === 0 || dr === 6 || dc === 0 || dc === 6 ||
+                               (dr >= 2 && dr <= 4 && dc >= 2 && dc <= 4));
+        setFunction(r, c, black);
       }
     }
   };
   setFinder(0, 0);
   setFinder(0, size - 7);
   setFinder(size - 7, 0);
-
+  for (const row of ALIGN[version - 1]) {
+    for (const column of ALIGN[version - 1]) {
+      if (isFunction[row][column]) continue;
+      for (let dr = -2; dr <= 2; dr++) {
+        for (let dc = -2; dc <= 2; dc++) {
+          setFunction(row + dr, column + dc, Math.max(Math.abs(dr), Math.abs(dc)) !== 1);
+        }
+      }
+    }
+  }
   for (let i = 8; i < size - 8; i++) {
-    if (!isFunction[6][i]) { grid[6][i] = (i % 2 === 0) ? 1 : 0; isFunction[6][i] = 1; }
-    if (!isFunction[i][6]) { grid[i][6] = (i % 2 === 0) ? 1 : 0; isFunction[i][6] = 1; }
+    if (!isFunction[6][i]) setFunction(6, i, i % 2 === 0);
+    if (!isFunction[i][6]) setFunction(i, 6, i % 2 === 0);
   }
 
-  if (ver.align.length) {
-    for (const ar of ver.align) {
-      for (const ac of ver.align) {
-        if (isFunction[ar][ac]) continue;
-        for (let dr = -2; dr <= 2; dr++) {
-          for (let dc = -2; dc <= 2; dc++) {
-            const isB = Math.max(Math.abs(dr), Math.abs(dc)) !== 1;
-            grid[ar + dr][ac + dc] = isB ? 1 : 0;
-            isFunction[ar + dr][ac + dc] = 1;
-          }
-        }
-      }
+  const bch = (value, polynomial, shift) => {
+    const degree = number => {
+      let result = 0;
+      while (number) { result += 1; number >>>= 1; }
+      return result;
+    };
+    let remainder = value << shift;
+    while (degree(remainder) - degree(polynomial) >= 0) {
+      remainder ^= polynomial << (degree(remainder) - degree(polynomial));
+    }
+    return (value << shift) | remainder;
+  };
+  // Error-correction level M (00), mask pattern 0.
+  const format = bch(0, 0x537, 10) ^ 0x5412;
+  for (let i = 0; i < 15; i++) {
+    const bit = ((format >>> i) & 1) !== 0;
+    if (i < 6) setFunction(i, 8, bit);
+    else if (i < 8) setFunction(i + 1, 8, bit);
+    else setFunction(size - 15 + i, 8, bit);
+    if (i < 8) setFunction(8, size - i - 1, bit);
+    else if (i < 9) setFunction(8, 15 - i, bit);
+    else setFunction(8, 15 - i - 1, bit);
+  }
+  setFunction(size - 8, 8, true);
+  if (version >= 7) {
+    const versionBits = bch(version, 0x1f25, 12);
+    for (let i = 0; i < 18; i++) {
+      const bit = ((versionBits >>> i) & 1) !== 0;
+      setFunction(Math.floor(i / 3), i % 3 + size - 11, bit);
+      setFunction(i % 3 + size - 11, Math.floor(i / 3), bit);
     }
   }
 
-  grid[size - 8][8] = 1; isFunction[size - 8][8] = 1;
-  for (let i = 0; i < 9; i++) {
-    if (i !== 6) { isFunction[8][i] = 1; isFunction[i][8] = 1; }
-  }
-  for (let i = 0; i < 8; i++) {
-    isFunction[8][size - 1 - i] = 1;
-    isFunction[size - 1 - i][8] = 1;
-  }
-
-  let bitIdx = 0;
-  const totalBits = allCodewords.length * 8;
+  let bitIndex = 0;
+  let upward = true;
   for (let right = size - 1; right > 0; right -= 2) {
-    if (right === 6) right--;
-    const upward = ((right + 1) / 2) % 2 === 1;
-    for (let vert = 0; vert < size; vert++) {
-      const r = upward ? size - 1 - vert : vert;
-      for (let c = right; c >= right - 1; c--) {
-        if (isFunction[r][c]) continue;
-        let bit = 0;
-        if (bitIdx < totalBits) {
-          bit = (allCodewords[bitIdx >> 3] >> (7 - (bitIdx & 7))) & 1;
-          bitIdx++;
-        }
-        if ((r + c) % 2 === 0) bit ^= 1;
-        grid[r][c] = bit;
+    if (right === 6) right -= 1;
+    for (let vertical = 0; vertical < size; vertical++) {
+      const row = upward ? size - 1 - vertical : vertical;
+      for (let column = right; column >= right - 1; column--) {
+        if (isFunction[row][column]) continue;
+        let dark = bitIndex < codewords.length * 8 &&
+          ((codewords[bitIndex >> 3] >>> (7 - (bitIndex & 7))) & 1) !== 0;
+        if ((row + column) % 2 === 0) dark = !dark; // mask 000
+        grid[row][column] = dark;
+        isFunction[row][column] = true;
+        bitIndex++;
       }
     }
+    upward = !upward;
   }
 
-  const fmtBits = [1,0,1,0,1,0,0,0,0,0,1,0,0,1,0];
-  for (let i = 0; i < 6; i++) grid[8][i] = fmtBits[i];
-  grid[8][7] = fmtBits[6]; grid[8][8] = fmtBits[7]; grid[7][8] = fmtBits[8];
-  for (let i = 0; i < 6; i++) grid[5 - i][8] = fmtBits[9 + i];
-  for (let i = 0; i < 8; i++) grid[size - 1 - i][8] = fmtBits[i];
-  for (let i = 0; i < 7; i++) grid[8][size - 7 + i] = fmtBits[8 + i];
-
-  const padUnits = 3;
-  const fullSize = size + padUnits * 2;
+  const quiet = 3;
+  const fullSize = size + quiet * 2;
   let paths = '';
-  for (let r = 0; r < size; r++) {
-    for (let c = 0; c < size; c++) {
-      if (grid[r][c] === 1) {
-        paths += `M${c + padUnits},${r + padUnits}h1v1h-1z `;
-      }
+  for (let row = 0; row < size; row++) {
+    for (let column = 0; column < size; column++) {
+      if (grid[row][column]) paths += `M${column + quiet},${row + quiet}h1v1h-1z `;
     }
   }
   return `<svg viewBox="0 0 ${fullSize} ${fullSize}" width="160" height="160" xmlns="http://www.w3.org/2000/svg" class="qr-svg"><rect width="${fullSize}" height="${fullSize}" fill="#ffffff" rx="10"/><path d="${paths}" fill="#0f172a"/></svg>`;
@@ -2941,6 +3352,108 @@ function snapshotTime(value) {
   if (!Number.isFinite(timestamp)) return '—';
   const milliseconds = timestamp > 1e12 ? timestamp : timestamp * 1000;
   return new Date(milliseconds).toLocaleString(lang === 'ru' ? 'ru-RU' : 'en-US');
+}
+
+// ---------------------------------------------------------------------------
+// Live feed: real measurement events (defect 25, R17)
+// ---------------------------------------------------------------------------
+// The previous implementation searched the aggregated scan log for
+// OK/PASS/FAIL.  That text is a progress summary: it does not say which proxy
+// was measured, with which latency, and a line can contain "OK" for unrelated
+// reasons.  The feed below shows one event per finished measurement, read
+// from the measurement store through /api/events.
+const LIVE_FEED_LIMIT = 40;
+const liveFeed = {cursor: '', items: [], busy: false, lastKey: ''};
+
+const CODE_TEXT = {
+  'OK': {en: 'measured', ru: 'измерено'},
+  'E_STATE_MEASUREMENT_FAILED': {en: 'measurement failed', ru: 'измерение неуспешно'},
+  'E_STATE_NO_OBSERVATION': {en: 'no measurement', ru: 'нет измерения'},
+  'E_TIME_TTL_EXPIRED': {en: 'evidence expired', ru: 'доказательство истекло'},
+  'E_TIME_UNKNOWN': {en: 'check time unknown', ru: 'время проверки неизвестно'},
+  'E_TIME_FUTURE': {en: 'check time in the future', ru: 'время проверки из будущего'},
+  'UNREACHABLE': {en: 'unreachable', ru: 'недоступен'},
+  'DNS_TIMEOUT': {en: 'DNS timeout', ru: 'таймаут DNS'},
+  'DNS_ERROR': {en: 'DNS error', ru: 'ошибка DNS'},
+  'HTTP_3XX': {en: 'redirect', ru: 'перенаправление'},
+  'HTTP_4XX': {en: '4xx answer', ru: 'ответ 4xx'},
+  'HTTP_5XX': {en: '5xx answer', ru: 'ответ 5xx'},
+  'CONTENT_MISMATCH': {en: 'unexpected content', ru: 'неожиданное содержимое'},
+  'CHECK_FAILED': {en: 'check failed', ru: 'проверка не пройдена'}
+};
+
+function codeLabel(code) {
+  const entry = CODE_TEXT[String(code || '')];
+  // The machine code stays visible next to the text: a missing translation
+  // must never hide the code itself.
+  return entry ? (lang === 'ru' ? entry.ru : entry.en) : String(code || '\u2014');
+}
+
+function eventTone(event) {
+  if (event.type === 'job.state') return 'state';
+  return event.code === 'OK' ? 'pass' : 'fail';
+}
+
+function eventLine(event) {
+  const data = event.data || {};
+  if (event.type === 'job.state') {
+    const state = String(data.state || '');
+    return `${t('monitor.job')} \u00b7 ${state}` + (data.exit_code !== undefined ? ` (${data.exit_code})` : '');
+  }
+  const proxy = String(data.proxy || event.item_id || '');
+  const latency = data.latency_ms !== null && data.latency_ms !== undefined ? ` \u00b7 ${latencyBadge(data.latency_ms)}` : '';
+  const reliability = typeof data.reliability === 'number' ? ` \u00b7 ${Math.round(data.reliability * 100)}%` : '';
+  return `${proxy}${latency}${reliability}`;
+}
+
+async function pollEvents() {
+  if (liveFeed.busy) return;
+  liveFeed.busy = true;
+  try {
+    const query = new URLSearchParams({after: liveFeed.cursor, limit: '80'});
+    const data = await api('/api/events?' + query);
+    if (!data || !Array.isArray(data.events)) return;
+    if (data.cursor) liveFeed.cursor = data.cursor;
+    for (const event of data.events) {
+      const key = event.stream + ':' + event.seq;
+      if (key === liveFeed.lastKey) continue;
+      liveFeed.lastKey = key;
+      liveFeed.items.push(event);
+    }
+    if (liveFeed.items.length > LIVE_FEED_LIMIT) {
+      liveFeed.items = liveFeed.items.slice(-LIVE_FEED_LIMIT);
+    }
+    renderLiveFeedItems();
+  } catch {
+    // A missing event stream must not break the page; the feed keeps the last
+    // events it already had.
+  } finally {
+    liveFeed.busy = false;
+  }
+}
+
+function renderLiveFeedItems() {
+  const container = $('live-ticker-list');
+  if (!container) return;
+  if (!liveFeed.items.length) {
+    container.innerHTML = `<div class="ticker-empty">${esc(t('monitor.liveStreamIdle'))}</div>`;
+    return;
+  }
+  container.innerHTML = liveFeed.items.map(event => {
+    const tone = eventTone(event);
+    const badge = tone === 'state' ? 'STATE' : (event.code === 'OK' ? 'OK' : 'FAIL');
+    return `<div class="ticker-item ${tone}" data-code="${esc(event.code || '')}" title="${esc(t('code.title') + ': ' + (event.code || ''))}">` +
+      `<span class="ticker-badge">${esc(badge)}</span>` +
+      `<span class="ticker-text">${eventLine(event)}</span>` +
+      `<span class="ticker-code">${esc(codeLabel(event.code))}</span></div>`;
+  }).join('');
+}
+
+function renderLiveFeed(value) {
+  const source = $('live-feed-source');
+  if (source) source.textContent = t('monitor.liveStreamSource');
+  pollEvents();
+  renderLiveFeedItems();
 }
 
 function snapshotView(report) {
@@ -3042,7 +3555,17 @@ function renderState(value) {
   const gaugePercent = $('gauge-percent');
   if (gaugePercent) gaugePercent.textContent = percent.toFixed(1) + '%';
   const gaugeCaption = $('gauge-caption');
-  if (gaugeCaption) gaugeCaption.textContent = currentPhase === 'ready' ? t('phase.ready') : t('phase.' + currentPhase);
+  if (gaugeCaption) {
+    const pText = currentPhase === 'ready' ? t('phase.ready') : (t('phase.' + currentPhase) || currentPhase);
+    gaugeCaption.textContent = pText.toUpperCase();
+  }
+
+  const tickerBadge = $('ticker-status-badge');
+  if (tickerBadge) {
+    const isLive = value.running && ['scanning', 'collecting'].includes(currentPhase);
+    tickerBadge.textContent = isLive ? 'LIVE' : (currentPhase === 'ready' ? 'READY' : (t('phase.' + currentPhase) || currentPhase).toUpperCase());
+    tickerBadge.classList.toggle('live', isLive);
+  }
 
   if ($('speed')) $('speed').textContent = value.running && progress.phase === 'scanning' ? String(progress.speed ?? '—') : '—';
   if ($('eta')) $('eta').textContent = value.running && progress.phase === 'scanning' ? duration(progress.eta_seconds) : '—';
@@ -3058,24 +3581,10 @@ function renderState(value) {
     }
   }
 
-  // Live ticker updates
-  const tickerContainer = $('live-ticker-list');
-  if (tickerContainer) {
-    if (value.running && value.log) {
-      const logLines = String(value.log).split('\n').filter(l => l.trim().length > 0);
-      const testLines = logLines.filter(l => /\b(OK|PASS|SUCCESS|FAIL|ERR|ERROR)\b/i.test(l)).slice(-6);
-      if (testLines.length) {
-        tickerContainer.innerHTML = testLines.map(line => {
-          const isPass = /\b(OK|PASS|SUCCESS)\b/i.test(line);
-          const badgeClass = isPass ? 'pass' : 'fail';
-          const badgeLabel = isPass ? 'PASS' : 'FAIL';
-          return `<div class="ticker-item ${badgeClass}"><span class="ticker-badge">${badgeLabel}</span><span class="ticker-text">${esc(line)}</span></div>`;
-        }).join('');
-      }
-    } else if (!value.running && tickerContainer.children.length === 0) {
-      tickerContainer.innerHTML = `<div class="ticker-empty">${esc(t('monitor.liveStreamIdle'))}</div>`;
-    }
-  }
+  // Live ticker: real measurement events, never a regex over the log.
+  // The log is an aggregate progress text; a line that happens to contain
+  // "OK" says nothing about which proxy was measured (defect 25, R17).
+  renderLiveFeed(value);
 
   const passedCount = progress.passed ?? exportReport.passed ?? 0;
   if ($('nav-count')) {
@@ -3093,14 +3602,41 @@ function renderState(value) {
     $('export-note').textContent = reportText + (snapshotText ? ' ' + snapshotText : '') + (diagnosticText ? ' ' + diagnosticText : '');
   }
   renderBreakdown((value.export || {}).breakdown);
+  renderConnectPath(value);
+  if (Array.isArray(value.views)) renderSavedViews(value.views);
   if ($('api-line')) $('api-line').classList.toggle('hidden', !value.api);
   if ($('gateway-line')) $('gateway-line').classList.toggle('hidden', !value.gateway);
 
   // Gateway screen & Mobile Hub QR / Links
-  if (value.gateway) {
+  const gwBadge = document.querySelector('.gateway-status-badge');
+  const gwPulse = document.querySelector('.status-pulse-large');
+  const gwPill = document.querySelector('.gw-live-status-pill');
+  const isOnline = Boolean(value.gateway && value.gateway.address);
+
+  if (gwBadge) {
+    gwBadge.textContent = isOnline ? t('gateway.online') : t('gateway.offline');
+    gwBadge.classList.toggle('online', isOnline);
+    gwBadge.classList.toggle('offline', !isOnline);
+  }
+  if (gwPulse) gwPulse.style.display = isOnline ? 'inline-block' : 'none';
+  if (gwPill) gwPill.classList.toggle('offline', !isOnline);
+
+  if (isOnline) {
+    ['copy-gateway', 'copy-gateway-hero'].forEach(id => { if ($(id)) $(id).disabled = false; });
+    ['telegram-gateway', 'gw-tg-link', 'mobile-tg-btn-link'].forEach(id => {
+      const link = $(id);
+      if (link) link.setAttribute('aria-disabled', 'false');
+    });
     if ($('gateway-address')) $('gateway-address').textContent = value.gateway.address;
-    const [gatewayHost, gatewayPort] = value.gateway.address.split(':');
-    const tgUrl = `tg://socks?server=${encodeURIComponent(gatewayHost)}&port=${encodeURIComponent(gatewayPort)}`;
+    const rawAddress = String(value.gateway.address || '');
+    const separator = rawAddress.lastIndexOf(':');
+    let gatewayHost = separator > 0 ? rawAddress.slice(0, separator) : rawAddress;
+    const gatewayPort = separator > 0 ? rawAddress.slice(separator + 1) : '';
+    if (gatewayHost.startsWith('[') && gatewayHost.endsWith(']')) gatewayHost = gatewayHost.slice(1, -1);
+    let tgUrl = `tg://socks?server=${encodeURIComponent(gatewayHost)}&port=${encodeURIComponent(gatewayPort)}`;
+    if (value.gateway.mobile_ready && value.gateway.username) {
+      tgUrl += `&username=${encodeURIComponent(value.gateway.username)}&password=${encodeURIComponent(value.gateway.password || '')}`;
+    }
     if ($('telegram-gateway')) $('telegram-gateway').href = tgUrl;
     if ($('gateway-stats')) $('gateway-stats').innerHTML = `<span class="pool-dot"></span>${esc(t('gateway.stats', {proxies:fmt(value.gateway.proxies), connections:fmt(value.gateway.connections)}))}`;
 
@@ -3114,16 +3650,71 @@ function renderState(value) {
     const mobileTgLink = $('mobile-tg-btn-link');
     if (mobileTgLink) mobileTgLink.href = tgUrl;
 
-    const gwQr = $('gw-tg-qr');
-    if (gwQr && !gwQr.hasChildNodes()) gwQr.innerHTML = makeQR(tgUrl);
-    const mobileQr = $('mobile-tg-qr-box');
-    if (mobileQr && !mobileQr.hasChildNodes()) mobileQr.innerHTML = makeQR(tgUrl);
+    const renderQr = node => {
+      if (!node) return;
+      if (!value.gateway.mobile_ready) {
+        node.dataset.qrUnavailable = '1';
+        delete node.dataset.qrValue;
+        node.classList.remove('has-qr');
+        node.innerHTML = `
+          <div class="qr-placeholder-wrap" title="${esc(t('gateway.mobileUnavailable'))}">
+            <div class="qr-placeholder-icon">📱</div>
+            <div class="qr-placeholder-title">${esc(t('gateway.lanModeTitle'))}</div>
+            <div class="qr-placeholder-desc">${esc(t('gateway.mobileUnavailableShort'))}</div>
+          </div>
+        `;
+        return;
+      }
+      delete node.dataset.qrUnavailable;
+      if (node.dataset.qrValue !== tgUrl) {
+        const svg = makeQR(tgUrl);
+        if (!svg) {
+          delete node.dataset.qrValue;
+          node.classList.remove('has-qr');
+          node.innerHTML = `<p class="text-muted text-sm">${esc(t('gateway.qrTooLong'))}</p>`;
+          return;
+        }
+        node.dataset.qrValue = tgUrl;
+        node.classList.add('has-qr');
+        node.innerHTML = svg;
+      }
+    };
+    renderQr($('gw-tg-qr'));
+    renderQr($('mobile-tg-qr-box'));
+  } else {
+    if ($('gateway-address')) $('gateway-address').textContent = '—';
+    ['copy-gateway', 'copy-gateway-hero'].forEach(id => { if ($(id)) $(id).disabled = true; });
+    ['telegram-gateway', 'gw-tg-link', 'mobile-tg-btn-link'].forEach(id => {
+      const link = $(id);
+      if (!link) return;
+      link.removeAttribute('href');
+      link.setAttribute('aria-disabled', 'true');
+    });
+    ['gw-tg-qr', 'mobile-tg-qr-box'].forEach(id => {
+      const node = $(id);
+      if (!node) return;
+      delete node.dataset.qrValue;
+      delete node.dataset.qrUnavailable;
+      node.classList.remove('has-qr');
+      node.innerHTML = `
+        <div class="qr-placeholder-wrap">
+          <div class="qr-placeholder-icon">⚡</div>
+          <div class="qr-placeholder-title">${esc(t('gateway.offline'))}</div>
+        </div>
+      `;
+    });
+    if ($('gateway-stats')) $('gateway-stats').textContent = t('gateway.offline');
   }
   if ($('api-example')) $('api-example').textContent = value.api ? `${value.api}/random?protocol=socks5&format=txt` : '';
   const snapshotUnavailable = Boolean(exportReport.profile && (snapshot.stale || snapshot.state === 'error'));
   document.querySelectorAll('[data-download]').forEach(node => { node.disabled = snapshotUnavailable || !(value.downloads || []).includes(node.dataset.download) || (value.running && progress.phase === 'exporting'); });
+  ['singbox.json', 'clash.yaml'].forEach(name => {
+    const button = $(name === 'singbox.json' ? 'btn-copy-singbox' : 'btn-copy-clash');
+    if (button) button.disabled = snapshotUnavailable || !(value.downloads || []).includes(name) || value.running;
+  });
   if ($('copy-page')) $('copy-page').disabled = snapshotUnavailable || value.running;
   if ($('action-copy-selected')) $('action-copy-selected').disabled = snapshotUnavailable || value.running;
+  document.querySelectorAll('[data-copy-proxy]').forEach(node => { node.disabled = snapshotUnavailable; });
   // A stale/error snapshot cannot be rebuilt into a useful export from the UI;
   // the user must re-check first. A partial snapshot remains explicitly labelled
   // and can still be exported as a partial result.
@@ -3222,8 +3813,31 @@ function renderSources(report, urls, keys=[], quality={}) {
 async function poll() {
   if (polling) return;
   polling = true;
-  try { renderState(await api('/api/state')); }
+  try {
+    const value = await api('/api/state');
+    const gwBadge = document.querySelector('.gateway-status-badge');
+    const gwPulse = document.querySelector('.status-pulse-large');
+    const isOnline = Boolean(value.gateway && value.gateway.address);
+
+    if (gwBadge) {
+      gwBadge.textContent = isOnline ? t('gateway.online') : t('gateway.offline');
+      gwBadge.classList.toggle('online', isOnline);
+      gwBadge.classList.toggle('offline', !isOnline);
+    }
+    if (gwPulse) gwPulse.style.display = isOnline ? 'inline-block' : 'none';
+
+    renderState(value);
+  }
   catch {
+    const gwBadge = document.querySelector('.gateway-status-badge');
+    const gwPulse = document.querySelector('.status-pulse-large');
+    if (gwBadge) {
+      gwBadge.textContent = t('gateway.offline');
+      gwBadge.classList.toggle('online', false);
+      gwBadge.classList.toggle('offline', true);
+    }
+    if (gwPulse) gwPulse.style.display = 'none';
+
     const phaseEl = $('phase');
     if (phaseEl) {
       phaseEl.textContent = t('phase.offline');
@@ -3243,7 +3857,12 @@ function updateSelectionUI() {
   const selectAll = $('select-all-proxies');
   const count = selectedProxies.size;
 
-  if (bar) bar.classList.toggle('hidden', count === 0);
+  if (bar) {
+    const isVisible = count > 0;
+    bar.classList.toggle('hidden', !isVisible);
+    bar.classList.toggle('active', isVisible);
+    bar.setAttribute('aria-hidden', String(!isVisible));
+  }
   if (countBadge) countBadge.textContent = t('results.selectedCount', {count: fmt(count)});
 
   const checkboxes = document.querySelectorAll('.proxy-select-box');
@@ -3275,11 +3894,14 @@ function renderCountryDistribution(rows, breakdown) {
     }
   }
 
+  const card = $('country-distribution-card');
   if (total === 0) {
+    if (card) card.classList.add('hidden');
     bar.innerHTML = '<div class="country-bar-seg empty" style="width:100%"></div>';
     stats.textContent = '';
     return;
   }
+  if (card) card.classList.remove('hidden');
 
   const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
   const colors = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#06b6d4', '#64748b'];
@@ -3301,7 +3923,19 @@ function renderResults(data) {
   const page = data ? data.rows : [];
   const start = data ? data.offset : 0;
   const total = data ? data.total : 0;
-  if ($('result-context')) $('result-context').textContent = data && data.profile ? t('results.context', {targets:data.targets.map(target => target.name ? `${target.name} (${target.url})` : target.url).join(' + '), profile:profileLabel(data.request_profile || 'workbench')}) : t('results.empty');
+  if ($('result-context')) {
+    if (data && data.profile) {
+      const targetsList = (data.targets || []).map(target => target.name ? `${target.name} (${target.url})` : target.url).filter(Boolean).join(' + ');
+      if (targetsList) {
+        $('result-context').textContent = t('results.context', {targets: targetsList, profile: profileLabel(data.request_profile || 'workbench')});
+      } else {
+        const prof = profileLabel(data.request_profile || 'workbench');
+        $('result-context').textContent = lang === 'ru' ? `Профиль: ${prof}` : `Profile: ${prof}`;
+      }
+    } else {
+      $('result-context').textContent = t('results.empty');
+    }
+  }
   if ($('result-total')) $('result-total').textContent = t('results.total', {count:fmt(total)});
   const curPage = Math.floor(start / 50) + 1;
   const totalPages = Math.max(1, Math.ceil(total / 50));
@@ -3317,7 +3951,18 @@ function renderResults(data) {
   rowsContainer.innerHTML = page.length ? page.map((row, index) => {
     const scoreVal = Number(row.score);
     const scoreClass = scoreVal >= 75 ? 'high' : scoreVal >= 45 ? 'med' : 'low';
-    const proxyCell = `<div class="proxy-cell"><span class="proxy-text">${esc(row.proxy)}</span><button class="copy-proxy-btn" data-copy-proxy="${esc(row.proxy)}" title="${copyTitle}" aria-label="${copyTitle}"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg></button></div>`;
+    const rawProxy = String(row.proxy || '');
+    let proto = (row.protocol || '').toLowerCase();
+    let addrText = rawProxy;
+    if (rawProxy.includes('://')) {
+      const parts = rawProxy.split('://');
+      if (!proto) proto = parts[0].toLowerCase();
+      addrText = parts[1];
+    } else if (!proto) {
+      proto = 'http';
+    }
+    const protoBadge = `<span class="proto-tag proto-${esc(proto)}">${esc(proto.toUpperCase())}</span>`;
+    const proxyCell = `<div class="proxy-cell">${protoBadge}<span class="proxy-text">${esc(addrText)}</span><button class="copy-proxy-btn" data-copy-proxy="${esc(rawProxy)}" title="${copyTitle}" aria-label="${copyTitle}"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg></button></div>`;
     const detailsBtn = `<button class="button chip details-btn" data-details="${index}"><span class="details-icon">↗</span> <span>${esc(t('results.details'))}</span></button>`;
     const isChecked = selectedProxies.has(row.proxy) ? 'checked' : '';
     const flag = getCountryFlag(row.country);
@@ -3331,30 +3976,33 @@ function renderResults(data) {
     }
 
     const testBtn = `<button type="button" class="button chip quick-test-btn" data-test-proxy="${esc(row.proxy)}" title="${esc(t('action.test') || 'Test')}">⚡</button>`;
+    const favBtn = `<button type="button" class="button chip fav-btn${row.favorite ? ' is-favorite' : ''}" data-favorite="${esc(row.proxy)}" title="${esc(t('results.favorite'))}" aria-pressed="${row.favorite ? 'true' : 'false'}">★</button>`;
 
     return `<tr>
-      <td class="td-check"><input type="checkbox" class="proxy-select-box" data-proxy="${esc(row.proxy)}" aria-label="${esc(t('results.selectProxy', {proxy:row.proxy}))}" ${isChecked}></td>
-      <td>${fmt(start + index + 1)}</td>
-      <td>${proxyCell}</td>
-      <td><span class="score ${scoreClass}">${scoreVal.toFixed(1)}</span></td>
-      <td>${latencyBadge(row.latency_ms)}</td>
-      <td>${latencyBadge(row.jitter_ms)}</td>
-      <td>${row.speed && row.speed.mbps != null ? esc(Number(row.speed.mbps).toFixed(1)) : '—'}</td>
-      <td>${(Number(row.min_target_reliability) * 100).toFixed(0)}%</td>
-      <td>${row.history ? esc(`${fmt(row.history.passes)}/${fmt(row.history.checks)}`) : '1/1'}</td>
-      <td>${reputationBadge(row)}</td>
-      <td>${anonymityBadge(row)}</td>
-      <td class="country" title="${esc(row.anonymity && row.anonymity.exit_ip ? t('results.exitIp', {ip:row.anonymity.exit_ip}) : '')}"><span class="country-flag">${flag}</span> ${esc(countryLabel(row))}</td>
-      <td class="provider" title="${esc(row.provider ? `AS${row.provider.asn} ${row.provider.org}` : '')}">${providerCell(row)}</td>
-      <td class="td-actions">
+      <td class="td-check" data-col="col-check"><input type="checkbox" class="proxy-select-box" data-proxy="${esc(row.proxy)}" aria-label="${esc(t('results.selectProxy', {proxy:row.proxy}))}" ${isChecked}></td>
+      <td class="td-num" data-col="col-num">${fmt(start + index + 1)}</td>
+      <td data-col="col-proxy">${proxyCell}${renderRowMarks(row)}</td>
+      <td data-col="col-score"><span class="score ${scoreClass}">${scoreVal.toFixed(1)}</span>${renderFreshnessBadge(row)}</td>
+      <td data-col="col-latency">${latencyBadge(row.latency_ms)}</td>
+      <td data-col="col-jitter">${latencyBadge(row.jitter_ms)}</td>
+      <td data-col="col-speed">${row.speed && row.speed.mbps != null ? esc(Number(row.speed.mbps).toFixed(1)) : '—'}</td>
+      <td data-col="col-success">${(Number(row.min_target_reliability) * 100).toFixed(0)}%</td>
+      <td data-col="col-uptime">${row.history ? esc(`${fmt(row.history.passes)}/${fmt(row.history.checks)}`) : '1/1'}</td>
+      <td data-col="col-cleanliness">${reputationBadge(row)}</td>
+      <td data-col="col-anonymity">${anonymityBadge(row)}</td>
+      <td class="country" data-col="col-country" title="${esc(row.anonymity && row.anonymity.exit_ip ? t('results.exitIp', {ip:row.anonymity.exit_ip}) : '')}"><span class="country-flag">${flag}</span> ${esc(countryLabel(row))}</td>
+      <td class="provider" data-col="col-provider" title="${esc(row.provider ? `AS${row.provider.asn} ${row.provider.org}` : '')}">${providerCell(row)}</td>
+      <td class="td-age" data-col="col-age">${ageCell(row)}</td>
+      <td class="td-actions" data-col="col-actions">
         <div class="row-actions-group">
+          ${favBtn}
           ${testBtn}
           ${tgBtn}
           ${detailsBtn}
         </div>
       </td>
     </tr>`;
-  }).join('') : `<tr><td colspan="14" class="empty">${esc(t(data ? 'results.noneMatching' : 'results.noneYet'))}</td></tr>`;
+  }).join('') : `<tr><td colspan="15" class="empty"><div class="empty-table-state"><div class="empty-table-icon">🔍</div><div class="empty-table-title">${esc(t(data ? 'results.noneMatching' : 'results.noneYet'))}</div></div></td></tr>`;
 
   $('result-rows').querySelectorAll('[data-details]').forEach(node => node.onclick = () => details(page[Number(node.dataset.details)]));
 
@@ -3367,6 +4015,23 @@ function renderResults(data) {
     };
   });
 
+  // Favourite toggle: a marker on the row, never a way to skip freshness.
+  $('result-rows').querySelectorAll('.fav-btn').forEach(btn => {
+    btn.onclick = async event => {
+      event.stopPropagation();
+      const proxy = btn.dataset.favorite;
+      const was = btn.classList.contains('is-favorite');
+      btn.classList.toggle('is-favorite', !was);
+      btn.setAttribute('aria-pressed', String(!was));
+      try {
+        await api('/api/results/bulk', {op: was ? 'unfavorite' : 'favorite', scope: 'selected', proxies: [proxy]});
+      } catch (err) {
+        btn.classList.toggle('is-favorite', was);
+        toast(err.message, true);
+      }
+    };
+  });
+
   // Inline Quick Test handler
   $('result-rows').querySelectorAll('.quick-test-btn').forEach(btn => {
     btn.onclick = async e => {
@@ -3375,15 +4040,21 @@ function renderResults(data) {
       btn.disabled = true;
       btn.innerHTML = '⏳';
       try {
-        const res = await api('/api/test-proxy', {proxy});
+        const res = await api('/api/test-proxy', {
+          proxy,
+          min_success: $('result-min') ? Number($('result-min').value) : 2/3
+        });
+        const volume = res.scope ? t('quick.volume', {targets: res.scope.targets ?? 0, attempts: res.scope.attempts ?? 0,
+          requests: res.scope.planned_requests ?? 0, seconds: Math.round(res.scope.whole_deadline_s || 0)}) : '';
+        const detail = [volume, res.scope ? t('quick.skipped') : '', res.scope ? t('quick.storedNo') : ''].filter(Boolean).join(' · ');
         if (res.ok) {
           btn.innerHTML = `✓ ${Math.round(res.latency_ms)}ms`;
           btn.className = 'button chip pass test-badge';
-          toast(`${proxy} · ${Math.round(res.latency_ms)}ms · OK`);
+          toast(`${proxy} · ${Math.round(res.latency_ms)}ms · ${detail}`);
         } else {
           btn.innerHTML = '✕ Err';
           btn.className = 'button chip fail test-badge';
-          toast(`${proxy} · ${res.error || 'Failed'}`, true);
+          toast(`${proxy} · ${res.error || 'Failed'} · ${detail}`, true);
         }
       } catch (err) {
         btn.innerHTML = '✕';
@@ -3407,16 +4078,15 @@ function renderResults(data) {
       const btn = event.target.closest('[data-copy-proxy]');
       if (!btn) return;
       event.stopPropagation();
+      if (state.export && (state.export.stale || state.export.state === 'error')) {
+        toast(t('phase.stale'), true);
+        return;
+      }
       const proxy = btn.dataset.copyProxy;
       try {
         await navigator.clipboard.writeText(proxy);
-        btn.classList.add('copied');
-        btn.innerHTML = '✓';
-        setTimeout(() => {
-          btn.classList.remove('copied');
-          btn.innerHTML = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>';
-        }, 1200);
-        toast(proxy + ' · ' + (t('results.copied') || 'Copied!'));
+        markCopied(btn, '✓');
+        toast(proxy + ' · ' + (t('results.copied') || 'Скопировано!'));
       } catch {
         toast(t('toast.copyFailed'), true);
       }
@@ -3424,26 +4094,27 @@ function renderResults(data) {
   }
 }
 
+let pendingLoadResults = false;
+
 async function loadResults() {
-  if (resultBusy) return;
+  if (resultBusy) {
+    pendingLoadResults = true;
+    return;
+  }
   resultBusy = true;
+  pendingLoadResults = false;
   const refreshBtn = $('refresh-results');
   if (refreshBtn) refreshBtn.disabled = true;
   try {
-    const query = new URLSearchParams({
-      sort: $('result-sort') ? $('result-sort').value : 'recommended',
-      min_success: $('result-min') ? $('result-min').value : '1',
-      min_anonymity: $('result-anon') ? $('result-anon').value : 'any',
-      protocol: $('result-protocol') ? $('result-protocol').value : 'all',
-      max_latency: Number($('result-max-latency') ? $('result-max-latency').value : 0) || 0,
-      country: $('result-country') ? $('result-country').value.trim() : '',
-      hosting: $('result-hosting') ? $('result-hosting').value : 'any',
-      q: $('result-search') ? $('result-search').value.trim() : '',
-      offset
-    });
-    const data = await api('/api/results?' + query);
+    const params = resultQuery();
+    params.offset = offset;
+    const data = await api('/api/results?' + new URLSearchParams(params));
     resultTargets = data.targets || [];
     resultData = {...data, offset};
+    resultState.digest = data.scope_digest || '';
+    syncSelectionScope(resultState.digest);
+    renderViewTabs(data);
+    applyColumns(resultState.columns);
     renderResults(resultData);
     if ($('prev')) $('prev').disabled = offset === 0;
     if ($('next')) $('next').disabled = offset + 50 >= (data.total || 0);
@@ -3452,14 +4123,19 @@ async function loadResults() {
   } finally {
     resultBusy = false;
     if (refreshBtn) refreshBtn.disabled = false;
+    if (pendingLoadResults) {
+      pendingLoadResults = false;
+      loadResults();
+    }
   }
 }
 
 function renderDetails(row) {
-  $('details-title').textContent = row.proxy;
-  const verdict = row.reputation || {status:'clean', dnsbl:[]};
-  const repStatus = verdict.status || 'clean';
-  const dnsblItems = verdict.dnsbl || [];
+  const titleEl = $('details-title');
+  if (titleEl) titleEl.textContent = row.proxy;
+  const verdict = row.reputation && typeof row.reputation === 'object' ? row.reputation : {};
+  const repStatus = reputationStatus(row);
+  const dnsblItems = Array.isArray(verdict.dnsbl) ? verdict.dnsbl : [];
 
   const dnsblBadges = dnsblItems.length ? dnsblItems.map(item => {
     const isListed = item.status === 'listed';
@@ -3557,90 +4233,234 @@ function renderDetails(row) {
     </div>`;
   }).join('');
 
-  $('details-body').innerHTML = html;
+  const bodyEl = $('details-body');
+  if (bodyEl) bodyEl.innerHTML = html;
 }
 
 async function details(summary) {
+  if (!summary || !summary.proxy) return;
   try {
     const row = await api('/api/result-detail?proxy=' + encodeURIComponent(summary.proxy));
     detailRow = row;
     renderDetails(row);
-    $('details-dialog').showModal();
+    const dlg = $('details-dialog');
+    if (dlg) {
+      if (dlg.open && typeof dlg.close === 'function') {
+        dlg.close();
+      }
+      if (typeof dlg.showModal === 'function') {
+        dlg.showModal();
+      }
+    }
   } catch (error) {
     toast(error.message, true);
   }
 }
 
 const detailsDialog = $('details-dialog');
-$('close-details').onclick = () => detailsDialog.close();
-
-detailsDialog.addEventListener('click', event => {
-  if (event.target === detailsDialog) {
-    const rect = detailsDialog.getBoundingClientRect();
-    const isInDialog = (
-      rect.top <= event.clientY &&
-      event.clientY <= rect.bottom &&
-      rect.left <= event.clientX &&
-      event.clientX <= rect.right
-    );
-    if (!isInDialog) {
+const closeDetailsBtn = $('close-details');
+if (closeDetailsBtn) {
+  closeDetailsBtn.onclick = (e) => {
+    if (e) e.preventDefault();
+    if (detailsDialog && typeof detailsDialog.close === 'function') {
       detailsDialog.close();
     }
-  }
-});
+  };
+}
 
-window.addEventListener('keydown', event => {
-  if (event.key === 'Escape' && detailsDialog.open) {
-    detailsDialog.close();
-  }
-});
+if (detailsDialog) {
+  detailsDialog.addEventListener('click', event => {
+    if (event.target === detailsDialog) {
+      const rect = detailsDialog.getBoundingClientRect();
+      const isInDialog = (
+        rect.top <= event.clientY &&
+        event.clientY <= rect.bottom &&
+        rect.left <= event.clientX &&
+        event.clientX <= rect.right
+      );
+      if (!isInDialog && typeof detailsDialog.close === 'function') {
+        detailsDialog.close();
+      }
+    }
+  });
 
-$('add-target').onclick = () => addTarget();
-$('save-settings').onclick = save;
-$('save-sources').onclick = save;
-$('start').onclick = () => start('run');
-$('resume').onclick = () => start('scan');
-$('recheck').onclick = () => start('recheck');
-$('recheck-passing').onclick = () => start('recheck_passing');
-$('collect').onclick = () => start('collect');
-$('export').onclick = () => start('export');
-$('stop').onclick = async () => { try { $('stop').disabled = true; await api('/api/stop', {}); toast(t('toast.stopping')); await poll(); } catch (error) { toast(error.message, true); } };
+  window.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && detailsDialog.open && typeof detailsDialog.close === 'function') {
+      detailsDialog.close();
+    }
+  });
+
+  detailsDialog.addEventListener('close', () => {
+    detailsDialog.removeAttribute('open');
+  });
+}
+
+if ($('add-target')) $('add-target').onclick = () => addTarget();
+if ($('save-settings')) $('save-settings').onclick = save;
+if ($('save-sources')) $('save-sources').onclick = save;
+if ($('start')) $('start').onclick = () => start('run');
+if ($('resume')) $('resume').onclick = () => start('scan');
+if ($('recheck')) $('recheck').onclick = () => start('recheck');
+if ($('recheck-passing')) $('recheck-passing').onclick = () => start('recheck_passing');
+if ($('collect')) $('collect').onclick = () => start('collect');
+if ($('export')) $('export').onclick = () => start('export');
+if ($('stop')) {
+  $('stop').onclick = async () => {
+    try {
+      $('stop').disabled = true;
+      await api('/api/stop', {});
+      toast(t('toast.stopping'));
+      await poll();
+    } catch (error) {
+      toast(error.message, true);
+    }
+  };
+}
+
 async function clearLocalData() {
   if (!confirm(t('confirm.clear'))) return;
   try {
     const result = await api('/api/clear-data', {});
-    toast(t('toast.cleared', {count:result.removed.length}));
+    toast(t('toast.cleared', {count: (result && result.removed) ? result.removed.length : 0}));
     await poll();
   } catch (error) {
     toast(error.message, true);
   }
 }
+if ($('clear-data')) $('clear-data').onclick = clearLocalData;
 document.querySelectorAll('[data-action="clear-data"]').forEach(button => { button.onclick = clearLocalData; });
-$('refresh-results').onclick = () => { offset = 0; loadResults(); };
-['result-sort', 'result-min', 'result-anon', 'result-protocol', 'result-max-latency', 'result-hosting'].forEach(id => $(id).onchange = () => { offset = 0; loadResults(); });
+
+let isSyncingFilters = false;
+
+function syncScanToResults(sourceId) {
+  if (isSyncingFilters) return;
+  isSyncingFilters = true;
+  try {
+    if (sourceId === 'protocol' || !sourceId) {
+      if ($('protocol') && $('result-protocol')) $('result-protocol').value = $('protocol').value;
+    }
+    if (sourceId === 'min_anonymity' || !sourceId) {
+      if ($('min_anonymity') && $('result-anon')) $('result-anon').value = $('min_anonymity').value;
+    }
+    if (sourceId === 'max_latency' || !sourceId) {
+      if ($('max_latency') && $('result-max-latency')) $('result-max-latency').value = $('max_latency').value;
+    }
+    if (sourceId === 'countries' || !sourceId) {
+      if ($('countries') && $('result-country')) {
+        $('result-country').value = $('countries').value;
+        if (typeof countriesComboboxInstance !== 'undefined' && countriesComboboxInstance) {
+          countriesComboboxInstance.syncFromInput();
+        }
+      }
+    }
+    if (sourceId === 'top' || !sourceId) {
+      if ($('top') && $('result-top')) $('result-top').value = $('top').value;
+    }
+    if (sourceId === 'min_success' || !sourceId) {
+      if ($('min_success') && $('result-min')) {
+        const val = $('min_success').value;
+        if (![...$('result-min').options].some(o => o.value === val)) {
+          $('result-min').add(new Option(`${Math.round(Number(val) * 100)}%`, val));
+        }
+        $('result-min').value = val;
+      }
+    }
+    if (sourceId === 'exclude_hosting' || !sourceId) {
+      if ($('exclude_hosting') && $('result-hosting')) {
+        $('result-hosting').value = $('exclude_hosting').checked ? 'exclude' : 'keep';
+      }
+    }
+    if (sourceId === 'sort' || !sourceId) {
+      if ($('sort') && $('result-sort')) $('result-sort').value = $('sort').value;
+    }
+  } finally {
+    isSyncingFilters = false;
+  }
+}
+
+if ($('refresh-results')) $('refresh-results').onclick = () => { offset = 0; loadResults(); };
+
+// Results controls are view/export filters only; they never mutate the next scan.
+['result-sort', 'result-min', 'result-anon', 'result-protocol', 'result-max-latency', 'result-hosting', 'result-top'].forEach(id => {
+  const el = $(id);
+  if (el) el.onchange = () => {
+    offset = 0;
+    loadResults();
+  };
+});
+
+// Scan tab filters: sync to Results
+['protocol', 'min_anonymity', 'max_latency', 'top', 'min_success', 'sort'].forEach(id => {
+  const el = $(id);
+  if (el) el.onchange = () => {
+    syncScanToResults(id);
+    if (currentTab === 'results') { offset = 0; loadResults(); }
+  };
+});
+if ($('exclude_hosting')) {
+  $('exclude_hosting').onchange = () => {
+    syncScanToResults('exclude_hosting');
+    if (currentTab === 'results') { offset = 0; loadResults(); }
+  };
+}
+if ($('countries')) {
+  $('countries').oninput = () => {
+    syncScanToResults('countries');
+    if (currentTab === 'results') {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => { offset = 0; loadResults(); }, 150);
+    }
+  };
+}
+
 let searchTimer;
-$('result-search').oninput = () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => { offset = 0; loadResults(); }, 300); };
-$('result-country').oninput = $('result-search').oninput;
+if ($('result-search')) {
+  $('result-search').oninput = () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => { offset = 0; loadResults(); }, 150);
+  };
+}
+if ($('result-country')) {
+  $('result-country').oninput = () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => { offset = 0; loadResults(); }, 150);
+  };
+}
 
 const presets = {
   quick: {attempts:1, timeout:5, connect_timeout:2, workers:256, prefilter:1024, fail_fast:true},
   balanced: {attempts:3, timeout:8, connect_timeout:4, workers:128, prefilter:512, fail_fast:true},
   thorough: {attempts:5, timeout:12, connect_timeout:6, prefilter:256, workers:128, fail_fast:true}
 };
+
 function markCopied(button, html) {
   if (!button) return;
   button.classList.add('copied');
+  if (!button.dataset.origHtml) button.dataset.origHtml = button.innerHTML;
+
+  const copiedLabel = t('results.copied') || (lang === 'ru' ? 'Скопировано!' : 'Copied!');
   if (html) {
-    if (!button.dataset.origHtml) button.dataset.origHtml = button.innerHTML;
     button.innerHTML = html;
+  } else {
+    const textSpan = button.querySelector('.btn-text');
+    const iconSpan = button.querySelector('.btn-icon');
+    if (textSpan) {
+      textSpan.textContent = '✓ ' + copiedLabel;
+      if (iconSpan) iconSpan.textContent = '✓';
+    } else {
+      button.innerHTML = `<span class="btn-icon">✓</span> <span class="btn-text">${esc('✓ ' + copiedLabel)}</span>`;
+    }
   }
-  setTimeout(() => {
+
+  if (button._copyTimeout) clearTimeout(button._copyTimeout);
+  button._copyTimeout = setTimeout(() => {
     button.classList.remove('copied');
-    if (html && button.dataset.origHtml) {
+    if (button.dataset.origHtml) {
       button.innerHTML = button.dataset.origHtml;
       delete button.dataset.origHtml;
     }
-  }, 1400);
+    delete button._copyTimeout;
+  }, 1500);
 }
 
 function updateSegmentedGlider() {
@@ -3691,15 +4511,22 @@ if ($('dnsbl-zones')) $('dnsbl-zones').addEventListener('input', updateLineCount
 if ($('denylist')) $('denylist').addEventListener('input', updateLineCounts);
 window.addEventListener('resize', updateSegmentedGlider);
 
-document.querySelectorAll('[data-preset]').forEach(node => node.onclick = () => {
-  const preset = presets[node.dataset.preset];
-  for (const [key, value] of Object.entries(preset)) {
-    if (typeof value === 'boolean') $(key).checked = value; else $(key).value = value;
-  }
-  document.querySelectorAll('[data-preset]').forEach(b => b.classList.remove('active'));
-  node.classList.add('active');
-  updateSegmentedGlider();
-  toast(t('preset.applied'));
+document.querySelectorAll('[data-preset]').forEach(node => {
+  if (!node) return;
+  node.onclick = () => {
+    const preset = presets[node.dataset.preset];
+    if (!preset) return;
+    for (const [key, value] of Object.entries(preset)) {
+      const el = $(key);
+      if (!el) continue;
+      if (typeof value === 'boolean') el.checked = value; else el.value = value;
+    }
+    document.querySelectorAll('[data-preset]').forEach(b => b.classList.remove('active'));
+    node.classList.add('active');
+    updateSegmentedGlider();
+    syncAllPresetChips();
+    toast(t('preset.applied'));
+  };
 });
 
 let lastGeoStatus = null;
@@ -3718,44 +4545,59 @@ function renderGeo(status) {
 async function loadGeo() {
   try { renderGeo(await api('/api/geoip')); } catch {}
 }
-$('geo-update').onclick = async () => {
-  const btn = $('geo-update');
-  const spinner = btn.querySelector('.btn-spinner');
-  const label = btn.querySelector('.btn-label') || btn;
-  btn.disabled = true;
-  if (spinner) spinner.classList.remove('hidden');
-  label.textContent = t('geo.downloading');
-  toast(t('geo.downloading'));
+if ($('geo-update')) {
+  $('geo-update').onclick = async () => {
+    const btn = $('geo-update');
+    const spinner = btn.querySelector('.btn-spinner');
+    const label = btn.querySelector('.btn-label') || btn;
+    btn.disabled = true;
+    if (spinner) spinner.classList.remove('hidden');
+    label.textContent = t('geo.downloading');
+    toast(t('geo.downloading'));
+    try {
+      renderGeo(await api('/api/geoip/update', {}));
+      toast(t('geo.updated'));
+      if (currentTab === 'results') loadResults();
+    } catch (error) {
+      toast(error.message, true);
+    } finally {
+      btn.disabled = false;
+      if (spinner) spinner.classList.add('hidden');
+      label.textContent = t('geo.download');
+    }
+  };
+}
+loadGeo();
+if ($('copy-page')) {
+  $('copy-page').onclick = async () => {
+    const proxies = ((resultData && resultData.rows) || []).map(row => row.proxy);
+    if (!proxies.length) { toast(t('toast.copyEmpty'), true); return; }
+    try {
+      await navigator.clipboard.writeText(proxies.join('\n') + '\n');
+      markCopied($('copy-page'), '<span class="btn-icon">✓</span> <span>' + esc(t('results.copied') || 'Скопировано!') + '</span>');
+      toast(t('toast.copied', {count:fmt(proxies.length)}));
+    } catch {
+      toast(t('toast.copyFailed'), true);
+    }
+  };
+}
+async function exportSettingsFile(event) {
+  const button = event && event.currentTarget;
+  if (button) button.disabled = true;
   try {
-    renderGeo(await api('/api/geoip/update', {}));
-    toast(t('geo.updated'));
-    if (currentTab === 'results') loadResults();
+    // The server validates the complete form before creating a backup, so a
+    // credential pasted into the textarea can never be serialized client-side.
+    const safeSettings = await api('/api/settings/export', getSettings());
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(new Blob([JSON.stringify(safeSettings, null, 2)], {type:'application/json'}));
+    link.download = 'proxy-workbench-settings.json';
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(link.href), 1000);
   } catch (error) {
     toast(error.message, true);
   } finally {
-    btn.disabled = false;
-    if (spinner) spinner.classList.add('hidden');
-    label.textContent = t('geo.download');
+    if (button) button.disabled = false;
   }
-};
-loadGeo();
-$('copy-page').onclick = async () => {
-  const proxies = ((resultData && resultData.rows) || []).map(row => row.proxy);
-  if (!proxies.length) { toast(t('toast.copyEmpty'), true); return; }
-  try {
-    await navigator.clipboard.writeText(proxies.join('\n') + '\n');
-    markCopied($('copy-page'), '<span class="btn-icon">✓</span> <span>' + esc(t('results.copied') || 'Скопировано!') + '</span>');
-    toast(t('toast.copied', {count:fmt(proxies.length)}));
-  } catch {
-    toast(t('toast.copyFailed'), true);
-  }
-};
-function exportSettingsFile() {
-  const link = document.createElement('a');
-  link.href = URL.createObjectURL(new Blob([JSON.stringify(getSettings(), null, 2)], {type:'application/json'}));
-  link.download = 'proxy-workbench-settings.json';
-  link.click();
-  setTimeout(() => URL.revokeObjectURL(link.href), 1000);
 }
 document.querySelectorAll('[data-action="export-settings"]').forEach(button => { button.onclick = exportSettingsFile; });
 
@@ -3775,7 +4617,11 @@ async function importSettingsFile(event) {
 }
 document.querySelectorAll('[data-action="import-settings"]').forEach(input => { input.onchange = importSettingsFile; });
 async function copyGatewayAddress(button) {
-  const addr = $('gateway-address') ? $('gateway-address').textContent : '127.0.0.1:8899';
+  if (!state.gateway || !state.gateway.address) {
+    toast(t('gateway.offline'), true);
+    return;
+  }
+  const addr = state.gateway.copy_address || state.gateway.address;
   try {
     await navigator.clipboard.writeText(addr);
     markCopied(button, '<span class="btn-icon">✓</span> <span class="btn-text">' + esc(t('results.copied')) + '</span>');
@@ -3799,8 +4645,8 @@ if ($('copy-api')) {
   };
 }
 
-$('prev').onclick = () => { offset = Math.max(0, offset - 50); loadResults(); };
-$('next').onclick = () => { offset += 50; loadResults(); };
+if ($('prev')) $('prev').onclick = () => { offset = Math.max(0, offset - 50); loadResults(); };
+if ($('next')) $('next').onclick = () => { offset += 50; loadResults(); };
 function bindCodeEditor(textareaId, gutterId, counterId) {
   const textarea = $(textareaId);
   const gutter = $(gutterId);
@@ -3834,58 +4680,62 @@ function updateCodeEditors() {
   if (updateProxiesLines) updateProxiesLines();
 }
 
-$('sources').oninput = () => { updateSourceCount(); updateCodeEditors(); };
-$('use_sources').onchange = () => { updateSourceCount(); updateCodeEditors(); };
-$('proxies').oninput = updateCodeEditors;
-$('request-profile').onchange = updateIdentity;
-$('dnsbl-enabled').onchange = updateIdentity;
+if ($('sources')) $('sources').oninput = () => { updateSourceCount(); updateCodeEditors(); };
+if ($('use_sources')) $('use_sources').onchange = () => { updateSourceCount(); updateCodeEditors(); };
+if ($('proxies')) $('proxies').oninput = updateCodeEditors;
+if ($('request-profile')) $('request-profile').onchange = updateIdentity;
+if ($('dnsbl-enabled')) $('dnsbl-enabled').onchange = updateIdentity;
 
 async function sourceAction(path, button, message) {
-  button.disabled = true;
+  if (button) button.disabled = true;
   try {
     const value = await api(path, getSettings());
     settings = value.settings;
-    $('sources').value = settings.sources.join('\n');
+    if ($('sources')) $('sources').value = (settings.sources || []).join('\n');
     updateSourceCount();
     updateCodeEditors();
     toast(message(value));
   } catch (error) {
     toast(error.message, true);
   } finally {
-    button.disabled = false;
+    if (button) button.disabled = false;
   }
 }
 
-$('prune-sources').onclick = () => sourceAction('/api/sources/prune', $('prune-sources'), value => value.removed.length ? t('toast.pruned', {count:fmt(value.removed.length)}) : t('toast.prunedNone'));
-$('update-sources').onclick = () => sourceAction('/api/sources/update', $('update-sources'), value => value.added.length ? t('toast.sourcesAdded', {count:fmt(value.added.length)}) : t('toast.sourcesCurrent'));
-$('reset-sources').onclick = async () => {
-  try {
-    const value = await api('/api/defaults');
-    $('sources').value = value.sources.join('\n');
-    updateSourceCount();
-    updateCodeEditors();
-    toast(t('toast.sourcesReset'));
-  } catch (error) {
-    toast(error.message, true);
-  }
-};
+if ($('prune-sources')) $('prune-sources').onclick = () => sourceAction('/api/sources/prune', $('prune-sources'), value => value.removed.length ? t('toast.pruned', {count:fmt(value.removed.length)}) : t('toast.prunedNone'));
+if ($('update-sources')) $('update-sources').onclick = () => sourceAction('/api/sources/update', $('update-sources'), value => value.added.length ? t('toast.sourcesAdded', {count:fmt(value.added.length)}) : t('toast.sourcesCurrent'));
+if ($('reset-sources')) {
+  $('reset-sources').onclick = async () => {
+    try {
+      const value = await api('/api/defaults');
+      if ($('sources')) $('sources').value = (value.sources || []).join('\n');
+      updateSourceCount();
+      updateCodeEditors();
+      toast(t('toast.sourcesReset'));
+    } catch (error) {
+      toast(error.message, true);
+    }
+  };
+}
 
-$('import-file').onchange = async event => {
-  const file = event.target.files[0];
-  if (!file) return;
-  if (file.size > 20_000_000) { toast(t('error.fileTooLarge'), true); return; }
-  const text = await file.text();
-  $('proxies').value = text;
-  updateCodeEditors();
-  const lineCount = text.split('\n').filter(l => l.trim()).length;
-  toast(t('toast.listLoaded') + ` (${fmt(lineCount)})`);
-  const dropZone = document.querySelector('.file-drop');
-  if (dropZone) {
-    dropZone.classList.add('file-loaded');
-    setTimeout(() => dropZone.classList.remove('file-loaded'), 1200);
-  }
-  $('import-file').value = '';
-};
+if ($('import-file')) {
+  $('import-file').onchange = async event => {
+    const file = event.target.files && event.target.files[0];
+    if (!file) return;
+    if (file.size > 20_000_000) { toast(t('error.fileTooLarge'), true); return; }
+    const text = await file.text();
+    if ($('proxies')) $('proxies').value = text;
+    updateCodeEditors();
+    const lineCount = text.split('\n').filter(l => l.trim()).length;
+    toast(t('toast.listLoaded') + ` (${fmt(lineCount)})`);
+    const dropZone = document.querySelector('.file-drop');
+    if (dropZone) {
+      dropZone.classList.add('file-loaded');
+      setTimeout(() => dropZone.classList.remove('file-loaded'), 1200);
+    }
+    event.target.value = '';
+  };
+}
 
 // Global safeguards: prevent browser from navigating/opening file when dragged anywhere on window
 window.addEventListener('dragover', e => { e.preventDefault(); }, false);
@@ -3933,38 +4783,475 @@ if (dropZone) {
   });
 }
 
+// Defect 21 / R15.  Three separate problems, three separate rules:
+//  1. showSaveFilePicker() only works while a user activation is still live,
+//     so it must be the first thing the click handler does, before any await.
+//  2. pipeTo() closes the destination by default; adding writable.close()
+//     afterwards closes the same stream twice and Chromium reports a failure
+//     for a download that actually succeeded.
+//  3. Cancelling the picker is a normal user decision, not an error, and a
+//     browser without the picker still needs a working fallback.
+function isPickerCancel(error) {
+  return Boolean(error) && (error.name === 'AbortError' || error.name === 'NotAllowedError');
+}
+
+function writableOf(handle) {
+  // Only a real WritableStream can be the destination of pipeTo(); anything
+  // else is handed to the blob fallback instead of half-writing a file.
+  if (handle && typeof handle.createWritable === 'function' && typeof WritableStream !== 'undefined') {
+    return handle.createWritable();
+  }
+  return null;
+}
+
+async function saveAsFallback(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = name;
+  anchor.rel = 'noopener';
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
+
 async function downloadFile(name, node) {
-  try {
+  // The activation is consumed here, synchronously, before the first await.
+  let picker = null;
+  if (window.showSaveFilePicker) {
+    try {
+      picker = window.showSaveFilePicker({suggestedName: name});
+    } catch (error) {
+      if (isPickerCancel(error)) return;
+      picker = null;
+    }
+  }
+  const previous = node ? node.textContent : null;
+  if (node) {
     node.disabled = true;
+    node.dataset.downloadBusy = '1';
+  }
+  try {
     const response = await fetch('/api/download/' + name, {headers:{'X-Workbench-Token':token}});
     if (!response.ok) throw new Error(t('error.fileNotReady'));
-    if (window.showSaveFilePicker && response.body) {
-      const handle = await window.showSaveFilePicker({suggestedName:name});
-      const writable = await handle.createWritable();
-      await response.body.pipeTo(writable);
-      await writable.close();
-    } else {
-      const url = URL.createObjectURL(await response.blob());
-      const anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.download = name;
-      anchor.click();
-      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    if (picker) {
+      let handle;
+      try {
+        handle = await picker;
+      } catch (error) {
+        if (isPickerCancel(error)) return;   // the user chose a different path
+        picker = null;
+      }
+      if (handle) {
+        const writable = await writableOf(handle);
+        if (writable) {
+          await response.body.pipeTo(writable, {preventClose: true});
+          await writable.close();             // exactly one close, ours
+          return;
+        }
+      }
     }
+    await saveAsFallback(await response.blob(), name);
   } catch (error) {
+    if (isPickerCancel(error)) return;
     toast(error.message, true);
   } finally {
-    node.disabled = false;
+    if (node) {
+      node.disabled = false;
+      delete node.dataset.downloadBusy;
+      if (previous !== null) node.textContent = previous;
+    }
   }
 }
 document.querySelectorAll('[data-download]').forEach(node => node.onclick = () => downloadFile(node.dataset.download, node));
 
+// ---------------------------------------------------------------------------
+// Result list: views, scopes, bulk actions, tags, saved views, matrix (F19)
+// ---------------------------------------------------------------------------
+const COLUMN_LABELS = {
+  check: 'col.check', num: 'col.num', proxy: 'col.proxy', score: 'col.quality', latency: 'col.latency',
+  jitter: 'col.jitter', speed: 'col.mbps', success: 'col.success', uptime: 'col.uptime',
+  cleanliness: 'col.cleanliness', anonymity: 'col.anonymity', country: 'col.country',
+  provider: 'col.provider', age: 'col.age', actions: 'col.actions'
+};
+const COLUMNS_KEY = 'proxy-workbench-columns';
+const resultState = {view: 'fresh', scope: 'page', digest: '', columns: null, views: [], selectionScope: ''};
+
+function resultQuery() {
+  return {
+    sort: $('result-sort') ? $('result-sort').value : 'recommended',
+    min_success: $('result-min') ? $('result-min').value : '1',
+    min_anonymity: $('result-anon') ? $('result-anon').value : 'any',
+    quick: activeQuickFilter(),
+    protocol: $('result-protocol') ? $('result-protocol').value : 'all',
+    max_latency: Number($('result-max-latency') ? $('result-max-latency').value : 0) || 0,
+    country: $('result-country') ? $('result-country').value.trim() : '',
+    hosting: resultHostingFilter(),
+    q: $('result-search') ? $('result-search').value.trim() : '',
+    view: resultState.view,
+    offset
+  };
+}
+
+function rememberColumns(list) {
+  resultState.columns = list;
+  try { localStorage.setItem(COLUMNS_KEY, JSON.stringify(list)); } catch {}
+  try { localStorage.setItem('proxy-workbench-columns', JSON.stringify(list)); } catch {}
+}
+
+function loadColumns() {
+  let stored = null;
+  try { stored = JSON.parse(localStorage.getItem(COLUMNS_KEY) || 'null'); } catch {}
+  resultState.columns = Array.isArray(stored) && stored.length ? stored : null;
+  if (!resultState.columns) {
+    const server = (state && state.all_columns) ? state.all_columns : [];
+    resultState.columns = server.length ? compactColumns(server) : null;
+  }
+}
+
+// The compact set is the default of the user's table: quality, latency,
+// success, cleanliness and country, everything else is one click away.
+function compactColumns(allColumns) {
+  const compact = ['check', 'num', 'proxy', 'score', 'latency', 'success', 'cleanliness', 'country', 'actions'];
+  return allColumns.filter(name => compact.includes(name));
+}
+
+function applyColumns(list) {
+  const all = (state && state.all_columns && state.all_columns.length) ? state.all_columns : Object.keys(COLUMN_LABELS);
+  const active = new Set((list && list.length) ? list : compactColumns(all));
+  all.forEach(name => {
+    const key = 'col-' + name;
+    document.querySelectorAll(`#result-table [data-col="${key}"]`).forEach(node => {
+      node.classList.toggle('col-off', !active.has(name));
+    });
+  });
+  document.querySelectorAll('#columns-menu [data-column]').forEach(node => {
+    node.checked = active.has(node.dataset.column);
+  });
+  rememberColumns(Array.from(active));
+}
+
+function renderColumnsMenu() {
+  const menu = $('columns-menu');
+  if (!menu) return;
+  const all = (state && state.all_columns && state.all_columns.length) ? state.all_columns : Object.keys(COLUMN_LABELS);
+  menu.innerHTML = all.map(name => `<label class="column-option"><input type="checkbox" data-column="${esc(name)}"> <span>${esc(t(COLUMN_LABELS[name] || name))}</span></label>`).join('');
+  menu.querySelectorAll('input[data-column]').forEach(box => {
+    box.onchange = () => {
+      const chosen = Array.from(menu.querySelectorAll('input[data-column]:checked')).map(node => node.dataset.column);
+      applyColumns(chosen);
+      toast(t('results.columnsSaved'));
+    };
+  });
+}
+
+function renderViewTabs(data) {
+  const counts = (data && data.counts) || {};
+  document.querySelectorAll('#results-view-tabs [data-view]').forEach(button => {
+    const view = button.dataset.view;
+    const badge = button.querySelector('.view-count');
+    if (badge) badge.textContent = fmt(counts[view] !== undefined ? counts[view] : 0);
+    button.classList.toggle('active', view === resultState.view);
+    button.setAttribute('aria-pressed', view === resultState.view ? 'true' : 'false');
+  });
+  const hint = $('results-view-hint');
+  if (hint) {
+    hint.textContent = (data && data.snapshot_state === 'broken') ? t('results.snapshotBroken') : t('results.selectionScopeHint');
+    hint.classList.toggle('warn', Boolean(data && data.snapshot_state === 'broken'));
+  }
+}
+
+function renderFreshnessBadge(row) {
+  const fresh = String(row.freshness || 'fresh');
+  const label = t('view.' + (fresh === 'rejected' ? 'failed' : fresh)) || fresh;
+  return `<span class="freshness-badge freshness-${esc(fresh)}" title="${esc(t('code.title') + ': ' + (row.admission_reason || 'OK'))}">${esc(label)}</span>`;
+}
+
+function renderRowMarks(row) {
+  const bits = [];
+  if (row.favorite) bits.push('<span class="row-mark mark-favorite" title="★">★</span>');
+  const tags = Array.isArray(row.tags) ? row.tags : [];
+  if (tags.length) bits.push(`<span class="row-mark mark-tags">${esc(tags.join(', '))}</span>`);
+  if (row.note) bits.push(`<span class="row-mark mark-note" title="${esc(String(row.note))}">✎</span>`);
+  return bits.join('');
+}
+
+async function bulkAction(op, extra={}) {
+  const query = resultQuery();
+  const scope = extra.scope || resultState.scope;
+  const body = {op, scope, query};
+  if (scope === 'selected') body.proxies = Array.from(selectedProxies);
+  // The digest makes a stale selection or a changed filter visible instead of
+  // silently moving the action to another scope.
+  if (resultState.digest) body.scope_digest = resultState.digest;
+  if (op === 'tag' || op === 'untag') body.tag = (extra.tag !== undefined ? extra.tag : ($('bulk-tag-input') || {}).value || '').trim();
+  if (op === 'note') body.note = (extra.note !== undefined ? extra.note : ($('bulk-note-input') || {}).value || '').trim();
+  if (op === 'export' || op === 'recheck') body.settings = await currentSettingsPayload();
+  if (!body.proxies && scope === 'selected' && !selectedProxies.size) {
+    toast(t('results.scope') + ': ' + t('scope.selected'), true);
+    return;
+  }
+  try {
+    const res = await api('/api/results/bulk', body);
+    if (op === 'copy') {
+      await navigator.clipboard.writeText(res.text || '');
+      toast(t('toast.copied', {count: fmt(res.count || 0)}));
+    } else {
+      toast(t('results.bulkDone', {op: op, count: fmt(res.count || 0)}));
+    }
+    if (res.history) pushHistory(res.history);
+    if (op === 'tag' || op === 'untag' || op === 'note' || op === 'favorite' || op === 'unfavorite') {
+      const input = op === 'tag' ? $('bulk-tag-input') : (op === 'note' ? $('bulk-note-input') : null);
+      if (input) input.value = '';
+    }
+    loadResults();
+  } catch (error) {
+    toast(error.message || t('toast.scopeChanged'), true);
+  }
+}
+
+async function currentSettingsPayload() {
+  try {
+    return await api('/api/settings');
+  } catch {
+    return undefined;
+  }
+}
+
+function pushHistory(entry) {
+  const list = $('history-list');
+  if (!list || !entry) return;
+  const items = [entry, ...Array.from(list.querySelectorAll('[data-history-id]'))
+    .map(node => ({id: node.dataset.historyId, summary: node.dataset.historySummary, recoverable: node.dataset.historyRecoverable === '1'}))]
+    .slice(0, 8);
+  list.innerHTML = items.map(item => `<div class="history-item" data-history-id="${esc(item.id)}" data-history-summary="${esc(item.summary || '')}" data-history-recoverable="${item.recoverable ? '1' : '0'}"><span>${esc(item.summary || item.id)}</span>${item.recoverable ? `<button type="button" class="button text chip history-undo" data-undo="${esc(item.id)}">${esc(t('results.undo'))}</button>` : ''}</div>`).join('');
+  list.querySelectorAll('[data-undo]').forEach(button => {
+    button.onclick = async () => {
+      try {
+        const res = await api('/api/history/undo', {id: button.dataset.undo});
+        toast(t('results.undone', {summary: res.summary || ''}));
+        loadResults();
+        pushHistory({id: res.undone, summary: t('results.undone', {summary: res.summary || ''}), recoverable: false});
+      } catch (error) {
+        toast(error.message || t('results.nothingUndo'), true);
+      }
+    };
+  });
+  const badge = $('history-undo-last');
+  if (badge) badge.disabled = !items.some(item => item.recoverable);
+}
+
+async function loadMatrix() {
+  const panel = $('matrix-panel');
+  if (!panel) return;
+  try {
+    const data = await api('/api/results/matrix?' + new URLSearchParams(resultQuery()));
+    renderMatrix(data);
+    panel.classList.remove('hidden');
+  } catch (error) {
+    toast(error.message, true);
+  }
+}
+
+function renderMatrix(data) {
+  const body = $('matrix-body');
+  if (!body) return;
+  const targets = (data && data.targets) || [];
+  const rows = (data && data.rows) || [];
+  if (!targets.length || !rows.length) {
+    body.innerHTML = `<div class="matrix-empty">${esc(t('results.noneMatching'))}</div>`;
+    return;
+  }
+  const head = `<tr><th>${esc(t('col.proxy'))}</th>${targets.map(target => `<th title="${esc(target.url)}">${esc(target.name || target.url)}</th>`).join('')}<th>${esc(t('col.success'))}</th></tr>`;
+  const bodyRows = rows.map(row => {
+    const byTarget = {};
+    (row.cells || []).forEach(cell => { byTarget[cell.target] = cell; });
+    const cells = targets.map((_, index) => {
+      const cell = byTarget[index];
+      if (!cell) return '<td class="matrix-cell unknown">—</td>';
+      const tone = cell.ok ? 'ok' : (cell.error ? 'fail' : 'pending');
+      const title = cell.error ? String(cell.error) : (cell.ms !== undefined && cell.ms !== null ? `${cell.ms} ms` : '');
+      return `<td class="matrix-cell ${tone}" title="${esc(title)}">${cell.ok ? '✓' : (cell.error ? '✕' : '·')}</td>`;
+    }).join('');
+    const reliability = typeof row.reliability === 'number' ? Math.round(row.reliability * 100) + '%' : '—';
+    return `<tr><td class="matrix-proxy">${esc(row.proxy)}</td>${cells}<td>${esc(reliability)}</td></tr>`;
+  }).join('');
+  body.innerHTML = `<table class="matrix-table"><thead>${head}</thead><tbody>${bodyRows}</tbody></table>`;
+  const note = $('matrix-note');
+  if (note) note.textContent = `${t('results.matrix')} · ${data.generation || '—'}`;
+}
+
+function syncSelectionScope(digest) {
+  if (!resultState.selectionScope) { resultState.selectionScope = digest; return; }
+  if (resultState.selectionScope !== digest && selectedProxies.size) {
+    // F19: a selection never silently moves to another scope.
+    selectedProxies.clear();
+    document.querySelectorAll('.proxy-select-box').forEach(cb => { cb.checked = false; });
+    if ($('select-all-proxies')) $('select-all-proxies').checked = false;
+    updateSelectionUI();
+    toast(t('results.selectionCleared'));
+  }
+  resultState.selectionScope = digest;
+}
+
+function applySavedView(view) {
+  if (!view) return;
+  const query = view.query || {};
+  const map = {sort: 'result-sort', min_success: 'result-min', min_anonymity: 'result-anon', protocol: 'result-protocol',
+    max_latency: 'result-max-latency', country: 'result-country', hosting: 'result-hosting', q: 'result-search'};
+  for (const [key, id] of Object.entries(map)) {
+    const node = $(id);
+    if (node && query[key] !== undefined) node.value = String(query[key]);
+  }
+  if (query.view) resultState.view = query.view;
+  if (Array.isArray(view.columns) && view.columns.length) applyColumns(view.columns);
+  offset = 0;
+  loadResults();
+  toast(t('results.viewApplied', {name: view.name}));
+}
+
+function renderSavedViews(views) {
+  const select = $('saved-views');
+  if (!select) return;
+  const current = select.value;
+  resultState.views = Array.isArray(views) ? views : [];
+  select.innerHTML = `<option value="">${esc(t('results.views'))}</option>` +
+    resultState.views.map(view => `<option value="${esc(view.id)}">${esc(view.name)}</option>`).join('');
+  if (current) select.value = current;
+}
+
+// ---------------------------------------------------------------------------
+// Connection path (F17)
+// ---------------------------------------------------------------------------
+function renderConnectPath(value) {
+  const gateway = value && value.gateway;
+  const binding = (gateway && gateway.binding) || {};
+  const poolBox = $('connect-pool');
+  if (poolBox) {
+    poolBox.textContent = gateway && gateway.address
+      ? `${gateway.address} · ${fmt(gateway.proxies || 0)}`
+      : (lang === 'ru' ? 'ротирующий прокси выключен' : 'rotating proxy is off');
+  }
+  const generation = $('connect-generation');
+  if (generation) {
+    const parts = [];
+    if (binding.generation) parts.push(String(binding.generation).replace(/^\.generation-/, '').slice(0, 12));
+    if (binding.state) parts.push(binding.state + (binding.state_detail ? ` / ${binding.state_detail}` : ''));
+    if (binding.available !== undefined) parts.push(lang === 'ru' ? `доступно ${binding.available}` : `${binding.available} available`);
+    generation.textContent = parts.length ? parts.join(' · ') : '—';
+  }
+  const lan = $('connect-lan');
+  if (lan && gateway) {
+    lan.textContent = gateway.mobile_ready
+      ? (lang === 'ru' ? `LAN включён: ${gateway.bind_host}` : `LAN is on: ${gateway.bind_host}`)
+      : t('connect.lanOptIn');
+    lan.classList.toggle('warn', Boolean(gateway.mobile_ready));
+  }
+  const note = $('connect-probe-note');
+  if (note) note.textContent = (gateway && gateway.probe_note) || t('connect.probeNote');
+  const hint = $('connect-disconnect-hint');
+  if (hint) hint.textContent = (gateway && gateway.disconnect_hint) || t('connect.disconnectText');
+}
+
+async function stopGateway() {
+  const button = $('connect-disconnect');
+  if (button) button.disabled = true;
+  try {
+    await api('/api/gateway/stop', {});
+    toast(t('connect.gatewayStopped'));
+    poll();
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+function setupResultList() {
+  loadColumns();
+  document.querySelectorAll('#results-view-tabs [data-view]').forEach(button => {
+    button.onclick = () => {
+      resultState.view = button.dataset.view;
+      offset = 0;
+      loadResults();
+    };
+  });
+  const scope = $('results-scope-select');
+  if (scope) {
+    scope.onchange = () => { resultState.scope = scope.value; };
+  }
+  const bulk = {copy: 'bulk-copy', export: 'bulk-export', recheck: 'bulk-recheck', tag: 'bulk-tag', note: 'bulk-note',
+    unfavorite: 'bulk-unfavorite', exclude: 'bulk-exclude', include: 'bulk-include'};
+  for (const [op, id] of Object.entries(bulk)) {
+    const button = $(id);
+    if (!button) continue;
+    button.onclick = () => bulkAction(op);
+  }
+  const matrix = $('open-matrix');
+  if (matrix) matrix.onclick = loadMatrix;
+  const closeMatrix = $('matrix-close');
+  if (closeMatrix) closeMatrix.onclick = () => $('matrix-panel').classList.add('hidden');
+  const saveView = $('save-view');
+  if (saveView) {
+    saveView.onclick = async () => {
+      const name = prompt(t('results.viewName'));
+      if (!name) return;
+      try {
+        const view = await api('/api/views', {name, query: resultQuery(), columns: resultState.columns});
+        renderSavedViews([...(resultState.views || []), view]);
+        toast(t('results.viewSaved', {name: view.name}));
+      } catch (error) {
+        toast(error.message, true);
+      }
+    };
+  }
+  const views = $('saved-views');
+  if (views) {
+    views.onchange = () => {
+      const view = resultState.views.find(item => item.id === views.value);
+      if (view) applySavedView(view);
+    };
+  }
+  const deleteView = $('delete-view');
+  if (deleteView) {
+    deleteView.onclick = async () => {
+      const id = views ? views.value : '';
+      if (!id) return;
+      try {
+        await api('/api/views/delete', {id});
+        renderSavedViews((resultState.views || []).filter(item => item.id !== id));
+        toast(t('results.viewDeleted'));
+      } catch (error) {
+        toast(error.message, true);
+      }
+    };
+  }
+  const columnsToggle = $('columns-toggle');
+  if (columnsToggle && $('columns-menu')) {
+    columnsToggle.onclick = () => $('columns-menu').classList.toggle('hidden');
+  }
+  const disconnect = $('connect-disconnect');
+  if (disconnect) disconnect.onclick = stopGateway;
+}
+
 function renderTheme() {
   const dark = document.documentElement.dataset.theme === 'dark';
-  $('theme-toggle').textContent = dark ? t('theme.light') : t('theme.dark');
-  $('theme-toggle').setAttribute('aria-label', dark ? t('theme.toLight') : t('theme.toDark'));
+  const themeBtn = $('theme-toggle');
+  if (themeBtn) {
+    themeBtn.textContent = dark ? t('theme.light') : t('theme.dark');
+    themeBtn.setAttribute('aria-label', dark ? t('theme.toLight') : t('theme.toDark'));
+  }
 }
-$('theme-toggle').onclick = () => { const theme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'; document.documentElement.dataset.theme = theme; try { localStorage.setItem('proxy-workbench-theme', theme); } catch {} renderTheme(); };
+const themeBtn = $('theme-toggle');
+if (themeBtn) {
+  themeBtn.onclick = () => {
+    const theme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+    document.documentElement.dataset.theme = theme;
+    try { localStorage.setItem('proxy-workbench-theme', theme); } catch {}
+    renderTheme();
+  };
+}
 
 function renderLang() {
   document.documentElement.lang = lang;
@@ -3979,13 +5266,90 @@ function renderLang() {
   if (sidebarLabel) {
     sidebarLabel.textContent = t('lang.currentName');
   }
-  $('page-label').textContent = t('nav.' + currentTab);
-  if (catalogData) renderCatalog(catalogData);
+  const pageLabel = $('page-label');
+  if (pageLabel) {
+    pageLabel.textContent = t('nav.' + currentTab) || currentTab;
+  }
   renderTheme();
   updateIdentity();
   updateSourceCount();
   updateCodeEditors();
+  if (catalogData && typeof renderCatalog === 'function') renderCatalog(catalogData);
 }
+// Scenario presets with an explicit, complete field set (defect 24, R17).
+//
+// A scenario used to change only some fields, so the judge, the DNSBL zones,
+// the strict flag and the anonymity minimum of the previous scenario survived
+// the switch: the "Elite privacy" card could still measure YouTube.  Every
+// scenario here declares every field it owns, and applying one first resets
+// all of them to the application defaults.  Names state what is actually
+// measured: a website response is a website response, not the whole service.
+const SCENARIO_FIELDS = [
+  ['protocol', 'all'], ['connect_timeout', 4], ['timeout', 8], ['prefilter', 512], ['workers', 128],
+  ['watch', 0], ['min_anonymity', 'any'], ['request-profile', 'workbench'], ['fail_fast', true],
+  ['speedtest-url', ''], ['judge-url', ''], ['dnsbl-zones', ''], ['dnsbl-enabled', false],
+  ['strict-clean', false], ['min_success', 2/3], ['max_latency', 0], ['countries', '']
+];
+
+const SCENARIOS = [
+  {
+    id: 'telegram',
+    name: {en: 'Telegram web reachability', ru: 'Telegram: доступность веб-страницы'},
+    note: {en: 'Checks the public web page, not calls or the app protocol.',
+           ru: 'Проверяет публичную веб-страницу, а не звонки и не протокол приложения.'},
+    targets: [{name: 'Telegram web', url: 'https://telegram.org/', method: 'GET', statuses: [200], contains: 'Telegram', headers: {}}],
+    fields: {protocol: 'socks5', connect_timeout: 3, timeout: 6, 'speedtest-url': '', 'request-profile': 'workbench'}
+  },
+  {
+    id: 'youtube',
+    name: {en: 'YouTube page load', ru: 'YouTube: загрузка страницы'},
+    note: {en: 'Checks that the page answers, plus a separate download-size sample.',
+           ru: 'Проверяет ответ страницы и отдельный замер скорости скачивания.'},
+    targets: [{name: 'YouTube web', url: 'https://www.youtube.com/', method: 'GET', statuses: [200], contains: null, headers: {}}],
+    fields: {protocol: 'all', connect_timeout: 4, timeout: 10, 'speedtest-url': 'https://speed.cloudflare.com/__down?bytes=5000000', 'request-profile': 'workbench'}
+  },
+  {
+    id: 'anon',
+    name: {en: 'Anonymity screening', ru: 'Анонимность: отбор'},
+    note: {en: 'Screens the exit address for a judge verdict and DNSBL listings.',
+           ru: 'Проверяет внешний адрес на judge и списки DNSBL.'},
+    targets: [{name: 'Anonymity check', url: 'https://www.wikipedia.org/', method: 'GET', statuses: [200], contains: null, headers: {}}],
+    fields: {protocol: 'socks5', 'judge-url': 'http://azenv.net/', 'dnsbl-zones': 'zen.spamhaus.org\nbl.spamcop.net',
+             'dnsbl-enabled': true, 'strict-clean': true, min_anonymity: 'elite', 'speedtest-url': '',
+             'request-profile': 'workbench'}
+  },
+  {
+    id: 'scrape',
+    name: {en: 'High-throughput sweep', ru: 'Массовый обход'},
+    note: {en: 'Many workers and a short timeout for big lists; no anonymity or speed test.',
+           ru: 'Много потоков и короткий таймаут для больших списков; без анонимности и скорости.'},
+    targets: [{name: 'Website response', url: 'https://www.wikipedia.org/', method: 'GET', statuses: [200], contains: null, headers: {}}],
+    fields: {workers: 256, connect_timeout: 2, timeout: 5, prefilter: 1024, watch: 60,
+             'request-profile': 'minimal', 'speedtest-url': '', min_anonymity: 'any'}
+  },
+  {
+    id: 'custom',
+    name: {en: 'Custom', ru: 'Свой сценарий'},
+    note: {en: 'Keeps everything as it is.', ru: 'Оставляет всё как есть.'},
+    targets: null,
+    fields: {}
+  }
+];
+
+function scenarioById(id) {
+  return SCENARIOS.find(item => item.id === id) || SCENARIOS[SCENARIOS.length - 1];
+}
+
+function resetScenarioFields() {
+  for (const [id, value] of SCENARIO_FIELDS) {
+    const el = $(id);
+    if (!el) continue;
+    if (typeof value === 'boolean') el.checked = value;
+    else el.value = String(value);
+  }
+  if ($('dnsbl-fields') && $('dnsbl-enabled')) $('dnsbl-fields').classList.toggle('hidden', !$('dnsbl-enabled').checked);
+}
+
 function setupEnhancedListeners() {
   // Select All Proxies
   const selectAll = $('select-all-proxies');
@@ -4020,7 +5384,9 @@ function setupEnhancedListeners() {
   if (btnExportSel) {
     btnExportSel.onclick = () => {
       if (!selectedProxies.size || state.running) return;
-      start('export', Array.from(selectedProxies));
+      // The same server-side action as the scope-aware bar, with the scope
+      // digest check, so an export can never be applied to a stale selection.
+      bulkAction('export', {scope: 'selected'});
     };
   }
 
@@ -4062,68 +5428,110 @@ function setupEnhancedListeners() {
 
   // Filter Chips in Results
   document.querySelectorAll('#results-filter-chips .filter-chip').forEach(chip => {
+    if (!chip) return;
     chip.onclick = () => {
       document.querySelectorAll('#results-filter-chips .filter-chip').forEach(c => c.classList.remove('active'));
       chip.classList.add('active');
       const f = chip.dataset.filter;
       if (f === 'all') {
-        $('result-protocol').value = 'all';
-        $('result-anon').value = 'any';
-        $('result-max-latency').value = 0;
-        $('result-sort').value = 'recommended';
+        if ($('result-protocol')) $('result-protocol').value = 'all';
+        if ($('result-anon')) $('result-anon').value = 'any';
+        if ($('result-max-latency')) $('result-max-latency').value = 0;
+        if ($('result-sort')) $('result-sort').value = 'recommended';
       } else if (f === 'fast') {
-        $('result-max-latency').value = 300;
-        $('result-sort').value = 'speed';
+        if ($('result-max-latency')) $('result-max-latency').value = 300;
+        if ($('result-sort')) $('result-sort').value = 'speed';
       } else if (f === 'socks5') {
-        $('result-protocol').value = 'socks5';
+        if ($('result-protocol')) $('result-protocol').value = 'socks5';
       } else if (f === 'http') {
-        $('result-protocol').value = 'http';
+        if ($('result-protocol')) $('result-protocol').value = 'all';
       } else if (f === 'elite') {
-        $('result-anon').value = 'elite';
+        if ($('result-anon')) $('result-anon').value = 'elite';
       } else if (f === 'clean') {
-        $('result-sort').value = 'quality';
+        if ($('result-sort')) $('result-sort').value = 'quality';
       } else if (f === 'speed') {
-        $('result-sort').value = 'bandwidth';
+        if ($('result-sort')) $('result-sort').value = 'bandwidth';
       }
       offset = 0;
       loadResults();
     };
   });
 
+  function setScenarioTargets(targets) {
+    const container = $('targets');
+    if (!container) return;
+    container.replaceChildren();
+    targets.forEach(addTarget);
+    syncQuickServiceChips();
+  }
+
   // Quick Scenarios in Scan tab
+  function highlightChangedInputs(inputs) {
+    inputs.forEach(el => {
+      if (!el) return;
+      el.classList.remove('field-changed-highlight');
+      void el.offsetWidth;
+      el.classList.add('field-changed-highlight');
+      setTimeout(() => {
+        if (el) el.classList.remove('field-changed-highlight');
+      }, 1500);
+    });
+  }
+
+  function setVal(id, val) {
+    const el = $(id);
+    if (!el) return;
+    if (typeof val === 'boolean') {
+      el.checked = val;
+    } else {
+      el.value = String(val);
+    }
+  }
+
+  function setScenarioValues(fields, changed) {
+    for (const [id, value] of Object.entries(fields || {})) {
+      setVal(id, value);
+      const el = $(id);
+      if (!el) continue;
+      if (el.tagName === 'SELECT' && el.selectedIndex < 0) {
+        // An unknown value is never silently dropped: the closest option wins.
+        const closest = Array.from(el.options).find(option => option.value !== '');
+        if (closest) el.value = closest.value;
+      }
+      changed.push(el);
+    }
+  }
+
   document.querySelectorAll('.scenario-card').forEach(card => {
     card.onclick = () => {
       document.querySelectorAll('.scenario-card').forEach(c => c.classList.remove('active'));
       card.classList.add('active');
-      const s = card.dataset.scenario;
-      if (s === 'telegram') {
-        if ($('protocol')) $('protocol').value = 'socks5';
-        if ($('connect_timeout')) $('connect_timeout').value = 3;
-        if ($('timeout')) $('timeout').value = 6;
-        if ($('speedtest-url')) $('speedtest-url').value = '';
-        if ($('request-profile')) $('request-profile').value = 'workbench';
-      } else if (s === 'youtube') {
-        if ($('protocol')) $('protocol').value = 'all';
-        if ($('connect_timeout')) $('connect_timeout').value = 4;
-        if ($('timeout')) $('timeout').value = 10;
-        if ($('speedtest-url')) $('speedtest-url').value = 'https://speed.cloudflare.com/__down?bytes=5000000';
-        if ($('request-profile')) $('request-profile').value = 'workbench';
-      } else if (s === 'anon') {
-        if ($('protocol')) $('protocol').value = 'socks5';
-        if ($('dnsbl-enabled')) $('dnsbl-enabled').checked = true;
-        if ($('strict-clean')) $('strict-clean').checked = true;
-        if ($('min_anonymity')) $('min_anonymity').value = 'elite';
-        if ($('request-profile')) $('request-profile').value = 'workbench';
-      } else if (s === 'scrape') {
-        if ($('workers')) $('workers').value = 256;
-        if ($('connect_timeout')) $('connect_timeout').value = 2;
-        if ($('timeout')) $('timeout').value = 5;
-        if ($('prefilter')) $('prefilter').value = 1024;
-        if ($('watch')) $('watch').value = 60;
-        if ($('request-profile')) $('request-profile').value = 'minimal';
+      const scenario = scenarioById(card.dataset.scenario);
+      const changed = [];
+      if (scenario.targets) {
+        setScenarioTargets(scenario.targets);
+      } else {
+        // Custom keeps the user's own services and parameters untouched.
       }
+      if (scenario.id !== 'custom') {
+        // Reset first: a scenario must not inherit the previous one.
+        resetScenarioFields();
+        setScenarioValues(scenario.fields, changed);
+        if (scenario.id === 'anon') {
+          setVal('judge-url', 'http://azenv.net/');
+          setVal('dnsbl-zones', 'zen.spamhaus.org\nbl.spamcop.net');
+        }
+      }
+      highlightChangedInputs(changed);
+      syncScanToResults();
+      syncAllPresetChips();
       updateIdentity();
-      toast(t('scenario.applied'));
+      const note = $('scenario-note');
+      if (note) note.textContent = lang === 'ru' ? scenario.note.ru : scenario.note.en;
+      const toastMsg = scenario.id === 'custom'
+        ? t('scenario.customUnchanged')
+        : t('scenario.applied');
+      toast(toastMsg);
     };
     card.setAttribute('role', 'button');
     card.tabIndex = 0;
@@ -4136,10 +5544,11 @@ function setupEnhancedListeners() {
   });
 
   document.querySelectorAll('[data-copy-text]').forEach(button => {
+    if (!button) return;
     button.onclick = async () => {
       try {
         await navigator.clipboard.writeText(button.dataset.copyText || '');
-        markCopied(button, '<span class="btn-icon">✓</span> <span>' + esc(t('results.copied')) + '</span>');
+        markCopied(button);
         toast(t('toast.copied', {count:fmt(1)}));
       } catch {
         toast(t('toast.copyFailed'), true);
@@ -4149,6 +5558,7 @@ function setupEnhancedListeners() {
 
   // Gateway screen tabs
   document.querySelectorAll('.gw-tab-btn').forEach(btn => {
+    if (!btn) return;
     btn.onclick = () => {
       document.querySelectorAll('.gw-tab-btn').forEach(b => b.classList.remove('active'));
       document.querySelectorAll('.gw-tab-content').forEach(c => c.classList.remove('active'));
@@ -4160,12 +5570,13 @@ function setupEnhancedListeners() {
   });
 
   // Mobile Hub config copy
-  async function copyConfigDownload(filename) {
+  async function copyConfigDownload(filename, button) {
     try {
       const res = await fetch('/api/download/' + filename, {headers: {'X-Workbench-Token': token}});
       if (res.ok) {
         const text = await res.text();
         await navigator.clipboard.writeText(text);
+        if (button) markCopied(button);
         toast(t('toast.copied', {count: 1}));
         return;
       }
@@ -4173,14 +5584,33 @@ function setupEnhancedListeners() {
     toast(t('error.fileNotReady'), true);
   }
 
-  if ($('btn-copy-singbox')) $('btn-copy-singbox').onclick = () => copyConfigDownload('singbox.json');
-  if ($('btn-copy-clash')) $('btn-copy-clash').onclick = () => copyConfigDownload('clash.yaml');
+  if ($('btn-copy-singbox')) $('btn-copy-singbox').onclick = () => copyConfigDownload('singbox.json', $('btn-copy-singbox'));
+  if ($('btn-copy-clash')) $('btn-copy-clash').onclick = () => copyConfigDownload('clash.yaml', $('btn-copy-clash'));
+  document.querySelectorAll('[data-copy-config]').forEach(node => {
+    node.onclick = () => copyConfigDownload(node.dataset.copyConfig, node);
+  });
+
+  // Re-bind tabs & go buttons in case DOM was refreshed
+  document.querySelectorAll('[data-tab]').forEach(node => {
+    node.onclick = () => showTab(node.dataset.tab);
+  });
+  document.querySelectorAll('[data-go]').forEach(node => {
+    node.onclick = () => showTab(node.dataset.go);
+  });
 }
 
+const langBtn = $('lang-toggle');
+if (langBtn) {
+  langBtn.onclick = () => {
+    lang = lang === 'ru' ? 'en' : 'ru';
+    try { localStorage.setItem(LANG_KEY, lang); } catch {}
+    renderLang();
+  };
+}
+const sidebarLangBtn = $('sidebar-lang-toggle');
+if (sidebarLangBtn && langBtn) sidebarLangBtn.onclick = langBtn.onclick;
+
 // --- Source catalog -------------------------------------------------------
-// One view over the same catalog the CLI and the read-only API read.  A row
-// shows what the app observed, never "working"/"dead"/"quality": those words
-// have no evidence behind them in this project.
 const CATALOG_PAGE = 50;
 const ACCESS_GROUPS = ['public_free', 'permanent_free_quota', 'free_with_key', 'trial', 'paid',
                        'own_infrastructure', 'snapshot_unavailable', 'unknown'];
@@ -4192,13 +5622,13 @@ let catalogDetailId = null;
 let catalogTimer = null;
 
 const catalogFilters = () => ({
-  q: $('catalog-q').value.trim(),
-  state: $('catalog-state').value,
-  category: $('catalog-category').value,
-  protocol: $('catalog-protocol').value,
-  format: $('catalog-format').value,
-  access: $('catalog-access').value,
-  set: $('catalog-set-filter').value
+  q: $('catalog-q') ? $('catalog-q').value.trim() : '',
+  state: $('catalog-state') ? $('catalog-state').value : '',
+  category: $('catalog-category') ? $('catalog-category').value : '',
+  protocol: $('catalog-protocol') ? $('catalog-protocol').value : '',
+  format: $('catalog-format') ? $('catalog-format').value : '',
+  access: $('catalog-access') ? $('catalog-access').value : '',
+  set: $('catalog-set-filter') ? $('catalog-set-filter').value : ''
 });
 
 function catalogQuery(extra={}) {
@@ -4215,7 +5645,7 @@ function fillCatalogSelect(id, values, labelOf) {
   const current = node.value;
   const all = node.querySelector('option[value=""]');
   node.innerHTML = '';
-  node.appendChild(all);
+  if (all) node.appendChild(all);
   for (const value of values) {
     const option = document.createElement('option');
     option.value = value;
@@ -4228,23 +5658,24 @@ function fillCatalogSelect(id, values, labelOf) {
 
 function renderCatalogFacets(view) {
   const facet = value => Object.keys(value || {});
-  fillCatalogSelect('catalog-category', facet(view.facets.categories).sort());
+  fillCatalogSelect('catalog-category', facet((view && view.facets && view.facets.categories) || {}).sort());
   fillCatalogSelect('catalog-protocol', ['http', 'https', 'socks4', 'socks5']);
-  fillCatalogSelect('catalog-format', facet(view.facets.formats).sort());
-  fillCatalogSelect('catalog-access', ACCESS_GROUPS.filter(group => (view.facets.access_groups || {})[group]),
+  fillCatalogSelect('catalog-format', facet((view && view.facets && view.facets.formats) || {}).sort());
+  fillCatalogSelect('catalog-access', ACCESS_GROUPS.filter(group => (view && view.facets && view.facets.access_groups || {})[group]),
                     group => t(`cat.group.${group}`));
-  fillCatalogSelect('catalog-set-filter', (view.sets || []).map(item => item.id), item => {
-    const set = (view.sets || []).find(entry => entry.id === item);
+  fillCatalogSelect('catalog-set-filter', (view && view.sets || []).map(item => item.id), item => {
+    const set = (view && view.sets || []).find(entry => entry.id === item);
     return set ? `${set.id} (${set.members})` : item;
   });
-  const states = view.facets.states || {};
+  const states = (view && view.facets && view.facets.states) || {};
   const node = $('catalog-state');
+  if (!node) return;
   const wanted = Object.keys(states).filter(value => states[value]).sort();
   if (node.dataset.filled !== String(wanted.join(','))) {
     const current = node.value;
     const all = node.querySelector('option[value=""]');
     node.innerHTML = '';
-    node.appendChild(all);
+    if (all) node.appendChild(all);
     for (const value of wanted) {
       const option = document.createElement('option');
       option.value = value;
@@ -4257,7 +5688,9 @@ function renderCatalogFacets(view) {
 }
 
 function renderCatalogSets(view) {
-  $('catalog-sets').innerHTML = (view.sets || []).map(item => `
+  const container = $('catalog-sets');
+  if (!container) return;
+  container.innerHTML = (view.sets || []).map(item => `
     <div class="catalog-set${item.applied ? ' applied' : ''}">
       <div class="catalog-set-main">
         <strong>${esc(item.id)}</strong>
@@ -4266,32 +5699,38 @@ function renderCatalogSets(view) {
         ${item.applied ? `<span class="badge success">${esc(t('cat.choice.selected'))}</span>` : ''}
       </div>
       <div class="catalog-set-meta">
-        ${item.new_members.length ? `<span class="badge warn">${esc(t('cat.setNew', {count: fmt(item.new_members.length)}))}</span>` : ''}
+        ${item.new_members && item.new_members.length ? `<span class="badge warn">${esc(t('cat.setNew', {count: fmt(item.new_members.length)}))}</span>` : ''}
         <button class="button light" data-catalog-set="${esc(item.id)}" data-i18n="cat.applySet">${esc(t('cat.applySet'))}</button>
       </div>
     </div>`).join('');
-  $('catalog-sets').querySelectorAll('[data-catalog-set]').forEach(button => {
-    button.onclick = () => catalogAction('/api/sources/set', {set: button.dataset.catalogSet}, 'toast.cat.set');
+  container.querySelectorAll('[data-catalog-set]').forEach(button => {
+    button.onclick = () => catalogAction('/api/sources/set', {set: button.dataset.catalogSet}, null, 'toast.cat.set');
   });
 }
 
 function renderCatalogGroups(view) {
-  $('catalog-groups').innerHTML = (view.access_groups || []).map(group => `
+  const container = $('catalog-groups');
+  if (!container) return;
+  container.innerHTML = (view.access_groups || []).map(group => `
     <button class="catalog-group" data-catalog-access="${esc(group.id)}" title="${esc(group.checked_at || '')}">
       <span class="catalog-group-name">${esc(t(`cat.group.${group.id}`))}</span>
       <span class="catalog-group-count">${fmt(group.count)}</span>
       ${group.checked_at ? `<span class="catalog-group-date">${esc(group.checked_at.slice(0, 10))}</span>` : ''}
     </button>`).join('');
-  $('catalog-groups').querySelectorAll('[data-catalog-access]').forEach(button => {
+  container.querySelectorAll('[data-catalog-access]').forEach(button => {
     button.onclick = () => {
-      $('catalog-access').value = $('catalog-access').value === button.dataset.catalogAccess ? '' : button.dataset.catalogAccess;
-      renderLang();
-      reloadCatalog();
+      const accessSel = $('catalog-access');
+      if (accessSel) {
+        accessSel.value = accessSel.value === button.dataset.catalogAccess ? '' : button.dataset.catalogAccess;
+        renderLang();
+        reloadCatalog();
+      }
     };
   });
 }
 
 function relativeAge(seconds) {
+  if (seconds === null || seconds === undefined) return '';
   if (seconds < 60) return `${seconds} s`;
   if (seconds < 3600) return `${Math.floor(seconds / 60)} min`;
   if (seconds < 86400) return `${Math.floor(seconds / 3600)} h`;
@@ -4376,16 +5815,22 @@ function catalogRowHtml(row) {
 
 function renderCatalog(view) {
   catalogData = view;
-  $('catalog-revision').textContent = `${view.revision} · ${view.published_at ? String(view.published_at).slice(0, 10) : ''}`;
+  const rev = $('catalog-revision');
+  if (rev) rev.textContent = `${view.revision} · ${view.published_at ? String(view.published_at).slice(0, 10) : ''}`;
   renderCatalogFacets(view);
   renderCatalogSets(view);
   renderCatalogGroups(view);
   const rows = view.sources || [];
-  $('catalog-list').innerHTML = rows.length
-    ? rows.map(catalogRowHtml).join('')
-    : `<p class="hint">${esc(t('cat.empty'))}</p>`;
-  $('catalog-count').textContent = t('cat.shown', {shown: fmt(rows.length), total: fmt(view.total)});
-  $('catalog-more').classList.toggle('hidden', rows.length >= view.total);
+  const list = $('catalog-list');
+  if (list) {
+    list.innerHTML = rows.length
+      ? rows.map(catalogRowHtml).join('')
+      : `<p class="hint">${esc(t('cat.empty'))}</p>`;
+  }
+  const count = $('catalog-count');
+  if (count) count.textContent = t('cat.shown', {shown: fmt(rows.length), total: fmt(view.total)});
+  const more = $('catalog-more');
+  if (more) more.classList.toggle('hidden', rows.length >= view.total);
   bindCatalogRows();
   if (catalogDetailId) loadCatalogDetail(catalogDetailId);
 }
@@ -4401,8 +5846,10 @@ function bindCatalogRows() {
     'catalog-recover': id => catalogAction('/api/sources/recover', {id}, null, 'toast.cat.recovered'),
     'catalog-exclude': id => openScopeDialog(id)
   };
+  const list = $('catalog-list');
+  if (!list) return;
   for (const [action, run] of Object.entries(handlers)) {
-    $('catalog-list').querySelectorAll(`[data-${action}]`).forEach(button => {
+    list.querySelectorAll(`[data-${action}]`).forEach(button => {
       button.onclick = () => run(button.dataset[action.replace(/-([a-z])/g, (_, c) => c.toUpperCase())]);
     });
   }
@@ -4410,9 +5857,12 @@ function bindCatalogRows() {
 
 async function reloadCatalog() {
   try {
+    const list = $('catalog-list');
+    if (!list) return;
     renderCatalog(await api('/api/source-catalog?' + catalogQuery()));
   } catch (error) {
-    $('catalog-list').innerHTML = `<p class="hint">${esc(error.message)}</p>`;
+    const list = $('catalog-list');
+    if (list) list.innerHTML = `<p class="hint">${esc(error.message)}</p>`;
   }
 }
 
@@ -4429,7 +5879,7 @@ async function catalogAction(path, body, message, toastKey) {
     const value = await api(path, body);
     if (value && value.settings) {
       settings = value.settings;
-      $('sources').value = settings.sources.join('\n');
+      if ($('sources')) $('sources').value = (settings.sources || []).join('\n');
       updateSourceCount();
       updateCodeEditors();
     }
@@ -4444,6 +5894,7 @@ async function catalogAction(path, body, message, toastKey) {
 async function loadCatalogDetail(sourceId) {
   catalogDetailId = sourceId;
   const node = $('catalog-detail');
+  if (!node) return;
   node.hidden = false;
   try {
     const row = await api('/api/source-catalog/' + encodeURIComponent(sourceId));
@@ -4481,7 +5932,8 @@ async function loadCatalogDetail(sourceId) {
       <h3 data-i18n="cat.history">Last observations</h3>
       ${history ? `<table><thead><tr><th>${esc(t('cat.time'))}</th><th>HTTP</th><th>${esc(t('cat.col.format'))}</th><th>${esc(t('cat.cache'))}</th><th>${esc(t('cat.accepted'))} / ${esc(t('cat.rejected'))}</th><th>${esc(t('cat.error'))}</th></tr></thead><tbody>${history}</tbody></table>`
         : `<p class="hint">${esc(t('cat.noHistory'))}</p>`}`;
-    node.querySelector('[data-catalog-close]').onclick = () => { node.hidden = true; catalogDetailId = null; };
+    const closeBtn = node.querySelector('[data-catalog-close]');
+    if (closeBtn) closeBtn.onclick = () => { node.hidden = true; catalogDetailId = null; };
     applyI18n(node);
   } catch (error) {
     node.innerHTML = `<p class="catalog-err">${esc(error.message)}</p>`;
@@ -4502,16 +5954,17 @@ function previewHtml(row) {
 }
 
 async function previewSource(sourceId) {
-  const node = $('catalog-list');
   try {
     const row = await api('/api/sources/check', {id: sourceId});
     toast(t('cat.accepted') + ': ' + fmt(row.accepted));
     await loadCatalogDetail(sourceId);
     const detail = $('catalog-detail');
-    const extra = document.createElement('div');
-    extra.innerHTML = previewHtml(row);
-    detail.prepend(extra);
-    applyI18n(extra);
+    if (detail) {
+      const extra = document.createElement('div');
+      extra.innerHTML = previewHtml(row);
+      detail.prepend(extra);
+      applyI18n(extra);
+    }
   } catch (error) {
     toast(t('cat.previewFailed', {reason: error.message}), true);
   }
@@ -4519,6 +5972,7 @@ async function previewSource(sourceId) {
 
 function openScopeDialog(sourceId) {
   const dialog = $('scope-dialog');
+  if (!dialog) return;
   $('scope-title').textContent = t('cat.excludeTitle', {id: sourceId});
   $('scope-body').innerHTML = `<p class="hint">${esc(t('cat.excludeBody'))}</p>
     <label class="check-label"><input type="checkbox" id="scope-shared"><span>${esc(t('cat.excludeShared'))}</span></label>
@@ -4538,104 +5992,134 @@ function openScopeDialog(sourceId) {
   };
   dialog.showModal();
 }
-$('close-scope').onclick = () => $('scope-dialog').close();
 
-$('catalog-refresh').onclick = async () => {
-  const button = $('catalog-refresh');
-  const spinner = button.querySelector('.btn-spinner');
-  const label = button.querySelector('.btn-label');
-  const note = $('catalog-update-note');
-  button.disabled = true;
-  if (spinner) spinner.classList.remove('hidden');
-  note.hidden = false;
-  note.textContent = t('cat.updating');
-  try {
-    await api('/api/sources/refresh', {});
-    for (let attempt = 0; attempt < 60; attempt += 1) {
-      const job = await api('/api/sources/update-status');
-      if (job.stage === 'downloading') note.textContent = t('cat.updateStage.downloading');
-      if (job.stage === 'validating') note.textContent = t('cat.updateStage.validating');
-      if (!job.running) {
-        if (job.error) {
-          note.textContent = t('cat.updateFailed', {reason: serverText(job.error)});
-          toast(note.textContent, true);
-        } else if (job.not_modified) {
-          note.textContent = t('cat.updateNotModified');
-          toast(note.textContent);
-        } else {
-          note.textContent = t('cat.updateDone', {revision: job.revision, added: fmt(job.added), changed: fmt(job.changed), retired: fmt(job.retired)});
-          toast(note.textContent);
+function setupCatalogListeners() {
+  const closeScope = $('close-scope');
+  if (closeScope) closeScope.onclick = () => { const d = $('scope-dialog'); if (d) d.close(); };
+
+  const refreshBtn = $('catalog-refresh');
+  if (refreshBtn) {
+    refreshBtn.onclick = async () => {
+      const spinner = refreshBtn.querySelector('.btn-spinner');
+      const label = refreshBtn.querySelector('.btn-label');
+      const note = $('catalog-update-note');
+      refreshBtn.disabled = true;
+      if (spinner) spinner.classList.remove('hidden');
+      if (note) { note.hidden = false; note.textContent = t('cat.updating'); }
+      try {
+        await api('/api/sources/refresh', {});
+        for (let attempt = 0; attempt < 60; attempt += 1) {
+          const job = await api('/api/sources/update-status');
+          if (note) {
+            if (job.stage === 'downloading') note.textContent = t('cat.updateStage.downloading');
+            if (job.stage === 'validating') note.textContent = t('cat.updateStage.validating');
+          }
+          if (!job.running) {
+            if (job.error) {
+              if (note) note.textContent = t('cat.updateFailed', {reason: serverText(job.error)});
+              toast(note ? note.textContent : '', true);
+            } else if (job.not_modified) {
+              if (note) note.textContent = t('cat.updateNotModified');
+              toast(note ? note.textContent : '');
+            } else {
+              if (note) note.textContent = t('cat.updateDone', {revision: job.revision, added: fmt(job.added), changed: fmt(job.changed), retired: fmt(job.retired)});
+              toast(note ? note.textContent : '');
+            }
+            break;
+          }
+          await new Promise(resolve => setTimeout(resolve, 400));
         }
-        break;
+        await reloadCatalog();
+      } catch (error) {
+        if (note) note.textContent = t('cat.updateFailed', {reason: error.message});
+        toast(error.message, true);
+      } finally {
+        refreshBtn.disabled = false;
+        if (spinner) spinner.classList.add('hidden');
+        if (label) label.textContent = t('cat.update');
       }
-      await new Promise(resolve => setTimeout(resolve, 400));
-    }
-    await reloadCatalog();
-  } catch (error) {
-    note.textContent = t('cat.updateFailed', {reason: error.message});
-    toast(note.textContent, true);
-  } finally {
-    button.disabled = false;
-    if (spinner) spinner.classList.add('hidden');
-    if (label) label.textContent = t('cat.update');
+    };
   }
-};
 
-for (const id of ['catalog-q', 'catalog-state', 'catalog-category', 'catalog-protocol', 'catalog-format', 'catalog-access', 'catalog-set-filter']) {
-  const node = $(id);
-  if (!node) continue;
-  node.oninput = () => { catalogLimit = CATALOG_PAGE; clearTimeout(catalogTimer); catalogTimer = setTimeout(reloadCatalog, 250); };
-  node.onchange = () => { catalogLimit = CATALOG_PAGE; reloadCatalog(); };
+  for (const id of ['catalog-q', 'catalog-state', 'catalog-category', 'catalog-protocol', 'catalog-format', 'catalog-access', 'catalog-set-filter']) {
+    const node = $(id);
+    if (!node) continue;
+    node.oninput = () => { catalogLimit = CATALOG_PAGE; clearTimeout(catalogTimer); catalogTimer = setTimeout(reloadCatalog, 250); };
+    node.onchange = () => { catalogLimit = CATALOG_PAGE; reloadCatalog(); };
+  }
+
+  const moreBtn = $('catalog-more');
+  if (moreBtn) moreBtn.onclick = () => { catalogLimit += CATALOG_PAGE; reloadCatalog(); };
+
+  const addToggle = $('catalog-add-toggle');
+  if (addToggle) addToggle.onclick = () => { const f = $('catalog-add-form'); if (f) f.hidden = !f.hidden; };
+
+  const addKind = $('catalog-add-kind');
+  if (addKind) addKind.innerHTML = SOURCE_FORMATS.map(value => `<option value="${esc(value)}">${esc(value)}</option>`).join('');
+
+  const addPreview = $('catalog-add-preview');
+  if (addPreview) {
+    addPreview.onclick = async () => {
+      addPreview.disabled = true;
+      try {
+        const payload = {
+          url: $('catalog-add-url').value.trim(),
+          kind: $('catalog-add-kind').value,
+          allow_private: $('catalog-add-private').checked
+        };
+        const row = await api('/api/sources/preview', payload);
+        const res = $('catalog-add-result');
+        if (res) res.innerHTML = previewHtml(row);
+      } catch (error) {
+        const res = $('catalog-add-result');
+        if (res) res.innerHTML = `<p class="catalog-err">${esc(t('cat.previewFailed', {reason: error.message}))}</p>`;
+      } finally {
+        addPreview.disabled = false;
+      }
+    };
+  }
+
+  const addSubmit = $('catalog-add-submit');
+  if (addSubmit) {
+    addSubmit.onclick = async () => {
+      try {
+        const payload = {
+          url: $('catalog-add-url').value.trim(),
+          kind: $('catalog-add-kind').value
+        };
+        const value = await api('/api/sources/add', payload);
+        toast(t('cat.addDone', {id: value.id}));
+        $('catalog-add-url').value = '';
+        const res = $('catalog-add-result');
+        if (res) res.innerHTML = '';
+        await reloadCatalog();
+      } catch (error) {
+        toast(error.message, true);
+      }
+    };
+  }
 }
-$('catalog-more').onclick = () => { catalogLimit += CATALOG_PAGE; reloadCatalog(); };
 
-$('catalog-add-toggle').onclick = () => { $('catalog-add-form').hidden = !$('catalog-add-form').hidden; };
-$('catalog-add-kind').innerHTML = SOURCE_FORMATS.map(value => `<option value="${esc(value)}">${esc(value)}</option>`).join('');
+try { setupCatalogListeners(); } catch (e) { console.error(e); }
+try { setupCountryComboboxes(); } catch (e) { console.error(e); }
+try { setupFieldPresetChips(); } catch (e) { console.error(e); }
+try { setupEnhancedListeners(); } catch (e) { console.error(e); }
+try { setupResultList(); } catch (e) { console.error(e); }
 
-function addPayload() {
-  return {url: $('catalog-add-url').value.trim(), kind: $('catalog-add-kind').value,
-          allow_private: $('catalog-add-private').checked};
-}
-
-$('catalog-add-preview').onclick = async () => {
-  const button = $('catalog-add-preview');
-  button.disabled = true;
-  try {
-    const row = await api('/api/sources/preview', addPayload());
-    $('catalog-add-result').innerHTML = previewHtml(row);
-  } catch (error) {
-    $('catalog-add-result').innerHTML = `<p class="catalog-err">${esc(t('cat.previewFailed', {reason: error.message}))}</p>`;
-  } finally {
-    button.disabled = false;
-  }
-};
-$('catalog-add-submit').onclick = async () => {
-  try {
-    const value = await api('/api/sources/add', {url: $('catalog-add-url').value.trim(), kind: $('catalog-add-kind').value});
-    toast(t('cat.addDone', {id: value.id}));
-    $('catalog-add-url').value = '';
-    $('catalog-add-result').innerHTML = '';
-    await reloadCatalog();
-  } catch (error) {
-    toast(error.message, true);
-  }
-};
-
-$('lang-toggle').onclick = () => { lang = lang === 'ru' ? 'en' : 'ru'; try { localStorage.setItem(LANG_KEY, lang); } catch {} renderLang(); };
-const sidebarLangBtn = $('sidebar-lang-toggle');
-if (sidebarLangBtn) sidebarLangBtn.onclick = $('lang-toggle').onclick;
-
-setupCountryComboboxes();
-setupFieldPresetChips();
-setupEnhancedListeners();
-
-renderLang();
+try { renderLang(); } catch (e) { console.error(e); }
 requestAnimationFrame(updateSegmentedGlider);
 setTimeout(updateSegmentedGlider, 100);
 
+const initToast = $('toast');
+if (initToast) {
+  initToast.hidden = true;
+  initToast.textContent = '';
+}
+
 (async () => {
   try {
-    fill(await api('/api/settings'));
+    const initialSettings = await api('/api/settings');
+    fill(initialSettings);
     await poll();
     setInterval(poll, 2000);
   } catch (error) {
