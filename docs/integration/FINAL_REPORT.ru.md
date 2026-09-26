@@ -1,454 +1,531 @@
 # Итоговый отчёт: Proxy Workbench 2.3.0
 
-Ветка `integration/ultra-2026-09-25`, HEAD `408bb3e` (+ коммиты приёмки
-`64fffac`, этот отчёт). Версия продукта: `proxy_workbench/branding.py:14` →
-`PRODUCT_VERSION = "2.3.0"`.
+Ветка `integration/ultra-2026-09-25`, HEAD `ccb0954` (включая ремонты
+`414bd06`, `3e7c953`, `7902612`, `3fb43d3`, `7a6a526`, `ccb0954`). Версия
+продукта: `proxy_workbench/branding.py:14` → `PRODUCT_VERSION = "2.3.0"`.
 
-Полная таблица трассировки со статусами и ссылками на код, команды и тесты:
-**[`docs/integration/TRACEABILITY.ru.md`](TRACEABILITY.ru.md)**. Здесь —
-то, что важно человеку, который будет пользоваться программой.
+Этот отчёт переписан **после** указанной серии ремонтов. Разделы 1 и 4
+описывают то, что работает и что не работает **сейчас**, на HEAD `ccb0954`; в
+качестве доказательств — команды, которые я прогонял сам, и живые ответы
+сервера, а не отчёт предыдущей сессии.
+
+**Снимок состояния: 26.09.2026, 11:56–12:19.** Пока отчёт писался, в рабочем
+дереве **параллельно правил кто-то ещё**: на 12:19 `git status` показывал
+изменёнными `probes.py`, `reputation.py`, `exportsvc.py`, `sourcedesk.py`,
+`diagnostics.py`, `pools.py`, `scheduler.py`, `jobs.py`, `geo.py`,
+`importer.py`, `source_catalog.py`, `source_management.py`, `formats.py`,
+`profiles.py`, `anonymity.py`, `geoip.py`, `source_adapters.py`,
+`source-catalog.json` и 21 новый тестовый файл. HEAD оставался `ccb0954`.
+Из моих выводов **два устарели прямо в ходе работы** (F20 и дефект 14) — они
+помечены в тексте и в трассировке. Остальные относятся к файлам, которые в
+это окно не менялись.
+
+**На текущем дереве есть падающий тест**, которого не было на момент моего
+прогона:
+
+```
+$ .venv/bin/python -m unittest tests.test_probes_reference.CapabilityMatrixTests
+Ran 2 tests … FAILED (failures=3)
+```
+
+Полного зелёного прогона на текущем дереве я не делал и не заявляю: цифра
+`Ran 2480 tests … OK (skipped=1)` ниже снята в 11:58, до параллельных правок.
+
+Полная таблица трассировки со статусами и ссылками на код:
+**[`docs/integration/TRACEABILITY.ru.md`](TRACEABILITY.ru.md)**.
 
 ---
 
 ## 1. Что пользователь теперь может сделать
 
-Ниже только то, что я **реально выполнил** в этой сессии на локальной
-контролируемой фикстуре (локальный mock HTTP-прокси на `127.0.0.1:18998` и
-локальная цель `http://service.invalid/health`, никаких публичных прокси и
-сторонних сервисов). Команда начинается с `.venv/bin/python -m proxy_workbench
---data <папка>`.
+Ниже только то, что я **проверил сам** в этой сессии. Все сетевые проверки
+сделаны на loopback: локальный HTTP-прокси и локальная цель. Публичные прокси и
+сторонние сервисы не запрашивались, поэтому **в этом отчёте нет ни одной цифры
+о качестве или скорости живых публичных прокси** — их никто не измерял.
 
-### 1.1 Собрать, проверить и напечатать рабочие прокси
+### 1.1 Проверить адреса настоящим конвейером стадий
 
 ```
 collect --no-sources --input list.txt --allow-private-endpoints
-  → Unique candidates in the database: 1
+  → Unique candidates in the database: 4
 
-run --no-sources --url http://service.invalid/health --allow-private-endpoints --min-success 1
-  → Workers: 128; full pass; profile 7e146526bf46d1aa4e26
-  → job: job-49a8654015f6555b
-  → Checked 1/1; 22.7 proxies/s
-  → Checked 1/1; matching 1; saved 1
-
-get
-  → http://127.0.0.1:18998
+run --no-sources --url http://service.invalid/health --allow-private-endpoints
+    --min-success 1 --count-what endpoint --workers 4
+  → Workers: 4; full pass; profile 7e146526bf46d1aa4e26
+  → job: job-dbaaf6ffcbd7dd77
+  → Checked 4/4; 131.2 proxies/s
+  → matching 1; saved 1
 ```
 
-Задание получает ID, идемпотентное — повтор того же запроса не создаёт второго
-задания. Тот же путь проверен на установленном wheel через
-`packaging/smoke.py`: `{"exit_code": 0, "passed": 1}`.
+Прогон ведёт `pipeline.Pipeline`: стадии `cheap → basic → expensive`,
+`AdaptiveConcurrency` поверх бюджетов, `HostLimiter` (пер-хост и пер-таргет) и
+`TargetPolicy` для чужого judge. Это не «обёртка над старым циклом» — у
+каждой стадии свой исход и своя запись в результат.
 
-### 1.2 Свои списки: коллекции, импорт с отчётом, изоляция от публичной базы
+### 1.2 Бюджеты ограничивают по-настоящему
 
-```
-import preview --input файл.csv
-import commit  --input файл.csv
-```
+| Что задано | Проверено | `stop_reason` |
+| --- | --- | --- |
+| без бюджетов | `checked: 3, requests: 3` | `complete` |
+| `--max-requests 1` | `checked: 1, requests: 1` | `E_LIMIT_BUDGET` |
+| `--max-requests 2` | `checked: 2, requests: 2` | `E_LIMIT_BUDGET` |
 
-Импортёр отклоняет hostname без поддержки, приватные адреса и credentials
-одинаково во всех форматах, а не принимает и не теряет позже. Плохая строка в
-файле не ломает импорт (проверено функциональной приёмкой). Повторный commit
-того же файла не размножает записи. Своя коллекция не смешивается с публичной
-базой — это доказано сквозным тестом на реальной legacy-базе.
+`--workers` — **потолок**, а не число воркеров: потолок считается как
+`min(--workers, потолок по дескрипторам, потолок по RAM)` и двигается по
+наблюдаемой доле успеха. Потолки дескрипторов и RAM теперь тратятся по-настоящему.
 
-### 1.3 Свежесть, которую видно и которая не обманывает
+`--run-max-bytes` подключён в коде, но **числом я его не подтвердил**: на моей
+фикстуре тело ответа не читается, счётчик байтов остаётся `0` и потолок не
+срабатывает. Это честная оговорка, а не «готово».
 
-- У каждой строки результата есть записанный срок; строка без срока читается
-  как `freshness=unknown`, а не как «вечно свежая».
-- Истечение одного адреса **не** обнуляет набор: в `api.py:270-315` в выдачу
-  идут строки с `freshness == 'fresh'`, а статус набора считается отдельно.
-- Повторный экспорт и смена watch **не** создают новое время измерения.
-- Неизвестное время, метка из будущего и откат часов дают явные коды
-  `E_TIME_UNKNOWN` / `E_TIME_FUTURE` / `E_TIME_CLOCK_ROLLBACK`, а не «свежо».
-- Повреждённый или удалённый указатель поколения даёт одинаковое явное
-  `E_STATE_NO_SNAPSHOT` вместо отката к случайным строкам SQLite.
-
-### 1.4 Экспорт выделенного не переключает активный пул
+### 1.3 Три единицы `--count-what` различаются и объясняют недостижимость
 
 ```
-export --min-success 1                    → пересборка активного поколения
+--count-what endpoint  → Checked 1/1; matching 1; saved 1
+--count-what ip        → Checked 1/1; matching 1; saved 1
+--count-what exit --want 1
+  → Cannot reach the requested number of confirmed exit IPs: this profile has no
+    judge. Add --judge-url (it also turns the anonymity check on) or count
+    addresses with --count-what ip.
 ```
 
-Экспорт выделенных строк, top-N и поисковой выборки — отдельный артефакт с
-`kind='selection'` (`proxytool.py:2343`), он не публикует поколение и не
-трогает активный пул. Это проверено тремя разными тестами, включая проверку
-через `/v1`.
+При `--count-what ip` и четырёх кандидатах на одном хосте `want=2` даёт
+`want_unreachable_ip`: адреса разные, IP один. История прогонов выбирается
+детерминированно по времени измерения (`proxytool.py:1612` `newest_measurements`),
+а не по порядку строк в таблице.
 
-### 1.5 Пустой набор не выпускает трафик в интернет
+### 1.4 Свой список: импорт с предпросмотром и отчётом — в интерфейсе
 
-Пустой, истёкший или unsupported-only набор даёт fail-closed конфигурацию:
-`formats.py:39,62,72` не добавляют `DIRECT`. Проверено тестом
-`test_an_empty_export_never_selects_a_direct_route`.
-
-### 1.6 Ротирующий шлюз с отдельным паролем
+Живые ответы `POST /api/import/preview` и `POST /api/import/commit`:
 
 ```
-gateway --port 18996 --gateway-token demo-gw-pass --api-token demo-read-token
-  → Rotating proxy: 127.0.0.1:18996 (HTTP and SOCKS5 TCP), 1 proxies in the pool
-
-curl -x http://127.0.0.1:18996 ...              → 407   (без пароля)
-curl -x http://u:demo-gw-pass@127.0.0.1:18996 … → 200   (с паролем)
+preview → 200, batch_id, mapping {host, port, scheme, country}, columns, can_commit
+commit  → 200, rejected: [
+             {line 2, reason: E_IMPORT_PRIVATE,      sample: 198.51.100.7 8080},
+             {line 3, reason: E_IMPORT_MISSING_FIELD, sample: not-an-address},
+             line 4, line 5 …
+           ], collection_id, replayed: false
+commit  → 200, replayed: true      (повтор того же плана ничего не добавляет)
 ```
 
-Пароль шлюза и токен API — разные секреты; если задать одно значение, команда
-отказывается работать (`proxytool.py:3292-3294`). Слот соединения резервируется
-**до** первого `await` (`gateway.py:604-637`), поэтому параллельные подключения
-не превышают лимит.
+Приёмка: предпросмотр ничего не пишет, commit применяет **тот самый** план,
+который был показан, и отчёт перечисляет номера отклонённых строк с кодами.
+Форматы — TXT, URI, CSV, JSON; интерфейс предлагает разбор колонок, а не
+угадывает роли. Приватные адреса в публичную коллекцию не проходят.
 
-### 1.7 Полноценный control API `/v1` и менеджер ключей из CLI
+**Чего я не гонял:** формат `json`, режим `replace` и drag-and-drop в
+браузере (драйвера нет). Код написан, поведение этих трёх вариантов не
+подтверждено.
+
+### 1.5 Менеджер API-ключей в интерфейсе
+
+Живые ответы по HTTP:
 
 ```
-api-key bootstrap --name demo
-  → key 4deae2bc3c76239e (27bb7eb871cb). THE SECRET IS SHOWN ONCE:
-    pwk_…                                     (секрет показан один раз)
-
-serve --host 127.0.0.1 --port 18997 --api-token demo-read-token
+GET  /api/api-keys                 → 200: список без секретов, 26 прав, журнал операций
+POST /api/api-keys/bootstrap       → 200: id, secret (показан один раз), permissions
+POST /api/api-keys                 → 200: id, secret, ровно заданные права (read.status, read.results)
+POST /api/api-keys/action rotate   → 200: тот же id, новый secret
+GET  /api/api-keys                 → 200: секретов в списке нет
 ```
 
-Что работает (проверено функциональной приёмкой, код выхода 0):
+Страница «Ключи API» (`#page-keys`), действия `rotate` / `update` / `disable` /
+`enable` / `revoke` / `delete`. Прежнее утверждение отчёта, что в интерфейсе
+менеджера ключей нет, **больше не верно**.
 
-- `GET /v1/capabilities` отдаёт 26 прав.
-- 13 операций возвращают HTTP 200/202: коллекции (чтение и создание), профили
-  (чтение и создание), источники и каталог исследований, список заданий,
-  `POST /v1/checks/check` → **202** с job ID, пулы, расписания, ключи, журнал
-  аудита, результаты с курсором.
-- Разграничение доступа работает: ключ с `read.results` получает **403** на
-  административную операцию и **403** на попытку выдать себе новый ключ; ключ с
+### 1.6 Пулы, расписания и привязка шлюза — в интерфейсе
+
+```
+POST /api/pools/create            → 200: пул с профилем, desired 3, reserve
+GET  /api/pools                   → 200: state, served, deficit_reason, next_attempt_at
+POST /api/pools/action refill     → 200
+POST /api/schedules/action        → 200: интервал 30 мин, Europe/Berlin, окна, бюджеты
+GET  /api/schedules               → 200: тот же расписание со счётчиками
+GET  /api/gateway/options         → 200: пулы, профили, поколения
+POST /api/gateway/config          → 200: привязка сохранена
+```
+
+**Честная оговорка про привязку шлюза.** Она сохраняется, валидируется и
+перезапускает слушателя, но сам объект `Binding` в `gateway.Background` не
+передаётся — работающий шлюз обслуживает привязку по умолчанию. Это
+недостающее звено, а не «пулы и шлюз связаны».
+
+### 1.7 Хранение с предпросмотром — в интерфейсе
+
+```
+GET /api/maintenance/cleanup-preview    → 200: что удаляется, что остаётся
+GET /api/maintenance/retention-preview → 200: runnable, targets, blocked
+POST /api/maintenance/restore-preview  → 200: source_path, target_path, files
+                                          (источник — полный путь к бэкапу; имя
+                                           файла без пути даёт понятный отказ)
+```
+
+Каждое изменяющее действие сначала отвечает предпросмотром, и только
+отдельное действие применяет. То же в CLI: `backup create|list|verify|preview|
+restore|rollback|retention|cleanup|rebind`, каждое изменяющее — с `--apply`.
+
+### 1.8 Резервные копии: миграции 1..12 починены
+
+```
+$ python -m proxy_workbench backup
+sources-worktree-data-2026-09-26.tar.gz 8328389 байт
+proxies.sqlite3.v14.pre-migration.20260926T080721.bak 233472 байт
+proxies.sqlite3.v0.pre-migration.20260925T220106.bak 40960 байт
+```
+
+Копия `v14` — прямое доказательство того, что снятие копии перед неаддитивным
+шагом работает на **промежуточной** версии, а не только на legacy `v0`. Раньше
+любая база с `user_version` 1..12 вообще не обновлялась: `migrate()` падал с
+`no such function: endpoint_id`, потому что функция регистрировалась только в
+миграции 0, а та не выполнялась. Теперь она регистрируется на каждом
+соединении (`db.py:1148`).
+
+Перепривязка секретов (`backup rebind`) поднимает `access_revision` и
+`rotated_at` и печатает, на какую ревизию встал каждый доступ: старый пароль
+больше не наследует успешную проверку. Retention считает **один** план и для
+предпросмотра, и для применения.
+
+### 1.9 Четыре маршрута источников делают настоящую работу
+
+Раньше они отвечали «ок» без работы. Живой HTTP, два издателя: один отдал три
+адреса, второй — один общий:
+
+```
+POST /api/sources/exclude-scope            → 200: delivered 3, exclusive 2, shared 1, excluded 2
+GET  /api/sources/scope                    → 200: count 2, нормализованные адреса
+POST /api/sources/exclude-scope include_shared → 200: excluded 1 (третий, разделяемый)
+POST /api/sources/scope/clear              → 200: removed 3, remaining 0
+POST /api/sources/recover (неизвестный)    → 200: known false + понятный текст ошибки
+```
+
+Общий адрес молча у другого издателя не отнимается — только по явному
+`include_shared`. На неизвестном источнике маршрут не делает вид, что что-то
+восстановил.
+
+### 1.10 Ключевой секрет, пароль шлюза, фоновый слой
+
+- Ключ с `read.results` получает 403 на административную операцию; ключ с
   `admin.keys` проходит. Секрет не утёкает в `GET /v1/keys`.
-- Старый токен `--api-token` по-прежнему читает `/proxies` (проверено: вернул
-  `http://127.0.0.1:18998`) и **не** получает новых административных прав.
-- Canary-секреты отсутствуют в БД, логах, argv, файлах и примерах OpenAPI —
-  подтверждено `test_the_canary_secret_is_nowhere` и
-  `test_a_credentialed_endpoint_is_never_put_in_a_public_artifact`.
+- Пароль шлюза и токен API — разные секреты; при совпадении команда отказывается
+  работать. Слот соединения резервируется **до** первого `await`.
+- `desktop.py` содержит слой фоновой работы: меню-бар на нативном
+  `NSStatusItem` (Swift-helper компилируется один раз через `swiftc`),
+  один экземпляр на папку данных, opt-in автозапуск (LaunchAgent / `HKCU\Run` /
+  XDG), перехват сна и пробуждения, который вызывает `scheduler.mark_wake` и
+  `jobs.mark_awake`, и перенос старой папки данных при старте.
 
-Полный сценарий «создать ключ → импортировать → запустить → получить события →
-экспортировать → отозвать» проходит без единого ручного действия в GUI:
-`test_one_bootstrap_key_finishes_the_whole_journey_without_the_gui`.
-
-### 1.8 Резервные копии и восстановление — с предпросмотром
-
-```
-backup create    → /…/backups/proxies.sqlite3.v15.manual.20260926T011659.bak (sha256 11f2f05bd…)
-backup list      → proxies.sqlite3.v15.manual.20260926T011659.bak 229376 байт
-backup retention → «retention preview; add --apply to delete.»
-backup cleanup   → «data cleanup preview; add --apply to delete.»
-```
-
-Полный набор: `create|list|verify|preview|restore|rollback|retention|cleanup|
-rebind` (`proxytool.py:3918`). Каждое изменяющее действие по умолчанию только
-печатает, что сделает, и выполняется лишь с `--apply`. Техническая копия перед
-миграцией делается через `VACUUM INTO` с manifest и контрольной суммой, а не
-только для legacy-файла с `user_version = 0`.
-
-### 1.9 Пулы и расписания
-
-```
-pool create demo-pool --desired 3   → pool demo-pool: keep 3, reserve 0
-pool status demo-pool                → pool demo-pool: empty
-
-schedule add --name demo-sched --interval 30 --timezone Europe/Berlin --window 09:00-18:00
-  → schedule demo-sched: next run in Europe/Berlin
-schedule list                       → demo-sched interval каждые 30.0 мин вкл
-schedule next --name demo-sched     → next run: None (not_due)   [окно сейчас закрыто]
-```
-
-Наполнение пула вызывается явно: `POST /v1/pools/{id}/refill` наполняет
-именно тот пул, что указан в пути, и `/start` больше не отвечает ошибкой.
-
-### 1.10 Диагностика: почему ноль результатов
+### 1.11 Диагностика
 
 ```
 diagnose funnel  → счётчики по стадиям воронки
 diagnose zero    → «the empty result is not explained: some rows passed the funnel»
 diagnose control → состояние проверки целей устройства
-diagnose health  → (см. раздел 4 — здесь сейчас есть дефект)
-diagnose bundle  → diagnostic bundle: /…/diagnostics/bundle.json (0 redactions)
+diagnose bundle  → diagnostic bundle с числом redactions
+diagnose health  → СЛОМАН, см. раздел 4.1
 ```
-
-### 1.11 Каталог сервисов с честными границами
-
-```
-preset  → google-204 v1 status_endpoint legacy_definition live=never 1 проб
-          youtube-204 …, cloudflare-trace …, wikipedia-home …
-```
-
-Программа **сама** пишет `live=never`: встроенные определения проб ни разу не
-сверялись с живыми ответами, потому что сетевые проверки запрещены условиями
-работы. Это честная метка, а не рабочее подтверждение.
 
 ---
 
 ## 2. Сводка по F01–F29 и дефектам
 
 Полные таблицы — в
-[`TRACEABILITY.ru.md`](TRACEABILITY.ru.md), раздел 1 (F01–F29), раздел 2
-(дефекты 1–26), раздел 3 (R01–R20), раздел 4 (40 исходных замечаний аудита),
-раздел 5 (28 карточек исследования), раздел 6 (140 задач backlog), раздел 7
-(X01–X08 и отвергнутые идеи), раздел 8 (22 сквозных сценария §7).
+[`TRACEABILITY.ru.md`](TRACEABILITY.ru.md), разделы 1–8.
 
 | Статус | F01–F29 | Дефекты 1–26 | Всего (55) |
 | --- | --- | --- | --- |
-| `verified` | 3 — F02, F11, F24 | 12 — 1, 2, 3, 4, 6, 7, 9, 10, 11, 13, 15, 16 | **15** |
-| `implemented_unverified` | 19 | 11 | **30** |
-| `in_progress` | 4 — F04, F08, F12, F29 | 1 — 25 | **5** |
-| `todo` | 2 — F21, F22 | 1 — 22 | **3** |
+| `verified` | 4 — F02, F03, F11, F24 | 12 — 1, 2, 3, 4, 6, 7, 9, 10, 11, 13, 15, 16 | **16** |
+| `implemented_unverified` | 21 | 10 | **31** |
+| `in_progress` | 3 — F04, F08, F20 | 3 — 14, 22, 25 | **6** |
+| `todo` | 0 | 0 | **0** |
 | `external_blocker` | 1 — F23 | 1 — 26 | **2** |
 
-`verified` означает ровно одно: функция достижима снаружи и на этой сессии
-дала верный результат. Число зелёных тестов само по себе статус не поднимает —
-ровно поэтому 15, а не «всё готово».
+Было 15 `verified`, стало 16. Прибавка одна — **F03**: импортёру в интерфейсе
+доказан живым HTTP предпросмотр, commit с номерами отклонённых строк и
+идемпотентный повтор. Предыдущая причина низкого статуса («мастер импорта в
+GUI не сделан») устранена и заменена проверкой, а не количеством тестов.
 
-Технические замечания R01–R20: 5 закрыты (`verified`), 13 — `implemented_unverified`,
-2 — `todo` (R16, и R20 частично). Полный разбор с построчными ссылками —
-раздел 3 трассировки.
+Подняты F21 и F22 (из `todo`), F12 и F29 (из `in_progress`). **F20 и дефект 14
+выросли в `in_progress` не мной, а параллельной правкой кода в 12:01 и 12:16**:
+их прежнее обоснование («объявлено, но не сделано») перестало быть правдой.
+
+**Три ID понижены обоснованно, а не по недоверию:** POO05 (бюджет байтов я не
+подтвердил), API04 (`diagnose health` печатает ложную тревогу) и API12 (повтор
+`POST /v1/keys` с тем же `Idempotency-Key` отдаёт полный секрет второй раз).
+
+Технические замечания R01–R20: 7 закрыты (`verified` — R01, R02, R04, R05,
+R06, R10, R11), 8 — `implemented_unverified`, 4 — `in_progress` (R09, R14, R16,
+R17), 1 — `external_blocker` (R19). R16 поднят с `todo` до `in_progress` после
+разбора дефекта 22 по коду; R09 поднят вместе с дефектом 14.
 
 ---
 
 ## 3. Что проверено и чем
 
-Все три проверки я запускал сам на текущей ревизии.
-
 | Проверка | Команда | Результат |
 | --- | --- | --- |
-| Полный набор тестов | `.venv/bin/python -m unittest discover -s tests` | `Ran 2437 tests in 164.765s` / `OK (skipped=1)` / **код выхода 0** |
-| Smoke-сборка (wheel → чистый venv → прогон) | `.venv/bin/python -m pip wheel --no-deps --wheel-dir /tmp/pw-fs-dist .` → `python -m venv /tmp/pw-fs-venv` → `pip install` → `env ALL_PROXY= HTTP_PROXY= HTTPS_PROXY= NO_PROXY=127.0.0.1,localhost .venv/bin/python packaging/smoke.py /tmp/pw-fs-venv/bin/proxy-workbench` | `WHEEL_EXIT=0`, `Proxy Workbench 2.3.0`, `{"exit_code": 0, "passed": 1}`, `smoke test passed`, **SMOKE_EXIT=0** |
-| Функциональная приёмка снаружи | `.venv/bin/python functional_acceptance.py` | 30 `СДЕЛАНО`, 0 `СЛОМАНО`, 0 `НЕ СДЕЛАНО`, **код выхода 0** |
-| Ручной пользовательский цикл | локальный mock на `127.0.0.1:18998`, команды из раздела 1 | collect→run→get→export→backup→diagnose→pool→schedule→api-key→serve→gateway пройдены, вывод приведён выше |
-
-Один пропущенный тест (`skipped=1`) — самопроверка `test_geo_compat`, которая
-намеренно пропускает себя, если `proxytool.matches_selection` переписан; на этой
-ревизии она выполнилась, пропущен другой. Единичный пропуск не скрывает падений:
-без него прогон был бы `OK`.
+| Полный набор тестов | `.venv/bin/python -m unittest discover -s tests` | `Ran 2480 tests in 173.529s` / `OK (skipped=1)` / **код выхода 0** |
+| Функциональная приёмка снаружи | `.venv/bin/python functional_acceptance.py` | 30 `done`, **код выхода 0** |
+| Резервные копии | `python -m proxy_workbench backup` | перечислены реальные файлы, включая `v0` и `v14` pre-migration с манифестами |
+| Живой прогон конвейера | локальный mock-прокси, `run --count-what … --max-requests …` | §1.1–1.3, счётчики `run_state` |
+| Новые маршруты интерфейса | HTTP к поднятому `gui.make_server` | §1.4–1.9, реальные ответы |
+| Воспроизведённые дефекты | повторный `POST /v1/keys`, `diagnose health`, замер `db.columns()` | §4.1, §4.2 |
 
 **Чего эти проверки не доказывают.** Они доказывают, что дерево согласовано, что
-установленный wheel проходит сквозной путь на локальном mock, и что до 30
-функций можно дойти снаружи. Они не доказывают F21, F22, транспорт
-аутентификации F04, GUI-менеджер ключей F29, поставочные артефакты на текущей
-ревизии и подпись — это перечислено в разделах 4 и 5.
+до 30 функций можно дойти снаружи, что конвейер действительно ведёт прогон и
+что новые маршруты интерфейса отвечают по-настоящему. Они **не** доказывают F21
+в пользовательском пути, меню-бар в собранном `.app`, транспорт
+аутентификации F04, клиентскую валидацию экспортов F28, Windows-поставку и
+подпись.
 
-Известная неточность самого инструмента приёмки: вердикт «Менеджер ключей в
-интерфейсе → СДЕЛАНО» — **ложноположительный**. Регулярное выражение
-`api.?key|apiKey|ключ` (`functional_acceptance.py:311`) совпало с подстрокой
-«ключ» внутри слов «ис**ключ**ённые», «ис**ключ**аются»
-(`proxy_workbench/ui/app.js:1035,1153,1530`). Прямая проверка: в `gui.py` 0
-маршрутов `/api/(key|apikey)`, в `proxy_workbench/ui/` нет ни `apiKey`, ни
-`api-key`, ни `key-manager`; два совпадения «API-Key» — это каталог поставщиков
-(«Free with an API key», `app.js:629`), а не менеджер ключей Workbench.
-Поэтому F29 не `verified`.
+**Известная неточность самого инструмента приёмки.** Вердикт «Менеджер ключей в
+интерфейсе → СДЕЛАНО» в `functional_acceptance.py:284` по-прежнему строится на
+регулярном выражении `api.?key|apiKey|ключ`, которое совпадает и с подстрокой
+«ключ» внутри обычных русских слов. Сейчас это уже **не** ложноположительный
+вердикт (маршруты действительно есть), но проверка остаётся слабой: она ищет
+слово, а не маршрут. Я проверял менеджер ключей отдельно, живыми запросами.
 
 ---
 
 ## 4. Что объективно осталось и почему
 
-### 4.1 Внешние блокеры (`external_blocker`)
+Полный список из 25 пунктов с доказательствами — в
+[`TRACEABILITY.ru.md`](TRACEABILITY.ru.md), раздел 10. Здесь — главное.
 
-**F23 и дефект 26 — поставка и подпись.** Артефакт macOS материально существует
-(`/tmp/pw-dist/Proxy Workbench.app`, `.dmg`, `.zip`, manifest), но он версии
-**2.2.1 от 25.09 21:49** при текущей `2.3.0` (HEAD `408bb3e`) — то есть отстаёт
-на десятки коммитов, и проверки release notes относятся к старому дереву.
-Причины, по которым закрыть нельзя:
+### 4.1 Дефекты, которые я воспроизвёл, а не только прочитал
 
-- `PyInstaller` в `.venv` отсутствует: `.venv/bin/python -c "import PyInstaller"`
-  → `ModuleNotFoundError`. Пересборка потребовала бы сетевой установки, а сетевые
-  действия в эту работу не входят.
-- Подписанных артефактов нет вовсе, манифест отдаёт `"signed": false`.
-  Developer ID Application и учётных данных нотаризации на машине нет; создавать
-  или покупать их запрещено условиями.
-- Windows-сборка ни разу не выполнялась: машина сборки — macOS arm64, `iscc`
-  (Inno Setup) не установлен. Локальный Mac не доказывает Windows.
+**1. Повторный `POST /v1/keys` с тем же `Idempotency-Key` отдаёт полный секрет
+второй раз.**
 
-`packaging/verify_release.py` проходит, но подтверждает лишь checksum старого
-билда.
+```
+first  -> 200 id=ee69ad8763ccbb92 secret=pwk_634cd7c2…
+replay -> 200 id=ee69ad8763ccbb92 secret=pwk_634cd7c2…   SAME SECRET TWICE: True
+rows named replay-probe: 1
+```
 
-**F13 частично.** Итоговый diff ветки источников — отдельная работа; в дереве
-есть `source_adapters.py`, `source_catalog.py`, `source_management.py`, но
-принятие чужого workflow по его финальной ревизии — не моя задача. Здесь я
-зафиксировал состояние по коду, без приёмки чужой работы.
+Причина: `apiv1.py:2044` кладёт в кэш идемпотентности тот же объект
+`Response`, который уходит клиенту, а `IdempotencyStore.get` (`:791-804`)
+возвращает его целиком. Механизм `apikeys.carries_one_shot` /
+`without_one_shot` (`apikeys.py:559,573`) **написан и не вызывается нигде**;
+правка одной строки из `docs/integration/HANDOFF/fix-keys.md` в дерево не
+попала. Задевает и `POST /v1/subscriptions`, который идёт тем же путём. Это
+прямое нарушение контракта «секрет показывается один раз».
 
-### 4.2 Не сделано по существу, без внешней причины
+**2. `diagnose health` печатает ложную тревогу.**
 
-**F21 — сравнение источников и провайдеров. Не начато.**
-`grep -rniE 'cohort|survival|overlap|cost_per|unique_contribution' --include=*.py
-proxy_workbench/` даёт только `geo.py:416` (пересечение include/exclude стран) и
-docstring `proxytool.py:2154`. Ни сравнения поставщиков, ни cohort, ни survival,
-ни стоимости пригодного адреса нет ни в одном модуле, включая `sourcedesk.py`
-на 1642 строки.
+```
+$ python -m proxy_workbench diagnose health --data data
+health: 5 checks, 5 problems        # при одном реальном отказе
+```
 
-**F22 — фоновая работа, трей, sleep/wake. Не начато.**
-`grep -rniE 'tray|меню-бар|автозапуск|autostart|LaunchAgent' --include=*.py
-proxy_workbench/` даёт **одно** совпадение — комментарий `pools.py:500`.
-`Scheduler.mark_wake()` (`scheduler.py:2117`) не имеет ни одного продуктового
-вызова, поэтому «после сна нет шквала catch-up» в продукте не включается.
+`HealthCheck.to_dict()` (`diagnostics.py:1596-1598`) отдаёт поле `ok`,
+`proxytool.py:4615` считает проблемами `item.get('state') != 'ok'`, а поля
+`state` в словаре нет. Дополнительно `_cmd_diagnose` не передаёт `scope=`,
+поэтому проверка scope падает по существу. Правка однострочная:
+`item.get('ok') is not True`.
 
-**Дефект 22 — качество источников в приложении. Не исправлено.**
-`branding.py` URL каталога, `country_resolver` до `collect`, prune с
-необратимым удалением, `public_source()` стирает path — файлы
-`branding.py`/`gui.py`/`proxytool.py` в этом цикле не менялись. GUI-маршруты
-`gui.py:720-732` — заглушки: возвращают `cleared=1, excluded=0` без работы.
+### 4.2 Написано, но не подключено к пользовательскому пути
 
-**F29 — менеджер ключей в GUI. Отсутствует.** См. раздел 3: вердикт приёмки
-ложноположительный, в интерфейсе элементов управления ключами нет. Чтобы получить
-первый административный ключ, нужно уйти в CLI `api-key bootstrap`. Дополнительно
-не работают per-key квоты параллелизма: `Principal.concurrency` записывается
-(`apiv1.py:546`) и больше нигде не читается, `QuotaGuard` (`apikeys.py:1303`) не
-имеет продуктового вызова, а единственный `ConcurrencyLimiter` (`apiv1.py:1645`)
-пер-серверный на 16 соединений.
+**3. F21 — сравнение источников и поставщиков — написано и не доступно.**
+`compare_sources`, `compare_suppliers`, `compare_cohorts`,
+`survival_across_windows` есть в `sourcedesk.py` и покрыты 43 тестами, но ни
+CLI, ни GUI, ни API их не вызывают. Статус `implemented_unverified`, а не
+`verified`, именно поэтому.
 
-**F12 — конвейер не исполняется движком.** Ресурсные бюджеты и различение трёх
-величин N починены, но `grep -oE 'chain\.[A-Za-z_]+' proxy_workbench/proxytool.py`
-даёт только `Budgets`, `ResourceGate`, `SystemClock`, `Ledger`, `FindPolicy`.
-`Pipeline`, `run_pipeline`, `AdaptiveConcurrency`, `HostLimiter` не вызываются:
-стадий cheap→basic→expensive в продукте нет. Бенчмарки в `pipeline.py:2409`
-честно помечены `SYNTHETIC_NOTICE`, но описывают цепочку, которую программа не
-запускает, — цитировать их как характеристику продукта нельзя.
+**4. F22 — меню-бар и фоновый слой не доходят до поставочной сборки.**
+`packaging/build_macos.py` и все четыре `.spec` не кладут Swift-helper в
+bundle, поэтому `ensure_tray_helper` для frozen-сборки честно возвращает «в
+сборке нет helper меню-бара»: **в собранном `.app` меню-бара нет**. Windows и
+Linux не проверялись ни разу — ни `winreg`, ни loopback-канал, ни XDG autostart
+не запускались. `python -m proxy_workbench` без аргументов идёт в `gui.main`,
+а не в `desktop.main`, поэтому меню-бар есть только у frozen-сборки и при
+`python -m proxy_workbench.desktop`. Владелец слоя отчитался о 48 проверках из
+48 на macOS; **это его отчёт, я его не перепроверял**.
 
-**F08 — один критерий страны не доведён до API и GUI.** `geo.py` полон, но
-`Workbench.country_criterion`/`filter_by_country` не имеют ни одного вызывающего;
-`api.py:825-827` и `gui.py:1996-1997` фильтруют своим выражением. В схеме нет
-`endpoints.hosting_basis`, `observations.exit_ip`/`exit_country` и
-`pools.quota_basis`, поэтому «hosting — эвристика, а не доказательство» и квоты
-по exit-IP нечем выразить в данных.
+**5. `proxy_workbench/ui/app.js` не показывает события фонового слоя.**
+`desktop-journal.jsonl` пишется и читается меню-баром, но не страницей;
+маршрут `GET /api/desktop`, предложенный в handoff, в `gui.py` не добавлен.
 
-**F04 — транспорт аутентификации отсутствует.** Механизм доступа работает
-(ротация поднимает `access_revision`, старое доказательство отзывается), но
-`probes.py:589` и `proxytool.py:138,329,1107,1123` отвергают любые
-username/password в URL, `grep Proxy-Authorization` = 0. macOS `security` CLI
-сознательно не сделан (пароль в argv), Windows OS-vault — нет. Записано в
-`CHANGELOG.md` «Known gaps».
+**6. `client_target` / `client_binary` не задаются ниоткуда.** Сигнатура
+`proxytool.py:2682` объявляет их со значением `None`, и единственное место,
+где они идут дальше, — `proxytool.py:2880`; все непустые значения задаёт только
+тест. Поэтому `singbox_target(None)` всегда даёт `unconfigured/legacy`, и
+проверка совместимости с целевой версией sing-box фактически не выполняется.
 
-**F14 — нет автономного поддержания пула.** `grep -rn 'pools.watch'
-proxy_workbench/` даёт 0 вызывающих: наполнение работает по явному
-`POST /v1/pools/{id}/refill`, но пул сам со временем до N не восстанавливается.
+**7. `sourcedesk.REQUESTED_DDL` не исполняется.** Таблицы `source_feed`,
+`membership_source` и их индексы объявлены константой с комментарием «this
+module never executes it», а в `db.py` такой миграции нет: `SourceDesk`
+работает против схемы, которой в живой базе не существует. Отдельно:
+`source_management.py:239` запрашивает `candidate_scope_exclusion` — такой
+таблицы в `db.py` тоже нет, исключения складиваются в сайдкар
+`data/gui-scope-exclusions.json`.
 
-**F15 — расписания теряются при перезапуске.** Таблица `schedules`
-(`db.py:744-749`) несёт 11 колонок и не содержит `last_run_at`, `paused`,
-`dst_policy`, `catch_up`, `max_catch_up`, `wake_gap_s`, `notify_json`,
-`counters_json` — интервальная сетка и накопленный бюджет не переживают рестарт.
+### 4.3 Ограничения, вшитые в архитектуру
 
-**F03 — импорт недостижим в GUI.** `grep -c 'importer' proxy_workbench/gui.py`
-= 0, `proxy_workbench/ui/index.html:1439` принимает только `.txt`. Работает
-только через CLI и `/v1`.
+**8. `collect` наполняет коллекцию до прогона.** Поток «источник → проба» есть
+**внутри** скана (`candidates()` читает коллекцию постранично и отдаёт байты в
+конвейер), но не между загрузкой и проверкой. Docstring `proxytool.py:2063-2071`
+признаёт это прямо: «`collect` still fills the collection first».
 
-**F10 и F25 — диагностика есть в CLI, её нет в интерфейсе.**
-`grep -c funnel proxy_workbench/ui/app.js` = 0.
+**9. `EXPENSIVE_UNTIL_N` в продукте не используется** — выбран
+`EXPENSIVE_ALL_PASSING` (`proxytool.py:2246`). Политика «проверять дорогой
+стадией, пока не наберётся N» написана и покрыта тестами, но не выбрана.
 
-**F17 — QR не проверен обратным декодированием.** `tests/test_qr.py` (21 строка)
-проверяет наличие `class="qr-svg"`, а не декодирование URL обратно. R20
-отмечал это два цикла подряд.
+**10. Интервальная сетка расписаний не переживает перезапуск.** Таблица
+`schedules` (`db.py:775-777`) несёт 11 колонок и не содержит `last_run_at`,
+`paused`, `pause_reason`, `dst_policy`, `catch_up`, `wake_gap_s`. Слияние
+пропущенных слотов после сна работает внутри процесса, но после рестарта
+интервальная сетка и накопленный бюджет теряются.
 
-**F28 и дефект 20 — клиентская валидация экспортов недостижима.**
-`ExportOptions.client_target`/`client_binary` не заполняются ни CLI, ни GUI, ни
-телом `POST /v1/exports`, поэтому `singbox_target(None)` всегда даёт
-`unconfigured/legacy` и каждый артефакт содержит legacy-конфиг. Настоящий
-бинарник sing-box в окружении нет, `client_check()` покрыт фейковыми
-исполняемыми файлами (exit 0 / exit 1). Fail-closed часть закрыта и проверена,
-версионная валидация — нет.
+**11. README отстал от флагов.** `--workers` описан как «128 workers» и «Raise
+`--workers`», хотя это теперь потолок. Флагов `--max-requests`,
+`--run-max-bytes`, `--count-what` и команды `bench` в README нет вовсе.
 
-**F26 — доступность и часть документации.** `SECURITY.md` и `CONTRIBUTING.md`
-не обновлены под `/v1` и менеджер ключей (0 совпадений). Клавиатурная навигация,
-screen reader labels, 200% zoom, reduced motion, browser E2E — не реализованы.
-Часть тестов (`test_qr.py`, `test_gui_collections_catalog.py`) проверяет исходный
-текст, а не поведение, что прямо запрещено MASTER-PROMPT §7.
+**12. LAN из интерфейса по-прежнему не включается.** `--lan` объявлен и
+предупреждение печатается, но `lan=True` не доходит до `gateway.Background`,
+а `Bind.__post_init__` без `lan=True` отвергает не-loopback адрес — слушатель
+просто не стартует.
 
-**F20 — дополнительные протоколы объявлены, но не реализованы.**
-WebSocket handshake, длительное соединение и media manifest/segment не сделаны;
-`capability_matrix()` честно помечает их неподдерживаемыми с объяснением, что
-F20 разрешает. Self-hosted reference probe (`probes.py:2248,2320`) есть.
+**13. `allow_private` в `POST /v1/collections` и `PATCH` принимается и молча
+выбрасывается** — в `api.py` это имя не встречается ни разу, в таблице
+`collections` такой колонки нет. Единственный единый сценарий нарушенной
+валидации, который остался.
 
-### 4.3 Дефект, который я нашёл при прогоне и не правил
+**14. `Workbench.country_criterion` / `filter_by_country` не имеют
+вызывающих**, а схема не держит exit-модель: `endpoints.hosting_basis`,
+`observations.exit_ip`, `pools.quota_basis` отсутствуют.
 
-`diagnose health` показывает **ложную тревогу**. Запуск на полностью исправной
-папке данных даёт `health: 5 checks, 5 problems`, хотя проверки `version`,
-`schema`, `job` и `freshness` проходят:
+**15. Периодического watch пулов нет** — `grep -rn "pools.watch"` даёт 0
+вызывающих. Наполнение работает по явному действию (CLI, API, интерфейс), но
+пул сам до N не восстанавливается.
 
-- `diagnostics.HealthCheck.to_dict()` (`diagnostics.py`) отдаёт булево поле под
-  ключом **`ok`**;
-- `proxytool.py:4157` считает проблемами элементы, у которых
-  `item.get('state') != 'ok'`, а поля `state` в словаре нет вовсе.
+**16. `db.upsert_endpoint` спрашивает схему на каждый вызов.** `db.columns()`
+(`:501-502`) не кэшируется; замерено на этой машине ≈7 мкс на `columns()` и
+≈33 мкс на весь вызов `upsert_endpoint`, то есть на 50 000 результатов только
+на `PRAGMA table_info` уходит около половины секунды. Нужен кэш.
 
-Проверено воспроизведением: `diagnostics.health_report(version='2.3.0',
-schema_version=15, max_age_seconds=7200).to_dict()` даёт
-`{'name': 'version', 'ok': True, ...}`, а подсчёт по `state != 'ok'` — 5 из 5.
+**17. `reputation.py` — в полёте, а не «не тронут».** До 12:01 он был нетронут
+и содержал два дефекта: разворот IPv6 через `address.exploded` с двоеточиями
+вместо точечных нибблов и правило «любой `127.*` = listed». В 12:01 параллельная
+правка перевела его на `probes.reverse_ip` и зональные коды, и в 12:17 обе
+строки в файле отсутствуют. Правка не закоммичена и живым DNSBL-запросом не
+проверена, поэтому пункт остаётся в списке «не подтверждено», а не «сломано».
 
-Дополнительно `_cmd_diagnose` не передаёт `scope=`, поэтому проверка scope
-падает по существу, а не из-за опечатки.
+**18. Per-key `concurrency` и квоты не работают.** `Principal.concurrency`
+записывается (`apiv1.py:546`) и больше нигде не читается; `QuotaGuard`
+(`apikeys.py:1494`) не имеет продуктового вызова; единственный
+`ConcurrencyLimiter` пер-серверный.
 
-`proxytool.py` в эту задачу мне не принадлежит, поэтому я не правил. Правка
-однострочная: фильтровать по `item.get('ok') is not True`.
+**19. Переводы отстают более чем на 350 ключей.** Встроенные `messages.en` и
+`messages.ru` содержат 1143 и 1217 ключей, а каждый из десяти пакетов
+`ui/i18n/*.js` — ровно 791. Новые экраны (менеджер ключей, импортёр, пулы и
+расписания, хранение) в пакетах отсутствуют, и `t()` (`app.js:2455-2462`)
+отдаёт для них английский текст.
+
+**20. Диагностики в интерфейсе нет.** `grep -c funnel proxy_workbench/ui/app.js`
+= 0: ни счётчиков воронки, ни объяснения «почему 0 результатов», ни кнопки
+диагностического пакета. Плюс `tests/test_qr.py` по-прежнему проверяет исходный
+текст вместо round-trip декодирования QR, а `SECURITY.md` и `CONTRIBUTING.md`
+не обновлены под `/v1` (0 совпадений).
+
+### 4.4 Внешние блокеры — закрыть нельзя, а не «готово»
+
+**21. Подпись и нотаризация macOS.** Signing credentials намеренно не
+создавались; `packaging/release_manifest.py` ставит флаг `signed` только после
+того, как инструмент подписи реально проверил файл, поэтому манифест честно
+отдаёт `"signed": false`. Подписанных артефактов нет вовсе. Статус
+`external_blocker`, а не «осталось нажать кнопку».
+
+**22. Пересборка macOS в этой среде невозможна.** `PyInstaller` в `.venv`
+отсутствует (проверено: `ModuleNotFoundError`), а установка требует сети.
+
+**23. Windows-сборка не проверялась ни разу.** Локальная машина — macOS arm64,
+`iscc` (Inno Setup) не установлен. Подтвердить может только Windows-runner.
+
+**24. Артефакты macOS отстают.** `/tmp/pw-dist/…` — версия **2.2.1 от
+25.09 21:49** при текущей `2.3.0`, то есть отстаёт на десятки коммитов. Даже
+после пересборки в нём не будет меню-бара, пока helper не положат в bundle
+(пункт 4).
+
+**25. `api_keys` и подписки.** `POST /v1/subscriptions` идёт тем же путём, что и
+`POST /v1/keys`, поэтому дефект из 4.1 задевает и его.
 
 ---
 
 ## 5. Реальные границы и экспериментальные зоны
 
-Без фиктивной готовности. Ничего из перечисленного не является «недоделкой со
-следующим релизом» — это зафиксированные границы.
-
 **Встроенные определения проб не проверены вживую.** `preset` сам печатает
 `live=never` для каждой записи: `google-204`, `youtube-204`, `cloudflare-trace`,
 `wikipedia-home`. Сетевые проверки запрещены условиями, поэтому определения
-помечены как непроверенные, а не как рабочие. Нужен один ручной прогон
-интегратора и простановка `verified_at`.
+помечены как непроверенные, а не как рабочие.
 
 **Скорость живых публичных прокси не измерена.** `INSUFFICIENT_SAMPLE` и
-раздельные замеры transfer/TTFB реализованы и покрыты локальными сценариями на
-фикстурах, но ни одного замера по реальному публичному адресу я не делал и не
-делаю — это запрещено. Синтетические бенчмарки `pipeline.py` нельзя читать как
+раздельные замеры transfer/TTFB реализованы и покрыты локальными сценариями,
+но ни одного замера по реальному публичному адресу я не делал и не делаю.
+Синтетические бенчмарки `pipeline.py` и команда `bench` нельзя читать как
 характеристику продукта.
 
-**Каталог сервисов частично — homepage-пробы.** Хост Steamworks API официальной
-документацией не подтверждён (пример на стороннем домене), Reddit Data API
-вернул 403, по TikTok и X неаутентифицированный эндпоинт не подтверждён. Все
-четыре — homepage-пробы с раскрытием в `not_proved`, а не проверки транспорта
-сервиса. Единственная исследовательная не-homepage добавка —
-`microsoft-oidc-discovery`, подтверждённый MS Learn.
+**F20 менялся на глазах.** В 11:56 WebSocket, длительное соединение и media были
+объявлены неподдерживаемыми — на этом держался весь предыдущий отчёт. В 12:16
+`probes.py` переписан: `run_websocket`, `run_duration`, `run_media`,
+`summarize_websocket`, `parse_media_manifest`, лимиты по умолчанию и эндпоинты
+reference probe `/ws`, `/hold`, `/manifest.m3u8`, `/segment/1` плюс три
+негативных. В 12:17 `capability_matrix()` отдаёт по ним `supported: True`.
+Прогонов этих проб я не делал, и `tests/test_probes_reference.py:218`, который
+всё ещё требует `supported == False`, на них падает. Не поддерживаются
+по-прежнему только `udp_transport` и `http2_or_http3`.
 
-**Рейтинг источников и предсказание качества — эвристика.** `hosting` —
-регулярное выражение по названию организации, а не доказательство
-residential/mobile; в данных это выразить нечем, так как колонки
-`hosting_basis` нет. Утилиты «редкость по числу URL» остаётся гипотезой.
+**Каталог сервисов частично — homepage-пробы.** Хост Steamworks API официальной
+документацией не подтверждён, Reddit Data API вернул 403, по TikTok и X
+неаутентифицированный эндпоинт не подтверждён. Все четыре — homepage-пробы с
+раскрытием в `not_proved`.
+
+**Рейтинг источников — эвристика.** `hosting` — регулярное выражение по
+названию организации, а не доказательство residential/mobile; выразить это в
+данных нечем, так как колонки `hosting_basis` нет.
 
 **Проверка в браузере не выполнялась.** Дефект 21 (скачивание файла) закрыт на
-уровне поведения функции под node со стабами `showSaveFilePicker`/`fetch`/
-`pipeTo`. Настоящего клика в Chromium не было — драйвера браузера в окружении
-нет. Внешний вид новых элементов тоже не снимался: сверка шла по DOM-контракту.
+уровне функции под node со стабами. Настоящего клика в Chromium не было,
+внешний вид новых элементов не снимался, drag-and-drop импортёра не
+проверялся. Драйвера браузера в окружении нет.
 
-**Частичная интеграция DNSBL.** Корректная реализация с dotted nibbles и
-зонными кодами живёт в `probes.py`, но старая осталась в `reputation.py`:
-`:184` по-прежнему разворачивает `address.exploded` с двоеточиями, `:237` считает
-любой `127.*` листингом. Владельцу `reputation.py` файл передан не был.
+**Хранение секретов.** macOS `security` CLI сознательно не используется
+(пароль попадает в argv). OS-vault не проверен вживую: `keyring` в этом `.venv`
+не установлен. macOS и Windows работают через session-адаптер.
 
-**Хранение секретов.** macOS `security` CLI сознательно не используется (пароль
-попадает в argv). Ключ OS-vault не проверен вживую: `keyring` в этом `.venv` не
-установлен, живой путь не заявляю. macOS и Windows работают через session-адаптер.
-
-**Research-идеи X01–X08 не превращены в обязательства.** Ни browser extension,
-ни мобильный web-доступ, ни VPN/TUN-адаптер, ни облачная синхронизация, ни
-adapter к поставщику с session-rotation API не писались. Обязательные их части
-выполнены там, где они входили в F29 (remote management: отдельные identity, audit
-log, revocation/expiry, LAN opt-in) и в F20 (self-hosted reference probe). Полная
-матрица с обоснованием по каждой — раздел 7 трассировки.
-
-**Тесты как доказательство.** `Ran 2437 tests` показывает согласованность
+**Тесты как доказательство.** `Ran 2480 tests` показывает согласованность
 дерева, а не полноту функций. Статус `verified` в таблице трассировки присвоен
-только тем 15 ID, где я в этой сессии увидел верный результат снаружи.
+только тем 16 ID, где я увидел верный результат снаружи.
 
 ---
 
 ## 6. Честный итог
 
-Программа научилась главному, за чем шёл пользователь: находить, проверять,
-организовывать и выдавать пригодные прокси, и управлять этим через CLI и
-версионированный `/v1` с ключами, правами и областями. Freshness проходит весь
-путь, выдача выделенного не трогает активный пул, пустой набор не выпускает
-трафик в интернет, пароль шлюза отделён от токена API, а копия базы и откат
-доступны с предпросмотром.
+Программа за этот цикл научилась тому, чего не умела: **прогон ведёт конвейер
+стадий с настоящими бюджетами** (`--max-requests` — реальный потолок, `--workers`
+— потолок, а не число воркеров, три единицы `--count-what` различаются и
+объясняют недостижимость); **интерфейс стал местом, где делаются настоящие
+вещи** — менеджер ключей, импорт с предпросмотром и отчётом по номерам строк,
+пулы и расписания, привязка шлюза, хранение с предпросмотром и четыре
+маршрута источников, которые раньше отвечали «ок» без работы; **миграции
+1..12 перестали быть бомбой** — копия `v14` в папке backups это доказывает;
+**перепривязка секрета отозвала старое доказательство**; **фоновый слой
+написан** — меню-бар, один экземпляр, opt-in автозапуск, сон и пробуждение.
 
-Чего нет: сравнения поставщиков (F21), фоновой работы с треем и sleep/wake
-(F22), аутентификации на самих прокси (F04-транспорт), менеджера ключей в
-интерфейсе (F29), исполняемого конвейера стадий (F12), единого критерия страны в
-API и GUI (F08) и поставочных артефактов на текущей ревизии с подписью
-(F23/дефект 26). Два из них — внешние блокеры: ключи подписи и PyInstaller
-отсутствуют, Windows-машины нет.
+Чего нет по-прежнему и что нельзя выдать за готовое: сравнение источников
+(F21) написано, но не подключено; меню-бар не попадает в собранное
+приложение (F22); аутентификация на самих прокси (F04-транспорт);
+клиентская валидация экспортов недостижима, потому что `client_target` не
+задаётся ниоткуда (F28); единый критерий страны не доведён до API и GUI (F08);
+поставочные артефакты отстают на десятки коммитов, подписи нет (F23/дефект 26).
+
+Три вещи, которые я нашёл и **не** починил, потому что файлы чужие, — и
+передал с точными правками: повторный выдача секрета ключа, ложная тревога
+`diagnose health` и кэш схемы в `db.py`. Первые две я воспроизвёл вживую, третью
+замерил.
+
+Из внешних блокеров три — подпись, отсутствие PyInstaller и отсутствие
+Windows-машины — закрыть в этой среде нельзя в принципе, и они отмечены как
+`external_blocker`, а не как «осталось доделать».
 
 Ни одно из этих «нет» не превращает остальное в неготовность, и ни одно не
 помечено как готовое.
