@@ -137,8 +137,10 @@ def _bundled_legacy_sources():
 def defaults():
     sources = _bundled_legacy_sources()
     catalog = source_catalog.load_bundled()
-    ids = [source_catalog.legacy_aliases(catalog)[spec] for spec in sources
-           if spec in source_catalog.legacy_aliases(catalog)]
+    # The alias map walks the whole catalog; building it once per call instead
+    # of twice per spec turned every settings read into ~110 catalog walks.
+    aliases = source_catalog.legacy_aliases(catalog)
+    ids = [aliases[spec] for spec in sources if spec in aliases]
     return dict(settings_version=3, targets=[dict(name='example.com', url='https://example.com/', statuses=[200],
                              contains='Example Domain', headers={}, method='GET')],
                 sources=sources, source_selection=dict(schema_version=1, catalog_revision=catalog['revision'],
