@@ -22,7 +22,12 @@ Rules this module keeps, because each of them was a defect or a requirement:
   separate, explicit ``on_deny`` policy (defect 19, R13);
 * the gateway password is a separate identity from the GUI session token and
   the API token, and the default bind stays on loopback (defect 18, R12,
-  CONTRACTS §5.1).
+  CONTRACTS §5.1);
+* an upstream credential is produced only by :mod:`proxy_workbench.secrets`
+  and lives only for the handshake that needs it, and a rejected credential is
+  **indistinguishable** from a missing one and from a dead proxy (F04, defect 1
+  of the area list: the listener used to speak to a password-protected proxy
+  without ever authenticating, so every such address failed forever).
 """
 from __future__ import annotations
 
@@ -31,6 +36,7 @@ import base64
 import contextlib
 import dataclasses
 import hmac
+import inspect
 import ipaddress
 import json
 import random
@@ -44,7 +50,7 @@ import time
 from collections import OrderedDict
 from pathlib import Path
 
-from . import geoip, reputation, socks4
+from . import geoip, reputation, secrets as secretstore, socks4
 from .api import Exports, is_loopback, select
 from .i18n import tr
 
@@ -80,6 +86,20 @@ HEALTH_PRIOR = 1.0
 CACHE_LIMIT = 256
 SESSIONS_LIMIT = 10_000
 MAX_CLIENTS = 512
+#: The one word recorded for an upstream the gateway could not use.
+#:
+#: A refused connection, a handshake that answered with garbage, a ``407`` and a
+#: wrong password are the same verdict on purpose: an observer of the pool must
+#: not be able to learn *why* one address is unusable, because "the proxy asked
+#: for a password we do not have" and "the proxy rejected the password we have"
+#: are the same kind of secret - whether the gateway holds a credential for a
+#: given address (see ``AccessCredentials``, and the ``407`` section of
+#: docs/integration/HANDOFF/area-gateway.md for the client-visible half).
+UNUSABLE = 'unusable'
+#: The wildcard a LAN listener binds when no address was named.  It is never a
+#: published address: :func:`display_host` replaces it with a real interface.
+LAN_WILDCARD_V4 = '0.0.0.0'
+LAN_WILDCARD_V6 = '::'
 
 
 class UpstreamError(Exception):
@@ -165,6 +185,13 @@ class Bind:
 
     ``lan`` is the explicit opt-in.  Without it only loopback is allowed, so
     the local default stays local and a phone needs a deliberate decision.
+
+    ``host`` is what the caller *asked for*; :attr:`listen_host` is the address
+    the socket really binds.  They differ in exactly one case, and the case is
+    the whole point of the opt-in: LAN with a loopback address means "open me
+    to the network", so the listener binds the wildcard and publishes a concrete
+    interface (:attr:`published_host`).  A caller that asked for a wildcard
+    without ``lan`` is refused in :meth:`__post_init__` instead.
     """
 
     host: str = DEFAULT_HOST
@@ -185,16 +212,40 @@ class Bind:
                                 'the LAN interface cannot be a loopback address.'))
 
     @property
+    def listen_host(self):
+        """The address ``asyncio.start_server`` is given.
+
+        With LAN on and no address of its own, the listener takes the wildcard
+        for the family the requested loopback address belongs to, so
+        ``--lan`` is a real opt-in rather than a flag that changes nothing.
+        With an interface chosen, only that address is bound.
+        """
+        if not self.lan:
+            return self.host
+        if self.interface:
+            return self.interface
+        if is_loopback(self.host):
+            return LAN_WILDCARD_V6 if ':' in self.host else LAN_WILDCARD_V4
+        return self.host
+
+    @property
     def local(self):
-        return is_loopback(self.host)
+        """Whether the listener is reachable only from this computer."""
+        return is_loopback(self.listen_host)
 
     @property
     def published_host(self):
-        """The address to hand to a client; loopback while LAN is off."""
-        return display_host(self.host, self.interface) if self.lan else self.host
+        """The address to hand to a client; loopback while LAN is off.
+
+        Derived from :attr:`listen_host`, not from ``host``: a LAN opt-in that
+        kept the default loopback address binds the wildcard, and publishing
+        ``127.0.0.1`` for it would hand a phone an address it cannot reach.
+        """
+        return display_host(self.listen_host, self.interface) if self.lan else self.host
 
     def as_dict(self):
         return dict(host=self.host, port=int(self.port), lan=self.lan, interface=self.interface,
+                    listen_host=self.listen_host, local=self.local,
                     published_host=self.published_host if self.lan else self.host)
 
 
@@ -239,19 +290,109 @@ class Binding:
         return scope
 
 
+class AccessCredentials:
+    """A row's access identity, resolved into the bytes one transport needs.
+
+    This is the F04 path the listener was missing: an endpoint that was
+    imported with its own username/password is dialled with that credential, so
+    ``import -> worker check -> scoped gateway`` is a real chain instead of a
+    promise.  Three rules keep it honest:
+
+    * the value is built by :func:`proxy_workbench.secrets.transport_credentials`
+      and by nothing else - the gateway has no second place that formats a
+      password, so no URL, log line, snapshot or exception can carry one;
+    * it is resolved for the exact ``(access_id, access_revision)`` the row
+      names, so a rotated password can never inherit the old one's evidence and
+      a superseded revision is refused rather than sent;
+    * an endpoint with *several* usable access identities is ambiguous, and an
+      ambiguous row gets no credential at all.  Two credentials of one address
+      are two identities (CONTRACTS §1.2(1)); merging them would be worse than
+      not authenticating.
+
+    Nothing here raises into the relay path.  A locked vault, a missing secret,
+    a wrong scheme or an ambiguous row all end as "no credential", and the
+    upstream then simply fails like any other unusable address - see
+    ``UNUSABLE`` for why that indistinguishability is deliberate.
+    """
+
+    def __init__(self, store, *, lock=None):
+        #: ``secrets.AccessStore``; its connection must allow the calling
+        #: thread, because the listener resolves off the event loop.
+        self.store = store
+        self.lock = lock or threading.RLock()
+        #: Local diagnostics only.  Deliberately absent from ``snapshot()``,
+        #: which the listener serves to anybody who may ask it.
+        self.problems = 0
+        self.resolved = 0
+
+    def _candidate(self, row):
+        """The access this row was measured with, or a refusal.
+
+        A row that names its access is taken at its word.  A row that only
+        names an endpoint - which is what ``api.public_row`` produces today -
+        is authenticated only when that endpoint has exactly one usable access;
+        several means ambiguous, because two credentials of one address are two
+        identities and merging them is worse than not authenticating.
+        """
+        access_id = row.get('access_id')
+        if access_id:
+            return self.store.require(access_id)
+        endpoint_id = row.get('endpoint_id')
+        if not endpoint_id:
+            # No reference at all: this row was never measured with a
+            # credential, which is the ordinary open-proxy case and not a fault.
+            return None
+        candidates = [access for access in self.store.list_for_endpoint(endpoint_id)
+                      if self.store.usable(access)]
+        if len(candidates) == 1:
+            return candidates[0]
+        if candidates:
+            raise secretstore.SecretConflictError(
+                'endpoint %s has more than one usable access' % endpoint_id,
+                action='let the row name the access it was measured with')
+        raise secretstore.SecretNotProvided(
+            'endpoint %s has no usable access' % endpoint_id,
+            action='re-enter the credential for this access')
+
+    def __call__(self, row, scheme):
+        with self.lock:
+            try:
+                access = self._candidate(row)
+                if access is None:
+                    return None
+                resolved = self.store.resolve(access.id, access_revision=row.get('access_revision'))
+                try:
+                    credentials = secretstore.transport_credentials(access, resolved, scheme=scheme)
+                finally:
+                    resolved.scrub()
+                if not credentials.authenticated:
+                    return None
+                self.resolved += 1
+                return credentials
+            except secretstore.SecretError:
+                self.problems += 1
+                return None
+
+    def as_json(self):
+        """A describable form for the local operator; never a credential."""
+        return dict(resolved=self.resolved, unavailable=self.problems)
+
+
 class Lease:
     """A held concurrency slot for one proxy.
 
     Released exactly once, whether the connection succeeded, failed or was
-    cancelled (defect 16).  ``with lease:`` is the safe form.
+    cancelled (defect 16).  ``with lease:`` is the safe form.  ``credentials``
+    rides along only until the request that needs it has been written.
     """
 
-    __slots__ = ('pool', 'proxy', 'taken_at', '_released')
+    __slots__ = ('pool', 'proxy', 'taken_at', 'credentials', '_released')
 
     def __init__(self, pool, proxy, now=None):
         self.pool = pool
         self.proxy = proxy
         self.taken_at = time.monotonic() if now is None else now
+        self.credentials = None
         self._released = False
 
     @property
@@ -259,6 +400,7 @@ class Lease:
         return self._released
 
     def release(self):
+        self.credentials = None
         if self._released:
             return
         self._released = True
@@ -340,6 +482,8 @@ class Pool:
         self.active = {}
         self.usage = {}
         self.health = {}
+        #: The last fault note per proxy; local diagnostics, never published.
+        self.reasons = {}
         self.sessions = {}
         self.position = 0
         self.key = None
@@ -350,6 +494,8 @@ class Pool:
         self.source_rows = []
         #: ``source_rows`` minus the denylist: what a client may be offered.
         self.rows = []
+        #: ``proxy`` -> row, for everything in :attr:`rows`.
+        self.index = {}
         #: (export key, export revision, denylist digest) the rows were built from.
         self.rows_stamp = None
         self.cache = OrderedDict()
@@ -417,6 +563,10 @@ class Pool:
         self.rows_stamp = stamp
         self.denied = denied
         self.rows = [row for row in self.source_rows if row['proxy'] not in denied]
+        # Selection hands out addresses; a credential needs the row.  The index
+        # is rebuilt with the rows, so it can never name a proxy the listener
+        # would not serve, and looking one up stays O(1) on every connect.
+        self.index = {row['proxy']: row for row in self.rows}
         self.cache.clear()
         # Session bindings are left in place on purpose.  A denied address is
         # no longer available, so a failover session re-binds to a working one
@@ -529,6 +679,17 @@ class Pool:
             return [proxy for proxy in self.matching(request, binding)
                     if self.resting.get(proxy, 0) <= now and self.allowed(proxy)
                     and (not limit or self.active.get(proxy, 0) < limit)]
+
+    def row_for(self, proxy):
+        """The published row behind one chosen proxy, or None.
+
+        Selection deals in addresses, but a credential belongs to the *access
+        identity* a row was measured with, so the relay looks the row up here
+        (F04).  Pure in-memory and O(1); a row that is not servable is not
+        served, so a denied proxy resolves to nothing.
+        """
+        with self.lock:
+            return self.index.get(proxy)
 
     def _limit(self, binding):
         if binding is not None and binding.policy.get('max_per_proxy'):
@@ -697,7 +858,22 @@ class Pool:
                     self.resting[proxy] = time.monotonic() + self.cooldown
                     self.failures.pop(proxy)
             if detail:
-                usage.setdefault('detail', detail)
+                # Kept beside the counters, deliberately *not* in the usage
+                # record that ``report()`` and the status page publish: a
+                # fault recorded while dialling and a fault recorded after the
+                # tunnel was up would otherwise be told apart by the mere
+                # presence of a word, which is the same leak as a different
+                # counter (see ``UNUSABLE``).
+                self.reasons[proxy] = detail
+
+    def reason(self, proxy):
+        """The local note on the last fault of one proxy, or None.
+
+        For an operator reading a log.  Never published: ``report()`` and
+        ``snapshot()`` stay identical for every unusable upstream.
+        """
+        with self.lock:
+            return self.reasons.get(proxy)
 
     def ok(self, proxy):
         """A target answered: the only evidence that counts as working."""
@@ -820,13 +996,32 @@ def http_status(head):
         return None
 
 
-async def open_tunnel(proxy, host, port, forward=False, ssl_context=None):
+def authorization_header(credentials):
+    """The ``Proxy-Authorization`` line for a resolved access, or ``''``.
+
+    An open proxy is the common case and it gets no header at all, which
+    :func:`proxy_workbench.secrets.proxy_authorization` expresses by returning
+    an empty string.
+    """
+    value = getattr(credentials, 'proxy_authorization', '') or ''
+    return 'Proxy-Authorization: %s' % value if value else ''
+
+
+async def open_tunnel(proxy, host, port, forward=False, ssl_context=None, credentials=None):
     """A stream to host:port through `proxy`, after the proxy's own handshake.
 
     With ``forward`` an HTTP proxy gets the plain request itself instead of a
     CONNECT tunnel, since many HTTP proxies allow CONNECT only to port 443.
     An ``https://`` upstream is reached over TLS with the proxy host name as
     the server name, so certificate verification stays on.
+
+    ``credentials`` is a :class:`proxy_workbench.secrets.TransportCredentials`,
+    built by :class:`AccessCredentials` from the row this proxy was picked
+    from.  It is used for the proxy's own handshake only - never for the
+    target - and the caller drops it as soon as those bytes are on the wire.
+    Every refusal here looks the same to the pool: a proxy that wants a
+    credential we do not have, a proxy that rejects the one we sent and a proxy
+    that is not an HTTP proxy at all are one verdict, ``UNUSABLE``.
     """
     scheme, _, address = proxy.partition('://')
     if scheme not in SUPPORTED:
@@ -846,12 +1041,20 @@ async def open_tunnel(proxy, host, port, forward=False, ssl_context=None):
             pass
         elif scheme in ('http', 'https'):
             target = f'[{host}]:{port}' if ':' in host else f'{host}:{port}'
-            writer.write(f'CONNECT {target} HTTP/1.1\r\nHost: {target}\r\n\r\n'.encode())
+            # RFC 7231: the credential belongs to the proxy, so it rides in the
+            # CONNECT the gateway makes on the client's behalf.
+            lines = [f'CONNECT {target} HTTP/1.1', f'Host: {target}']
+            if (header := authorization_header(credentials)):
+                lines.append(header)
+            writer.write(('\r\n'.join(lines) + '\r\n\r\n').encode())
             await writer.drain()
             status = http_status(await read_head(reader))
             if status != 200:
                 raise UpstreamError('CONNECT_REFUSED' if status is not None else 'CONNECT_REFUSED')
         elif scheme in ('socks4', 'socks4a'):
+            # SOCKS4 has no credential sub-negotiation, and F04 refuses to
+            # invent one: a row whose access is not a SOCKS4 identity simply
+            # gets no credential here.
             if scheme == 'socks4a':
                 # SOCKS4a: DSTIP 0.0.0.x marks a hostname in the USERID field.
                 name = host.encode('idna')
@@ -867,10 +1070,24 @@ async def open_tunnel(proxy, host, port, forward=False, ssl_context=None):
             except socks4.Socks4Error as exc:
                 raise UpstreamError(str(exc)) from None
         elif scheme in ('socks5', 'socks5h'):
-            writer.write(b'\x05\x01\x00')
+            # The offer is derived from the access, never widened: an access
+            # with a credential offers only 0x02, one without only 0x00.
+            greeting = getattr(credentials, 'socks5_greeting', b'') or b'\x05\x01\x00'
+            writer.write(greeting)
             await writer.drain()
-            if await read_exactly(reader, 2) != b'\x05\x00':
+            answer = await read_exactly(reader, 2)
+            if answer[0] != 5 or answer[1] not in (0, 2):
                 raise UpstreamError('SOCKS5_AUTH')
+            if answer[1] == 2:
+                # RFC 1929.  A rejection ends in the same error as "no
+                # acceptable method", so the pool cannot tell them apart.
+                auth = getattr(credentials, 'socks5_auth', b'')
+                if not auth:
+                    raise UpstreamError('SOCKS5_AUTH')
+                writer.write(auth)
+                await writer.drain()
+                if await read_exactly(reader, 2) != b'\x01\x00':
+                    raise UpstreamError('SOCKS5_AUTH')
             if scheme == 'socks5':
                 # socks5 resolves locally, socks5h lets the proxy do it.
                 host = await resolve(host, port)
@@ -961,11 +1178,28 @@ def split_target(value, default_port):
     return host, int(port)
 
 
+def credential_state(source):
+    """Describe the credential source of a listener without describing a secret.
+
+    Three shapes, because the caller may supply nothing, an
+    :class:`AccessCredentials` or a source of its own: what is published is
+    whether upstream authentication is possible at all and how many stored
+    credentials turned out to be unusable.
+    """
+    if source is None:
+        return dict(mode='none', resolved=0, unavailable=0)
+    described = getattr(source, 'as_json', None)
+    if callable(described):
+        return dict(mode='access-store', **described())
+    return dict(mode='external', resolved=0, unavailable=0)
+
+
 class Gateway:
     def __init__(self, pool, token=None, attempts=3, connect_timeout=8, idle_timeout=300,
                  allow_local_without_auth=False, *, handshake_timeout=30, response_timeout=15,
                  max_clients=MAX_CLIENTS, max_session=0, bind=None, token_origin=None,
-                 drain_timeout=2.0, ssl_context=None, refresh_interval=2.0):
+                 drain_timeout=2.0, ssl_context=None, refresh_interval=2.0,
+                 credentials=None, binding=None):
         self.pool = pool
         self.token = token
         self.token_origin = token_origin or ('explicit' if token else 'none')
@@ -985,6 +1219,16 @@ class Gateway:
         self.drain_timeout = drain_timeout
         self.ssl_context = ssl_context
         self.refresh_interval = float(refresh_interval)
+        #: ``row, scheme -> TransportCredentials | None``; see
+        #: :class:`AccessCredentials`.  ``None`` means this listener never
+        #: authenticates to an upstream, which is the correct behaviour for a
+        #: pool of open proxies.
+        self.credentials = credentials
+        if binding is not None:
+            # What one listener serves.  The pool holds it, so there is exactly
+            # one binding in force and no way for the GUI to store one that the
+            # listener ignores.
+            self.pool.default_binding = binding
         self.refresher = None
         # asyncio.Server.wait_closed() waits for listening sockets, not for
         # client handler tasks.  Track the latter so Background.close() can
@@ -995,7 +1239,72 @@ class Gateway:
         self.shutting_down = False
         self.closed_sessions = 0
 
+    @property
+    def binding(self):
+        """The binding this listener serves right now."""
+        return self.pool.default_binding
+
+    def set_binding(self, binding):
+        """Serve another pool/generation/profile, and say what that yields.
+
+        The GUI stores a pool choice and used to keep serving the default pool,
+        because the listener was built without it.  Applying it here makes the
+        choice real at run time, and the report tells the caller how many rows
+        the new binding can serve *right now* - a binding that pins a
+        generation the current export does not carry serves nothing, and saying
+        so is better than letting a client meet a 502 it cannot explain.
+        """
+        with self.pool.lock:
+            self.pool.default_binding = binding if binding is not None else Binding()
+            self.pool.cache.clear()
+            rows = len(self.pool.matching(None, self.pool.default_binding))
+        return dict(binding=self.pool.default_binding.as_dict(), rows=rows,
+                    generation=self.pool.generation,
+                    profile=(self.pool.status or {}).get('profile'))
+
+    async def aset_binding(self, binding):
+        """:meth:`set_binding` on the loop that owns the pool.
+
+        The install itself is in-memory and instant; it is a coroutine so the
+        caller can be sure it ran on the thread that serves the clients, which is
+        what ``Background`` does.
+        """
+        return self.set_binding(binding)
+
+    async def _credentials_for(self, proxy):
+        """Resolve the credential of the row this proxy was chosen from.
+
+        Off the event loop: the vault may be the OS keychain, and a locked
+        keychain can take seconds.  The whole call is inside the caller's
+        ``connect_timeout`` and the client's handshake deadline, so a slow store
+        costs this one client and never the listener.
+        """
+        source = self.credentials
+        if source is None:
+            return None
+        row = self.pool.row_for(proxy)
+        if row is None:
+            return None
+        scheme = proxy.partition('://')[0]
+        if scheme not in ('http', 'https', 'socks5', 'socks5h'):
+            return None
+        try:
+            if inspect.iscoroutinefunction(source):
+                return await source(row, scheme)
+            return await asyncio.to_thread(source, row, scheme)
+        except (secretstore.SecretError, OSError, ValueError, TypeError):
+            # An unusable credential is an unusable upstream, never a listener
+            # error: the client is told the same thing it is told for a dead
+            # proxy, and the pool records the same verdict.
+            return None
+
     # --- upstream selection --------------------------------------------------
+
+    async def _tunnel(self, proxy, host, port, forward):
+        credentials = await self._credentials_for(proxy)
+        stream = await open_tunnel(proxy, host, port, forward, ssl_context=self.ssl_context,
+                                   credentials=credentials)
+        return stream, credentials
 
     async def connect(self, host, port, forward=False, request=None, session=None, binding=None,
                       sticky=None):
@@ -1015,12 +1324,11 @@ class Gateway:
             self.pool.stats['retries'] += attempt > 0
             started = time.monotonic()
             try:
-                stream = await asyncio.wait_for(
-                    open_tunnel(proxy, host, port, forward, ssl_context=self.ssl_context),
-                    self.connect_timeout)
+                stream, credentials = await asyncio.wait_for(
+                    self._tunnel(proxy, host, port, forward), self.connect_timeout)
             except (OSError, UpstreamError, ValueError, UnicodeError) as exc:
                 lease.release()
-                self.pool.outcome(proxy, 'handshake_failed', detail=type(exc).__name__)
+                self.pool.outcome(proxy, 'handshake_failed', detail=UNUSABLE)
                 if session and sticky == 'strict':
                     break
                 continue
@@ -1028,6 +1336,10 @@ class Gateway:
                 # Cancellation and timeout both belong here: the slot must not leak.
                 lease.release()
                 raise
+            # The plain-HTTP path still has to write the credential onto the
+            # wire, so it rides on the lease and is dropped the moment the
+            # request is written.
+            lease.credentials = credentials
             self.pool.connected(proxy, (time.monotonic() - started) * 1000)
             return lease, stream
         self.pool.stats['failed'] += 1
@@ -1128,6 +1440,17 @@ class Gateway:
                 elif status == 407:
                     # The upstream wants its own credentials.  Through this
                     # gateway it is unusable, and resting it is correct.
+                    #
+                    # The answer is relayed as the upstream sent it, which is
+                    # this module's existing contract, and it leaks nothing about
+                    # *our* secret: "no credential for this address" and "the
+                    # credential we sent was rejected" produce the same bytes and
+                    # the same pool verdict (see ``UNUSABLE``).  The one
+                    # difference a client can see is against a proxy that is
+                    # simply not reachable, and that is a property of the
+                    # upstream address itself, which any observer could establish
+                    # without asking this listener.  See the handoff note
+                    # ``407`` for the stronger variant and what it would cost.
                     score('upstream_refused')
                 elif status >= 500:
                     # The upstream answered and the target did not.  Resting the
@@ -1185,6 +1508,9 @@ class Gateway:
             if task is not None:
                 self.streams.pop(task, None)
             upstream_writer.close()
+            # The credential has been on the wire or was never needed; either
+            # way it leaves with the slot.
+            lease.credentials = None
             lease.release()
             self.closed_sessions += 1
 
@@ -1300,8 +1626,14 @@ class Gateway:
             # predictable.  The request is written exactly once, after the tunnel
             # is up, and only to the upstream that owns this lease.
             target = absolute if lease.proxy.startswith(('http://', 'https://')) else path
-            payload = b'\r\n'.join([b' '.join([method, target.encode('ascii'), version or b'HTTP/1.1']), *kept,
-                                    b'Connection: close']) + b'\r\n\r\n'
+            # The client's own Proxy-Authorization was stripped above with the
+            # hop headers: it authenticates *this* listener, and the upstream
+            # gets the credential of the access this row was measured with, or
+            # none at all.
+            extra = [header.encode('ascii') for header in
+                     filter(None, (authorization_header(lease.credentials),))]
+            payload = b'\r\n'.join([b' '.join([method, target.encode('ascii'), version or b'HTTP/1.1']),
+                                    *kept, *extra, b'Connection: close']) + b'\r\n\r\n'
             return lease, upstream, payload, 'forward'
         except BaseException:
             self._discard(lease, upstream)
@@ -1411,7 +1743,16 @@ class Gateway:
     def state(self):
         """Visible state of the listener: bind, identity and policy, no secrets."""
         return dict(self.pool.state(), bind=self.bind.as_dict(),
+                    listen_address=self.listen_address(),
                     token_origin=self.token_origin, authenticated=bool(self.token),
+                    lan=self.bind.lan, reachable_from_lan=self.reachable_from_lan,
+                    interfaces=lan_interfaces(),
+                    # Whether upstream authentication is even possible for this
+                    # listener, and how often a stored credential was not
+                    # usable.  Deliberately NOT part of ``snapshot()``, which the
+                    # listener serves to anybody who asks; ``state()`` is the
+                    # local operator's view.  No value is ever published.
+                    credentials=credential_state(self.credentials),
                     handshake_timeout=self.handshake_timeout, connect_timeout=self.connect_timeout,
                     idle_timeout=self.idle_timeout, max_session=self.max_session,
                     max_clients=self.max_clients, clients=len(self.tasks),
@@ -1419,6 +1760,23 @@ class Gateway:
                     closing=self.shutting_down, supported=list(SUPPORTED),
                     strategies=list(STRATEGIES), sticky_modes=list(STICKY_MODES),
                     revoke_policies=list(REVOKE_POLICIES))
+
+    def listen_address(self):
+        """``host:port`` the socket really bound, brackets for IPv6."""
+        host = self.bind.listen_host
+        return f'[{host}]:{self.bind.port}' if ':' in host else f'{host}:{self.bind.port}'
+
+    @property
+    def reachable_from_lan(self):
+        """Whether another machine on this network can actually use the listener.
+
+        F17 asks for a visible difference between a local proxy and a phone
+        connection.  All three conditions are required: the bind is not
+        loopback, LAN was asked for, and a password exists - a listener that
+        other machines can reach without one is not a phone connection, it is
+        an open relay.
+        """
+        return bool(self.bind.lan and not self.bind.local and self.token)
 
     async def refresh_loop(self, interval=None):
         """Follow the current export without reading a file on the event loop.
@@ -1445,10 +1803,48 @@ def _left(deadline):
     return left
 
 
+def resolve_bind(host, port, lan=None, bind=None, interface=None):
+    """One bind out of the ways a caller may ask for it.
+
+    ``bind=`` wins and ``lan=`` must agree with it, so a contradictory pair is
+    refused rather than half-applied.  Without either, LAN is off and the
+    listener stays on loopback.  ``interface`` chooses which adapter a LAN
+    listener binds and publishes; it is meaningless without the opt-in, so it is
+    refused rather than quietly ignored.
+    """
+    if interface is not None and not (lan or (bind is not None and bind.lan)):
+        raise ValueError(tr('Интерфейс LAN требует явного включения LAN (lan=True).',
+                            'a LAN interface requires the explicit opt-in (lan=True).'))
+    if bind is None:
+        return Bind(host=host, port=port, lan=bool(lan) if lan is not None else False,
+                    interface=interface)
+    if lan is not None and bool(lan) != bind.lan:
+        raise ValueError(tr('bind.lan противоречит аргументу lan.', 'bind.lan contradicts the lan argument.'))
+    if interface is not None and interface != bind.interface:
+        raise ValueError(tr('Интерфейс противоречит bind.interface.',
+                            'interface contradicts bind.interface.'))
+    return bind
+
+
+def listener_binding(binding, default_binding=None):
+    """The one binding a listener serves, or a refusal when two disagree.
+
+    A GUI stores a pool choice and a caller may also pass the pool's own
+    default.  Silently preferring one of them is how a listener ends up serving
+    a pool the user did not pick, so two different answers are an error.
+    """
+    if binding is None:
+        return default_binding
+    if default_binding is not None and default_binding.as_dict() != binding.as_dict():
+        raise ValueError(tr('Указаны разные привязки шлюза.', 'Two different gateway bindings were given.'))
+    return binding
+
+
 async def start(data, host=DEFAULT_HOST, port=DEFAULT_PORT, token=None, filters=None,
                 strategy='round-robin', max_per_proxy=0, session_ttl=600, *, bind=None, lan=None,
-                sticky='failover', denylist=None, denylist_path=None, denylist_normalizer=None,
-                on_deny='keep', bindings=None, default_binding=None,
+                interface=None, sticky='failover', denylist=None, denylist_path=None, denylist_normalizer=None,
+                on_deny='keep', bindings=None, default_binding=None, binding=None,
+                credentials=None,
                 handshake_timeout=30, max_clients=MAX_CLIENTS,
                 max_session=0, cache_limit=CACHE_LIMIT, attempts=3, connect_timeout=8,
                 idle_timeout=300, refresh_interval=2.0, response_timeout=15,
@@ -1457,15 +1853,18 @@ async def start(data, host=DEFAULT_HOST, port=DEFAULT_PORT, token=None, filters=
 
     A non-loopback address needs ``lan=True`` (or ``bind=Bind(lan=True)``) and its
     own password.  When none is given, a dedicated one is generated here - never
-    the GUI session token and never the API token.
+    the GUI session token and never the API token.  With ``lan=True`` and a
+    loopback address the listener binds the wildcard instead, because asking for
+    LAN and getting a loopback socket back is the bug this closes.
+
+    ``binding`` is the pool, generation, profile and policy this listener
+    serves; ``credentials`` resolves a chosen row's access identity into the
+    bytes the upstream handshake needs (see :class:`AccessCredentials`).
     """
-    if bind is None:
-        # LAN is off unless it was asked for, so the local default stays local.
-        bind = Bind(host=host, port=port, lan=bool(lan) if lan is not None else False)
-    elif lan is not None and bool(lan) != bind.lan:
-        raise ValueError(tr('bind.lan противоречит аргументу lan.', 'bind.lan contradicts the lan argument.'))
+    bind = resolve_bind(host, port, lan, bind, interface)
     origin = 'none'
     token, origin = resolve_token(bind, token)
+    default_binding = listener_binding(binding, default_binding)
     pool = Pool(data, filters, strategy, max_per_proxy=max_per_proxy, session_ttl=session_ttl,
                 sticky=sticky, denylist=denylist, denylist_path=denylist_path,
                 denylist_normalizer=denylist_normalizer, on_deny=on_deny,
@@ -1479,11 +1878,12 @@ async def start(data, host=DEFAULT_HOST, port=DEFAULT_PORT, token=None, filters=
                       allow_local_without_auth=bind.lan and not bind.local,
                       handshake_timeout=handshake_timeout, max_clients=max_clients,
                       max_session=max_session, bind=bind, token_origin=origin,
-                      refresh_interval=refresh_interval, response_timeout=response_timeout)
+                      refresh_interval=refresh_interval, response_timeout=response_timeout,
+                      credentials=credentials)
     # The first read happens before the listener opens, off the loop, so the very
     # first client already sees a real generation.
     await pool.arefresh()
-    server = await asyncio.start_server(gateway.handle, bind.host, bind.port, limit=MAX_HEAD)
+    server = await asyncio.start_server(gateway.handle, bind.listen_host, bind.port, limit=MAX_HEAD)
     server.gateway = gateway
     server.bind = bind
     gateway.refresher = asyncio.get_running_loop().create_task(gateway.refresh_loop())
@@ -1495,17 +1895,12 @@ class Background:
 
     def __init__(self, data, host=DEFAULT_HOST, port=DEFAULT_PORT, token=None, **options):
         self.loop = asyncio.new_event_loop()
-        bind = options.pop('bind', None)
-        lan = options.pop('lan', None)
-        if bind is None:
-            # LAN is off unless it was asked for, so the local default stays local.
-            bind = Bind(host=host, port=port, lan=bool(lan) if lan is not None else False)
-        elif lan is not None and bool(lan) != bind.lan:
-            raise ValueError(tr('bind.lan противоречит аргументу lan.',
-                                'bind.lan contradicts the lan argument.'))
+        bind = resolve_bind(host, port, options.pop('lan', None), options.pop('bind', None),
+                            options.pop('interface', None))
         self.bind = bind
         self.server = self.loop.run_until_complete(start(data, bind=bind, token=token, **options))
         self.host = bind.host
+        self.listen_host = bind.listen_host
         self.display_host = bind.published_host
         self.token = self.server.gateway.token
         self.token_origin = self.server.gateway.token_origin
@@ -1516,9 +1911,26 @@ class Background:
         self._closed = False
         self.shutdown_report = None
 
+    @property
+    def gateway(self):
+        return self.server.gateway
+
     def state(self):
         """The same visible state the GUI and the API show; no secret values."""
         return dict(self.server.gateway.state(), port=self.port, interfaces=lan_interfaces())
+
+    def set_binding(self, binding):
+        """Apply a stored pool choice to the running listener.
+
+        The GUI validates and stores a binding in ``POST /api/gateway/config``
+        and then rebuilds the listener; this is the path for a caller that would
+        rather not restart, and it reports the same way a fresh listener would:
+        how many rows the new binding can serve right now.
+        """
+        if self._closed:
+            raise ValueError('the gateway is closed')
+        return asyncio.run_coroutine_threadsafe(
+            self.server.gateway.aset_binding(binding), self.loop).result(5)
 
     def close(self):
         if self._closed:
