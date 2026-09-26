@@ -142,11 +142,22 @@ process.stdout.write(url);
         self.assertEqual(ws.decode_qr(ws.make_qr(url)), url)
 
     def test_the_qr_never_carries_the_gui_or_api_secret(self):
+        class FakeGateway:
+            # Background exposes the Gateway itself, and App.gateway_state reads
+            # `runner.gateway` for LAN reachability, so the double carries it.
+            reachable_from_lan = False
+
+            class pool:
+                @staticmethod
+                def snapshot(top=5):
+                    return {'available': 3, 'items': []}
+
         class FakeRunner:
             port = 8899
             host = '127.0.0.1'
             display_host = '127.0.0.1'
             token = FIXTURE_PASSWORD
+            gateway = FakeGateway()
 
             class server:
                 class gateway:
