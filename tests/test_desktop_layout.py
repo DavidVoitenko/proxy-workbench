@@ -153,7 +153,7 @@ class WritableFolderTests(unittest.TestCase):
                 desktop.ensure_layout(desktop.Layout(Path('/nope'), Path('/nope'), Path('/nope'),
                                                     'per-user', Path('/nope'), 'test'))
         message = str(caught.exception)
-        self.assertIn('/nope', message)
+        self.assertIn(str(Path('/nope')), message)
         self.assertIn(desktop.DATA_ENV, message)
 
 
@@ -161,21 +161,22 @@ class WorkerCommandTests(unittest.TestCase):
     """A frozen build has no module to import, so the command must be the binary."""
 
     def test_frozen_worker_is_the_executable_itself(self):
+        program = temp('Program Files', 'app.exe')
         with mock.patch.object(desktop, 'frozen', return_value=True):
-            command = desktop.worker_command('scan', '--data', '/tmp/d', executable='/opt/app/app')
-        self.assertEqual(command, ['/opt/app/app', 'scan', '--data', '/tmp/d'])
+            command = desktop.worker_command('scan', '--data', '/tmp/d', executable=program)
+        self.assertEqual(command, [str(program), 'scan', '--data', '/tmp/d'])
 
     def test_source_worker_uses_the_module_entry_point(self):
         with mock.patch.object(desktop, 'frozen', return_value=False):
-            command = desktop.worker_command('scan', executable='/usr/bin/python3')
-        self.assertEqual(command, ['/usr/bin/python3', '-u', '-m', 'proxy_workbench', 'scan'])
+            command = desktop.worker_command('scan', executable=sys.executable)
+        self.assertEqual(command, [str(Path(sys.executable)), '-u', '-m', 'proxy_workbench', 'scan'])
 
     def test_child_environment_points_the_worker_at_the_resolved_folders(self):
         layout = desktop.Layout(Path('/d'), Path('/c'), Path('/l'), 'per-user', Path('/d'), 'test')
         env = desktop.child_environment(layout, base={'PATH': '/bin'})
-        self.assertEqual(env[desktop.DATA_ENV], '/d')
-        self.assertEqual(env[desktop.CACHE_ENV], '/c')
-        self.assertEqual(env[desktop.LOGS_ENV], '/l')
+        self.assertEqual(env[desktop.DATA_ENV], str(layout.data))
+        self.assertEqual(env[desktop.CACHE_ENV], str(layout.cache))
+        self.assertEqual(env[desktop.LOGS_ENV], str(layout.logs))
         self.assertEqual(env['PYTHONUTF8'], '1')
         self.assertEqual(env['PATH'], '/bin')
 
@@ -206,15 +207,17 @@ class ResourceTests(unittest.TestCase):
             self.assertEqual(desktop.resource_root(), desktop.PACKAGE)
 
     def test_macos_bundle_is_two_levels_above_the_executable(self):
-        path = Path('/Applications/Proxy Workbench.app/Contents/MacOS/Proxy Workbench')
-        self.assertEqual(desktop.macos_bundle(path), Path('/Applications/Proxy Workbench.app'))
+        bundle = temp('Applications', 'Proxy Workbench.app')
+        path = bundle / 'Contents' / 'MacOS' / 'Proxy Workbench'
+        self.assertEqual(desktop.macos_bundle(path), bundle)
 
     def test_a_plain_executable_has_no_bundle(self):
         self.assertIsNone(desktop.macos_bundle(Path('/opt/proxy-workbench/proxy-workbench')))
 
     def test_portable_root_is_the_bundle_a_user_would_move(self):
-        path = Path('/Applications/Proxy Workbench.app/Contents/MacOS/Proxy Workbench')
-        self.assertEqual(desktop.portable_root(path), Path('/Applications/Proxy Workbench.app'))
+        bundle = temp('Applications', 'Proxy Workbench.app')
+        path = bundle / 'Contents' / 'MacOS' / 'Proxy Workbench'
+        self.assertEqual(desktop.portable_root(path), bundle)
 
 
 if __name__ == '__main__':

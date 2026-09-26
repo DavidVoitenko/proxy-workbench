@@ -13,6 +13,7 @@ accidentally build a row the running program could not have written.
 from __future__ import annotations
 
 import json
+from itertools import islice
 import sqlite3
 
 from proxy_workbench import core, db
@@ -44,9 +45,21 @@ def add_candidate(conn, values, *, collection_id=None, origin='public'):
 
 
 def add_candidates(conn, rows, *, collection_id=None, origin='public'):
-    """Add many addresses from an iterable of strings or one-element tuples."""
-    for row in rows:
-        add_candidate(conn, row, collection_id=collection_id, origin=origin)
+    """Add a streaming fixture in bounded transactions, keeping a caller's transaction."""
+    rows = iter(rows)
+    while batch := tuple(islice(rows, 500)):
+        # The engine connection uses autocommit. Without a transaction, a large
+        # fixture flushes three separate writes per address and spends minutes
+        # preparing the test on Windows before the first probe can run.
+        conn.execute('SAVEPOINT workbench_fixture_candidates')
+        try:
+            for row in batch:
+                add_candidate(conn, row, collection_id=collection_id, origin=origin)
+        except BaseException:
+            conn.execute('ROLLBACK TO SAVEPOINT workbench_fixture_candidates')
+            raise
+        finally:
+            conn.execute('RELEASE SAVEPOINT workbench_fixture_candidates')
 
 
 def mark_seen(conn, values, source=None, *, collection_id=None):

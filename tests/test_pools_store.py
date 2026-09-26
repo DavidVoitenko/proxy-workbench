@@ -6,6 +6,7 @@ proves this module never declares DDL of its own.
 from __future__ import annotations
 
 import json
+from contextlib import closing
 import sqlite3
 import tempfile
 import unittest
@@ -85,6 +86,7 @@ class TargetStateTest(PoolTestCase):
         self.create_pool(desired=4, minimum=2, reserve=3)
         self.store.close()
         self.store = pools.PoolStore.open(self.path)
+        self.addCleanup(self.store.close)
 
         spec = self.store.get('main')
         self.assertEqual((spec.desired, spec.minimum, spec.reserve), (4, 2, 3))
@@ -191,6 +193,7 @@ class StatusTest(PoolTestCase):
         pools.refill(self.store, 'main', FakeSource(), now=self.now)
         self.store.close()
         self.store = pools.PoolStore.open(self.path)
+        self.addCleanup(self.store.close)
 
         spec = self.store.get('main')
         self.assertEqual(spec.state, pools.STATE_EMPTY)
@@ -210,7 +213,7 @@ class StatusTest(PoolTestCase):
         blob = Path(self.path).read_bytes()
         self.assertNotIn(CANARY.encode(), blob,
                          'a pool stores an endpoint id, never a URL with anything after it')
-        with sqlite3.connect(str(self.path)) as check:
+        with closing(sqlite3.connect(str(self.path))) as check:
             rows = check.execute('SELECT policy_json FROM pools').fetchall()
         self.assertNotIn(CANARY, rows[0][0])
 

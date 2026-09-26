@@ -91,13 +91,17 @@ class RegistryBehaviourTests(unittest.TestCase):
         return False
 
     def served(self):
-        return pools.PoolStore.open(self.data / db.DB_FILENAME).status('main').served
+        store = pools.PoolStore.open(self.data / db.DB_FILENAME)
+        try:
+            return store.status('main').served
+        finally:
+            store.close()
 
     def ticks(self):
         return self.registry.status()['watching'].get('main', {}).get('ticks', 0)
 
     def test_a_started_pool_recovers_on_its_own(self):
-        self.assertEqual(pools.PoolStore.open(self.data / db.DB_FILENAME).status('main').served, 0)
+        self.assertEqual(self.served(), 0)
         self.registry.start('main', source_factory=self.source_factory)
         self.assertTrue(self.wait_for(lambda: self.served() == 5),
                         f'the watch never filled the pool, served={self.served()}')
@@ -144,6 +148,7 @@ class RegistryBehaviourTests(unittest.TestCase):
 
     def test_a_tick_spends_at_most_the_budget_it_was_given(self):
         store = pools.PoolStore.open(self.data / db.DB_FILENAME)
+        self.addCleanup(store.close)
         spec = store.require('main')
         self.assertEqual(spec.policy.refill_budget, 20)
         # One admission per tick against a target of five: the pool can only

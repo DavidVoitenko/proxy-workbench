@@ -72,10 +72,10 @@ class PlanTests(unittest.TestCase):
         (source / 'proxies.sqlite3').write_bytes(b'sqlite')
         (source / 'gui-settings.json').write_text('{"a": 1}', encoding='utf-8')
         (source / 'exports').mkdir()
-        (source / 'exports' / 'proxies.txt').write_text('http://127.0.0.1:80\n', encoding='utf-8')
+        (source / 'exports' / 'proxies.txt').write_bytes(b'http://127.0.0.1:80\n')
 
         plan = desktop.plan_migration(layout_for(root), source=source, now=1_700_000_000)
-        self.assertEqual(sorted(str(name) for name, _ in plan.items),
+        self.assertEqual(sorted(name.as_posix() for name, _ in plan.items),
                          ['exports/proxies.txt', 'gui-settings.json', 'proxies.sqlite3'])
         self.assertEqual(plan.total_bytes, 34)
         self.assertFalse((root / 'data-copy').exists())

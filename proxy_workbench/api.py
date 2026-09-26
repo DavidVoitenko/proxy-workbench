@@ -3750,6 +3750,7 @@ def key_manager(data, db_path=None):
     """
     from . import proxytool as engine
     path = Path(db_path) if db_path else Path(data) / 'proxies.sqlite3'
+    conn = None
     try:
         conn = sqlite3.connect(path, isolation_level=None, check_same_thread=False)
         conn.row_factory = sqlite3.Row
@@ -3761,6 +3762,8 @@ def key_manager(data, db_path=None):
         apikeys.ensure_schema(conn)
         return apikeys.ApiKeyManager(conn)
     except (sqlite3.Error, OSError, apikeys.ApiKeyError, ValueError):
+        if conn is not None:
+            conn.close()
         return None
 
 
@@ -3781,7 +3784,13 @@ def make_control_api(data, host='127.0.0.1', port=V1_DEFAULT_PORT, token=None,
     manager = key_manager(data)
     service = WorkbenchService(data)
     keys = LegacyKeyStore(token, manager)
-    server = apiv1.make_server(service=service, keys=keys, host=host, port=port, **options)
+    try:
+        server = apiv1.make_server(service=service, keys=keys, host=host, port=port, **options)
+    except BaseException:
+        if manager is not None:
+            manager.conn.close()
+        raise
+    server = _with_key_manager(server, manager)
     return _with_job_runner(server, data) if execute_jobs else server
 
 
@@ -3953,12 +3962,37 @@ def make_api_server(data, host='127.0.0.1', port=DEFAULT_PORT, token=None, v1=Tr
                     'stale': status.get('stale', False), 'proxies': selected}
             return self.send_json(200, body, headers=notice)
 
-    server = ThreadingHTTPServer((host, port), Handler)
+    try:
+        server = ThreadingHTTPServer((host, port), Handler)
+    except BaseException:
+        if manager is not None:
+            manager.conn.close()
+        raise
     server.daemon_threads = True
     server.control_api = control
     server.exports = exports
     server.workbench_service = service
+    server = _with_key_manager(server, manager)
     return _with_job_runner(server, data) if execute_jobs else server
+
+
+def _with_key_manager(server, manager):
+    """Release the server-owned SQLite connection on every close path."""
+    original_close = server.server_close
+    closed = False
+
+    def server_close():
+        nonlocal closed
+        try:
+            return original_close()
+        finally:
+            if not closed:
+                closed = True
+                if manager is not None:
+                    manager.conn.close()
+
+    server.server_close = server_close
+    return server
 
 
 def _with_job_runner(server, data):

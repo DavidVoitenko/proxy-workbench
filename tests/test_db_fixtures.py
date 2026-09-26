@@ -13,7 +13,9 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from proxy_workbench import db
+from proxy_workbench import proxytool
 from tests.fixtures import admission
+from tests.workbench_support import add_candidates
 
 #: Documentation (RFC 5737) and reserved TLD (RFC 2606) only. The shared fixture
 #: must not name a routable address, so no module can be tempted into a live check.
@@ -110,6 +112,52 @@ class AdmissionFixtureTests(unittest.TestCase):
         preview = db.retention_preview(
             conn, db.RetentionPolicy(max_age_seconds=admission.HOUR), now=admission.NOW)
         self.assertEqual(preview.rows_for("results"), 1)
+
+
+class CandidateFixtureTests(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.conn = proxytool.open_db(Path(temp.name) / db.DB_FILENAME)
+        self.addCleanup(self.conn.close)
+
+    def test_bulk_fixture_writes_are_transactional_on_an_autocommit_connection(self):
+        transactions = []
+
+        def trace(statement):
+            if statement.startswith('INSERT OR IGNORE INTO candidates'):
+                transactions.append(self.conn.in_transaction)
+
+        self.conn.set_trace_callback(trace)
+        add_candidates(self.conn, (f'http://192.0.2.1:{port}' for port in range(1000, 2017)))
+        self.conn.set_trace_callback(None)
+        self.assertEqual(len(transactions), 1017)
+        self.assertTrue(all(transactions))
+        self.assertFalse(self.conn.in_transaction)
+        self.assertEqual(self.conn.execute('SELECT count(*) FROM candidates').fetchone()[0], 1017)
+
+    def test_bulk_fixture_does_not_commit_the_callers_transaction(self):
+        self.conn.execute('BEGIN')
+        add_candidates(self.conn, ['http://192.0.2.1:8080'])
+        self.assertTrue(self.conn.in_transaction)
+        self.conn.rollback()
+        self.assertEqual(self.conn.execute('SELECT count(*) FROM candidates').fetchone()[0], 0)
+        self.assertEqual(self.conn.execute('SELECT count(*) FROM endpoints').fetchone()[0], 0)
+
+    def test_a_failed_fixture_rolls_back_its_batch_and_preserves_outer_work(self):
+        self.conn.execute('BEGIN')
+        collection = db.create_collection(self.conn, 'Caller work')
+        self.conn.execute('SAVEPOINT caller')
+        with self.assertRaises(ValueError):
+            add_candidates(self.conn, ['http://192.0.2.1:8080', ('invalid', 'tuple')])
+        self.assertTrue(self.conn.in_transaction)
+        self.assertEqual(self.conn.execute('SELECT count(*) FROM candidates').fetchone()[0], 0)
+        self.assertEqual(self.conn.execute('SELECT count(*) FROM endpoints').fetchone()[0], 0)
+        self.assertIsNotNone(db.get_collection(self.conn, collection))
+        self.conn.execute('RELEASE SAVEPOINT caller')
+        add_candidates(self.conn, ['http://192.0.2.2:8080'])
+        self.conn.rollback()
+        self.assertEqual(self.conn.execute('SELECT count(*) FROM candidates').fetchone()[0], 0)
 
 
 if __name__ == '__main__':

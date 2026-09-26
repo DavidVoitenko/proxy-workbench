@@ -4,6 +4,7 @@ A cleanup removes runtime artifacts, keeps the user's own settings, and never
 touches secret material.
 """
 from pathlib import Path
+from unittest import mock
 import sqlite3
 import sys
 import tempfile
@@ -99,7 +100,17 @@ class RetentionTests(unittest.TestCase):
         self.assertEqual(len(remaining), 3)
         self.assertTrue(any(row[0] is None for row in remaining))
         self.assertFalse(report.vacuumed)
-        self.assertGreater(report.freed_bytes, 0)
+        self.assertEqual(report.freed_bytes, max(
+            0, report.database_bytes_before - report.database_bytes_after))
+
+    def test_cleanup_does_not_claim_the_remaining_table_was_freed(self):
+        self.seed()
+        with mock.patch.object(db, 'table_bytes', return_value=1_000_000), \
+                mock.patch.object(db, 'database_bytes', return_value=4096):
+            report = db.apply_retention(self.conn, db.RetentionPolicy(), now=self.now)
+        self.assertEqual(dict(report.deleted)['results'], 3)
+        self.assertEqual(self.count('results'), 3)
+        self.assertEqual(report.freed_bytes, 0)
 
     def test_max_age_alone_keeps_rows_that_are_not_expired_yet(self):
         self.seed()

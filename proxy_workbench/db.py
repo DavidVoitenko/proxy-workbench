@@ -2011,7 +2011,7 @@ def apply_retention(conn, policy=None, *, now=None, vacuum=False):
     before = database_bytes(_database_file(conn))
     preview = retention_preview(conn, policy, now=now)
     blocked = {name: blockers for name, blockers, _rows in preview.blocked}
-    deleted, freed = [], 0
+    deleted = []
     for table, _column, rows, _oldest, _newest in preview.targets:
         # A table the plan could not free is refused before anything is deleted, and
         # the refusal comes from the preview's own map -- the same computed fact the
@@ -2026,7 +2026,6 @@ def apply_retention(conn, policy=None, *, now=None, vacuum=False):
         delete, where = _retention_sql(table, policy, now)
         if where is None or not rows:
             continue
-        freed += table_bytes(conn, table) or 0
         conn.execute("BEGIN IMMEDIATE")
         try:
             conn.execute(delete)
@@ -2039,8 +2038,11 @@ def apply_retention(conn, policy=None, *, now=None, vacuum=False):
     if vacuum and deleted:
         conn.execute("VACUUM")
         vacuumed = True
-    return RetentionReport(tuple(deleted), freed, before,
-                           database_bytes(_database_file(conn)), vacuumed, preview)
+    after = database_bytes(_database_file(conn))
+    # DELETE may only make pages reusable; it need not shrink the file, and
+    # WAL can grow during cleanup. Never report a whole table as freed space.
+    return RetentionReport(tuple(deleted), max(0, before - after), before,
+                           after, vacuumed, preview)
 
 
 #: Never removed by a cleanup: user settings and the denylist are the user's own files

@@ -95,6 +95,7 @@ class AuditContentTests(AuditTestCase):
     def test_the_log_is_bounded(self):
         bounded = support.manager(support.connect(self.tmp.name, 'bounded.db'),
                                   self.clock, audit_retention=10)
+        self.addCleanup(bounded.conn.close)
         admin = bounded.bootstrap_admin(local_trusted=True, name='admin')
         principal = bounded.authenticate(admin.secret)
         for index in range(40):

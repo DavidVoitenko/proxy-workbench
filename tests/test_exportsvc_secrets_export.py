@@ -51,6 +51,7 @@ class SecretExportTests(unittest.TestCase):
         self.db.commit()
 
         self.manager = api.key_manager(self.home)
+        self.addCleanup(self.manager.conn.close)
         self.service = api.WorkbenchService(self.home,
                                             exports=api.Exports(self.home / 'exports'),
                                             key_store=self.manager)
