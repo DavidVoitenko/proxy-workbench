@@ -2380,7 +2380,26 @@ class Scheduler:
             })
         return {'at': now, 'power': signal.to_dict(), 'schedules': items,
                 'notifications': [item.to_dict() for item in self.notifier.sent],
-                'suppressed': self.notifier.suppressed_count()}
+                'suppressed': self.notifier.suppressed_count(),
+                'persistence': self.persistence()}
+
+    def persistence(self) -> dict:
+        """What survives a restart on the store this scheduler is talking to.
+
+        A budget that silently resets is worse than no budget: the user reads the
+        counter, trusts it, and a restart hands the whole limit back.  So the two
+        runtime facts — the pause and the period counters — are reported as *lost*
+        rather than quietly defaulted, and the caller can say so instead of
+        claiming a limit that is not being enforced across a restart.  The module
+        writes no DDL, so the fix belongs to the migrator that owns `schedules`
+        (HANDOFF/scheduler.md §1.1; the columns are in :data:`REQUESTED_COLUMNS`).
+        """
+        runtime = bool(getattr(self.store, 'persists_runtime_state', False))
+        counters = bool(getattr(self.store, 'persists_counters', False))
+        lost = [name for name, kept in (('paused', runtime), ('counters', counters)) if not kept]
+        return {'persists_runtime_state': runtime, 'persists_counters': counters,
+                'lost_on_restart': lost,
+                'requested_columns': {name: list(columns) for name, columns in REQUESTED_COLUMNS.items()}}
 
 
 def make_run_id(schedule_id: str, scheduled_for: float) -> str:
