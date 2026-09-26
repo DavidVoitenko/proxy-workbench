@@ -20,6 +20,7 @@ the answer -- an idempotency cache, a retry log -- has to ask before storing it.
 from __future__ import annotations
 
 import base64
+import dataclasses
 import hashlib
 import hmac
 import json
@@ -69,8 +70,11 @@ GRACE_SWEEP_INTERVAL_S = 60.0
 #: idempotency cache keeps that whole response, the *same* secret comes back a
 #: second time to whoever repeats the request, long after the one moment the
 #: contract allows.  This module owns the field names and the stripper; the cache
-#: is in ``apiv1.py`` and has to ask before it keeps an answer -- see
-#: docs/integration/HANDOFF/fix-keys.md.
+#: is in ``apiv1.py`` and has to ask before it keeps an answer.  There are two
+#: strippers because there are two shapes: :func:`without_one_shot` works on the
+#: body before it is serialized, :func:`without_one_shot_response` on the
+#: finished response the cache actually stores.  See
+#: docs/integration/HANDOFF/fix-keys.md and docs/integration/HANDOFF/area-secrets.md.
 ONE_SHOT_FIELDS = ('secret',)
 #: The flag a body that no longer carries the value answers with, so a caller
 #: reads "already delivered, rotate" instead of "this key has no secret".
@@ -586,6 +590,64 @@ def without_one_shot(body, *, note=True):
     if note:
         stripped[ONE_SHOT_NOTE_FIELD] = True
     return stripped
+
+
+#: Cheap pre-filter for the byte-level path below: a serialized answer that holds
+#: no once-only field name at all cannot hold a once-only value, and skipping the
+#: JSON parse is what keeps this cheap enough for the hot path.
+_ONE_SHOT_NAME_BYTES = tuple(('"%s"' % name).encode('ascii') for name in ONE_SHOT_FIELDS)
+
+
+def without_one_shot_response(response):
+    """A copy of a transport response that may be *kept*, with the secret removed.
+
+    :func:`without_one_shot` scrubs a body before it is serialized.  An
+    idempotency cache never sees that body: it stores the finished response, and
+    by then the ``OneShotBody`` marker is gone -- the value is just bytes in a
+    ``pwk_``-shaped field.  Replaying those bytes is what turned
+    ``POST /v1/keys`` into a way to ask for the same secret twice, long after
+    the one moment the contract allows, so the cache is the second place the
+    value has to be taken out.
+
+    This works on the serialized form on purpose: it does not need the caller to
+    have preserved the marker, only a response object with a JSON ``body`` of
+    bytes, which is what every transport here already returns.  The one value it
+    removes is a field that *is* an issued key -- a JSON answer whose ``secret``
+    holds something else (a secret reference, a boolean) is not touched, so the
+    export artifact and the diagnostics answers keep working.
+
+    The caller is expected to keep the original and store the returned copy; see
+    docs/integration/HANDOFF/area-secrets.md for the one-line call site.
+    """
+    body = getattr(response, 'body', None)
+    if not isinstance(body, (bytes, bytearray)) or not body:
+        return response
+    raw = bytes(body)
+    if not any(name in raw for name in _ONE_SHOT_NAME_BYTES):
+        return response
+    try:
+        parsed = json.loads(raw.decode('utf-8'))
+    except (UnicodeDecodeError, ValueError):
+        return response
+    if not isinstance(parsed, dict):
+        return response
+    issued = [name for name in ONE_SHOT_FIELDS
+              if isinstance(parsed.get(name), str) and parsed[name].startswith(SECRET_MARK)]
+    if not issued:
+        return response
+    stripped = {name: value for name, value in parsed.items() if name not in issued}
+    stripped[ONE_SHOT_NOTE_FIELD] = True
+    payload = json.dumps(stripped, ensure_ascii=False, default=str).encode('utf-8')
+    try:
+        return dataclasses.replace(response, body=payload)
+    except (TypeError, ValueError):
+        # Not a dataclass: a transport response of another shape.  Returning it
+        # unchanged would be a leak, so refuse loudly instead of caching it.
+        raise ApiKeyError(E_INVALID,
+                          detail='cannot strip a one-shot secret from this response type',
+                          action='pass the response to apikeys.without_one_shot_response()'
+                                 ' before storing it',
+                          state=type(response).__name__)
 
 
 class IssuedKey:
@@ -1178,8 +1240,21 @@ class ApiKeyManager:
         principal = Principal(info, in_grace=in_grace,
                               code=E_ROTATION_GRACE if in_grace else None)
         if permission is not None:
-            authorize(principal, permission, include_secrets=include_secrets,
-                      collection_id=collection_id, pool_id=pool_id).raise_if_denied()
+            decision = authorize(principal, permission, include_secrets=include_secrets,
+                                 collection_id=collection_id, pool_id=pool_id)
+            if not decision:
+                # A key that is valid and asks for something it may not do is the
+                # one refusal an operator most needs to see, and it is the one
+                # that used to leave no trace: only a bad secret and an unusable
+                # key reached the log.  The key is known here, so the row names
+                # it, the right it wanted, and the scope it aimed at.
+                self._audit(info.id, 'authorize', object_kind='permission',
+                            object_id=permission, result='denied', error_code=decision.code,
+                            scope={k: v for k, v in (('collection_id', collection_id),
+                                                     ('pool_id', pool_id),
+                                                     ('include_secrets', include_secrets or None))
+                                   if v is not None})
+                decision.raise_if_denied()
         if touch:
             self._touch(row, moment)
         return principal

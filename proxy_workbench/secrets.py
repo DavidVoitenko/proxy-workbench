@@ -152,14 +152,23 @@ def verify_secret(candidate, verifier):
 
     A missing, foreign or malformed verifier is False, never an exception, so a
     caller cannot tell the cases apart by what it can catch.
+
+    The stored text has to be the exact string :func:`make_verifier` wrote.  A
+    base64 field has spare bits in its last character, so two different strings
+    can decode to the same digest; accepting a non-canonical spelling would let
+    a rewritten or truncated row authenticate as if it were untouched, and it
+    would make the pair a one-way function in only one direction.  Re-encoding
+    and comparing the text is constant work on a fixed-length field and happens
+    before the (much more expensive) key derivation, so the check costs nothing
+    on a matching secret either.
     """
     parts = verifier.split('$') if isinstance(verifier, str) else ()
     if len(parts) != 4 or parts[0] != VERIFIER_ALGO:
         return False
     try:
         cost = int(parts[1])
-        salt = base64.b64decode(parts[2], validate=True)
-        expected = base64.b64decode(parts[3], validate=True)
+        salt = _b64_exact(parts[2])
+        expected = _b64_exact(parts[3])
     except (ValueError, binascii.Error):
         return False
     if cost < 1 or not 8 <= len(salt) <= 64 or not expected:
@@ -171,17 +180,30 @@ def verify_secret(candidate, verifier):
     return hmac.compare_digest(digest, expected)
 
 
+def _b64_exact(text):
+    """Decode base64 and refuse any spelling that is not the canonical one."""
+    raw = base64.b64decode(text, validate=True)
+    if base64.b64encode(raw).decode('ascii') != text:
+        raise binascii.Error('non-canonical base64 in a stored verifier')
+    return raw
+
+
 def _secret_bytes(secret):
     if isinstance(secret, (bytes, bytearray)):
         raw = bytes(secret)
     elif isinstance(secret, str):
         raw = secret.encode('utf-8')
     else:
-        raise SecretValidationError('secret must be str or bytes')
+        raise SecretValidationError('secret must be str or bytes',
+                                    action='pass the password as text or as bytes')
     if not raw:
-        raise SecretValidationError('secret must not be empty')
+        # A blank password is the shape of a half-filled form, and the verifier
+        # cannot be built from nothing, so the message names the other answer.
+        raise SecretValidationError('secret must not be empty',
+                                    action='enter the password, or create the access without one')
     if len(raw) > MAX_SECRET_BYTES:
-        raise SecretValidationError('secret is longer than %d bytes' % MAX_SECRET_BYTES)
+        raise SecretValidationError('secret is longer than %d bytes' % MAX_SECRET_BYTES,
+                                    action='shorten the password')
     return raw
 
 
@@ -772,6 +794,135 @@ class ResolvedAccess:
 
     def describe(self):
         return describe(self.access)
+
+
+# --------------------------------------------------------------------------- #
+# Transport credentials (F04: HTTP Basic and SOCKS5 username/password)
+# --------------------------------------------------------------------------- #
+
+#: RFC 1929 sub-negotiation version, and the length that bounds each of its two
+#: fields.  A longer field is a protocol error upstream, so it is refused here,
+#: where the message can still name the cause.
+SOCKS5_AUTH_VERSION = 1
+SOCKS5_FIELD_MAX = 255
+#: The two authentication methods F04 supports.  An access offers exactly one.
+SOCKS5_METHOD_NO_AUTH = 0x00
+SOCKS5_METHOD_USER_PASSWORD = 0x02
+
+
+def proxy_authorization(username, password):
+    """`Proxy-Authorization: Basic ...` for an HTTP or HTTPS proxy (RFC 7617).
+
+    An empty result means "send no header": an open proxy is the common case and
+    a blank credential in a header is a different thing from no header at all.
+    """
+    if not username and not password:
+        return ''
+    if not username or password is None:
+        raise SecretValidationError('a username and a password are both required',
+                                    action='enter both, or neither for an open proxy')
+    token = base64.b64encode(('%s:%s' % (username, password)).encode('utf-8')).decode('ascii')
+    return 'Basic %s' % token
+
+
+def socks5_greeting(*, with_auth):
+    """The method offer of one SOCKS5 handshake.
+
+    An access without a credential offers only "no authentication required" (0x00)
+    and an access with one offers only "username/password" (0x02).  Offering both
+    would let a proxy pick the weaker one, so the offer is derived from the access
+    and never widened.
+    """
+    method = SOCKS5_METHOD_USER_PASSWORD if with_auth else SOCKS5_METHOD_NO_AUTH
+    return bytes((0x05, 0x01, method))
+
+
+def socks5_username_password(username, password):
+    """The RFC 1929 username/password sub-negotiation for a SOCKS5 proxy."""
+    if not username or password is None:
+        raise SecretValidationError('a username and a password are both required',
+                                    action='enter both, or neither for an open proxy')
+    user = username.encode('utf-8')
+    secret = password.encode('utf-8')
+    if not 1 <= len(user) <= SOCKS5_FIELD_MAX or not 1 <= len(secret) <= SOCKS5_FIELD_MAX:
+        raise SecretValidationError(
+            'a SOCKS5 username and password must each be 1..%d bytes' % SOCKS5_FIELD_MAX,
+            action='shorten the credential to what the SOCKS5 sub-negotiation can carry')
+    return (bytes((SOCKS5_AUTH_VERSION, len(user))) + user
+            + bytes((len(secret),)) + secret)
+
+
+@dataclass(frozen=True)
+class TransportCredentials:
+    """What one transport needs to authenticate an upstream proxy.
+
+    Held as bytes and a header value rather than as a live connection, so the
+    socket stays the caller's business and this module never holds a transport.
+    The value is short-lived by construction: it is built from a
+    :class:`ResolvedAccess` the caller is already scrubbing.
+    """
+
+    mode: str
+    scheme: str
+    access_id: str
+    access_revision: int
+    proxy_authorization: str = ''
+    socks5_greeting: bytes = b''
+    socks5_auth: bytes = b''
+
+    @property
+    def authenticated(self):
+        return self.mode != MODE_NONE
+
+    def as_json(self):
+        """A describable form. The credentials are counted, never carried."""
+        return {'access_id': self.access_id, 'access_revision': self.access_revision,
+                'mode': self.mode, 'scheme': self.scheme,
+                'authenticated': self.authenticated}
+
+
+def transport_credentials(access, resolved, *, scheme=None):
+    """Build the wire material for one access, or refuse.
+
+    This is the only sanctioned way to turn a resolved access into something a
+    socket can send, which is what keeps the password on the short-lived value
+    instead of in a URL, a query, a settings file or a log line.  The scheme is
+    checked against the access mode, so a SOCKS5 identity can never be offered
+    to an HTTP proxy and the other way round.
+    """
+    selected = str(scheme or '').lower()
+    if selected not in MODE_BY_SCHEME:
+        raise SecretUnsupportedError('unsupported proxy scheme %r' % selected,
+                                     action='supported schemes: %s' % ', '.join(sorted(MODE_BY_SCHEME)))
+    if resolved.access.id != access.id:
+        raise SecretConflictError(
+            'the resolved secret belongs to access %s, not %s'
+            % (_excerpt(resolved.access.id), _excerpt(access.id)),
+            action='resolve the access again and use the value it returns')
+    if int(resolved.access.access_revision) != int(access.access_revision):
+        raise SecretConflictError(
+            'the resolved secret is revision %d but the access is at %d'
+            % (resolved.access.access_revision, access.access_revision),
+            action='re-resolve the access; a superseded secret is not sent')
+    check_mode_scheme(resolved.mode, selected)
+    if resolved.mode == MODE_NONE:
+        return TransportCredentials(mode=MODE_NONE, scheme=selected, access_id=access.id,
+                                    access_revision=access.access_revision,
+                                    socks5_greeting=socks5_greeting(with_auth=False)
+                                    if selected in SCHEME_MODES[MODE_SOCKS5] else b'')
+    if selected in SCHEME_MODES[MODE_HTTP_BASIC]:
+        return TransportCredentials(mode=resolved.mode, scheme=selected, access_id=access.id,
+                                    access_revision=access.access_revision,
+                                    proxy_authorization=proxy_authorization(resolved.username,
+                                                                            resolved.password))
+    if selected in SCHEME_MODES[MODE_SOCKS5]:
+        return TransportCredentials(mode=resolved.mode, scheme=selected, access_id=access.id,
+                                    access_revision=access.access_revision,
+                                    socks5_greeting=socks5_greeting(with_auth=True),
+                                    socks5_auth=socks5_username_password(resolved.username,
+                                                                        resolved.password))
+    raise SecretValidationError('access mode %r cannot authenticate %s' % (resolved.mode, selected),
+                                action='use a separate access identity for this endpoint')
 
 
 def admission_key(access, access_revision):
