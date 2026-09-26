@@ -557,6 +557,10 @@ class TranslationTests(unittest.TestCase):
         self.assertFalse(re.search('[\u0400-\u04ff]', page))
         used = set(re.findall(r'data-i18n(?:-[a-z-]+)?="([^"]+)"', page))
         used |= set(re.findall(r"(?:\bt\(|text\(|attr\('[a-z-]+', )'([a-zA-Z]+\.[\w.]+)'", script))
+        # `t('results.detail.' + detailId)` is a prefix being concatenated, not a
+        # whole key; a regex cannot tell, so drop anything the code goes on to
+        # build upon rather than loosening the check for real missing keys.
+        used = {key for key in used if not key.endswith('.')}
         self.assertFalse(used - english.keys())
     def test_scenarios_set_their_defining_workflow_fields(self):
         ui = Path(__file__).resolve().parents[1]/'proxy_workbench'/'ui'
