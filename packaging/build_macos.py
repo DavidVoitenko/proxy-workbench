@@ -198,6 +198,12 @@ def verify_bundle(bundle):
                          'is missing. The spec must copy the ui directory into the app.')
     if not _bundled_resource(bundle, 'sources.json'):
         raise BuildError('sources.json is not inside the bundle; the interface would fail to start.')
+    if not _bundled_resource(bundle, 'source-catalog.json'):
+        # The catalog is what the Sources page reads. Without it the tab renders
+        # an empty list and every built-in source looks absent, which is exactly
+        # the kind of quiet breakage this check exists to refuse.
+        raise BuildError('source-catalog.json is not inside the bundle; the Sources tab would '
+                         'show no catalog at all. The spec must copy it into the app.')
     helper = tray_helper.in_bundle(bundle)
     if helper is None:
         raise BuildError('the menu bar helper is not inside the bundle. The spec must compile it '

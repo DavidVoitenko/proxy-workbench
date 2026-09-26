@@ -8,7 +8,7 @@ package = root / 'proxy_workbench'
 analysis = Analysis(
     [str(root / 'packaging' / 'launcher.py')],
     pathex=[str(root)],
-    datas=[(str(package / 'ui'), 'proxy_workbench/ui'), (str(package / 'sources.json'), 'proxy_workbench')],
+    datas=[(str(package / 'ui'), 'proxy_workbench/ui'), (str(package / 'sources.json'), 'proxy_workbench'), (str(package / 'source-catalog.json'), 'proxy_workbench')],
     hiddenimports=['socksio', 'proxy_workbench.gui', 'proxy_workbench.proxytool'],
     excludes=['tkinter', 'unittest', 'pydoc'],
 )
