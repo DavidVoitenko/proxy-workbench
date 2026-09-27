@@ -6307,7 +6307,11 @@ async function sourceAction(path, button, message) {
   } catch (error) {
     toast(error.message, true);
   } finally {
-    if (button) button.disabled = false;
+    if (button) {
+      button.disabled = false;
+      button.textContent = button.dataset.busyLabel;
+      delete button.dataset.busyLabel;
+    }
   }
 }
 
@@ -8566,7 +8570,7 @@ function setupServiceCatalogListeners() {
 // click on Apply replays instead of duplicating.
 // ---------------------------------------------------------------------------
 
-let importState = {plan: null, source: null, mapping: null, busy: false};
+let importState = {plan: null, source: null, mapping: null, busy: false, revision: 0};
 
 // One place decides whether "Apply" is clickable, so a finishing request can
 // never re-enable a button the preview had just disabled for "nothing to do".
@@ -8585,6 +8589,17 @@ function updateImportButtons() {
 
 function setImportBusy(busy) {
   importState.busy = busy;
+  updateImportButtons();
+}
+
+function invalidateImportPreview() {
+  importState.revision += 1;
+  importState.plan = null;
+  importState.busy = false;
+  const preview = $('import-preview-body');
+  if (preview) preview.innerHTML = '';
+  const count = $('imp-count');
+  if (count) count.textContent = '0';
   updateImportButtons();
 }
 
@@ -8625,14 +8640,22 @@ function renderImportMapping(suggestion, problem) {
   const missing = (problem && problem.missing) || [];
   const ambiguous = (problem && problem.ambiguous) || [];
   if (!suggestion) { box.hidden = true; return; }
-  const columns = Object.values(suggestionMap).filter(value => value !== null && value !== undefined);
+  const columns = Array.isArray(suggestion.columns) ? suggestion.columns
+    : Object.values(suggestionMap).filter(value => value !== null && value !== undefined);
   if (!columns.length) { box.hidden = true; return; }
   const roles = ['host', 'port', 'scheme', 'country'];
   grid.innerHTML = roles.map(role => {
     const chosen = suggestionMap[role];
     const warn = missing.includes(role) || ambiguous.includes(role);
+    const chosenIndex = chosen === null || chosen === undefined ? -1
+      : typeof chosen === 'number' ? chosen
+      : columns.findIndex(name => String(name) === String(chosen));
     const options = [`<option value="">${esc(t('imp.mappingNone'))}</option>`]
-      .concat(columns.map(name => `<option value="${esc(name)}"${String(chosen) === String(name) ? ' selected' : ''}>${esc(name)}</option>`))
+      .concat(columns.map((name, index) => {
+        const repeated = columns.filter(other => String(other) === String(name)).length > 1;
+        const label = repeated || !name ? `${name || '—'} (#${index + 1})` : name;
+        return `<option value="${index}"${chosenIndex === index ? ' selected' : ''}>${esc(label)}</option>`;
+      }))
       .join('');
     return `<label${warn ? ' class="field-warn"' : ''}>
         <span>${esc(t('imp.mapping' + role.charAt(0).toUpperCase() + role.slice(1)))}</span>
@@ -8710,14 +8733,16 @@ function mappingFromForm() {
   if (!grid || grid.closest('#import-mapping').hidden) return null;
   const mapping = {};
   grid.querySelectorAll('[data-mapping-role]').forEach(node => {
-    mapping[node.dataset.mappingRole] = node.value || null;
+    mapping[node.dataset.mappingRole] = node.value === '' ? null : Number(node.value);
   });
-  return (mapping.host && mapping.port) ? mapping : null;
+  return (mapping.host !== null && mapping.port !== null) ? mapping : null;
 }
 
 async function runImportPreview() {
   const source = currentImportSource();
+  invalidateImportPreview();
   if (!source) { importNote(t('imp.needFile')); return; }
+  const revision = importState.revision;
   setImportBusy(true);
   try {
     const plan = await api('/api/import/preview', {
@@ -8729,6 +8754,7 @@ async function runImportPreview() {
       name: source.name,
       channel: source.channel
     });
+    if (revision !== importState.revision) return;
     importState.plan = plan;
     importState.source = source;
     renderImportMapping(plan.mapping_suggestion, plan.mapping_problem);
@@ -8737,11 +8763,13 @@ async function runImportPreview() {
     if (count) count.textContent = fmt((plan.counts || {}).total || 0);
     if (plan.needs_mapping) importNote(t('imp.needMapping'));
   } catch (error) {
-    importState.plan = null;
-    importNote('');
-    toast(error.message, true);
+    if (revision === importState.revision) {
+      importState.plan = null;
+      importNote('');
+      toast(error.message, true);
+    }
   } finally {
-    setImportBusy(false);
+    if (revision === importState.revision) setImportBusy(false);
   }
 }
 
@@ -8815,6 +8843,8 @@ function setupImportListeners() {
     file.onchange = async () => {
       const chosen = file.files && file.files[0];
       if (!chosen) return;
+      invalidateImportPreview();
+      importState.source = null;
       if (chosen.size > 32 * 1024 * 1024) {
         importNote(t('error.fileTooLarge'));
         return;
@@ -8836,15 +8866,28 @@ function setupImportListeners() {
   }
   const paste = $('import-text');
   if (paste) {
-    paste.oninput = () => { importState.source = null; };
+    paste.oninput = () => { importState.source = null; invalidateImportPreview(); };
   }
+  const collection = $('import-collection');
+  if (collection) collection.onchange = () => {
+    invalidateImportPreview();
+    if (currentImportSource()) runImportPreview();
+  };
+  const mapping = $('import-mapping-grid');
+  if (mapping) mapping.onchange = () => invalidateImportPreview();
   if ($('import-preview')) $('import-preview').onclick = runImportPreview;
   if ($('import-commit')) $('import-commit').onclick = runImportCommit;
   if ($('imp-refresh')) $('imp-refresh').onclick = loadImportHistory;
   const mode = $('import-mode');
-  if (mode) mode.onchange = () => { if (importState.source) runImportPreview(); };
+  if (mode) mode.onchange = () => {
+    invalidateImportPreview();
+    if (currentImportSource()) runImportPreview();
+  };
   const format = $('import-format');
-  if (format) format.onchange = () => { if (importState.source) runImportPreview(); };
+  if (format) format.onchange = () => {
+    invalidateImportPreview();
+    if (currentImportSource()) runImportPreview();
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -9454,9 +9497,7 @@ function renderPermissions(view) {
   keysState.permissions = view.permissions || [];
   const grid = $('keys-permissions');
   if (!grid) return;
-  const groups = [
-    ['read.*', 'read.permissions' in view ? '' : null]
-  ];
+  const selected = new Set(selectedPermissions());
   const buckets = [
     {label: 'read.*', items: view.read_permissions || []},
     {label: 'write.*', items: view.write_permissions || []},
@@ -9472,21 +9513,32 @@ function renderPermissions(view) {
       <legend><label class="check-label"><input type="checkbox" data-perm-group="${esc(bucket.label)}">
         <span>${esc(bucket.label)}</span></label></legend>
       <div class="perm-items">${bucket.items.map(name => `
-        <label class="check-label"><input type="checkbox" data-permission="${esc(name)}">
+        <label class="check-label"><input type="checkbox" data-permission="${esc(name)}" value="${esc(name)}"${selected.has(name) ? ' checked' : ''}>
           <span class="mono">${esc(name)}</span></label>`).join('')}</div>
     </fieldset>`).join('');
   grid.querySelectorAll('[data-perm-group]').forEach(box => {
     box.onchange = () => {
       const target = box.checked;
-      grid.querySelectorAll('[data-permission]').forEach(node => {
-        if (node.value.startsWith(box.dataset.permGroup) ||
-            (box.dataset.permGroup === 'export.secret' && node.value === 'export.secret')) {
-          node.checked = target;
-        }
+      box.closest('fieldset').querySelectorAll('[data-permission]').forEach(node => {
+        node.checked = target;
       });
+      syncPermissionGroups();
     };
   });
-  void groups;
+  grid.querySelectorAll('[data-permission]').forEach(node => {
+    node.onchange = syncPermissionGroups;
+  });
+  syncPermissionGroups();
+}
+
+function syncPermissionGroups() {
+  const grid = $('keys-permissions');
+  if (!grid) return;
+  grid.querySelectorAll('[data-perm-group]').forEach(box => {
+    const items = Array.from(box.closest('fieldset').querySelectorAll('[data-permission]'));
+    box.checked = items.length > 0 && items.every(node => node.checked);
+    box.indeterminate = items.some(node => node.checked) && !box.checked;
+  });
 }
 
 function selectedPermissions() {
@@ -9501,11 +9553,7 @@ function setPermissions(names) {
   if (!grid) return;
   const wanted = new Set(names || []);
   grid.querySelectorAll('[data-permission]').forEach(node => { node.checked = wanted.has(node.value); });
-  grid.querySelectorAll('[data-perm-group]').forEach(box => {
-    const items = Array.from(grid.querySelectorAll('[data-permission]'))
-      .filter(node => node.value.startsWith(box.dataset.permGroup));
-    box.checked = items.length > 0 && items.every(node => node.checked);
-  });
+  syncPermissionGroups();
 }
 
 function showKeySecret(issued, message) {
@@ -9554,8 +9602,8 @@ function renderKeys(view) {
         <div class="catalog-cell catalog-cell-state">${keyStateBadge(row.state)}</div>
         <div class="catalog-cell catalog-cell-choice">
           <div class="catalog-actions">
-            <button class="button chip" data-key-action="rotate" data-key-id="${esc(row.id)}" data-key-name="${esc(row.name || row.id)}">${esc(t('keys.rotate'))}</button>
-            ${row.state === 'disabled'
+            ${row.state !== 'revoked' ? `<button class="button chip" data-key-action="rotate" data-key-id="${esc(row.id)}" data-key-name="${esc(row.name || row.id)}">${esc(t('keys.rotate'))}</button>` : ''}
+            ${row.state === 'revoked' ? '' : row.state === 'disabled'
               ? `<button class="button chip" data-key-action="enable" data-key-id="${esc(row.id)}" data-key-name="${esc(row.name || row.id)}">${esc(t('keys.enable'))}</button>`
               : `<button class="button chip" data-key-action="disable" data-key-id="${esc(row.id)}" data-key-name="${esc(row.name || row.id)}">${esc(t('keys.disable'))}</button>`}
             ${row.state !== 'revoked'

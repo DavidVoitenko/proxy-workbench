@@ -653,7 +653,7 @@ header {
 
 .page.active {
   display: block !important;
-  animation: pageFadeSlide 180ms ease-out forwards;
+  opacity: 1;
   will-change: opacity, transform;
 }
 
@@ -11701,14 +11701,12 @@ aside.sidebar nav button.nav.active {
   animation: pw-tabIndicatorIn 0.22s var(--ease-spring, cubic-bezier(0.16,1,0.3,1)) forwards;
 }
 
-/* --- 4b. Panel content entrance (class applied by app.js on tab switch) ---
-   app.js should: add .panel-enter to the newly activated .page.active, then
-   remove it on animationend.  */
+/* Keep switched panels visible even when a browser suspends animation clocks. */
 .panel-enter {
-  animation: pw-scaleIn 0.22s var(--ease-spring, cubic-bezier(0.16,1,0.3,1)) both !important;
+  animation: none !important;
 }
 
-/* Page active baseline — keep existing pageFadeSlide, just ensure will-change */
+/* Page active baseline */
 .page.active {
   will-change: opacity, transform;
 }
@@ -21791,27 +21789,8 @@ tbody tr:nth-child(even) td,
                         .chip, .filter-chip, .segmented-btn, .recheck-btn
    ========================================================================== */
 
-/* ═══════════════════════════════════════════════════════════════════════════
-   1. OFFSCREEN TAB OPTIMIZATION (content-visibility & intrinsic sizing)
-   Verified against index.html (8 pages: #page-scan..#page-help) & style.css:650
-   Offscreen tabs cost 0 rendering/layout work until activated.
-   ═══════════════════════════════════════════════════════════════════════════ */
-
-.page {
-  content-visibility: auto;
-  contain-intrinsic-size: 1px 800px;
-  contain-intrinsic-size: auto 800px;
-}
-
-.page:not(.active) {
-  content-visibility: auto;
-  contain-intrinsic-size: 1px 800px;
-  contain-intrinsic-size: auto 800px;
-}
-
-.page.active {
-  content-visibility: visible !important;
-}
+/* Inactive pages already use display:none; extra content containment can
+   leave the newly selected page unpainted in WebKit. */
 
 
 /* ═══════════════════════════════════════════════════════════════════════════
