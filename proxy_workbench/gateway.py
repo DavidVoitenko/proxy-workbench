@@ -1343,6 +1343,7 @@ class Gateway:
         """
         tried = set()
         pending = {}
+        staggered = set()
         failures = 0
         won = False
         strict = bool(session and self.pool._sticky(binding, sticky) == 'strict')
@@ -1367,6 +1368,11 @@ class Gateway:
                 can_add = not strict and len(tried) < self.attempts
                 done, _ = await asyncio.wait(list(pending), timeout=self.stagger if can_add else None,
                                              return_when=asyncio.FIRST_COMPLETED)
+                if not done and can_add:
+                    # The wait itself establishes that these attempts have
+                    # missed the policy deadline.  Comparing clocks again in
+                    # cleanup can lose a few milliseconds on Windows.
+                    staggered.update(pending)
                 winner = None
                 for task in list(pending):
                     if task not in done:
@@ -1408,12 +1414,12 @@ class Gateway:
             # A loser that was still connecting after the stagger has proved
             # too slow for this gateway.  Count it, or it gets picked again on
             # every request and delays every other connection forever.
-            for task, (lease, started) in pending.items():
+            for task, (lease, _) in pending.items():
                 unfinished = not task.done()
                 if unfinished:
                     task.cancel()
                 lease.release()
-                if won and unfinished and time.monotonic() - started >= self.stagger:
+                if won and unfinished and task in staggered:
                     self.pool.outcome(lease.proxy, 'slow_connect', detail='slow_connect')
             for task in pending:
                 with contextlib.suppress(BaseException):
