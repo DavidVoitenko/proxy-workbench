@@ -6,14 +6,17 @@ secret that controlled the local UI.  These tests keep the three identities
 apart, keep loopback as the default, and check that the LAN choice is visible.
 """
 import asyncio
+import contextlib
+import io
 import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import httpx
 
-from proxy_workbench import gateway
+from proxy_workbench import gateway, proxytool
 from tests.gateway_support import GatewayCase, write_export
 
 #: Values that stand in for the other two identities.  They are literal test
@@ -66,6 +69,22 @@ class BindTests(unittest.TestCase):
                 server = await gateway.start(Path(temp), port=0, lan=True)
                 server.close()
         asyncio.run(run())
+
+    def test_cli_passes_explicit_lan_opt_in_to_the_gateway(self):
+        with tempfile.TemporaryDirectory() as temp:
+            args = proxytool.parser().parse_intermixed_args(
+                ['gateway', '--data', temp, '--host', '0.0.0.0', '--port', '0', '--lan'])
+            with mock.patch('proxy_workbench.gateway.start', side_effect=ValueError('stopped')) as start:
+                with contextlib.redirect_stderr(io.StringIO()):
+                    self.assertEqual(proxytool.run_gateway(args, ()), 2)
+            self.assertTrue(start.await_args.kwargs['lan'])
+            self.assertEqual(start.await_args.args[1], '0.0.0.0')
+
+    def test_cli_refuses_lan_flag_for_other_commands(self):
+        with self.assertRaises(SystemExit) as caught:
+            with contextlib.redirect_stderr(io.StringIO()):
+                proxytool.main(['serve', '--lan'])
+        self.assertEqual(caught.exception.code, 2)
 
 
 class LanBackgroundTests(unittest.TestCase):

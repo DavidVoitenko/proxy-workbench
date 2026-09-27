@@ -103,7 +103,7 @@ Pick one way to install:
 | **Windows app** | Download `proxy-workbench-…-windows-x64-setup.exe` from the [latest release](https://github.com/DavidVoitenko/proxy-workbench/releases/latest) and run it; there is a portable `.zip` too, and a separate `proxy-workbench-cli.exe` for the command line | nothing else |
 | **pipx** (Windows, macOS, Linux) | `pipx install git+https://github.com/DavidVoitenko/proxy-workbench` then `proxy-workbench` | Python 3.11+ and [pipx](https://pypa.io/pipx/) |
 | **Source folder** | Download the code (**Code → Download ZIP** or `git clone`), then double-click `Start.bat` (Windows) / `Start.command` (macOS) or run `./run.sh` (Linux) | Python 3.11+ |
-| **Docker** | `docker compose up -d` with the bundled [`compose.yml`](compose.yml) (checker + API + rotating proxy) | Docker |
+| **Docker** | Set `PROXY_WORKBENCH_API_TOKEN`, then run `docker compose up -d` with the bundled [`compose.yml`](compose.yml) (checker + API + rotating proxy) | Docker |
 
 `proxy-workbench` without arguments starts the application: the interface opens in your browser, and on macOS a menu bar item shows what is happening and offers pause, start, “start at login” and quit. Starting it a second time reaches the one that is already running instead of opening a rival. `proxy-workbench run …` and the other commands below work the same way as `./run.sh …`.
 
@@ -288,7 +288,7 @@ curl -x socks5h://127.0.0.1:8899 https://example.org/
 - If a proxy fails, the same connection is retried through another one (up to 3). A proxy that fails twice rests for 5 minutes.
 - Plain `http://` requests reach HTTP proxies directly, because many of them allow CONNECT only to port 443.
 
-On a server, start it with `./run.sh gateway` and narrow the pool with the usual filters, for example `gateway --protocol socks5 --country DE --max-latency 1500`. Binding to a network address (`--host 0.0.0.0`) requires a password: `--gateway-token <secret>`, or the `PROXY_WORKBENCH_GATEWAY_TOKEN` variable; when it is not given the gateway makes one and prints it. Clients then log in with any user name and that password, over HTTP Basic or SOCKS5 user/password.
+On a server, start it with `./run.sh gateway` and narrow the pool with the usual filters, for example `gateway --protocol socks5 --country DE --max-latency 1500`. Binding to a network address requires `--host 0.0.0.0 --lan` and a password: `--gateway-token <secret>`, or the `PROXY_WORKBENCH_GATEWAY_TOKEN` variable; when it is not given the gateway makes one and prints it. Clients then log in with any user name and that password, over HTTP Basic or SOCKS5 user/password.
 
 **The gateway password is not the API token.** They are separate identities on purpose: whoever knows the password you handed to a phone must not be able to read the published snapshot, and a leaked API token must not be a working proxy. Pass `--api-token` to `serve` and `--gateway-token` to `gateway`; `compose.yml` shows both variables.
 
@@ -380,11 +380,11 @@ docker run --rm --user "$(id -u):$(id -g)" -v "$PWD/data:/app/data" \
 Serve fresh proxies to other containers: one container re-checks, the other answers API requests from the same data folder.
 
 ```sh
-docker run -d --name pw-check -v "$PWD/data:/app/data" proxy-workbench run --want 50 --watch 30
-docker run -d --name pw-api -p 127.0.0.1:8765:8765 -e PROXY_WORKBENCH_API_TOKEN=change-me \
+docker run -d --name pw-check --user "$(id -u):$(id -g)" -v "$PWD/data:/app/data" proxy-workbench run --want 50 --watch 30
+docker run -d --name pw-api --user "$(id -u):$(id -g)" -p 127.0.0.1:8765:8765 -e PROXY_WORKBENCH_API_TOKEN=change-me \
   -v "$PWD/data:/app/data" proxy-workbench serve --host 0.0.0.0
-docker run -d --name pw-gateway -p 127.0.0.1:8899:8899 -e PROXY_WORKBENCH_API_TOKEN=change-me \
-  -v "$PWD/data:/app/data" proxy-workbench gateway --host 0.0.0.0
+docker run -d --name pw-gateway --user "$(id -u):$(id -g)" -p 127.0.0.1:8899:8899 -e PROXY_WORKBENCH_GATEWAY_TOKEN=another-secret \
+  -v "$PWD/data:/app/data" proxy-workbench gateway --host 0.0.0.0 --lan
 ```
 
 Every release also publishes a ready image to the GitHub Container Registry. It appears under **Packages** in the repository sidebar as `ghcr.io/<owner>/proxy-workbench:<version>` and `:latest`. Results land in the mounted `data/` folder exactly as with a local install.

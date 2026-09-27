@@ -353,6 +353,7 @@ class MappingSuggestion:
     found: dict
     missing: tuple
     ambiguous: tuple
+    columns: tuple
 
     @property
     def usable(self) -> bool:
@@ -360,7 +361,8 @@ class MappingSuggestion:
 
     def to_dict(self) -> dict:
         return {'mapping': self.mapping.to_dict(), 'found': self.found,
-                'missing': list(self.missing), 'ambiguous': list(self.ambiguous)}
+                'missing': list(self.missing), 'ambiguous': list(self.ambiguous),
+                'columns': list(self.columns)}
 
 
 def _fold(name) -> str:
@@ -380,7 +382,7 @@ def suggest_mapping(columns: Sequence) -> MappingSuggestion:
     missing = tuple(role for role in ROLES[:2] if role not in found and role not in ambiguous)
     mapping = ColumnMapping(host=found.get('host'), port=found.get('port'),
                             scheme=found.get('scheme'), country=found.get('country'))
-    return MappingSuggestion(mapping, found, missing, tuple(sorted(ambiguous)))
+    return MappingSuggestion(mapping, found, missing, tuple(sorted(ambiguous)), tuple(columns))
 
 
 def _resolve(mapping: ColumnMapping, columns: Sequence) -> dict:

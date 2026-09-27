@@ -1851,8 +1851,26 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                              blocked=sum(r.get('blocked', 0) for r in reports),
                              candidates=db.execute("SELECT count(*) FROM candidates").fetchone()[0]))
 
-    def add(value, protocol='http', country=None, source=None, public_only=True, seen=None):
+    def queue_candidate(proxy, country=None, source=None, seen=None):
         nonlocal pending_writes
+        if max_items is not None and collection_budget['items'] >= max_items:
+            member = db.execute('SELECT 1 FROM membership WHERE collection_id=? AND endpoint_id=?',
+                                (collection_id, schema.endpoint_id(proxy))).fetchone()
+            if member is None:
+                _collection_budget_error(collection_budget, 'SOURCE_ITEM_BUDGET')
+        if not (isinstance(country, str) and geoip.COUNTRY_CODE.fullmatch(country.upper())):
+            country = None
+        pending.append((proxy, schema.endpoint_id(proxy), country and country.upper(), source,
+                        seen if source else None))
+        pending_writes += 1
+        # An item budget is decided per address, so it is written at once.
+        if max_items is not None or len(pending) >= COLLECT_WRITE_BATCH:
+            flush()
+        if pending_writes >= COLLECT_WRITE_BATCH:
+            commit()
+        return 'accepted'
+
+    def add(value, protocol='http', country=None, source=None, public_only=True, seen=None):
         value = value.strip()
         raw = value if '://' in value else protocol+'://'+value
         # A remote source never gets to name a hostname or a private address,
@@ -1865,24 +1883,20 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
         if seen is not None and proxy in seen['values']:
             seen['duplicate'] += 1
             return 'accepted'
-        if max_items is not None and collection_budget['items'] >= max_items:
-            member = db.execute('SELECT 1 FROM membership WHERE collection_id=? AND endpoint_id=?',
-                                (collection_id, schema.endpoint_id(proxy))).fetchone()
-            if member is None:
-                _collection_budget_error(collection_budget, 'SOURCE_ITEM_BUDGET')
-        if not (isinstance(country, str) and geoip.COUNTRY_CODE.fullmatch(country.upper())):
-            country = None
+        if seen is not None and seen.get('defer'):
+            # A streamed response can break after thousands of complete lines.
+            # Keep its candidates aside until the HTTP body finishes; a retry
+            # may return a different list and must not leave the broken prefix
+            # in the collection or its source provenance.
+            seen['values'].add(proxy)
+            seen['staged'].append(proxy)
+            if country is not None:
+                seen['staged_country'][proxy] = country
+            return 'accepted'
+        outcome = queue_candidate(proxy, country, source, seen)
         if source and seen is not None:
             seen['values'].add(proxy)
-        pending.append((proxy, schema.endpoint_id(proxy), country and country.upper(), source,
-                        seen if source else None))
-        pending_writes += 1
-        # An item budget is decided per address, so it is written at once.
-        if max_items is not None or len(pending) >= COLLECT_WRITE_BATCH:
-            flush()
-        if pending_writes >= COLLECT_WRITE_BATCH:
-            commit()
-        return 'accepted'
+        return outcome
 
     pending = []
     country_columns = [name for name in ('country', 'country_at', 'country_source')
@@ -2050,7 +2064,8 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
             signatures = set()
             started_at = clock()
             state = _source_state_row(db, key) if record_provenance else None
-            seen = {'values': set(), 'new': 0, 'duplicate': 0, 'metadata': {}}
+            seen = {'values': set(), 'new': 0, 'duplicate': 0, 'metadata': {},
+                    'defer': False, 'staged': [], 'staged_country': {}}
             received = recognized = status_code = 0
             reject_reasons = {}
             body_digest = None
@@ -2129,10 +2144,30 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                  endpoint_count, seen['duplicate'], values) = checkpoint
                 budget.clear()
                 budget.update(saved_budget)
+                seen['staged'].clear()
+                seen['staged_country'].clear()
                 if values is not None:
                     seen['values'] = set(values)
                 if parse_state == 'empty':
                     parse_state = 'pending'
+
+            def publish_staged():
+                """Publish only a fully read streamed attempt's candidates."""
+                staged = seen['staged']
+                if not staged:
+                    return
+                index = 0
+                try:
+                    for index, proxy in enumerate(staged):
+                        queue_candidate(proxy, seen['staged_country'].get(proxy), key, seen)
+                except SourceFetchError:
+                    # An item budget may stop publication halfway through.
+                    # The accepted counter must describe the stored prefix.
+                    seen['values'].difference_update(staged[index:])
+                    raise
+                finally:
+                    seen['staged'] = []
+                    seen['staged_country'].clear()
 
             def consume_candidate():
                 nonlocal candidate_count
@@ -2420,8 +2455,13 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                             else:
                                 checkpoint = attempt_checkpoint()
                             try:
-                                async with asyncio.timeout(timeout):
-                                    data = await request_source(candidate, page, headers)
+                                seen['defer'] = kind not in CATALOG_ADAPTER_KINDS and kind != 'geonode'
+                                try:
+                                    async with asyncio.timeout(timeout):
+                                        data = await request_source(candidate, page, headers)
+                                finally:
+                                    seen['defer'] = False
+                                publish_staged()
                                 page_url = candidate
                                 succeeded = True
                                 error = None
@@ -2443,7 +2483,15 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                         if error == 'SOURCE_CANDIDATE_LIMIT' and seen['values']:
                             # A streamed page cut off by the candidate limit
                             # was read, and what it delivered is kept.
+                            try:
+                                publish_staged()
+                            except SourceFetchError as exc:
+                                error = exc.code
                             pages += 1
+                        elif error not in COLLECT_BUDGET_ERRORS:
+                            # A failed retry or mirror is not the source's
+                            # answer. Earlier completed pages remain intact.
+                            restore_attempt(checkpoint)
                         break
                     pages += 1
                     if not_modified:
@@ -6240,6 +6288,9 @@ def parser():
                    help=tr('CSV-база DB-IP Country Lite; по умолчанию data/geoip/' + geoip.DB_NAME, 'DB-IP Country Lite CSV; default data/geoip/' + geoip.DB_NAME))
     p.add_argument('--min-success', type=float, default=2/3, help=tr('минимальная доля успехов КАЖДОГО target, 0..1', 'minimum success share for EACH target, 0..1'))
     p.add_argument('--host', default='127.0.0.1', help=tr('serve: адрес локального API; по умолчанию только этот компьютер', 'serve: API address; default is this computer only'))
+    p.add_argument('--lan', action='store_true',
+                   help=tr('gateway: явно разрешить прослушивание сетевого адреса',
+                           'gateway: explicitly allow listening on a network address'))
     p.add_argument('--port', type=int, default=None,
                    help=tr('serve/gateway: порт; по умолчанию 8765 для API и 8899 для шлюза',
                            'serve/gateway: port; default 8765 for the API and 8899 for the gateway'))
@@ -6530,16 +6581,27 @@ def run_gateway(args, countries):
 
     async def run():
         server = await gateway.start(args.data, args.host, port, gateway_token, filters, args.rotate,
-                                     max(0, args.max_per_proxy), max(0.0, args.session_ttl) * 60)
+                                     max(0, args.max_per_proxy), max(0.0, args.session_ttl) * 60,
+                                     lan=args.lan)
         pool = server.gateway.pool
-        shown = f'[{args.host}]' if ':' in args.host else args.host
+        shown_host = server.bind.published_host if args.lan and gateway.is_loopback(args.host) else args.host
+        shown = f'[{shown_host}]' if ':' in shown_host else shown_host
         address = f'{shown}:{server.sockets[0].getsockname()[1]}'
-        print(tr(f'Ротирующий прокси: {address} (HTTP и SOCKS5 TCP), в пуле {len(pool.refresh())} прокси. Ctrl+C — остановить.',
-                 f'Rotating proxy: {address} (HTTP and SOCKS5 TCP), {len(pool.refresh())} proxies in the pool. Ctrl+C to stop.'),
+        available = len(pool.matching(binding=pool.default_binding))
+        print(tr(f'Ротирующий прокси: {address} (HTTP и SOCKS5 TCP), в пуле {available} прокси. Ctrl+C — остановить.',
+                 f'Rotating proxy: {address} (HTTP and SOCKS5 TCP), {available} proxies in the pool. Ctrl+C to stop.'),
               flush=True)
-        print(f'  curl -x http://{address} https://example.org/', flush=True)
-        print(f'  curl -x http://country-de-session-1:x@{address} https://example.org/', flush=True)
-        print(f'  curl http://{address}/status', flush=True)
+        if server.gateway.token_origin == 'generated':
+            print(tr(f'Пароль шлюза (сохраните): {server.gateway.token}',
+                     f'Gateway password (save it): {server.gateway.token}'), flush=True)
+        if server.gateway.token:
+            print(f'  curl -x http://workbench:PASSWORD@{address} https://example.org/  # replace PASSWORD',
+                  flush=True)
+            print(f'  curl -x http://country-de-session-1:PASSWORD@{address} https://example.org/',
+                  flush=True)
+        else:
+            print(f'  curl -x http://{address} https://example.org/', flush=True)
+            print(f'  curl http://{address}/status', flush=True)
         async with server:
             await server.serve_forever()
     try:
@@ -8153,6 +8215,8 @@ def main(argv=None):
     utf8_output()
     p = parser()
     args = p.parse_intermixed_args(argv)
+    if args.lan and args.command != 'gateway':
+        p.error('--lan is available only for gateway')
     if (min(args.attempts, args.workers, args.max_bytes) < 1 or args.top < 0
             or not math.isfinite(args.rate) or args.rate < 0
             or not math.isfinite(args.timeout) or args.timeout <= 0

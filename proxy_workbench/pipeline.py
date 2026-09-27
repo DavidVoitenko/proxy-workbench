@@ -59,7 +59,7 @@ __all__ = [
     'ITEM_STATES', 'EMITTED_ITEM_STATES', 'DEADLINE_EXCEEDED',
     'E_LIMIT_BUDGET', 'E_LIMIT_BODY', 'E_VALIDATION_FIELD', 'E_VALIDATION_SCHEMA',
     # errors
-    'PipelineError', 'ValidationError', 'BudgetExhausted',
+    'PipelineError', 'ValidationError', 'BudgetExhausted', 'TargetBudgetExhausted',
     # budgets and governance
     'Budgets', 'Limits', 'TargetPolicy', 'ResourceGate', 'ResourceSnapshot', 'Reservation',
     'AdaptiveConcurrency', 'ConcurrencySample', 'HostLimiter',
@@ -173,6 +173,10 @@ class BudgetExhausted(PipelineError):
     """
 
     code = E_LIMIT_BUDGET
+
+
+class TargetBudgetExhausted(BudgetExhausted):
+    """A single target is out of requests; the other targets may still run."""
 
 
 # --------------------------------------------------------------------------
@@ -560,9 +564,12 @@ class RequestBudget:
     budget until the bytes have actually been consumed.
     """
 
-    def __init__(self, gate: ResourceGate, reservation: Reservation):
+    def __init__(self, gate: ResourceGate, reservation: Reservation, *,
+                 target_policy: TargetPolicy | None = None, target_used: dict[str, int] | None = None):
         self.gate = gate
         self.reservation = reservation
+        self.target_policy = target_policy
+        self.target_used = target_used if target_used is not None else {}
         self.active = False
         self.requests = 0
         self.bytes = 0
@@ -601,6 +608,15 @@ class RequestBudget:
                 cap = max(0, int(max_bytes))
                 if available is not None:
                     cap = min(cap, available)
+                policy = self.target_policy
+                if policy is not None and self.requests:
+                    used = self.target_used.get(policy.target_id, 0)
+                    if policy.max_requests is not None and used >= policy.max_requests:
+                        exc = TargetBudgetExhausted(E_LIMIT_BUDGET,
+                                                    f'Лимит запросов цели {policy.target_id!r} исчерпан.')
+                        self.exhausted = exc
+                        raise exc
+                    self.target_used[policy.target_id] = used + 1
                 gate._requests += 1
                 gate._reserved_bytes += cap
                 self.requests += 1
@@ -1940,56 +1956,75 @@ class Pipeline:
         stream = await source.open()
         if self.config.parse_streaming:
             buffer = bytearray()
+            discarding_line = False
             async for chunk in stream:
                 if self._stopped.is_set() or not self._check_control():
                     return False
+                if not chunk:
+                    continue
                 if cap is not None and used >= cap:
                     self._truncate()
                     return False
+                truncated = False
                 if cap is not None and used + len(chunk) > cap:
                     chunk = chunk[:max(0, cap - used)]
-                    self._truncate()
+                    truncated = True
                 used += len(chunk)
                 self._counters.source_bytes += len(chunk)
-                # A line may straddle two chunks, so the buffer offset of the
-                # current chunk's first byte is tracked explicitly: the carry
-                # from the previous chunk must not shift the newline positions.
-                offset = len(buffer)
-                buffer += chunk
                 start = 0
                 while True:
                     index = chunk.find(b'\n', start)
                     if index < 0:
                         break
-                    end = offset + (index - start) + 1
-                    await self._feed_line(bytes(buffer[:end - 1]), source, emit)
-                    del buffer[:end]
-                    offset = 0
+                    if not discarding_line:
+                        part = chunk[start:index]
+                        if len(buffer) + len(part) <= budgets.max_line_bytes:
+                            buffer.extend(part)
+                            await self._feed_line(bytes(buffer), source, emit)
+                        else:
+                            self._reject_long_line()
+                        buffer.clear()
+                    discarding_line = False
                     start = index + 1
-                    if cap is not None and used >= cap:
-                        self._truncate()
-                        return False
-                if len(buffer) > budgets.max_line_bytes:
-                    await self._feed_line(bytes(buffer), source, emit)
-                    buffer.clear()
-            if buffer:
+                if not discarding_line:
+                    tail = chunk[start:]
+                    if len(buffer) + len(tail) <= budgets.max_line_bytes:
+                        buffer.extend(tail)
+                    else:
+                        buffer.clear()
+                        discarding_line = True
+                        self._reject_long_line()
+                if truncated:
+                    self._truncate()
+                    return False
+            if buffer and not discarding_line:
                 await self._feed_line(bytes(buffer), source, emit)
         else:
             document = bytearray()
             async for chunk in stream:
                 if self._stopped.is_set() or not self._check_control():
                     return False
+                if not chunk:
+                    continue
                 if cap is not None and used >= cap:
                     self._truncate()
                     return False
                 if cap is not None and used + len(chunk) > cap:
-                    chunk = chunk[:max(0, cap - used)]
+                    accepted = max(0, cap - used)
+                    used += accepted
+                    self._counters.source_bytes += accepted
                     self._truncate()
+                    return False
                 used += len(chunk)
                 self._counters.source_bytes += len(chunk)
                 document += chunk
             await self._feed_tokens(self._parse(bytes(document)), source, emit)
         return True
+
+    def _reject_long_line(self) -> None:
+        self._counters.parsed += 1
+        self._counters.rejected += 1
+        self._counters.stage_failures.setdefault(STAGE_PARSE, E_LIMIT_BODY)
 
     def _truncate(self) -> None:
         """A source hit its byte budget.  That is a budget stop, not an
@@ -2254,25 +2289,34 @@ class Pipeline:
         gate = self._gate
         if runner is None or gate is None:  # pragma: no cover - validated in PipelineConfig
             raise ValidationError(E_VALIDATION_FIELD, f'Для этапа {stage!r} нет runner или gate.')
-        target_id = self._pick_target(stage)
-        # The per-target slot and its share of the request budget are taken
-        # together, under one lock: a check followed by a request would let N
-        # concurrent stages all pass the check and then overshoot the budget.
-        taken = False
-        if target_id is not None:
-            if not await self._target_acquire(target_id):
+        # Select the target and reserve its slot under the same lock. Selecting
+        # first lets concurrent workers all choose a target with one request
+        # left while another target still has room.
+        taken = stage == STAGE_EXPENSIVE and bool(self._target_policies)
+        target_id = await self._target_acquire_any() if taken else None
+        if taken:
+            if target_id is None:
                 return StageOutcome(stage, False, code=E_LIMIT_BUDGET, failed_stage='target',
-                                    detail=f'Лимит запросов цели {target_id!r} исчерпан.')
-            taken = True
+                                    detail='Лимит запросов целей исчерпан.')
+        target_meter = {'requests': 0}
         try:
-            return await self._measure(item, stage, runner, gate, target_id, taken)
+            return await self._measure(item, stage, runner, gate, target_id, target_meter)
         finally:
             if taken:
-                await self._target_release(target_id)
+                await self._target_release(target_id, target_meter)
 
-    async def _measure(self, item: Item, stage: str, runner, gate, target_id, taken) -> StageOutcome:
+    async def _measure(self, item: Item, stage: str, runner, gate, target_id, target_meter) -> StageOutcome:
+        target_policy = self._target_policies.get(target_id)
+        target_remaining = None
+        if target_policy is not None and target_policy.max_requests is not None:
+            # The first request was reserved together with the target slot.
+            target_remaining = 1 + max(0, target_policy.max_requests - self.target_used(target_id))
+        global_remaining = gate.remaining_requests()
+        max_requests = global_remaining if global_remaining else (target_remaining or 1)
+        if target_remaining is not None:
+            max_requests = min(max_requests, target_remaining)
         limit = StageLimit(stage=stage, target_id=target_id,
-                           max_requests=gate.remaining_requests() if gate.remaining_requests() else 1,
+                           max_requests=max_requests,
                            max_bytes=gate.remaining_bytes() or 0,
                            remaining_requests=gate.remaining_requests(),
                            remaining_bytes=gate.remaining_bytes(), remaining_s=gate.remaining_s(),
@@ -2291,7 +2335,7 @@ class Pipeline:
             # rather than as a measurement that failed.
             self._stop('budget_exhausted', exc.code)
             return StageOutcome(stage, False, code=exc.code, detail=exc.message)
-        budget = RequestBudget(gate, reservation)
+        budget = RequestBudget(gate, reservation, target_policy=target_policy, target_used=self._target_used)
         limit = replace(limit, budget=budget)
         try:
             try:
@@ -2299,6 +2343,8 @@ class Pipeline:
                 budget.check()
             except asyncio.CancelledError:
                 raise
+            except TargetBudgetExhausted as exc:
+                outcome = StageOutcome(stage, False, code=exc.code, failed_stage='target', detail=exc.message)
             except BudgetExhausted as exc:
                 self._stop('budget_exhausted', exc.code)
                 outcome = StageOutcome(stage, False, code=exc.code, detail=exc.message)
@@ -2311,6 +2357,7 @@ class Pipeline:
                 outcome = StageOutcome(stage, False, code=code, detail=str(exc)[:200])
             self.concurrency.observe_outcome(outcome)
         finally:
+            target_meter['requests'] = budget.requests if budget.active else (outcome.requests if outcome else 0)
             if budget.active:
                 reservation = replace(reservation, requests=0)
             if budget.requests or budget.exhausted:
@@ -2323,17 +2370,19 @@ class Pipeline:
                                    bytes=0 if outcome is None else outcome.bytes)
         if outcome is None:  # pragma: no cover - only reachable via cancellation
             raise ValidationError(E_VALIDATION_FIELD, f'Этап {stage!r} не дал результата.')
+        if target_policy is not None and not budget.active and outcome.requests > 1:
+            # A custom runner may only report its cost instead of using the
+            # request meter. Record its real cost and refuse an over-budget
+            # verdict; product transports reserve every request before I/O.
+            additional = outcome.requests - 1
+            self._target_used[target_id] += additional
+            if target_policy.max_requests is not None and self._target_used[target_id] > target_policy.max_requests:
+                outcome = StageOutcome(stage, False, code=E_LIMIT_BUDGET, failed_stage='target',
+                                       requests=outcome.requests, bytes=outcome.bytes,
+                                       detail=f'Лимит запросов цели {target_id!r} превышен.')
         return outcome
 
     # -- per-target limits --------------------------------------------------
-
-    def _pick_target(self, stage: str) -> str | None:
-        """The expensive stage's target, preferring the one that has been used
-        least.  Cheap and basic are the pipeline's own probes and have no
-        configured target."""
-        if stage != STAGE_EXPENSIVE or not self._target_policies:
-            return None
-        return min(self._target_policies, key=lambda name: (self._target_used.get(name, 0), name))
 
     def target_used(self, target_id: str) -> int:
         """How many requests the target has already been given."""
@@ -2345,29 +2394,38 @@ class Pipeline:
             return False
         return self._target_used.get(target_id, 0) >= policy.max_requests
 
-    async def _target_acquire(self, target_id: str) -> bool:
-        """Take one in-flight slot and one unit of the target's request budget.
+    async def _target_acquire_any(self) -> str | None:
+        """Choose a target with budget and take its in-flight slot atomically.
 
-        Both happen under the same condition lock, so a stage either gets both
-        or gets neither: a budget that could be overshot by concurrency is not
-        a budget.  False means the target is out of requests, and the caller
-        must not run a probe for it.
+        A full target makes the caller wait while any target can still free a
+        slot. ``None`` means every configured target has spent its budget.
         """
-        policy = self._target_policies.get(target_id, TargetPolicy(target_id))
         async with self._target_cond:
             while True:
-                if policy.max_requests is not None and self._target_used.get(target_id, 0) >= policy.max_requests:
-                    return False
-                if self._target_inflight.get(target_id, 0) < policy.max_inflight:
-                    break
+                available = [policy for policy in self._target_policies.values()
+                             if policy.max_requests is None
+                             or self._target_used.get(policy.target_id, 0) < policy.max_requests]
+                if not available:
+                    if any(self._target_inflight.values()):
+                        await self._target_cond.wait()
+                        continue
+                    return None
+                free = [policy for policy in available
+                        if self._target_inflight.get(policy.target_id, 0) < policy.max_inflight]
+                if free:
+                    policy = min(free, key=lambda item: (self._target_used.get(item.target_id, 0), item.target_id))
+                    target_id = policy.target_id
+                    self._target_inflight[target_id] = self._target_inflight.get(target_id, 0) + 1
+                    self._target_used[target_id] = self._target_used.get(target_id, 0) + 1
+                    return target_id
                 await self._target_cond.wait()
-            self._target_inflight[target_id] = self._target_inflight.get(target_id, 0) + 1
-            if policy.max_requests is not None:
-                self._target_used[target_id] = self._target_used.get(target_id, 0) + 1
-        return True
 
-    async def _target_release(self, target_id: str) -> None:
+    async def _target_release(self, target_id: str, meter) -> None:
         async with self._target_cond:
+            if not meter['requests']:
+                # A stage that never opened a request returns its reservation
+                # to the target, so waiting peers can still use the cap.
+                self._target_used[target_id] = max(0, self._target_used.get(target_id, 0) - 1)
             self._target_inflight[target_id] = max(0, self._target_inflight.get(target_id, 0) - 1)
             self._target_cond.notify_all()
 

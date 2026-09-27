@@ -2,6 +2,8 @@
 .github
 .venv
 data
+!proxy_workbench/data/
+!proxy_workbench/data/*.json
 docs
 tests
 packaging

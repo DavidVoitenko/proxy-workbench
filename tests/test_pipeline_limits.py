@@ -394,6 +394,59 @@ class TargetLimitTests(unittest.TestCase):
         codes = [item.reason_code for item in result.results if not item.ok]
         self.assertEqual(codes, [pl.E_LIMIT_BUDGET] * 9)
 
+    def test_expensive_stage_uses_other_targets_after_one_is_exhausted(self):
+        seen = []
+        result = run(pl.run_pipeline(support.config(
+            [support.chunk_source('s', corpus(12))],
+            pl.Runners(cheap=None, basic=support.recording_runner(ok=True),
+                       expensive=self.expensive_wide(seen)),
+            limits=pl.Limits(targets=(pl.TargetPolicy('a', max_inflight=1, max_requests=1),
+                                      pl.TargetPolicy('b', max_inflight=2, max_requests=20))),
+            budgets=pl.Budgets(max_inflight=4, max_open_fds=12),
+            expensive_policy=pl.EXPENSIVE_ALL_PASSING)))
+        self.assertEqual(result.state, 'complete')
+        self.assertEqual(result.counters.passed_endpoints, 12)
+        self.assertEqual(seen.count('a'), 1)
+        self.assertEqual(seen.count('b'), 11)
+
+    def test_target_request_cap_counts_each_metered_request(self):
+        opened = []
+
+        async def runner(item, *, stage, limit):
+            self.assertEqual(limit.max_requests, 2)
+            with limit.budget:
+                for _ in range(3):
+                    reservation = await limit.budget.reserve(8)
+                    opened.append(limit.target_id)
+                    await limit.budget.settle(reservation, 1)
+            return pl.StageOutcome(stage, True)
+
+        chain = pl.Pipeline(support.config(
+            [support.chunk_source('s', corpus(1))],
+            pl.Runners(cheap=None, basic=support.recording_runner(ok=True), expensive=runner),
+            limits=pl.Limits(targets=(pl.TargetPolicy('judge', max_requests=2),)),
+            expensive_policy=pl.EXPENSIVE_ALL_PASSING))
+        result = run(chain.run())
+        self.assertEqual(opened, ['judge', 'judge'])
+        self.assertEqual(chain.target_used('judge'), 2)
+        self.assertEqual(result.state, 'complete', 'a target cap is local to the stage')
+        self.assertEqual(result.results[0].reason_code, pl.E_LIMIT_BUDGET)
+        self.assertEqual(result.results[0].stages[-1].requests, 2)
+
+    def test_target_reservation_is_returned_when_stage_does_no_io(self):
+        async def runner(item, *, stage, limit):
+            await asyncio.sleep(0.001)
+            return pl.StageOutcome(stage, True, requests=0)
+
+        chain = pl.Pipeline(support.config(
+            [support.chunk_source('s', corpus(3))],
+            pl.Runners(cheap=None, basic=support.recording_runner(ok=True), expensive=runner),
+            limits=pl.Limits(targets=(pl.TargetPolicy('judge', max_requests=1),)),
+            expensive_policy=pl.EXPENSIVE_ALL_PASSING))
+        result = run(chain.run())
+        self.assertEqual(result.counters.passed_endpoints, 3)
+        self.assertEqual(chain.target_used('judge'), 0)
+
     def test_a_target_concurrency_limit_is_honoured(self):
         concurrent = {'now': 0, 'peak': 0}
 

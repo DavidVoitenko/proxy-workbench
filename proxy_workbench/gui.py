@@ -3853,7 +3853,7 @@ class App:
         # module's own `MappingSuggestion`; nothing here re-guesses a role.
         suggestion = plan.mapping_suggestion
         body['mapping_suggestion'] = suggestion.to_dict() if suggestion is not None else None
-        body['columns'] = list(body.get('mapping') or {})
+        body['columns'] = list(suggestion.columns) if suggestion is not None else list(plan.header)
         body['can_commit'] = not plan.needs_mapping
         body['modes'] = list(importer.MODES)
         body['formats'] = list(importer.FORMATS)

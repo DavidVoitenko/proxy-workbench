@@ -34,6 +34,7 @@ with a recovery action.  The packaged OpenAPI artifact is
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import json
 import math
@@ -287,13 +288,21 @@ def _validate_scalar(field, value):
     if field.kind in ('int', 'float'):
         if isinstance(value, str):
             try:
-                value = float(value)
+                if field.kind == 'int':
+                    if re.fullmatch(r'[+-]?\d+', value) is None:
+                        raise ValueError('not an integer')
+                    value = int(value)
+                else:
+                    value = float(value)
             except ValueError:
                 raise field_error(field.name, tr('ожидается число', 'a number is expected')) from None
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise field_error(field.name, tr('ожидается число', 'a number is expected'))
+        if isinstance(value, float) and not math.isfinite(value):
+            raise field_error(field.name, tr('ожидается конечное число',
+                                             'a finite number is expected'))
         if field.kind == 'int':
-            if float(value) != int(value):
+            if isinstance(value, float) and not value.is_integer():
                 raise field_error(field.name, tr('ожидается целое', 'an integer is expected'))
             value = int(value)
         if field.minimum is not None and value < field.minimum:
@@ -817,6 +826,12 @@ class IdempotencyStore:
         self._clock = clock
         self._records = OrderedDict()
         self._lock = threading.Lock()
+        # Serialize identical mutations from check through execution and cache
+        # insertion.  A fixed set of locks keeps memory bounded for random keys.
+        self._singleflight = tuple(threading.RLock() for _ in range(64))
+
+    def serialized(self, bucket, key):
+        return self._singleflight[hash((bucket, key)) % len(self._singleflight)]
 
     def get(self, bucket, key, digest):
         with self._lock:
@@ -897,9 +912,10 @@ def encode_cursor(stream_id, seq, digest=None):
 def decode_cursor(cursor):
     try:
         padded = cursor + '=' * (-len(cursor) % 4)
-        data = json.loads(base64.urlsafe_b64decode(padded.encode('ascii')).decode('utf-8'))
+        data = json.loads(base64.b64decode(padded.encode('ascii'), altchars=b'-_',
+                                             validate=True).decode('utf-8'))
         return str(data['s']), int(data['n']), str(data.get('d') or '')
-    except (ValueError, TypeError, KeyError) as exc:
+    except (ValueError, TypeError, KeyError, UnicodeError, binascii.Error) as exc:
         raise field_error('cursor', tr('нечитаемый курсор', 'unreadable cursor'),
                           action=tr('начните выдачу заново', 'restart the listing')) from exc
 
@@ -963,42 +979,78 @@ class Call:
 class EventStream:
     """Server-sent events of one stream, normalized to the documented frame."""
 
-    def __init__(self, stream_id, events, clock, history=None, cursor_seq=0):
+    def __init__(self, stream_id, events, clock, history=None, cursor_seq=0,
+                 on_close=None):
         self.stream_id = stream_id
         self.events = events
         self.clock = clock
         self.history = history
         self.cursor_seq = cursor_seq
+        self._on_close = on_close
+        self._close_lock = threading.Lock()
+        self._closed = False
+
+    def close(self):
+        with self._close_lock:
+            if self._closed:
+                return
+            self._closed = True
+        try:
+            close = getattr(self.events, 'close', None)
+            if close is not None:
+                close()
+        finally:
+            if self._on_close is not None:
+                self._on_close()
 
     def __iter__(self):
         last = self.cursor_seq
-        for raw in self.events:
-            if not isinstance(raw, dict) or 'seq' not in raw or 'type' not in raw:
-                yield self._frame({'seq': last + 1, 'type': 'error',
-                                   'code': 'E_VALIDATION_FIELD',
-                                   'data': {'reason': 'event needs seq and type'}})
-                return
-            seq = int(raw['seq'])
-            if seq <= last:
-                yield self._frame({'seq': last + 1, 'type': 'error',
-                                   'code': 'E_CONFLICT_REVISION',
-                                   'data': {'reason': 'seq must increase', 'seq': seq,
-                                            'last_seq': last}})
-                return
-            if self.history is not None:
-                self.history.record(self.stream_id, seq)
-            last = seq
-            yield self._frame(raw)
+        try:
+            for raw in self.events:
+                if not isinstance(raw, dict) or 'seq' not in raw or 'type' not in raw:
+                    yield self._frame({'seq': last + 1, 'type': 'error',
+                                       'code': 'E_VALIDATION_FIELD',
+                                       '_no_cursor': True,
+                                       'data': {'reason': 'event needs seq and type'}})
+                    return
+                try:
+                    seq = int(raw['seq'])
+                except (TypeError, ValueError, OverflowError):
+                    yield self._frame({'seq': last + 1, 'type': 'error',
+                                       'code': 'E_VALIDATION_FIELD',
+                                       '_no_cursor': True,
+                                       'data': {'reason': 'event seq must be an integer'}})
+                    return
+                if seq <= last:
+                    yield self._frame({'seq': last + 1, 'type': 'error',
+                                       'code': 'E_CONFLICT_REVISION',
+                                       '_no_cursor': True,
+                                       'data': {'reason': 'seq must increase', 'seq': seq,
+                                                'last_seq': last}})
+                    return
+                if self.history is not None and not raw.get('_no_cursor'):
+                    self.history.record(self.stream_id, seq)
+                last = seq
+                yield self._frame(raw)
+        finally:
+            self.close()
 
     def _frame(self, raw):
+        try:
+            at = float(raw.get('at') or self.clock())
+            if not math.isfinite(at):
+                raise ValueError('nonfinite timestamp')
+        except (TypeError, ValueError, OverflowError):
+            at = self.clock()
         event = {'stream': self.stream_id, 'seq': int(raw.get('seq') or 0),
-                 'at': float(raw.get('at') or self.clock()),
-                 'type': str(raw.get('type') or 'unknown'),
+                 'at': at,
+                 'type': re.sub(r'[\x00-\x1f\x7f]', '', str(raw.get('type') or 'unknown')),
                  'job_id': raw.get('job_id'), 'item_id': raw.get('item_id'),
                  'code': raw.get('code'), 'data': raw.get('data') or {}}
         payload = json.dumps(event, ensure_ascii=False, sort_keys=True, default=str)
-        return (f'id: {encode_cursor(self.stream_id, event["seq"])}\n'
-                f'event: {event["type"]}\n'
+        cursor = '' if raw.get('_no_cursor') else \
+            f'id: {encode_cursor(self.stream_id, event["seq"])}\n'
+        return (cursor + f'event: {event["type"]}\n'
                 f'data: {payload}\n\n')
 
 
@@ -1846,6 +1898,10 @@ class ApiV1:
 
     def _check_config(self):
         """A network bind the Host check cannot serve is refused at construction."""
+        if self.config.loopback_only and not is_loopback_host(self.config.host):
+            raise ValueError(tr(
+                'Для сетевого адреса включите allow_remote_bind и задайте allowed_hosts.',
+                'A network bind requires allow_remote_bind and allowed_hosts.'))
         if not self.config.loopback_only and not self.config.allowed_hosts:
             raise ValueError(tr(
                 f'API на {self.config.host} доступно из сети: задайте allowed_hosts, '
@@ -1926,14 +1982,17 @@ class ApiV1:
                 self.send_header('Transfer-Encoding', 'chunked')
                 self.end_headers()
                 if head_only:
-                    self.wfile.write(b'0\r\n\r\n')
+                    response.stream.close()
                     return
-                for frame in response.stream:
-                    payload = frame.encode('utf-8')
-                    self.wfile.write(b'%x\r\n' % len(payload) + payload + b'\r\n')
+                try:
+                    for frame in response.stream:
+                        payload = frame.encode('utf-8')
+                        self.wfile.write(b'%x\r\n' % len(payload) + payload + b'\r\n')
+                        self.wfile.flush()
+                    self.wfile.write(b'0\r\n\r\n')
                     self.wfile.flush()
-                self.wfile.write(b'0\r\n\r\n')
-                self.wfile.flush()
+                finally:
+                    response.stream.close()
 
         server = ThreadingHTTPServer((self.config.host, self.config.port), Handler)
         server.daemon_threads = True
@@ -1979,7 +2038,10 @@ class ApiV1:
             require_permission(principal, route.permission, self.clock())
         for kind, source in route.scope:
             require_scope(principal, kind, params.get(source))
-        idem_key = request.header('Idempotency-Key')
+        idem_key = request.header('Idempotency-Key') if route.mutating else None
+        if idem_key is not None and (not idem_key.strip() or len(idem_key) > 128):
+            raise field_error('Idempotency-Key', tr('ожидается непустой ключ до 128 символов',
+                                                    'a nonempty key of at most 128 characters is expected'))
         if route.mutating and self.config.require_idempotency_key and not idem_key:
             raise field_error('Idempotency-Key', tr('обязателен для изменяющих запросов',
                                                     'required for mutations'),
@@ -1987,6 +2049,11 @@ class ApiV1:
                                         'repeat the request with the same key after a failure'))
         if route.sse:
             return self._stream(request, route, params, principal)
+        if idem_key:
+            bucket = (principal.key_id if principal else 'anonymous', request.method,
+                      request.path)
+            with self.idempotency.serialized(bucket, idem_key):
+                return self._invoke(request, route, params, principal, idem_key)
         return self._invoke(request, route, params, principal, idem_key)
 
     def _method_error(self, method, path):
@@ -2359,6 +2426,7 @@ class ApiV1:
                 headers.append(('Content-Disposition',
                                 'attachment; filename='
                                 + f'"{FILE_CHARS.sub("_", str(result["filename"]))}"'))
+            headers.extend(self._cors_headers(request))
             return Response(200, bytes(data),
                             str(result.get('content_type') or 'application/octet-stream'),
                             tuple(headers))
@@ -2453,53 +2521,65 @@ class ApiV1:
         # "stream_id": ...}``.  The page used to be iterated as it stood, which
         # walks the *keys* of a dict, so every event stream answered one
         # ``error`` frame ("event needs seq and type") and nothing else.
-        if isinstance(source, tuple):
-            declared, events = source
-        elif isinstance(source, Mapping) and isinstance(source.get('items'), list):
-            declared, events = source.get('stream_id') or stream_id, source['items']
-        else:
-            declared, events = stream_id, source
-        limit = int(query.get('limit') or self.config.max_limit)
-        stream = EventStream(str(declared or stream_id),
-                             self._guarded(events, limit, request, key_slot), self.clock,
-                             self.history, cursor_seq=seq)
+        try:
+            if isinstance(source, tuple) and len(source) == 2:
+                declared, events = source
+            elif isinstance(source, Mapping) and isinstance(source.get('items'), list):
+                declared, events = source.get('stream_id') or stream_id, source['items']
+            else:
+                declared, events = stream_id, source
+            if not isinstance(events, Iterable) or isinstance(events, (str, bytes, Mapping)):
+                raise ApiError('E_SERVICE_UNAVAILABLE', status=503,
+                               details={'reason': 'events are not iterable'})
+            limit = int(query.get('limit') or self.config.max_limit)
+
+            def close_stream():
+                try:
+                    close = getattr(events, 'close', None)
+                    if close is not None:
+                        close()
+                finally:
+                    self.key_quota.release(key_slot)
+
+            stream = EventStream(str(declared or stream_id),
+                                 self._guarded(events, limit, request), self.clock,
+                                 self.history, cursor_seq=seq,
+                                 on_close=close_stream)
+        except Exception:
+            self.key_quota.release(key_slot)
+            raise
         return Response(200, b'', 'text/event-stream; charset=utf-8',
                         (('Cache-Control', 'no-store'), ('X-Accel-Buffering', 'no'),
-                         ('X-Workbench-Stream', stream.stream_id)), stream=stream)
+                         ('X-Workbench-Stream', stream.stream_id),
+                         *self._cors_headers(request)), stream=stream)
 
-    def _guarded(self, events, limit, request, key_slot=None):
+    def _guarded(self, events, limit, request):
         """Bound the stream and re-check the key on a timer while it is open.
 
-        The key's own concurrency slot belongs to the open stream: it is given
-        back in the ``finally``, whether the client read every event, stopped
-        half way or vanished, so a closed subscription never locks its key out.
+        The stream owns and releases the key's concurrency slot when it closes.
         """
-        if not isinstance(events, Iterable):
-            self.key_quota.release(key_slot)
-            raise ApiError('E_SERVICE_UNAVAILABLE', status=503,
-                           details={'reason': 'events are not iterable'})
         last = 0
         checked_at = self.clock()
-        try:
-            for index, event in enumerate(events):
-                if index >= limit:
-                    yield {'seq': last + 1, 'type': 'stream.closed', 'code': 'E_LIMIT_BUDGET',
-                           'data': {'reason': 'limit reached'}}
+        for index, event in enumerate(events):
+            if index >= limit:
+                yield {'seq': last + 1, 'type': 'stream.closed', 'code': 'E_LIMIT_BUDGET',
+                       '_no_cursor': True, 'data': {'reason': 'limit reached'}}
+                return
+            now = self.clock()
+            if now - checked_at >= max(self.config.sse_reverify_s, 0.0):
+                try:
+                    self._recheck(request)
+                except ApiError as exc:
+                    yield {'seq': last + 1, 'type': 'session.closed', 'code': exc.code,
+                           '_no_cursor': True, 'data': {'reason': exc.message}}
                     return
-                now = self.clock()
-                if now - checked_at >= max(self.config.sse_reverify_s, 0.0):
-                    try:
-                        self._recheck(request)
-                    except ApiError as exc:
-                        yield {'seq': last + 1, 'type': 'session.closed', 'code': exc.code,
-                               'data': {'reason': exc.message}}
-                        return
-                    checked_at = now
-                if isinstance(event, dict):
+                checked_at = now
+            if isinstance(event, dict):
+                try:
                     last = max(last, int(event.get('seq') or 0))
-                yield event
-        finally:
-            self.key_quota.release(key_slot)
+                except (TypeError, ValueError, OverflowError):
+                    pass
+            yield event
 
     def _recheck(self, request):
         """A key that expired or was revoked closes the open stream, per policy."""
