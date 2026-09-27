@@ -6536,7 +6536,8 @@ def run_gateway(args, countries):
                                      max(0, args.max_per_proxy), max(0.0, args.session_ttl) * 60,
                                      lan=args.lan)
         pool = server.gateway.pool
-        shown = f'[{args.host}]' if ':' in args.host else args.host
+        shown_host = server.bind.published_host if args.lan and gateway.is_loopback(args.host) else args.host
+        shown = f'[{shown_host}]' if ':' in shown_host else shown_host
         address = f'{shown}:{server.sockets[0].getsockname()[1]}'
         print(tr(f'Ротирующий прокси: {address} (HTTP и SOCKS5 TCP), в пуле {len(pool.refresh())} прокси. Ctrl+C — остановить.',
                  f'Rotating proxy: {address} (HTTP and SOCKS5 TCP), {len(pool.refresh())} proxies in the pool. Ctrl+C to stop.'),
@@ -6544,9 +6545,14 @@ def run_gateway(args, countries):
         if server.gateway.token_origin == 'generated':
             print(tr(f'Пароль шлюза (сохраните): {server.gateway.token}',
                      f'Gateway password (save it): {server.gateway.token}'), flush=True)
-        print(f'  curl -x http://{address} https://example.org/', flush=True)
-        print(f'  curl -x http://country-de-session-1:x@{address} https://example.org/', flush=True)
-        print(f'  curl http://{address}/status', flush=True)
+        if server.gateway.token:
+            print(f'  curl -x http://workbench:PASSWORD@{address} https://example.org/  # replace PASSWORD',
+                  flush=True)
+            print(f'  curl -x http://country-de-session-1:PASSWORD@{address} https://example.org/',
+                  flush=True)
+        else:
+            print(f'  curl -x http://{address} https://example.org/', flush=True)
+            print(f'  curl http://{address}/status', flush=True)
         async with server:
             await server.serve_forever()
     try:
