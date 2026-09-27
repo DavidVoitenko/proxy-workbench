@@ -103,6 +103,23 @@ class ScanBudgetTests(unittest.TestCase):
         self.assertEqual(state['checked'], 20, 'a refusal spent no request and must not stop the run')
         self.assertEqual(state['stop_reason'], 'complete')
 
+    def test_expensive_target_cap_blocks_its_third_request(self):
+        self.seed(1)
+        opened = []
+
+        async def expensive(proxy, config, limiter, row):
+            for index in range(3):
+                async with proxytool._probe_io(1):
+                    opened.append(index)
+            return row
+
+        state = self.scan(self._ok_probe, expensive_probe=expensive, max_requests=4)
+        # The scan reserves half the run's request allowance for its expensive
+        # target. One basic probe and two expensive requests were spent.
+        self.assertEqual(opened, [0, 1])
+        self.assertEqual(state['requests'], 3)
+        self.assertEqual(state['checked'], 0)
+
 
 class CountWhatTests(unittest.TestCase):
     """N endpoints, N unique proxy IPs and N confirmed exit IPs are three numbers."""

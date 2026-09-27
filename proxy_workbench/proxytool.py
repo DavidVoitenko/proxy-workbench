@@ -1889,7 +1889,9 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
             # may return a different list and must not leave the broken prefix
             # in the collection or its source provenance.
             seen['values'].add(proxy)
-            seen['staged'][proxy] = country
+            seen['staged'].append(proxy)
+            if country is not None:
+                seen['staged_country'][proxy] = country
             return 'accepted'
         outcome = queue_candidate(proxy, country, source, seen)
         if source and seen is not None:
@@ -2063,7 +2065,7 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
             started_at = clock()
             state = _source_state_row(db, key) if record_provenance else None
             seen = {'values': set(), 'new': 0, 'duplicate': 0, 'metadata': {},
-                    'defer': False, 'staged': {}}
+                    'defer': False, 'staged': [], 'staged_country': {}}
             received = recognized = status_code = 0
             reject_reasons = {}
             body_digest = None
@@ -2143,6 +2145,7 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                 budget.clear()
                 budget.update(saved_budget)
                 seen['staged'].clear()
+                seen['staged_country'].clear()
                 if values is not None:
                     seen['values'] = set(values)
                 if parse_state == 'empty':
@@ -2153,18 +2156,18 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                 staged = seen['staged']
                 if not staged:
                     return
-                written = set()
+                index = 0
                 try:
-                    for proxy, country in staged.items():
-                        queue_candidate(proxy, country, key, seen)
-                        written.add(proxy)
+                    for index, proxy in enumerate(staged):
+                        queue_candidate(proxy, seen['staged_country'].get(proxy), key, seen)
                 except SourceFetchError:
                     # An item budget may stop publication halfway through.
                     # The accepted counter must describe the stored prefix.
-                    seen['values'].difference_update(staged.keys() - written)
+                    seen['values'].difference_update(staged[index:])
                     raise
                 finally:
-                    seen['staged'] = {}
+                    seen['staged'] = []
+                    seen['staged_country'].clear()
 
             def consume_candidate():
                 nonlocal candidate_count
