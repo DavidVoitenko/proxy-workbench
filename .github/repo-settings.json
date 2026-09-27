@@ -1,5 +1,5 @@
 {
-  "description": "Finds free proxies that actually work on the sites you need: collects from 150 public sources, checks each one against your services, and gives you ready lists, a rotating proxy and an API. Desktop app for macOS and Windows, CLI and Docker, 12 languages.",
+  "description": "Finds public proxies that work on the sites you need. Browse a 150-source catalog, collect supported feeds, check against your services, and use ready lists, a rotating gateway and an API. macOS/Windows app, CLI, Docker, 12 languages.",
   "homepage_from_pages": true,
   "has_discussions": true,
   "has_issues": true,
