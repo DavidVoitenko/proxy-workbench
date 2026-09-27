@@ -6240,6 +6240,9 @@ def parser():
                    help=tr('CSV-база DB-IP Country Lite; по умолчанию data/geoip/' + geoip.DB_NAME, 'DB-IP Country Lite CSV; default data/geoip/' + geoip.DB_NAME))
     p.add_argument('--min-success', type=float, default=2/3, help=tr('минимальная доля успехов КАЖДОГО target, 0..1', 'minimum success share for EACH target, 0..1'))
     p.add_argument('--host', default='127.0.0.1', help=tr('serve: адрес локального API; по умолчанию только этот компьютер', 'serve: API address; default is this computer only'))
+    p.add_argument('--lan', action='store_true',
+                   help=tr('gateway: явно разрешить прослушивание сетевого адреса',
+                           'gateway: explicitly allow listening on a network address'))
     p.add_argument('--port', type=int, default=None,
                    help=tr('serve/gateway: порт; по умолчанию 8765 для API и 8899 для шлюза',
                            'serve/gateway: port; default 8765 for the API and 8899 for the gateway'))
@@ -6530,13 +6533,17 @@ def run_gateway(args, countries):
 
     async def run():
         server = await gateway.start(args.data, args.host, port, gateway_token, filters, args.rotate,
-                                     max(0, args.max_per_proxy), max(0.0, args.session_ttl) * 60)
+                                     max(0, args.max_per_proxy), max(0.0, args.session_ttl) * 60,
+                                     lan=args.lan)
         pool = server.gateway.pool
         shown = f'[{args.host}]' if ':' in args.host else args.host
         address = f'{shown}:{server.sockets[0].getsockname()[1]}'
         print(tr(f'Ротирующий прокси: {address} (HTTP и SOCKS5 TCP), в пуле {len(pool.refresh())} прокси. Ctrl+C — остановить.',
                  f'Rotating proxy: {address} (HTTP and SOCKS5 TCP), {len(pool.refresh())} proxies in the pool. Ctrl+C to stop.'),
               flush=True)
+        if server.gateway.token_origin == 'generated':
+            print(tr(f'Пароль шлюза (сохраните): {server.gateway.token}',
+                     f'Gateway password (save it): {server.gateway.token}'), flush=True)
         print(f'  curl -x http://{address} https://example.org/', flush=True)
         print(f'  curl -x http://country-de-session-1:x@{address} https://example.org/', flush=True)
         print(f'  curl http://{address}/status', flush=True)
@@ -8153,6 +8160,8 @@ def main(argv=None):
     utf8_output()
     p = parser()
     args = p.parse_intermixed_args(argv)
+    if args.lan and args.command != 'gateway':
+        p.error('--lan is available only for gateway')
     if (min(args.attempts, args.workers, args.max_bytes) < 1 or args.top < 0
             or not math.isfinite(args.rate) or args.rate < 0
             or not math.isfinite(args.timeout) or args.timeout <= 0

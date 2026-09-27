@@ -379,7 +379,7 @@ curl -x socks5h://127.0.0.1:8899 https://example.org/
 - Если прокси не ответил, то же соединение повторяется через другой (до 3 раз). Прокси, который ошибся дважды, отдыхает 5 минут.
 - Обычные `http://`-запросы идут в HTTP-прокси напрямую, потому что многие из них разрешают CONNECT только на порт 443.
 
-На сервере шлюз запускает `./run.sh gateway`; пул сужается обычными фильтрами, например `gateway --protocol socks5 --country DE --max-latency 1500`. Для сетевого адреса (`--host 0.0.0.0`) нужен пароль: `--gateway-token <секрет>` или переменная `PROXY_WORKBENCH_GATEWAY_TOKEN`; если он не задан, шлюз придумывает свой и печатает его. Клиенты входят с любым именем и этим паролем через HTTP Basic или логин/пароль SOCKS5.
+На сервере шлюз запускает `./run.sh gateway`; пул сужается обычными фильтрами, например `gateway --protocol socks5 --country DE --max-latency 1500`. Для сетевого адреса нужны `--host 0.0.0.0 --lan` и пароль: `--gateway-token <секрет>` или переменная `PROXY_WORKBENCH_GATEWAY_TOKEN`; если он не задан, шлюз придумывает свой и печатает его. Клиенты входят с любым именем и этим паролем через HTTP Basic или логин/пароль SOCKS5.
 
 **Пароль шлюза — не токен API.** Это разные идентичности намеренно: тот, кому вы дали пароль для телефона в сети, не должен читать опубликованный снапшот, а утёкший токен API не должен работать как прокси. `serve` получает `--api-token`, `gateway` — `--gateway-token`; в `compose.yml` показаны обе переменные.
 
@@ -475,7 +475,7 @@ docker run -d --name pw-check -v "$PWD/data:/app/data" proxy-workbench run --wan
 docker run -d --name pw-api -p 127.0.0.1:8765:8765 -e PROXY_WORKBENCH_API_TOKEN=change-me \
   -v "$PWD/data:/app/data" proxy-workbench serve --host 0.0.0.0
 docker run -d --name pw-gateway -p 127.0.0.1:8899:8899 -e PROXY_WORKBENCH_API_TOKEN=change-me \
-  -v "$PWD/data:/app/data" proxy-workbench gateway --host 0.0.0.0
+  -v "$PWD/data:/app/data" proxy-workbench gateway --host 0.0.0.0 --lan
 ```
 
 Каждый релиз также публикует готовый образ в GitHub Container Registry. Он появляется в разделе **Packages** на странице репозитория как `ghcr.io/<owner>/proxy-workbench:<версия>` и `:latest`. Результаты сохраняются в подключённую папку `data/`, как при обычной установке.

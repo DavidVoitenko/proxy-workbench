@@ -288,7 +288,7 @@ curl -x socks5h://127.0.0.1:8899 https://example.org/
 - If a proxy fails, the same connection is retried through another one (up to 3). A proxy that fails twice rests for 5 minutes.
 - Plain `http://` requests reach HTTP proxies directly, because many of them allow CONNECT only to port 443.
 
-On a server, start it with `./run.sh gateway` and narrow the pool with the usual filters, for example `gateway --protocol socks5 --country DE --max-latency 1500`. Binding to a network address (`--host 0.0.0.0`) requires a password: `--gateway-token <secret>`, or the `PROXY_WORKBENCH_GATEWAY_TOKEN` variable; when it is not given the gateway makes one and prints it. Clients then log in with any user name and that password, over HTTP Basic or SOCKS5 user/password.
+On a server, start it with `./run.sh gateway` and narrow the pool with the usual filters, for example `gateway --protocol socks5 --country DE --max-latency 1500`. Binding to a network address requires `--host 0.0.0.0 --lan` and a password: `--gateway-token <secret>`, or the `PROXY_WORKBENCH_GATEWAY_TOKEN` variable; when it is not given the gateway makes one and prints it. Clients then log in with any user name and that password, over HTTP Basic or SOCKS5 user/password.
 
 **The gateway password is not the API token.** They are separate identities on purpose: whoever knows the password you handed to a phone must not be able to read the published snapshot, and a leaked API token must not be a working proxy. Pass `--api-token` to `serve` and `--gateway-token` to `gateway`; `compose.yml` shows both variables.
 
@@ -384,7 +384,7 @@ docker run -d --name pw-check -v "$PWD/data:/app/data" proxy-workbench run --wan
 docker run -d --name pw-api -p 127.0.0.1:8765:8765 -e PROXY_WORKBENCH_API_TOKEN=change-me \
   -v "$PWD/data:/app/data" proxy-workbench serve --host 0.0.0.0
 docker run -d --name pw-gateway -p 127.0.0.1:8899:8899 -e PROXY_WORKBENCH_API_TOKEN=change-me \
-  -v "$PWD/data:/app/data" proxy-workbench gateway --host 0.0.0.0
+  -v "$PWD/data:/app/data" proxy-workbench gateway --host 0.0.0.0 --lan
 ```
 
 Every release also publishes a ready image to the GitHub Container Registry. It appears under **Packages** in the repository sidebar as `ghcr.io/<owner>/proxy-workbench:<version>` and `:latest`. Results land in the mounted `data/` folder exactly as with a local install.

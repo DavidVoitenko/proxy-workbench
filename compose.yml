@@ -36,7 +36,7 @@ services:
 
   gateway:
     <<: *workbench
-    command: ["gateway", "--host", "0.0.0.0"]
+    command: ["gateway", "--host", "0.0.0.0", "--lan"]
     environment:
       # Not the API token: the gateway password is a separate identity.  Unset is
       # fine -- the gateway then generates one and prints it.
