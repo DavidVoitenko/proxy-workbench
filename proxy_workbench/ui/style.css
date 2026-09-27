@@ -24071,3 +24071,18 @@ pre#log,
   mask-image: none !important;
   -webkit-mask-image: none !important;
 }
+
+/* The general select rule is width:100%. Without an explicit flex basis it
+   consumes the entire URL group and hides the editable host/path field. */
+#page-scan .target-url-group .target-proto-select {
+  flex: 0 0 88px !important;
+  width: 88px !important;
+  min-width: 88px !important;
+  max-width: 88px !important;
+}
+
+#page-scan .target-url-group .target-url-input {
+  flex: 1 1 0 !important;
+  width: auto !important;
+  min-width: 0 !important;
+}
