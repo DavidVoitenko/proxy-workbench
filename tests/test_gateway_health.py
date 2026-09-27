@@ -9,6 +9,7 @@ never be written to another one, whatever its method.
 """
 import asyncio
 import unittest
+from unittest import mock
 
 from proxy_workbench import gateway
 from tests.gateway_support import GatewayCase, shutdown
@@ -221,6 +222,132 @@ class ReplayTests(GatewayCase):
         self.assertEqual(server.gateway.pool.stats['replay_refused'], 0)
         self.assertIn(owner.targets[-1], (('connect', '127.0.0.1', self.target),))
         await shutdown(writer)
+
+
+class RestingFallbackTests(GatewayCase):
+    async def test_a_pool_where_every_proxy_rests_still_serves(self):
+        # With a small pool of flaky public proxies every proxy reached two
+        # failures within a minute, and the gateway then answered 502 instantly
+        # for five minutes although some of them worked most of the time.
+        up = await self.http_upstream('relay')
+        self.publish([up.url])
+        server, address = await self.start(max_failures=1, cooldown=300)
+        pool = server.gateway.pool
+        pool.outcome(up.url, 'handshake_failed')
+        self.assertIn(up.url, pool.resting)
+        self.assertEqual(pool.available(), [])
+        self.assertEqual((await self.get(address, '/x')).status_code, 200)
+
+
+class RacingConnectTests(GatewayCase):
+    async def test_a_slow_loser_rests_instead_of_delaying_every_request(self):
+        fast = 'http://11.0.0.1:80'
+        slow = 'http://11.0.0.2:80'
+        self.publish([fast, slow])
+        server, _ = await self.start(max_failures=1)
+        running = server.gateway
+        running.stagger = 0.01
+
+        async def tunnel(proxy, *_args):
+            if proxy == slow:
+                await asyncio.Future()
+            return (None, None), None
+
+        running._tunnel = tunnel
+        lease, _stream = await running.connect('127.0.0.1', self.target)
+        try:
+            self.assertEqual(lease.proxy, fast)
+            self.assertIn(slow, running.pool.resting)
+            self.assertEqual(running.pool.report(slow)['failed'], 1)
+        finally:
+            lease.release()
+        self.assertFalse(running.pool.active)
+
+    async def test_simultaneous_failure_is_recorded_before_the_winner_returns(self):
+        alive = 'http://11.0.0.1:80'
+        dead = 'http://11.0.0.2:80'
+        self.publish([alive, dead])
+        server, _ = await self.start(max_failures=1)
+        running = server.gateway
+        running.stagger = 0
+        ready = asyncio.Event()
+        started = set()
+
+        class Writer:
+            def close(self):
+                pass
+
+        async def tunnel(proxy, *_args):
+            started.add(proxy)
+            if len(started) == 2:
+                ready.set()
+            await ready.wait()
+            if proxy == dead:
+                raise gateway.UpstreamError('closed')
+            return (None, Writer()), None
+
+        running._tunnel = tunnel
+        real_wait = asyncio.wait
+
+        async def wait_for_both(tasks, **options):
+            # Deliver both finished tasks in one batch, the interleaving that
+            # used to leave a failed proxy unrecorded on Windows.
+            if len(tasks) == 2:
+                options.update(timeout=None, return_when=asyncio.ALL_COMPLETED)
+            return await real_wait(tasks, **options)
+
+        with mock.patch.object(gateway.asyncio, 'wait', side_effect=wait_for_both):
+            lease, _stream = await running.connect('127.0.0.1', self.target)
+        try:
+            self.assertEqual(lease.proxy, alive)
+            self.assertIn(dead, running.pool.resting)
+            self.assertEqual(running.pool.report(dead)['failed'], 1)
+        finally:
+            lease.release()
+
+
+    async def test_failover_session_is_pinned_to_the_winning_tunnel(self):
+        fast = 'http://11.0.0.1:80'
+        slow = 'http://11.0.0.2:80'
+        self.publish([fast, slow])
+        server, _ = await self.start(sticky='failover')
+        running = server.gateway
+        running.stagger = 0
+
+        async def tunnel(proxy, *_args):
+            if proxy == slow:
+                await asyncio.Future()
+            return (None, None), None
+
+        running._tunnel = tunnel
+        lease, _stream = await running.connect('127.0.0.1', self.target, session='one')
+        try:
+            self.assertEqual(lease.proxy, fast)
+            self.assertEqual(running.pool.sessions['one'][0], fast)
+        finally:
+            lease.release()
+        self.assertFalse(running.pool.active)
+
+    async def test_configured_strict_session_dials_only_one_proxy(self):
+        proxies = ['http://11.0.0.1:80', 'http://11.0.0.2:80']
+        self.publish(proxies)
+        server, _ = await self.start(sticky='strict')
+        running = server.gateway
+        running.stagger = 0
+        dialed = []
+
+        async def tunnel(proxy, *_args):
+            dialed.append(proxy)
+            await asyncio.sleep(0.01)
+            return (None, None), None
+
+        running._tunnel = tunnel
+        lease, _stream = await running.connect('127.0.0.1', self.target, session='strict')
+        try:
+            self.assertEqual(dialed, [lease.proxy])
+            self.assertEqual(running.pool.sessions['strict'][0], lease.proxy)
+        finally:
+            lease.release()
 
 
 if __name__ == '__main__':

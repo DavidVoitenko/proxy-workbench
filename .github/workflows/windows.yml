@@ -68,6 +68,18 @@ jobs:
       - name: Smoke test the console CLI executable
         run: python packaging/smoke.py dist/proxy-workbench-cli.exe
 
+      # Local mocks cannot show whether real HTTPS downloads verify in the
+      # frozen build, so collect the quick source set from the internet.
+      - name: Collect real sources over HTTPS with the built CLI
+        shell: bash
+        run: |
+          data="$RUNNER_TEMP/pw-https-check"
+          dist/proxy-workbench-cli.exe source set quick --data "$data"
+          dist/proxy-workbench-cli.exe collect --data "$data" | tee "$RUNNER_TEMP/collect.log"
+          count=$(sed -n 's/^Unique candidates in the database: \([0-9]*\).*/\1/p' "$RUNNER_TEMP/collect.log")
+          echo "collected: ${count:-0}"
+          test "${count:-0}" -gt 0
+
       # The GUI executable is windowed, so it has nowhere to print: what it
       # prints is the log the build already produced.
       - name: Report what the build recorded

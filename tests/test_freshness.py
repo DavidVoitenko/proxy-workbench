@@ -327,8 +327,12 @@ class SourceTrackingTests(unittest.IsolatedAsyncioTestCase):
                 db.execute('INSERT INTO candidate_meta(proxy, source) VALUES (?,?)', (proxy, 'aaa'))
                 mark_seen(db, (proxy, 'bbb'))
                 store_result(db, ('fx', proxy, json.dumps(row)))
+                other = 'http://11.0.0.2:80'
+                mark_seen(db, (other, 'other'))
+                store_result(db, ('other-profile', other, json.dumps(measured(other, cfg))))
                 db.commit()
                 self.assertEqual(p.source_map(db)[proxy], ('aaa', 'bbb'))
+                self.assertEqual(p.source_map(db, 'fx'), {proxy: ('aaa', 'bbb')})
                 report = p.export(db, 'fx', Path(temp) / 'out', min_success=1)
                 self.assertEqual(report['source_quality'], {
                     'aaa': {'checked': 1, 'passed': 1}, 'bbb': {'checked': 1, 'passed': 1}})

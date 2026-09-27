@@ -27,10 +27,11 @@ import ipaddress
 import json
 import math
 import re
-import ssl
 import time
 from dataclasses import dataclass, replace
 from urllib.parse import parse_qs, urljoin, urlsplit
+
+from . import tls
 
 __all__ = [
     # errors
@@ -632,10 +633,7 @@ def build_ssl_context(ca_bundle=None):
     a custom CA, a header, a redirect or an API key never disables TLS
     verification.
     """
-    context = ssl.create_default_context(cafile=ca_bundle) if ca_bundle else ssl.create_default_context()
-    context.check_hostname = True
-    context.verify_mode = ssl.CERT_REQUIRED
-    return context
+    return tls.default_context(ca_bundle)
 
 
 @dataclass(frozen=True)

@@ -49,7 +49,7 @@ import time
 from collections import OrderedDict
 from pathlib import Path
 
-from . import geoip, reputation, secrets as secretstore, socks4
+from . import geoip, reputation, secrets as secretstore, socks4, tls
 from .api import Exports, is_loopback, select
 from .i18n import tr
 
@@ -76,7 +76,7 @@ POOL_OPTION = re.compile(r'[A-Za-z0-9._-]{1,64}')
 # itself; a target that refused must never rest a working upstream.
 HEALTH_GOOD = frozenset({'response', 'tunnel_bytes'})
 HEALTH_TARGET = frozenset({'upstream_unavailable', 'no_response'})
-HEALTH_FAULT = frozenset({'handshake_failed', 'upstream_refused', 'closed_empty'})
+HEALTH_FAULT = frozenset({'handshake_failed', 'slow_connect', 'upstream_refused', 'closed_empty'})
 HEALTH_OUTCOMES = HEALTH_GOOD | HEALTH_TARGET | HEALTH_FAULT
 #: Half-life of a gateway health observation, seconds.
 HEALTH_DECAY = 300.0
@@ -750,7 +750,8 @@ class Pool:
         """Choose a proxy without taking a slot.  Prefer :meth:`reserve` in a gateway."""
         return self._pick(exclude, request, session, sticky, binding, reserve=False)
 
-    def reserve(self, request=None, exclude=(), session=None, sticky=None, binding=None):
+    def reserve(self, request=None, exclude=(), session=None, sticky=None, binding=None,
+                commit_session=True):
         """Pick a proxy and take its concurrency slot in one indivisible step.
 
         Doing both together is what keeps parallel connects under
@@ -758,9 +759,10 @@ class Pool:
         reservation, so two clients can never observe the same free slot.
        The caller owns the returned :class:`Lease`.
         """
-        return self._pick(exclude, request, session, sticky, binding, reserve=True)
+        return self._pick(exclude, request, session, sticky, binding, reserve=True,
+                          commit_session=commit_session)
 
-    def _pick(self, exclude, request, session, sticky, binding, reserve):
+    def _pick(self, exclude, request, session, sticky, binding, reserve, commit_session=True):
         now = time.monotonic()
         sticky = self._sticky(binding, sticky)
         with self.lock:
@@ -771,7 +773,8 @@ class Pool:
                 if pinned and pinned in candidates:
                     if reserve:
                         self._take(pinned)
-                        self.sessions[session] = (pinned, now + self.session_ttl)
+                        if commit_session:
+                            self.sessions[session] = (pinned, now + self.session_ttl)
                         return Lease(self, pinned)
                     return pinned
                 if pinned and sticky == 'strict':
@@ -779,14 +782,35 @@ class Pool:
                     # free slot for the proxy it is bound to means a refusal.
                     return None
             if not candidates:
-                return None
-            choice = self._choose(candidates, self._strategy(binding), now)
-            if session:
+                # Every matching proxy is resting.  Refusing outright turned a
+                # small pool of flaky public proxies into a gateway that answered
+                # 502 instantly for five minutes; the one whose rest ends first
+                # is still a better answer than none.
+                candidates = self._resting_fallback(request, now, binding, exclude)
+                if not candidates:
+                    return None
+                choice = candidates[0]
+            else:
+                choice = self._choose(candidates, self._strategy(binding), now)
+            if session and commit_session:
                 self.sessions[session] = (choice, now + self.session_ttl)
             if not reserve:
                 return choice
             self._take(choice)
             return Lease(self, choice)
+
+    def bind_session(self, session, proxy):
+        """Pin a session only after its upstream tunnel has won the race."""
+        with self.lock:
+            self.sessions[session] = (proxy, time.monotonic() + self.session_ttl)
+
+    def _resting_fallback(self, request, now, binding, exclude):
+        """Resting proxies that could serve this request, soonest back first."""
+        limit = self._limit(binding)
+        resting = [proxy for proxy in self.matching(request, binding)
+                   if proxy not in exclude and self.resting.get(proxy, 0) > now and self.allowed(proxy)
+                   and (not limit or self.active.get(proxy, 0) < limit)]
+        return sorted(resting, key=lambda proxy: self.resting[proxy])
 
     def _take(self, proxy):
         self.active[proxy] = self.active.get(proxy, 0) + 1
@@ -1019,7 +1043,7 @@ async def open_tunnel(proxy, host, port, forward=False, ssl_context=None, creden
     proxy_host, _, proxy_port = address.rpartition(':')
     proxy_host = proxy_host.strip('[]')
     if scheme == 'https':
-        context = ssl_context or ssl.create_default_context()
+        context = ssl_context or tls.default_context()
         reader, writer = await asyncio.open_connection(proxy_host, int(proxy_port), limit=MAX_HEAD,
                                                        ssl=context, server_hostname=proxy_host)
     else:
@@ -1190,7 +1214,7 @@ def credential_state(source):
 
 
 class Gateway:
-    def __init__(self, pool, token=None, attempts=3, connect_timeout=8, idle_timeout=300,
+    def __init__(self, pool, token=None, attempts=4, connect_timeout=8, idle_timeout=300,
                  allow_local_without_auth=False, *, handshake_timeout=30, response_timeout=15,
                  max_clients=MAX_CLIENTS, max_session=0, bind=None, token_origin=None,
                  drain_timeout=2.0, ssl_context=None, refresh_interval=2.0,
@@ -1200,6 +1224,8 @@ class Gateway:
         self.token_origin = token_origin or ('explicit' if token else 'none')
         self.attempts = max(1, int(attempts))
         self.connect_timeout = connect_timeout
+        # Seconds before the next proxy joins a connect attempt that has not answered.
+        self.stagger = min(2.0, float(connect_timeout))
         self.idle_timeout = idle_timeout
         self.allow_local_without_auth = allow_local_without_auth
         self.handshake_timeout = handshake_timeout
@@ -1307,38 +1333,110 @@ class Gateway:
 
         The returned lease owns the concurrency slot; the caller must release it
         (or use ``with``) whatever happens to the stream.
+
+        Attempts are staggered rather than strictly one after another: when a
+        proxy has not answered within ``stagger`` seconds, the next one starts
+        alongside it and the first tunnel wins.  One after another, three dead
+        proxies cost a client three full connect timeouts before a 502.  A
+        strict sticky session keeps the sequential order, because it may only
+        fall through when its own proxy failed.
         """
         tried = set()
-        for attempt in range(self.attempts):
+        pending = {}
+        staggered = set()
+        failures = 0
+        won = False
+        strict = bool(session and self.pool._sticky(binding, sticky) == 'strict')
+
+        def start_next():
             lease = self.pool.reserve(request=request, exclude=tried, session=session,
-                                      sticky=sticky, binding=binding)
+                                      sticky=sticky, binding=binding, commit_session=strict)
             if lease is None:
-                break
-            proxy = lease.proxy
-            tried.add(proxy)
-            self.pool.stats['retries'] += attempt > 0
-            started = time.monotonic()
-            try:
-                stream, credentials = await asyncio.wait_for(
-                    self._tunnel(proxy, host, port, forward), self.connect_timeout)
-            except (OSError, UpstreamError, ValueError, UnicodeError) as exc:
-                lease.release()
-                self.pool.outcome(proxy, 'handshake_failed', detail=UNUSABLE)
-                if session and sticky == 'strict':
+                return False
+            tried.add(lease.proxy)
+            self.pool.stats['retries'] += len(tried) > 1
+            task = asyncio.ensure_future(asyncio.wait_for(
+                self._tunnel(lease.proxy, host, port, forward), self.connect_timeout))
+            pending[task] = (lease, time.monotonic())
+            return True
+
+        try:
+            if not start_next():
+                self.pool.stats['failed'] += 1
+                raise UpstreamError('NO_PROXIES')
+            while pending:
+                can_add = not strict and len(tried) < self.attempts
+                done, _ = await asyncio.wait(list(pending), timeout=self.stagger if can_add else None,
+                                             return_when=asyncio.FIRST_COMPLETED)
+                if not done and can_add:
+                    # The wait itself establishes that these attempts have
+                    # missed the policy deadline.  Comparing clocks again in
+                    # cleanup can lose a few milliseconds on Windows.
+                    staggered.update(pending)
+                winner = None
+                for task in list(pending):
+                    if task not in done:
+                        continue
+                    lease, started = pending.pop(task)
+                    try:
+                        stream, credentials = task.result()
+                    except (OSError, UpstreamError, ValueError, UnicodeError):
+                        lease.release()
+                        self.pool.outcome(lease.proxy, 'handshake_failed', detail=UNUSABLE)
+                        failures += 1
+                        continue
+                    if winner is None:
+                        winner = (lease, stream, credentials, started)
+                    else:
+                        # Two tunnels can finish in one event-loop turn.  Only
+                        # one may keep its reservation and open stream.
+                        stream[1].close()
+                        lease.release()
+                if winner is not None:
+                    lease, stream, credentials, started = winner
+                    # The plain-HTTP path still has to write the credential onto the
+                    # wire, so it rides on the lease and is dropped the moment the
+                    # request is written.
+                    lease.credentials = credentials
+                    self.pool.connected(lease.proxy, (time.monotonic() - started) * 1000)
+                    if session:
+                        self.pool.bind_session(session, lease.proxy)
+                    won = True
+                    return lease, stream
+                if strict and failures:
                     break
-                continue
-            except BaseException:
-                # Cancellation and timeout both belong here: the slot must not leak.
+                # Either the stagger ran out or everything that finished failed.
+                if not strict and len(tried) < self.attempts:
+                    start_next()
+            self.pool.stats['failed'] += 1
+            raise UpstreamError('NO_WORKING_PROXY')
+        finally:
+            # A loser that was still connecting after the stagger has proved
+            # too slow for this gateway.  Count it, or it gets picked again on
+            # every request and delays every other connection forever.
+            for task, (lease, _) in pending.items():
+                unfinished = not task.done()
+                if unfinished:
+                    task.cancel()
                 lease.release()
-                raise
-            # The plain-HTTP path still has to write the credential onto the
-            # wire, so it rides on the lease and is dropped the moment the
-            # request is written.
-            lease.credentials = credentials
-            self.pool.connected(proxy, (time.monotonic() - started) * 1000)
-            return lease, stream
-        self.pool.stats['failed'] += 1
-        raise UpstreamError('NO_WORKING_PROXY' if tried else 'NO_PROXIES')
+                if won and unfinished and task in staggered:
+                    self.pool.outcome(lease.proxy, 'slow_connect', detail='slow_connect')
+            for task in pending:
+                with contextlib.suppress(BaseException):
+                    await task
+            for task, (lease, _) in pending.items():
+                if task.cancelled():
+                    continue
+                try:
+                    stream = task.result()[0]
+                except (OSError, UpstreamError, ValueError, UnicodeError):
+                    if won:
+                        self.pool.outcome(lease.proxy, 'handshake_failed', detail=UNUSABLE)
+                except BaseException:
+                    pass
+                else:
+                    with contextlib.suppress(Exception):
+                        stream[1].close()
 
     # --- authentication ------------------------------------------------------
 
@@ -1866,7 +1964,7 @@ async def start(data, host=DEFAULT_HOST, port=DEFAULT_PORT, token=None, filters=
                 on_deny='keep', bindings=None, default_binding=None, binding=None,
                 credentials=None,
                 handshake_timeout=30, max_clients=MAX_CLIENTS,
-                max_session=0, cache_limit=CACHE_LIMIT, attempts=3, connect_timeout=8,
+                max_session=0, cache_limit=CACHE_LIMIT, attempts=4, connect_timeout=8,
                 idle_timeout=300, refresh_interval=2.0, response_timeout=15,
                 max_failures=2, cooldown=300):
     """Listen for proxy clients and spread their connections over the export.

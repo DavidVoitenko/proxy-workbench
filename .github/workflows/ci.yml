@@ -203,6 +203,19 @@ jobs:
       - name: Smoke test the built application
         run: python packaging/smoke.py "dist/Proxy Workbench.app/Contents/MacOS/Proxy Workbench"
 
+      # The smoke test only talks to local mocks.  A frozen build can still fail
+      # every real HTTPS download (3.0.0 did: no trusted certificates), so the
+      # built app has to collect the quick source set from the internet.
+      - name: Collect real sources over HTTPS with the built application
+        run: |
+          app="dist/Proxy Workbench.app/Contents/MacOS/Proxy Workbench"
+          data="$RUNNER_TEMP/pw-https-check"
+          "$app" source set quick --data "$data"
+          "$app" collect --data "$data" | tee "$RUNNER_TEMP/collect.log"
+          count=$(sed -n 's/^Unique candidates in the database: \([0-9]*\).*/\1/p' "$RUNNER_TEMP/collect.log")
+          echo "collected: ${count:-0}"
+          test "${count:-0}" -gt 0
+
       - name: Report what the build recorded
         run: |
           python - <<'PY'

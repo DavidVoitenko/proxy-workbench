@@ -2772,7 +2772,7 @@ class App:
             if denylist.error:
                 raise ValueError('Не удалось прочитать локальный denylist; обновите список.')
             policy = self.result_policy(plan, cfg, denylist=denylist)
-            source_keys = self.source_keys(conn)
+            source_keys = self.source_keys(conn, plan['profile'])
             provider_of = self.provider_resolver()
             now = time.time()
             entries = self.annotations.read().get('entries') or {}
@@ -2863,9 +2863,9 @@ class App:
                 return False
         return True
 
-    def source_keys(self, conn):
+    def source_keys(self, conn, profile=None):
         try:
-            return core.source_map(conn)
+            return core.source_map(conn, profile)
         except sqlite3.Error:
             return {}
 
@@ -5129,12 +5129,31 @@ class Handler(BaseHTTPRequestHandler):
                 body[name] = text
         return body
 
+    def discard_body(self):
+        """Read an unused request body, or close the connection if it cannot be read.
+
+        Answering before the body is read leaves it in the socket: on a kept-alive
+        connection it would be parsed as the next request, and on Windows closing
+        a socket with unread data resets it, so the client sees a connection
+        abort instead of the refusal.
+        """
+        try:
+            length = int(self.headers.get('Content-Length', '0'))
+        except ValueError:
+            length = -1
+        if 0 < length <= MAX_BODY:
+            self.rfile.read(length)
+        elif length != 0:
+            self.close_connection = True
+
     def do_POST(self):
         if not self.allowed():
+            self.discard_body()
             return
         try:
             length = int(self.headers.get('Content-Length', '0'))
             if not 0 < length <= MAX_BODY:
+                self.close_connection = True
                 return self.respond(413, dict(error='Слишком большой запрос.'))
             payload = json.loads(self.rfile.read(length))
             path = urlsplit(self.path).path
