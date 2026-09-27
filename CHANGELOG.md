@@ -10,7 +10,7 @@ The biggest release so far: a new interface, a source catalog of 150 lists, a de
 
 - **Redesigned interface.** A new dark-first design layer with a reworked light theme, consistent typography, micro-animations and a live feed of the running check. The layout adapts to phones and tablets (a side rail on tablets, a compact layout on phones), and heavy tables stay smooth on large result sets.
 - **12 interface languages.** English and Russian are joined by German, Spanish, French, Italian, Japanese, Polish, Portuguese, Turkish, Ukrainian and Chinese, every one of them complete.
-- **Source catalog: 150 sources, 117 of them fully free and public; 106 feeds are collected out of the box.** Every entry says who publishes it, what it serves (proxy list, subscription config, API), whether an account is needed, which protocols it carries and how it was verified. ready-made sets (quick, all supported, extended, by protocol), one-click enable/disable, per-source reports and a comparison that spots lists which republish each other. Only sources marked safe to collect are fetched; commercial, trial and rejected entries are shown for reference.
+- **Source catalog: 150 sources, 117 of them fully free and public; 106 feeds are collected out of the box.** Every entry says who publishes it, what it serves (proxy list, subscription config, API), whether an account is needed, which protocols it carries and how it was verified. Ready-made sets (quick, all supported, extended, by protocol), one-click enable/disable, per-source reports and a comparison that spots lists which republish each other. Only sources marked safe to collect are fetched; commercial, trial and rejected entries are shown for reference.
 - **Desktop app.** Starting `proxy-workbench` without arguments now launches the desktop app: a macOS menu-bar icon, a single running instance, optional start at login, and correct recovery after sleep/wake. `proxy-workbench gui` (or `--no-desktop`) opens only the web interface, as before.
 - **Proper installers.** A macOS `.app`/`.dmg` (Apple Silicon and Intel) and Windows GUI and CLI executables with a per-user installer; Linux installs with `pipx` or Docker. Data lives in per-user folders, with a portable mode and automatic migration of an old `data/` folder.
 
@@ -41,6 +41,7 @@ The biggest release so far: a new interface, a source catalog of 150 lists, a de
 
 ### Fixed
 
+- **Checks are much faster on real-world lists.** A scan no longer waits on its own database lock for every job item, and dead proxies no longer push the number of parallel checks down to one: 3,000 mostly dead candidates now take seconds instead of hours. Running out of file descriptors is no longer recorded as a dead proxy.
 - **The database no longer grows without limit under `--watch`.** Each source keeps its last three downloaded lists; older ones are pruned right after a collection, and `backup retention` cleans up history left by earlier versions. A list the server reports as unchanged is re-applied to collections that lost it, and a retry after a broken download no longer counts the first attempt against the size limit.
 - **Collecting is faster and reads more lists.** Addresses are written in batches (a full collection of the 106 default feeds went from 133 s to 79 s); four sources that returned nothing (hideip.me, spys.me and others with `ip:port` lines and comments) now return addresses; a list that exceeds the size limit is reported as a partial read instead of a failing provider and is no longer put into backoff; a list without country data no longer erases a country learned elsewhere; cached lists are re-read after a failed or refused download.
 - **Control API checked operation by operation.** The audit log is written; a key limited to one collection or pool can no longer act on others through body or query fields; event streams deliver events; result paging moves past the first page and every declared filter and sort works; unknown jobs, pools and sources answer 404; refreshing a source returns a job; PUT and wrong methods get JSON errors; `localhost` reaches `/v1`.
@@ -50,7 +51,6 @@ The biggest release so far: a new interface, a source catalog of 150 lists, a de
 - **`--watch` really re-checks.** Every round now measures the passing proxies again; before, rounds after the first measured nothing and republished old results.
 - **A busy host no longer holds up other hosts**, and `--want` stops as soon as the target is reached even when workers waited for a host (30 ports on one IP with `--want 5`: 8 measured instead of 30).
 - `hostport.txt` lists an address once even when it passed as several protocols; a speed test sample below 1 MiB is refused because it can never give a result.
-- **Checks are much faster on real-world lists.** A scan no longer waits on its own database lock for every job item, and dead proxies no longer push the number of parallel checks down to one: 3,000 mostly dead candidates now take seconds instead of hours. Running out of file descriptors is no longer recorded as a dead proxy.
 - The chosen interface language is kept after a restart; before, ten of the twelve languages fell back to English on the next start.
 - Results table cells stay under their own headers when some columns are hidden.
 - Results table text is readable in the light theme.
@@ -70,6 +70,8 @@ The biggest release so far: a new interface, a source catalog of 150 lists, a de
 - The menu-bar icon exists on macOS only; sleep/wake is not detected natively on Windows.
 - Builds are not code-signed or notarized: macOS will ask you to confirm the first launch, Windows SmartScreen may warn.
 - There is no automatic updater; the app can tell you an update exists.
+- Gateway settings saved through the API are stored and listed but not yet applied when the gateway starts; the command line and interface options are used.
+- The Windows uninstaller leaves the optional PATH entry in place.
 - Figures in this release come from local tests and mock services; the quality of public proxies was not measured.
 
 ## [2.2.1] — 2026-09-25
