@@ -1545,14 +1545,23 @@ class WorkbenchService(apiv1.Service):
 
     def _op_jobs_list(self, call):
         store, conn = self._job_store()
+        limit = min(int(call.query.get('limit') or 50), 500)
+        offset = self._offset(call)
         try:
-            items = [_job_dict(job)
-                     for job in store.jobs(limit=min(int(call.query.get('limit') or 50), 500))] \
-                if store is not None else []
+            allowed = _scope_values(call.principal, 'collections')
+            scoped = sorted(allowed) if allowed is not None else None
+            if store is None:
+                items, total = [], 0
+            else:
+                jobs = store.jobs(collection_ids=scoped, limit=limit, offset=offset)
+                items = [_job_dict(job) for job in jobs]
+                total = store.count_jobs(collection_ids=scoped)
         finally:
             _close(conn)
-        return {'items': self._guard_objects(items, call, 'id', 'jobs'),
-                'stream_id': 'jobs', 'next_seq': None}
+        items = self._guard_objects(items, call, 'id', 'jobs')
+        return {'items': items, 'stream_id': 'jobs', 'total': total,
+                'cursor_seq': offset + len(items) if items else None,
+                'next_seq': offset + len(items) + 1 if offset + len(items) < total else None}
 
     def _op_jobs_get(self, call):
         store, conn = self._job_store()
@@ -2061,19 +2070,21 @@ class WorkbenchService(apiv1.Service):
         conn = self.connection()
         items = []
         try:
-            rows = conn.execute(
-                'SELECT e.rowid AS rid, e.job_id, e.seq, e.at, e.type, e.code, e.data_json, '
-                'j.collection_id FROM job_event e LEFT JOIN job j ON j.id = e.job_id '
-                'WHERE e.rowid > ? ORDER BY e.rowid LIMIT ?',
-                (after, limit if allowed is None else limit * 20)).fetchall() \
-                if conn is not None else []
+            sql = ('SELECT e.rowid AS rid, e.job_id, e.seq, e.at, e.type, e.code, '
+                   'e.data_json, j.collection_id FROM job_event e '
+                   'LEFT JOIN job j ON j.id = e.job_id WHERE e.rowid > ?')
+            params = [after]
+            if allowed is not None:
+                sql += f' AND j.collection_id IN ({",".join("?" * len(allowed))})'
+                params.extend(sorted(allowed))
+            sql += ' ORDER BY e.rowid LIMIT ?'
+            params.append(limit)
+            rows = conn.execute(sql, params).fetchall() if conn is not None else []
         except sqlite3.Error:
             rows = []
         finally:
             _close(conn)
         for row in rows:
-            if allowed is not None and row['collection_id'] not in allowed:
-                continue
             try:
                 data = json.loads(row['data_json'] or '{}')
             except (TypeError, ValueError):
@@ -4503,13 +4514,16 @@ def make_api_server(data, host='127.0.0.1', port=DEFAULT_PORT, token=None, v1=Tr
             self.send_header('Connection', 'close')
             self.end_headers()
             if self.command == 'HEAD':
+                response.stream.close()
                 return
             try:
                 for frame in response.stream:
                     self.wfile.write(frame.encode('utf-8') if isinstance(frame, str) else frame)
                     self.wfile.flush()
             except OSError:
-                pass  # the subscriber went away; the stream releases its slot itself
+                pass  # the subscriber went away
+            finally:
+                response.stream.close()
 
         def do_GET(self):
             url = urlsplit(self.path)

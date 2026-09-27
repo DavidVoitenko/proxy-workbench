@@ -904,7 +904,14 @@ class JobStore:
                     (idempotency_key,)).fetchone()
                 if row is not None:
                     existing = self._job_from_row(row)
-                    if existing.id == job.id or existing.kind != new_kind:
+                    origin = conn.execute(
+                        'SELECT data_json FROM job_event WHERE job_id=? AND seq=1',
+                        (existing.id,)).fetchone()
+                    try:
+                        retry_of = json.loads(origin[0]).get('retry_of') if origin else None
+                    except (TypeError, ValueError):
+                        retry_of = None
+                    if existing.id == job.id or existing.kind != new_kind or retry_of != job.id:
                         raise IdempotencyConflict(
                             f'key {idempotency_key!r} is already bound to job {existing.id}')
                     return existing
@@ -1289,8 +1296,14 @@ class JobStore:
         return self._job(self._conn, job_id)
 
     def jobs(self, *, kind: str | None = None, state: str | None = None,
-             limit: int | None = None) -> list[Job]:
+             collection_ids: Sequence[str] | None = None,
+             limit: int | None = None, offset: int = 0) -> list[Job]:
         clauses, params = [], []
+        if collection_ids is not None:
+            if not collection_ids:
+                return []
+            clauses.append(f'collection_id IN ({",".join("?" * len(collection_ids))})')
+            params.extend(collection_ids)
         if kind is not None:
             clauses.append('kind=?')
             params.append(kind)
@@ -1306,7 +1319,22 @@ class JobStore:
         if limit is not None:
             sql += ' LIMIT ?'
             params.append(int(limit))
+        if offset:
+            if limit is None:
+                sql += ' LIMIT -1'
+            sql += ' OFFSET ?'
+            params.append(max(0, int(offset)))
         return [self._job_from_row(row) for row in self._conn.execute(sql, params).fetchall()]
+
+    def count_jobs(self, *, collection_ids: Sequence[str] | None = None) -> int:
+        if collection_ids is None:
+            return int(self._conn.execute('SELECT count(*) FROM job').fetchone()[0])
+        if not collection_ids:
+            return 0
+        placeholders = ','.join('?' * len(collection_ids))
+        return int(self._conn.execute(
+            f'SELECT count(*) FROM job WHERE collection_id IN ({placeholders})',
+            tuple(collection_ids)).fetchone()[0])
 
     def events(self, job_id: str, *, after_seq: int = 0, limit: int = 500,
                types: Sequence[str] | None = None) -> list[JobEvent]:
