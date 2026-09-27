@@ -74,6 +74,8 @@ MAX_SOURCE_LINE_BYTES = 16 * 1024 * 1024
 MAX_SOURCE_CANDIDATES = 10_000_000
 MAX_SOURCE_REDIRECTS = 20
 MAX_SOURCE_PAGES = 5_000
+#: Addresses ``collect`` buffers before one set-based write and commit.
+COLLECT_WRITE_BATCH = 10_000
 SOURCE_REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 SOURCE_METADATA_HOSTS = frozenset({
     'metadata', 'metadata.google.internal', 'metadata.goog', 'metadata.azure.internal',
@@ -280,6 +282,9 @@ def _declared_response_length(response):
 
 
 COLLECT_BUDGET_ERRORS = frozenset(('SOURCE_REQUEST_BUDGET', 'SOURCE_ITEM_BUDGET', 'SOURCE_BYTE_BUDGET'))
+#: One source's own limits: the origin answered, the answer did not fit.
+SOURCE_LIMIT_ERRORS = frozenset(('SOURCE_TOO_LARGE', 'SOURCE_LINE_TOO_LARGE', 'SOURCE_CANDIDATE_LIMIT',
+                                 'SOURCE_RECORD_LIMIT', 'SOURCE_PAGE_LIMIT', 'SOURCE_TRUNCATED'))
 
 
 def _collection_budget_error(budget, code):
@@ -422,8 +427,34 @@ async def _read_bounded_lines(response, budget, max_bytes, max_line_bytes, on_li
         budget['truncated'] = True
 
 
+_OCTET = r'(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])'
+#: The shape almost every public list uses: an optional scheme, a dotted IPv4
+#: address without leading zeros and a port.  ASCII digits only, so it accepts
+#: nothing the general parser below would refuse.
+_FAST_IPV4_PROXY = re.compile(
+    r'(?:(http|https|socks4|socks5|socks5h)://)?(' + _OCTET + r'(?:\.' + _OCTET + r'){3}):([0-9]{1,5})/?')
+
+
 def _normalize_proxy(value, *, public_only):
     """Shared proxy URL parser for public collection and private GUI imports."""
+    if not isinstance(value, str):
+        return None
+    # Fast path for the common ``scheme://a.b.c.d:port`` line; it returns what
+    # the general parser returns for the same input (see the tests).
+    match = _FAST_IPV4_PROXY.fullmatch(value.strip())
+    if match is not None:
+        scheme, host, port = match.groups()
+        port = int(port)
+        if not 1 <= port <= 65535:
+            return None
+        if public_only and not ipaddress.IPv4Address(host).is_global:
+            return None
+        return f'{scheme or "http"}://{host}:{port}'
+    return _normalize_proxy_general(value, public_only=public_only)
+
+
+def _normalize_proxy_general(value, *, public_only):
+    """The complete parser: IPv6, hostnames and every other spelling."""
     if not isinstance(value, str):
         return None
     raw = value.strip()
@@ -940,6 +971,10 @@ LINE_KIND = 'line'
 SOURCE_KINDS = ('http', 'https', 'socks4', 'socks5', 'socks5h', 'auto', 'text', 'geonode',
                 'http-fields', LINE_KIND) + CATALOG_ADAPTER_KINDS
 DETECT_PROTOCOLS = ('http', 'socks4', 'socks5')
+#: "ip:port:Country Name"; the country is any word of letters, "Türkiye" included.
+HTTP_FIELDS_LINE = re.compile(r"(\d{1,3}(?:\.\d{1,3}){3}:\d{1,5}):[^\W\d_](?:[^\W\d_]|[ .'-])*")
+#: A comment after an address, separated from it by whitespace.
+INLINE_COMMENT = re.compile(r'\s+#')
 # ip:port inside free text: "1.2.3.4:8080", "1.2.3.4 8080", CSV and HTML table cells.
 LOOSE_ADDRESS = re.compile(r'(?<![\d.])(?:(https?|socks[45]h?)://)?(\d{1,3}(?:\.\d{1,3}){3})'
                            r'(?::|\s*(?:</t[dh]>\s*<t[dh][^>]*>|[\s,;|])\s*)(\d{2,5})(?!\d)', re.I)
@@ -1551,7 +1586,7 @@ def record_source_generation(db, plan, observation_id, endpoints, *, state, now,
 
 def record_source_state(db, plan, endpoint_url, *, now, etag=None, last_modified=None,
                         final_url=None, success=False, error=None, retry_after=None,
-                        previous=None, generation=None, not_modified=False):
+                        previous=None, generation=None, not_modified=False, limited=False):
     """Cache validators, backoff and quarantine of one source.
 
     A successful fetch clears the backoff and the quarantine; three failures in
@@ -1565,8 +1600,20 @@ def record_source_state(db, plan, endpoint_url, *, now, etag=None, last_modified
     # failure budget: counting it as a failure quarantined a perfectly healthy
     # source after three collections, and every collection after that stopped
     # asking it at all.
-    healthy = bool(success or not_modified)
+    answered = bool(success or not_modified)
+    # A body past the user's own limits came from a working transport: it is
+    # neither backed off nor quarantined, so raising the limit takes effect on
+    # the next collection.
+    healthy = answered or bool(limited)
     failures = 0 if healthy else int(previous.get('consecutive_failures') or 0) + 1
+    # Validators describe the body they came with.  Only a body that was read
+    # whole may replace them; otherwise a later 304 would vouch for a body
+    # that was never stored.  A 304 without validators keeps the stored ones.
+    if not_modified:
+        etag = etag or previous.get('etag')
+        last_modified = last_modified or previous.get('last_modified')
+    elif not success:
+        etag, last_modified = previous.get('etag'), previous.get('last_modified')
     backoff_until = None
     quarantine_until = None if healthy else previous.get('quarantine_until')
     if not healthy:
@@ -1580,7 +1627,7 @@ def record_source_state(db, plan, endpoint_url, *, now, etag=None, last_modified
     if success and generation:
         current, last_good = generation, generation
     values = (plan.source_id, '', final_url or endpoint_url, etag, last_modified, now,
-              now if healthy else previous.get('last_success_at'),
+              now if answered else previous.get('last_success_at'),
               now if success else previous.get('last_body_at'),
               now if not_modified else previous.get('last_304_at'),
               current, last_good, failures, backoff_until, quarantine_until,
@@ -1688,7 +1735,8 @@ def _write_source_provenance(db, run_id, plan, url, *, started_at, clock, http_s
     if error not in COLLECT_BUDGET_ERRORS:
         record_source_state(db, plan, url, now=ended, etag=etag, last_modified=last_modified,
                             final_url=final_url, success=delivered, error=error, previous=previous,
-                            generation=generation, not_modified=not_modified, retry_after=retry_after)
+                            generation=generation, not_modified=not_modified, retry_after=retry_after,
+                            limited=error in SOURCE_LIMIT_ERRORS)
     return {'observation_id': observation_id, 'generation_id': generation,
             'cache_state': cache_state, 'outcome': outcome}
 
@@ -1821,41 +1869,102 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                 _collection_budget_error(collection_budget, 'SOURCE_ITEM_BUDGET')
         if not (isinstance(country, str) and geoip.COUNTRY_CODE.fullmatch(country.upper())):
             country = None
-        # The migrated connection uses autocommit. Without an explicit BEGIN,
-        # each membership statement fsyncs separately and collecting a large
-        # list costs minutes. A short batch also releases other GUI writers.
+        if source and seen is not None:
+            seen['values'].add(proxy)
+        pending.append((proxy, schema.endpoint_id(proxy), country and country.upper(), source,
+                        seen if source else None))
+        pending_writes += 1
+        # An item budget is decided per address, so it is written at once.
+        if max_items is not None or len(pending) >= COLLECT_WRITE_BATCH:
+            flush()
+        if pending_writes >= COLLECT_WRITE_BATCH:
+            commit()
+        return 'accepted'
+
+    pending = []
+    country_columns = [name for name in ('country', 'country_at', 'country_source')
+                       if name in endpoint_columns(db)]
+    meta_has_source = 'source' in meta_columns(db)
+
+    def flush():
+        """Write the buffered addresses with one statement per table.
+
+        The same rows and the same conflict rules as one address at a time,
+        in a single short transaction: a row-by-row writer spent most of a
+        large collection in SQLite call overhead and page writes.
+        """
+        nonlocal pending
+        if not pending:
+            return
+        rows, pending = pending, []
+        ids = list(dict.fromkeys(row[1] for row in rows))
+        existing = set()
+        for start in range(0, len(ids), 500):
+            chunk = ids[start:start + 500]
+            existing.update(row[0] for row in db.execute(
+                f'SELECT id FROM endpoints WHERE id IN ({",".join("?" * len(chunk))})', chunk))
+        for _proxy, endpoint, _country, source, seen in rows:
+            if endpoint not in existing:
+                existing.add(endpoint)
+                if seen is not None:
+                    seen['new'] = seen.get('new', 0) + 1
+        # Key order keeps the B-tree writes local; the conflict rules do not
+        # depend on the order within one batch.
+        rows.sort(key=lambda row: row[1])
+        # The migrated connection uses autocommit; one explicit transaction
+        # per batch keeps the write lock short for other GUI writers.
         if not db.in_transaction:
             db.execute('BEGIN')
+        stamp = clock()
         # One endpoint entity per canonical address; the collection membership
         # is the scope, and the legacy ``candidates`` row keeps the old readers
         # working.
-        existed = db.execute('SELECT 1 FROM endpoints WHERE canonical=?', (proxy,)).fetchone() is not None
-        endpoint = upsert_endpoint(db, proxy, country=country,
-                                   country_at=time.time() if country else None,
-                                   country_source='source' if country else None)
-        db.execute('INSERT OR IGNORE INTO candidates(proxy, endpoint_id) VALUES (?, ?)', (proxy, endpoint))
+        db.executemany('INSERT OR IGNORE INTO endpoints(id, canonical) VALUES (?,?)',
+                       [(endpoint, proxy) for proxy, endpoint, *_ in rows])
+        if country_columns:
+            # A publisher's country claim is written when there is one; a list
+            # without countries leaves what an earlier source or import said.
+            values = {'country': None, 'country_at': time.time(), 'country_source': 'source'}
+            assignments = ', '.join(f'"{name}" = ?' for name in country_columns)
+            db.executemany(f'UPDATE endpoints SET {assignments} WHERE id = ?',
+                           [[country if name == 'country' else values[name] for name in country_columns]
+                            + [endpoint] for _proxy, endpoint, country, *_ in rows if country])
+        db.executemany('INSERT OR IGNORE INTO candidates(proxy, endpoint_id) VALUES (?, ?)',
+                       [(proxy, endpoint) for proxy, endpoint, *_ in rows])
         before_membership = db.total_changes
-        schema.add_member(db, collection_id, endpoint, origin=origin)
-        collection_budget['items'] += int(db.total_changes > before_membership)
-        if source:
+        # ``db.add_member``, set-based.
+        db.executemany('INSERT OR IGNORE INTO membership(collection_id, endpoint_id, added_at, origin)'
+                       ' VALUES (?,?,?,?)', [(collection_id, endpoint, stamp, origin)
+                                             for _proxy, endpoint, *_ in rows])
+        collection_budget['items'] += db.total_changes - before_membership
+        sourced = [row for row in rows if row[3]]
+        if sourced:
             # How many lists offer an address: rare ones are less crowded and tend to live longer.
-            db.execute('INSERT OR IGNORE INTO candidate_seen(proxy, source, endpoint_id) VALUES (?, ?, ?)',
-                       (proxy, source, endpoint))
-            db.execute('INSERT OR REPLACE INTO membership_source(collection_id, endpoint_id, source_id,'
-                       ' origin, added_at, last_seen_at) VALUES (?,?,?,?,?,?)'
-                       ' ON CONFLICT(collection_id, endpoint_id, source_id) DO UPDATE SET'
-                       ' last_seen_at=excluded.last_seen_at',
-                       (collection_id, endpoint, source, origin, clock(), clock()))
-            if seen is not None:
-                seen['new'] = seen.get('new', 0) + (0 if existed else 1)
-                seen['values'].add(proxy)
-        if country or source:
-            record_candidate_meta(db, proxy, country and country.upper(), source)
-        pending_writes += 1
-        if pending_writes >= 1000:
-            db.commit()
-            pending_writes = 0
-        return 'accepted'
+            db.executemany('INSERT OR IGNORE INTO candidate_seen(proxy, source, endpoint_id) VALUES (?, ?, ?)',
+                           [(proxy, source, endpoint) for proxy, endpoint, _country, source, _seen in sourced])
+            db.executemany('INSERT OR REPLACE INTO membership_source(collection_id, endpoint_id, source_id,'
+                           ' origin, added_at, last_seen_at) VALUES (?,?,?,?,?,?)'
+                           ' ON CONFLICT(collection_id, endpoint_id, source_id) DO UPDATE SET'
+                           ' last_seen_at=excluded.last_seen_at',
+                           [(collection_id, endpoint, source, origin, stamp, stamp)
+                            for _proxy, endpoint, _country, source, _seen in sourced])
+        # ``record_candidate_meta``, set-based.
+        if meta_has_source:
+            db.executemany('''INSERT INTO candidate_meta(proxy, country, source) VALUES (?, ?, ?)
+                ON CONFLICT(proxy) DO UPDATE SET country=COALESCE(excluded.country, candidate_meta.country),
+                source=COALESCE(candidate_meta.source, excluded.source)''',
+                           [(proxy, country, source) for proxy, _endpoint, country, source, _seen in rows
+                            if country or source])
+        else:
+            db.executemany('''INSERT INTO candidate_meta(proxy, country) VALUES (?, ?)
+                ON CONFLICT(proxy) DO UPDATE SET country=COALESCE(excluded.country, candidate_meta.country)''',
+                           [(proxy, country) for proxy, _endpoint, country, *_ in rows if country])
+
+    def commit():
+        nonlocal pending_writes
+        flush()
+        db.commit()
+        pending_writes = 0
 
 
     def add_detected(value, source=None, public_only=True, seen=None):
@@ -1894,7 +2003,7 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
         reports.append(dict(input=f'local-input-{input_index}', rows=count, invalid=invalid,
                             blocked=blocked, complete=input_error is None, error=input_error))
         total_rows += count
-        db.commit()
+        commit()
         if input_error:
             break
     gate = asyncio.Semaphore(8)
@@ -1953,7 +2062,7 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                                     error='SOURCE_QUARANTINED',
                                     quarantine_until=state.get('quarantine_until'),
                                     next_attempt_at=state.get('quarantine_until')))
-                db.commit()
+                commit()
                 publish()
                 return
             next_attempt = max((state or {}).get('backoff_until') or 0,
@@ -1967,7 +2076,7 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                                     cache_state='stale_last_good' if cached else 'none',
                                     outcome='unavailable', retry_after=(state or {}).get('retry_after'),
                                     next_attempt_at=next_attempt))
-                db.commit()
+                commit()
                 publish()
                 return
 
@@ -1977,9 +2086,14 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                     raise SourceFetchError('SOURCE_CANDIDATE_LIMIT')
                 candidate_count += 1
 
+            line_config = ((plan.profile or {}).get('config') or {}) if kind == 'line' else {}
+            # The catalog's `line` adapter carries the flat format it replaced
+            # in `legacy_kind`; that is how a line of the list is read.
+            line_kind = line_config.get('legacy_kind') if kind == 'line' else kind
+
             def consume_line(raw):
                 nonlocal count, invalid, blocked, recognized
-                if kind == 'text':
+                if line_kind == 'text':
                     # Web pages may use any encoding and are mostly markup: keep only addresses.
                     for address in loose_addresses(raw.decode('utf-8', errors='replace')):
                         consume_candidate()
@@ -1995,11 +2109,14 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                     raise SourceFetchError('SOURCE_INVALID_UTF8') from exc
                 if not line.strip() or line.lstrip().startswith('#'):
                     return
+                if '#' in line:
+                    # "1.2.3.4:8080 # HTTP [ID]": a trailing comment is a note.
+                    line = INLINE_COMMENT.split(line, 1)[0]
                 consume_candidate()
                 count += 1
                 recognized += 1
-                if kind == 'http-fields':
-                    match = re.fullmatch(r"(\d{1,3}(?:\.\d{1,3}){3}:\d{1,5}):[A-Za-z][A-Za-z .'-]*", line.strip())
+                if line_kind == 'http-fields':
+                    match = HTTP_FIELDS_LINE.fullmatch(line.strip())
                     outcome = add(match[1], source=key, seen=seen) if match else 'invalid'
                 elif kind == 'auto':
                     outcome = add_detected(line, source=key, seen=seen)
@@ -2013,7 +2130,7 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                     # whether the list is unlabelled.  Reading the record
                     # instead of assuming HTTP is what makes a SOCKS5 list
                     # arrive as SOCKS5 rather than as 5000 unusable HTTP rows.
-                    config = (plan.profile or {}).get('config') or {}
+                    config = line_config
                     if config.get('line_address') == 'first-token':
                         # "address<tab>free-form note" is the one shape a line
                         # list uses; only the leading token is the address.
@@ -2358,7 +2475,7 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                             break
                         page_url = following
                         page += 1
-                        db.commit()
+                        commit()
                         await asyncio.sleep(.1)
                         continue
                     if kind != 'geonode':
@@ -2391,7 +2508,7 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                         error = 'INVALID_PAGINATION'
                         break
                     page += 1
-                    db.commit()
+                    commit()
                     await asyncio.sleep(.1)
             total_rows += count
             if bounded_prefix and budget.get('truncated'):
@@ -2401,6 +2518,8 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                 error, parse_state = 'SOURCE_TRUNCATED', 'partial'
             elif not not_modified and error is None and parse_state == 'pending':
                 parse_state = 'complete'
+            elif error in SOURCE_LIMIT_ERRORS and parse_state == 'pending':
+                parse_state = 'partial' if seen['values'] else 'budget_exceeded'
             # The three fetch states the source views know
             # (``source_management.FETCH_STATES``) are named here, not invented
             # per report: a 200 with no addresses and a 200 that failed to parse
@@ -2410,13 +2529,16 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
             elif error is None:
                 http_state = 'empty_body' if parse_state == 'empty' else 'http_2xx_nonempty'
             elif parse_state == 'budget_exceeded' or status_code == 429 or error in (
-                    'SOURCE_TRUNCATED', 'SOURCE_PAGE_LIMIT', 'SOURCE_RECORD_LIMIT'):
+                    'SOURCE_TRUNCATED', 'SOURCE_PAGE_LIMIT', 'SOURCE_RECORD_LIMIT') or (
+                    error in SOURCE_LIMIT_ERRORS and 200 <= (status_code or 0) < 300):
                 # The transport worked; the budget did not fit.  Reporting it as
                 # `http_error` would send the user to look at a provider that
                 # answered perfectly.
                 http_state = 'http_429' if status_code == 429 else 'http_2xx_nonempty'
             else:
                 http_state = 'http_error' if status_code else 'error'
+            # Buffered rows first: the report's "new" counter is decided there.
+            flush()
             delivered = not not_modified and error is None and bool(seen['values'])
             served = stored_generation(db, key, clock) if not_modified else None
             if served is not None:
@@ -2438,7 +2560,9 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                           rejected=invalid, reject_reasons=reject_reasons,
                           bytes=budget.get('used', 0),
                           partial=error in COLLECT_BUDGET_ERRORS or error in (
-                              'SOURCE_TRUNCATED', 'SOURCE_PAGE_LIMIT', 'SOURCE_RECORD_LIMIT'),
+                              'SOURCE_TRUNCATED', 'SOURCE_PAGE_LIMIT', 'SOURCE_RECORD_LIMIT')
+                          # The addresses before the candidate limit were stored.
+                          or (error == 'SOURCE_CANDIDATE_LIMIT' and bool(seen['values'])),
                           truncated=bool(budget.get('truncated')),
                           fallback_used=fallback_used,
                           retry_after=retry_after,
@@ -2478,15 +2602,22 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
             # source views filter on and it must agree with the error.
             report['outcome'] = source_outcome(report)
             reports.append(report)
-            db.commit()
+            commit()
             publish()
             if not quiet:
                 print(tr(f'Источник {index}: строк {count}, заблокировано {blocked}, страниц {pages}, ошибка {error or "нет"}',
                          f'Source {index}: rows {count}, blocked {blocked}, pages {pages}, error {error or "none"}'), flush=True)
-        async with asyncio.TaskGroup() as group:
-            for index, (kind, url, plan) in enumerate(specs, 1):
-                group.create_task(fetch(index, kind, url, plan))
-    db.commit()
+        try:
+            async with asyncio.TaskGroup() as group:
+                for index, (kind, url, plan) in enumerate(specs, 1):
+                    group.create_task(fetch(index, kind, url, plan))
+        except BaseException:
+            # A stopped run keeps the addresses it already read, as it did
+            # when every batch was committed on its own.
+            with contextlib.suppress(sqlite3.Error):
+                commit()
+            raise
+    commit()
     publish()
     return dict(raw_rows=total_rows, unique=db.execute('SELECT count(*) FROM candidates').fetchone()[0],
                 blocked=sum(r.get('blocked', 0) for r in reports), denylist_error=denylist.error,
