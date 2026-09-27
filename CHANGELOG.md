@@ -6,6 +6,7 @@ The format follows Keep a Changelog and semantic versioning.
 
 ### Fixed
 
+- **Checks run up to 16× faster on large lists.** Every scan was held at 64 checks in flight whatever the worker setting said (the memory reserved for response bodies had a fixed 64 MiB budget); the budget now grows with the workers up to 1 GiB. Ports of one IP no longer queue up together either: the first port of every host is checked first and further ports follow host by host. A full check of 663,000 collected addresses went from 25 to about 390 addresses per second with 512 workers.
 - **macOS app: collecting and HTTPS checks work again.** The 3.0.0 macOS builds looked for trusted certificates in a folder of the build machine, so every HTTPS source failed with a connection error and no proxies could be collected. Every HTTPS connection (sources, HTTPS checks, the gateway's HTTPS upstreams) now also trusts the certificate bundle shipped inside the app, while the system store is still used.
 - **“This data folder is already used by another run” when starting a check.** The desktop app's background job runner and scheduler hold the data lock for a moment every second, and a check started from the interface gave up on the first try. A run now waits up to 10 seconds for such a short hold; a folder that stays busy is still refused.
 - The interface server reads or closes the body of a request it refuses, so a refused request no longer shows up as a reset connection on Windows or as a garbled next request.

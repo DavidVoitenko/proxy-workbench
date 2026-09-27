@@ -377,3 +377,34 @@ class LocalResourceErrorTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class RamBudgetTests(unittest.TestCase):
+    def test_the_worker_count_is_not_capped_at_64_by_the_body_reservation(self):
+        from proxy_workbench import pipeline
+        mib = 1024 * 1024
+        for workers in (128, 512):
+            budgets = pipeline.Budgets(max_inflight=workers, max_open_fds=10 ** 6, fds_per_request=3,
+                                       max_ram_bytes=proxytool.scan_ram_budget(workers, mib),
+                                       ram_per_inflight_bytes=mib)
+            self.assertEqual(budgets.ram_ceiling >= workers, True, workers)
+
+    def test_the_reservation_has_a_ceiling(self):
+        mib = 1024 * 1024
+        self.assertEqual(proxytool.scan_ram_budget(100_000, mib), proxytool.MAX_SCAN_RAM_BYTES)
+        self.assertEqual(proxytool.scan_ram_budget(1, mib), proxytool.DEFAULT_MAX_RAM_BYTES)
+
+
+class HostSpreadTests(unittest.TestCase):
+    def test_many_ports_of_one_host_do_not_come_in_a_row(self):
+        # Address order put thousands of ports of one IP next to each other, so
+        # every worker waited for that host under the per-host limit.
+        stream = [f'http://203.0.113.1:{port}' for port in range(1, 6)] + ['http://203.0.113.2:80',
+                  'http://198.51.100.7:8080', 'http://198.51.100.7:3128']
+        spread = proxytool.HostSpread()
+        now = [proxy for proxy in stream if spread.admit(proxy)]
+        self.assertEqual(now, ['http://203.0.113.1:1', 'http://203.0.113.2:80', 'http://198.51.100.7:8080'])
+        rounds = list(spread.rounds())
+        self.assertEqual(rounds[0], ['http://203.0.113.1:2', 'http://198.51.100.7:3128'])
+        self.assertEqual(rounds[1:], [['http://203.0.113.1:3'], ['http://203.0.113.1:4'], ['http://203.0.113.1:5']])
+        self.assertEqual(sorted(now + [p for r in rounds for p in r]), sorted(stream))

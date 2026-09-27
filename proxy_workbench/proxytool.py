@@ -3843,6 +3843,41 @@ def measurement_bytes(row):
 #: cursor of the corpus.
 CANDIDATE_PAGE = 4096
 
+
+def _candidate_host(proxy):
+    """The host part of ``scheme://host:port``: the unit the per-host limit counts."""
+    rest = proxy.partition('://')[2] or proxy
+    return rest.rpartition(':')[0] or rest
+
+
+class HostSpread:
+    """First port of every host at once, further ports of a host in later rounds."""
+
+    def __init__(self):
+        self._seen: set[str] = set()
+        self._later: dict[str, list[str]] = {}
+
+    def admit(self, proxy):
+        """True when ``proxy`` may go out now; otherwise it is kept for a round."""
+        host = _candidate_host(proxy)
+        if host in self._seen:
+            self._later.setdefault(host, []).append(proxy)
+            return False
+        self._seen.add(host)
+        return True
+
+    def rounds(self):
+        """The kept addresses, one per host per round, in first-seen host order."""
+        later, index = self._later, 0
+        while later:
+            batch = []
+            for host in list(later):
+                batch.append(later[host][index])
+                if index + 1 >= len(later[host]):
+                    del later[host]
+            index += 1
+            yield batch
+
 #: One page of the scope, as an ordered range over the address index with
 #: membership as a test — see :func:`candidate_pages` for why it is not a join.
 _CANDIDATE_PAGE_SQL = (
@@ -3864,6 +3899,18 @@ RESERVED_FDS = 128
 #: silence.
 DEFAULT_RAM_PER_INFLIGHT = 256 * 1024
 DEFAULT_MAX_RAM_BYTES = 64 * 1024 * 1024
+#: Upper bound of the reserved body memory of one scan, whatever --workers says.
+MAX_SCAN_RAM_BYTES = 1024 * 1024 * 1024
+
+
+def scan_ram_budget(workers, ram_per_inflight):
+    """Body memory a scan may reserve: one full body per worker, up to a ceiling.
+
+    A fixed 64 MiB with the default 1 MiB body cap held every scan at 64
+    checks in flight whatever --workers said.
+    """
+    wanted = max(DEFAULT_MAX_RAM_BYTES, ram_per_inflight * max(1, int(workers)))
+    return min(wanted, max(MAX_SCAN_RAM_BYTES, ram_per_inflight))
 
 
 def _number(value):
@@ -4319,7 +4366,7 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
         max_inflight=max(1, int(workers)),
         max_open_fds=open_fd_budget(workers),
         fds_per_request=FDS_PER_REQUEST,
-        max_ram_bytes=max(DEFAULT_MAX_RAM_BYTES, ram_per_inflight * 8),
+        max_ram_bytes=scan_ram_budget(workers, ram_per_inflight),
         ram_per_inflight_bytes=ram_per_inflight,
         max_queue_items=max(2 * max(1, int(workers)), 64),
         max_results_pending=64,
@@ -4428,6 +4475,13 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
         phases = (True, False) if proven else (None,)
         for phase in phases:
             last = ''
+            # Pages come in address order, so the thousands of ports some lists
+            # publish for one IP arrive together and every worker queued behind
+            # that one host (a 663k corpus ran at 28 checks/s).  The first port
+            # of a host goes out at once; further ports of the same host wait and
+            # are sent afterwards one per host per round, so hosts stay in
+            # parallel and the per-host limit still holds.
+            spread = HostSpread()
             while True:
                 page = [proxy for (proxy,) in db.execute(
                     _CANDIDATE_PAGE_SQL, (last, collection_id, CANDIDATE_PAGE))]
@@ -4450,10 +4504,14 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
                         continue
                     if phase is not None and (proxy in proven) is not phase:
                         continue
-                    body.append(proxy)
+                    if spread.admit(proxy):
+                        body.append(proxy)
                 if not body:
                     continue
                 yield ''.join(f'{proxy}\n' for proxy in body).encode('utf-8')
+            for batch in spread.rounds():
+                for start in range(0, len(batch), CANDIDATE_PAGE):
+                    yield ''.join(f'{proxy}\n' for proxy in batch[start:start + CANDIDATE_PAGE]).encode('utf-8')
 
     rows: dict[str, dict] = {}
     store_failures: list[str] = []
