@@ -4036,7 +4036,8 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
                collection_id=None, profile_revision=1, max_age_seconds=None, profile_id=None,
                access=None, job_id=None, job_store=None, deadline_s=None,
                max_requests=None, max_bytes=None, count_what='endpoint',
-               max_per_host=1, min_host_interval_s=0.0, target_inflight=2, expensive_probe=None):
+               max_per_host=1, min_host_interval_s=0.0, target_inflight=2, expensive_probe=None,
+               open_job=None):
     """Check every pending candidate of the profile.
 
     The run *is* the chain of ``pipeline.py`` — the same ``Pipeline``,
@@ -4072,6 +4073,11 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
     ``max_bytes`` are the resource budgets of ``pipeline.py`` -- one global
     time and one request/byte ceiling instead of ``attempts x targets`` per
     address.
+
+    ``open_job`` registers the job once the scope is known, for a run whose
+    queue only this function can name (a ``--watch`` round re-checks the
+    addresses that pass): it is called with the addresses the run will measure
+    and returns the job id.
     """
     denylist = denylist or Denylist.empty()
     policy = config.get('reputation', {})
@@ -4246,12 +4252,17 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
     # half-million addresses has to have a denominator before the first probe.
     total = 0
     initial = 0
+    queue = [] if open_job is not None and job_id is None else None
     for proxy in candidate_pages(db, collection_id):
         if (only is not None and proxy not in only) or not selected(proxy):
             continue
         total += 1
         if proxy in done:
             initial += 1
+        elif queue is not None:
+            queue.append(proxy)
+    if queue is not None:
+        job_id = open_job(queue)
 
     # Addresses that already worked in another profile go first. In find-N mode
     # the rest is shuffled so early results are not all from one subnet or
@@ -4829,12 +4840,20 @@ def finish_job_item(store, job_id, endpoint_id, row, observation_id):
 
 
 def submit_scan_job(workbench, db, kind, *, profile, profile_revision, collection_id,
-                    candidates, filters=None, budgets=None, idempotency_key=None):
+                    candidates, filters=None, budgets=None, idempotency_key=None,
+                    continue_interrupted=False):
     """Register a scan in the persistent lifecycle and return its job id.
 
     ``idempotency_key`` makes a repeated request return the same job instead of
     starting a second one.  Every queue item is created here, so
     a restart knows what was still unfinished.
+
+    ``continue_interrupted`` is for a caller that holds ``workbench.lock``, so
+    no other process can be measuring: a job of this kind still ``running`` was
+    left by a process that died, and it is paused instead of blocking every
+    later run with ``E_CONFLICT_BUSY``.  A paused job asked for exactly the same
+    work is then resumed rather than started again, so its finished items --
+    the dead addresses included -- are not measured a second time.
     """
     from . import jobs
     store = workbench.jobs()
@@ -4845,11 +4864,38 @@ def submit_scan_job(workbench, db, kind, *, profile, profile_revision, collectio
                             access_id=PUBLIC_ACCESS_ID, access_revision=1)
              for value in candidates]
     db.commit()
+    if continue_interrupted:
+        for stale in store.jobs(kind=kind, state='running'):
+            store.pause(stale.id, reason_code=jobs.CODE_INTERRUPTED)
+        digest = jobs._input_digest(kind, scope, items)
+        for paused in reversed(store.jobs(kind=kind, state='paused')):
+            if paused.input_digest == digest:
+                store.resume(paused.id)
+                store.start(paused.id)
+                return paused.id
     job = store.submit(kind, scope, items, idempotency_key=idempotency_key)
     # ``queued`` -> ``running`` before the first claim; refused with
     # E_CONFLICT_BUSY while another job is already measuring.
-    store.start(job.id)
+    try:
+        store.start(job.id)
+    except jobs.JobError as exc:
+        # A queued job nobody runs would be picked up later by the background
+        # runner as work the user never asked it to do.
+        if job.state == 'queued' and not idempotency_key:
+            store.cancel(job.id, reason_code=getattr(exc, 'code', None))
+        raise
     return job.id
+
+
+def pause_scan_job(store, job_id):
+    """Leave an interrupted job resumable; a refusal is not an error here."""
+    from . import jobs
+    if not job_id:
+        return None
+    try:
+        return store.pause(job_id, reason_code=jobs.CODE_INTERRUPTED)
+    except (jobs.JobError, sqlite3.Error):
+        return None
 
 
 def finish_scan_job(store, job_id, state, reason_code):
@@ -8048,6 +8094,13 @@ def main(argv=None):
             or not math.isfinite(args.min_host_interval) or args.min_host_interval < 0
             or not math.isfinite(args.watch) or args.watch < 0):
         p.error(tr('Неверные числовые параметры', 'Invalid numeric options'))
+    if getattr(args, 'speedtest_url', None) and getattr(args, 'speedtest_bytes', None) is not None:
+        from . import probes
+        # Below the smallest honest sample every speed test ends "insufficient":
+        # the run would pay for a download on every proxy and never get a number.
+        if args.speedtest_bytes < probes.SPEED_LIMITS.min_bytes:
+            p.error(tr(f'--speedtest-bytes должен быть не меньше {probes.SPEED_LIMITS.min_bytes}',
+                       f'--speedtest-bytes must be at least {probes.SPEED_LIMITS.min_bytes}'))
     try:
         countries = geoip.parse_countries(args.country)
         country_exclude = geoip.parse_countries(getattr(args, 'country_exclude', '') or '')
@@ -8318,47 +8371,70 @@ def main(argv=None):
                                                target_inflight=args.judge_concurrency,
                                                expensive_probe=expensive_probe,
                                                job_store=scan_workbench.jobs() if scan_workbench else None,
-                                               job_id=current_job_id[0],
+                                               job_id=current_job_id[0] or None,
                                                run_state=state, **options), args.stop_file))
                 except (KeyboardInterrupt, asyncio.CancelledError):
                     scan_interrupted = True
                     state.update(state='partial', stop_reason='stopped')
                     last_scan_state = state
+                    # Paused, not left ``running``: a job that still looks live
+                    # refused every later run with E_CONFLICT_BUSY, and the same
+                    # command could not continue where this one stopped.
+                    if scan_workbench is not None:
+                        pause_scan_job(scan_workbench.jobs(), current_job_id[0])
                     raise
                 except Exception:
                     scan_interrupted = True
                     state.update(state='error', stop_reason='error')
                     last_scan_state = state
+                    if scan_workbench is not None:
+                        pause_scan_job(scan_workbench.jobs(), current_job_id[0])
                     raise
                 finally:
                     scan_in_progress = False
                 last_scan_state = state
                 return state
 
-            if scan_workbench is not None:
-                # One job per run, with its queue created up front: a stop in the
-                # middle leaves the unfinished items and the finished results
-                # both readable.
+            job_filters = dict(protocol=args.protocol, countries=sorted(countries),
+                               min_anonymity=args.min_anonymity, want=args.want,
+                               count_what=args.count_what)
+            job_budgets = dict(deadline_s=args.deadline or None,
+                               max_requests=args.max_requests or None,
+                               max_bytes=args.run_max_bytes or None)
+
+            def open_job(candidates, **extra):
                 current_job_id[0] = submit_scan_job(
                     scan_workbench, db, 'check', profile=profile, profile_revision=1,
                     collection_id=ensure_collection(db, args.collection or None),
-                    candidates=[value for (value,) in collection_candidates(
-                        db, ensure_collection(db, args.collection or None))],
-                    filters=dict(protocol=args.protocol, countries=sorted(countries),
-                                 min_anonymity=args.min_anonymity, want=args.want,
-                                 count_what=args.count_what),
-                    budgets=dict(deadline_s=args.deadline or None,
-                                 max_requests=args.max_requests or None,
-                                 max_bytes=args.run_max_bytes or None))
+                    candidates=candidates, filters=dict(job_filters, **extra),
+                    budgets=job_budgets, continue_interrupted=not extra)
                 print(tr(f'Задание: {current_job_id[0]}', f'job: {current_job_id[0]}'), flush=True)
-            last_scan_state = run_scan(recheck=args.recheck, recheck_passing=args.recheck_passing, want=args.want)
-            if scan_workbench is not None and current_job_id[0]:
+                return current_job_id[0]
+
+            def close_job():
+                if scan_workbench is None or not current_job_id[0]:
+                    return
                 from . import jobs as joblifecycle
-                job_store = scan_workbench.jobs()
                 state_now = last_scan_state or {}
-                terminal = 'succeeded' if state_now.get('state') == 'complete' else 'partial'
-                finish_scan_job(job_store, current_job_id[0], terminal,
-                                state_now.get('stop_reason') or joblifecycle.CODE_OK)
+                reason = state_now.get('stop_reason') or joblifecycle.CODE_OK
+                if state_now.get('state') == 'complete':
+                    terminal = 'succeeded'
+                elif reason == 'recheck_passing':
+                    # A re-check of the passing addresses is complete when its
+                    # own queue is; the items decide.
+                    terminal = None
+                else:
+                    terminal = 'partial'
+                finish_scan_job(scan_workbench.jobs(), current_job_id[0], terminal, reason)
+
+            if scan_workbench is not None:
+                # One job per run, with its queue created up front: a stop in the
+                # middle leaves the unfinished items and the finished results
+                # both readable, and the same command run again continues it.
+                open_job([value for (value,) in collection_candidates(
+                    db, ensure_collection(db, args.collection or None))])
+            last_scan_state = run_scan(recheck=args.recheck, recheck_passing=args.recheck_passing, want=args.want)
+            close_job()
             last_report = export_now(run_state=last_scan_state)
             update_progress(last_report)
             current_published = True
@@ -8371,7 +8447,15 @@ def main(argv=None):
                 print(tr(f'Сохранено {last_report["exported"]}. Следующая перепроверка рабочих прокси через {args.watch:g} мин.', f'Saved {last_report["exported"]}. Next re-check of working proxies in {args.watch:g} min.'),
                       flush=True)
                 asyncio.run(stoppable(asyncio.sleep(args.watch * 60), args.stop_file))
-                last_scan_state = run_scan(recheck_passing=True)
+                # Every round is its own job.  Reusing the first run's job, which
+                # is closed by now, made every address look finished already, so
+                # a round measured nothing and republished the old verdicts.
+                current_job_id[0] = ''
+                last_scan_state = run_scan(
+                    recheck_passing=True,
+                    open_job=(lambda queue: open_job(queue, watch_round=True))
+                    if scan_workbench is not None else None)
+                close_job()
                 last_report = export_now(run_state=last_scan_state)
                 update_progress(last_report)
                 current_published = True
