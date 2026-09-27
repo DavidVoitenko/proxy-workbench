@@ -51,6 +51,8 @@ The biggest release so far: a new interface, a source catalog of 150 lists, a de
 - Pool refill, start, pause and member listing through the API work.
 - Collecting treats HTTP 304 as a cached answer, not an empty list; oversized sources are capped without losing already parsed data.
 - Windows: time zones, HTTP handling and coarse-clock timing issues.
+- Windows installer: the “Command line” shortcuts open a console with the CLI instead of doing nothing, and a new PATH entry works in new consoles without signing out.
+- Windows: the app can be quit from the Start menu (“Quit Proxy Workbench”, or `proxy-workbench --quit`), and uninstalling quits a running app first.
 
 ### Known limitations
 
