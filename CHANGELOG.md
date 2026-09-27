@@ -9,6 +9,7 @@ The format follows Keep a Changelog and semantic versioning.
 - Scan target URLs remain visible beside their HTTP/HTTPS selector on desktop and tablet screens.
 - The Results page keeps proxy rows unobstructed; bulk scope actions sit below the table until a row is selected.
 - Example proxy and denylist placeholders use reserved documentation IP ranges.
+- Export publication retries brief Windows file locks while preserving the previous published files if a lock persists.
 
 ### Documentation
 
