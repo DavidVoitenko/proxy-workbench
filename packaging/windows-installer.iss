@@ -45,6 +45,10 @@ PrivilegesRequiredOverridesAllowed=
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayIcon={app}\{#AppExeName}
+; The "addtopath" task edits the user's Path. Without this, Explorer is never
+; told about the change and a new console does not find the command until the
+; user signs out and back in.
+ChangesEnvironment=yes
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -63,9 +67,17 @@ Source: "{#SourceDir}\portable-README.txt"; DestDir: "{app}"; Flags: ignoreversi
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExeName}"
-Name: "{group}\Command line ({#AppExeName})"; Filename: "{app}\{#AppExeName}"; Parameters: "--help"; WorkingDir: "{app}"
+; Windows has no menu bar item and the GUI executable has no console, so this
+; is the way to stop the running application without the Task Manager.
+Name: "{group}\Quit {#AppName}"; Filename: "{app}\{#AppExeName}"; Parameters: "--quit"
+; The command line shortcuts open a console that stays open and show the CLI's
+; help in it.  They must not point at the GUI executable: it is a windowed
+; program, so "--help" there prints to nowhere and the shortcut does nothing
+; visible.  Starting the console CLI directly would close its window as soon as
+; the help has been printed, hence cmd /k.
+Name: "{group}\{#AppName} command line"; Filename: "{cmd}"; Parameters: "/k """"{app}\{#AppCliExeName}"" --help"""; WorkingDir: "{%USERPROFILE}"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExeName}"; Tasks: desktopicon
-Name: "{autodesktop}\Command line"; Filename: "{app}\{#AppExeName}"; Parameters: "--help"; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{autodesktop}\{#AppName} command line"; Filename: "{cmd}"; Parameters: "/k """"{app}\{#AppCliExeName}"" --help"""; WorkingDir: "{%USERPROFILE}"; Tasks: desktopicon
 
 [Registry]
 Root: HKCU; Subkey: "Environment"; ValueType: expandsz; ValueName: "Path"; \
@@ -73,6 +85,11 @@ Root: HKCU; Subkey: "Environment"; ValueType: expandsz; ValueName: "Path"; \
 
 [Run]
 Filename: "{app}\{#AppExeName}"; Description: "Start {#AppName}"; Flags: nowait postinstall skipifsilent
+
+[UninstallRun]
+; A running application holds its executable open and it could not be removed.
+; "--quit" waits until the instance has let go, and does nothing if none runs.
+Filename: "{app}\{#AppExeName}"; Parameters: "--quit"; Flags: runhidden waituntilterminated; RunOnceId: "QuitProxyWorkbench"
 
 [Code]
 function NeedsAddPath(Param: string): boolean;

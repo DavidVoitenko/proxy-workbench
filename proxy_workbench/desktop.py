@@ -71,6 +71,9 @@ INSTANCE_LOCK_NAME = 'desktop-instance.lock'
 CONTROL_SOCKET_NAME = 'desktop-control.sock'
 CONTROL_MAX_LINE = 64 * 1024
 CONTROL_TIMEOUT_S = 5.0
+#: How long ``--quit`` waits for the instance to let go: the interface gives a
+#: running worker up to 45 seconds to stop before it exits.
+QUIT_WAIT_S = 60.0
 TRAY_HELPER_NAME = 'proxy-workbench-tray'
 TRAY_READY_TIMEOUT_S = 25.0
 PLATFORM_POLL_S = 5.0
@@ -3311,7 +3314,7 @@ def main(argv=None):
         os.environ[DATA_ENV] = str(Path(options.data).expanduser().resolve())
     argv = host_argv
     if argv and argv[0] in ('--print-paths', '--portable', '--update-notice', '--autostart',
-                            '--autostart-status', '--status', '--migrate-preview'):
+                            '--autostart-status', '--status', '--quit', '--migrate-preview'):
         return _host_command(argv)
     if any(token in ('-h', '--help', '--version') for token in argv):
         # `--help` and `--version` ask a question and change nothing, so they
@@ -3393,6 +3396,8 @@ def _host_command(argv):
         answer.pop('layout', None)
         print(json.dumps(answer, ensure_ascii=False, indent=2, default=str), flush=True)
         return 0 if answer.get('ok') else 2
+    if command == '--quit':
+        return _quit_running(layout)
     location = os.environ.get(UPDATE_MANIFEST_ENV)
     if not location:
         print(tr(f'Укажите файл манифеста обновления или переменную {UPDATE_MANIFEST_ENV}.',
@@ -3412,6 +3417,36 @@ def _host_command(argv):
     print(json.dumps(dict(notice=notice.as_dict(), compatibility=compatibility.as_dict()),
                      ensure_ascii=False, indent=2), flush=True)
     return 0
+
+
+def _quit_running(layout, *, timeout=QUIT_WAIT_S):
+    """Ask the running instance to quit, and wait until it has let go of its folder.
+
+    The menu bar's Quit item does the same over the same channel.  Windows has
+    no menu bar and the GUI executable has no console, so without this command
+    the only way to stop the application there was the Task Manager.  The
+    uninstaller uses it too: files a running program holds cannot be removed.
+    Nothing running is not an error - the wanted state already holds.
+    """
+    running = read_instance(layout)
+    if running is None:
+        print(tr('Приложение не запущено.', 'The application is not running.'), flush=True)
+        return 0
+    answer = control_request(running.control, running.token, dict(action='quit', reason='command'))
+    if not answer.get('bye'):
+        print(tr(f'Приложение не ответило на запрос выхода: {answer.get("error") or answer}',
+                 f'The application did not accept the quit request: {answer.get("error") or answer}'),
+              file=sys.stderr, flush=True)
+        return 2
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if read_instance(layout) is None:
+            print(tr('Приложение закрыто.', 'The application has quit.'), flush=True)
+            return 0
+        time.sleep(0.2)
+    print(tr(f'Приложение ещё не закрылось за {timeout:.0f} с.',
+             f'The application has not quit within {timeout:.0f}s.'), file=sys.stderr, flush=True)
+    return 2
 
 
 # --------------------------------------------------------------------------
