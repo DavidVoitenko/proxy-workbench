@@ -337,7 +337,8 @@ def _json_records(body, profile, page_context, limits):
     if not isinstance(container, list):
         raise AdapterError("SOURCE_JSON_SHAPE")
     if not container:
-        return dict(state="empty", records=[], rejects={}, pages=1, metadata={})
+        return _with_document(dict(state="empty", records=[], rejects={}, pages=1, metadata={}),
+                              data, page_context)
     default = cfg.get("default_protocol")
     default_list = _protocol(default, default=default) if isinstance(default, str) else []
     default_protocol = default_list[0] if default_list else None
@@ -414,6 +415,17 @@ def _json_records(body, profile, page_context, limits):
     if truncated:
         result["truncated"] = True
         result["reason"] = "SOURCE_RECORD_LIMIT"
+    return _with_document(result, data, page_context)
+
+
+def _with_document(result, data, page_context):
+    """Hand the parsed document back when the caller asked for it.
+
+    The collector reads pagination from the same document; without it every
+    JSON page was decoded and parsed a second time.
+    """
+    if isinstance(page_context, dict) and page_context.get("keep_document"):
+        result["document"] = data
     return result
 
 

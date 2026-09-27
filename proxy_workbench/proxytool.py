@@ -1947,7 +1947,15 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                            ' ON CONFLICT(collection_id, endpoint_id, source_id) DO UPDATE SET'
                            ' last_seen_at=excluded.last_seen_at',
                            [(collection_id, endpoint, source, origin, stamp, stamp)
-                            for _proxy, endpoint, _country, source, _seen in sourced])
+                            for _proxy, endpoint, _country, source, seen in sourced
+                            if not (seen or {}).get('replay')])
+            # A replayed generation (a 304) restores what is missing and leaves
+            # the rest as it was: nothing was seen again, so nothing is dated.
+            db.executemany('INSERT OR IGNORE INTO membership_source(collection_id, endpoint_id, source_id,'
+                           ' origin, added_at, last_seen_at) VALUES (?,?,?,?,?,?)',
+                           [(collection_id, endpoint, source, origin, stamp, stamp)
+                            for _proxy, endpoint, _country, source, seen in sourced
+                            if (seen or {}).get('replay')])
         # ``record_candidate_meta``, set-based.
         if meta_has_source:
             db.executemany('''INSERT INTO candidate_meta(proxy, country, source) VALUES (?, ?, ?)
@@ -2079,6 +2087,49 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                 commit()
                 publish()
                 return
+
+            def reapply_generation(generation_id):
+                """Write a stored generation into the target collection again.
+
+                The same writer as a fetched list -- denylist, item budget and
+                per-source membership included -- but on a counter of its own:
+                nothing was read, so the report's read counters stay at zero.
+                """
+                replay = {'values': set(), 'new': 0, 'duplicate': 0, 'metadata': {}, 'replay': True}
+                after = ''
+                while True:
+                    # Keyset pages, each read whole before it is written: the
+                    # writer commits, and a statement still reading across a
+                    # commit is not something to rely on.
+                    rows = db.execute('SELECT g.endpoint_id, e.canonical FROM source_generation_entry g'
+                                      ' JOIN endpoints e ON e.id=g.endpoint_id'
+                                      ' WHERE g.generation_id=? AND g.endpoint_id>?'
+                                      ' ORDER BY g.endpoint_id LIMIT ?',
+                                      (generation_id, after, COLLECT_WRITE_BATCH)).fetchall()
+                    if not rows:
+                        return
+                    after = rows[-1][0]
+                    for _endpoint, canonical in rows:
+                        add(canonical, source=key, seen=replay)
+
+            def attempt_checkpoint():
+                """The per-source counters a page read starts from."""
+                # Only a streamed list adds addresses while it is being read;
+                # a document is parsed after its read succeeded.
+                streamed = kind not in CATALOG_ADAPTER_KINDS and kind != 'geonode'
+                return (dict(budget), count, invalid, blocked, recognized, candidate_count,
+                        endpoint_count, seen['duplicate'], set(seen['values']) if streamed else None)
+
+            def restore_attempt(checkpoint):
+                nonlocal count, invalid, blocked, recognized, candidate_count, endpoint_count, parse_state
+                (saved_budget, count, invalid, blocked, recognized, candidate_count,
+                 endpoint_count, seen['duplicate'], values) = checkpoint
+                budget.clear()
+                budget.update(saved_budget)
+                if values is not None:
+                    seen['values'] = set(values)
+                if parse_state == 'empty':
+                    parse_state = 'pending'
 
             def consume_candidate():
                 nonlocal candidate_count
@@ -2356,6 +2407,15 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                             fallback_used = True
                             final_url = candidate
                         for retry in range(2):
+                            if retry or candidate is not candidates[0]:
+                                # A new attempt reads the page from its first
+                                # byte: the bytes and candidates the failed one
+                                # counted are not this source's, and keeping
+                                # them made a large list fail its own size
+                                # limit on the retry.
+                                restore_attempt(checkpoint)
+                            else:
+                                checkpoint = attempt_checkpoint()
                             try:
                                 async with asyncio.timeout(timeout):
                                     data = await request_source(candidate, page, headers)
@@ -2377,6 +2437,10 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                                 retry_after is not None and retry_after > clock()):
                             break
                     if not succeeded:
+                        if error == 'SOURCE_CANDIDATE_LIMIT' and seen['values']:
+                            # A streamed page cut off by the candidate limit
+                            # was read, and what it delivered is kept.
+                            pages += 1
                         break
                     pages += 1
                     if not_modified:
@@ -2417,7 +2481,7 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                         try:
                             result = source_adapters.parse_page(
                                 data, plan.profile or {'kind': kind},
-                                page_context={'page': page}, limits=limits)
+                                page_context={'page': page, 'keep_document': True}, limits=limits)
                         except source_adapters.AdapterError as exc:
                             error = exc.args[0] if exc.args else 'SOURCE_ADAPTER_ERROR'
                             # A document that is refused for exceeding its
@@ -2450,10 +2514,17 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                         # was read as its first page and reported as complete:
                         # a source that publishes 162 records over two pages
                         # contributed 100 and looked finished.
+                        # The JSON adapters hand back the document they parsed;
+                        # only a format that is not JSON itself (a table inside
+                        # a JSON envelope) is parsed again, and only when the
+                        # body can be JSON at all.
+                        document = result.pop('document', None)
                         try:
-                            info = source_adapters.page_info(
-                                json.loads(data.decode('utf-8')), plan.profile or {'kind': kind})
-                        except (source_adapters.AdapterError, UnicodeDecodeError, ValueError):
+                            if document is None and data.lstrip()[:1] in (b'{', b'['):
+                                document = json.loads(data.decode('utf-8'))
+                            info = (source_adapters.page_info(document, plan.profile or {'kind': kind})
+                                    if document is not None else {})
+                        except (source_adapters.AdapterError, UnicodeDecodeError, ValueError, RecursionError):
                             info = {}
                         if max_pages is not None and pages >= max_pages:
                             if info.get('total') is not None and count < int(info['total']):
@@ -2537,10 +2608,22 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                 http_state = 'http_429' if status_code == 429 else 'http_2xx_nonempty'
             else:
                 http_state = 'http_error' if status_code else 'error'
+            served = stored_generation(db, key, clock) if not_modified else None
+            if served is not None:
+                # "Not modified" means the list is still the last good one, so
+                # the target collection gets that list, exactly as a 200 with
+                # the same body would have given it: a second collection, or
+                # one a member was removed from, is otherwise left without it
+                # until the provider happens to change the file.
+                try:
+                    reapply_generation(served['generation_id'])
+                except SourceFetchError as exc:
+                    if exc.code not in COLLECT_BUDGET_ERRORS:
+                        raise
+                    error = exc.code
             # Buffered rows first: the report's "new" counter is decided there.
             flush()
             delivered = not not_modified and error is None and bool(seen['values'])
-            served = stored_generation(db, key, clock) if not_modified else None
             if served is not None:
                 # 304 is an answer, not the absence of one.  The source still
                 # offers everything its last good generation holds, so the run
@@ -2571,7 +2654,7 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                 report['served_from_cache'] = True
                 report['cache_age_seconds'] = served['age_seconds']
                 report['cache_generation'] = served['generation_id']
-                report['complete'] = True
+                report['complete'] = error is None
             if record_provenance:
                 # A fetch that failed while a previous answer is still on disk
                 # serves that answer rather than reporting an empty source.
@@ -2603,6 +2686,12 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
             report['outcome'] = source_outcome(report)
             reports.append(report)
             commit()
+            if record_provenance:
+                # Right after the new generation is committed, the ones past the
+                # bound go: every run used to add a full copy of every list.
+                # Housekeeping never fails a collection; the next run retries.
+                with contextlib.suppress(sqlite3.Error, schema.DbError):
+                    schema.prune_source_history(db, source_ids=[key])
             publish()
             if not quiet:
                 print(tr(f'Источник {index}: строк {count}, заблокировано {blocked}, страниц {pages}, ошибка {error or "нет"}',

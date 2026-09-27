@@ -77,6 +77,7 @@ __all__ = [
     "excluded_addresses", "clear_scope_exclusions", "create_backup", "verify_backup",
     "list_backups", "manifest_path", "restore_preview", "restore", "rollback",
     "migrate_data_path", "retention_preview", "apply_retention", "cleanup_preview",
+    "source_history_preview", "prune_source_history", "SOURCE_GENERATION_KEEP",
     "cleanup", "secret_bindings", "rebind_secrets", "write_json", "read_json",
     "sha256_file",
 ]
@@ -330,6 +331,10 @@ class RetentionPreview:
     database_bytes: int = 0
     target_bytes: int = 0
     blocked: tuple = ()                 # ((table, (blocker, ...), rows), ...)
+    #: Source fetch history past its bound (:func:`source_history_preview`).
+    #: Always pruned by :func:`apply_retention`, whatever the policy names:
+    #: it is bounded by count, not by age, and no reader needs it.
+    source_history: "dict | None" = None
 
     def rows_for(self, table):
         """The rows retention can actually remove. Blocked rows are not counted."""
@@ -376,6 +381,7 @@ class RetentionPreview:
                  "oldest": oldest, "newest": newest}
                 for name, column, rows, oldest, newest in self.targets
             ],
+            "source_history": dict(self.source_history or {}),
         }
 
 
@@ -2006,6 +2012,144 @@ def _retention_targets(conn, policy, now):
                                  for table, (blockers, rows) in blocked.items()), total
 
 
+#: Source generations kept per source, entries included.  Every reader needs
+#: only the newest one -- the contribution/overlap views read the active
+#: generation, a 304 re-applies the last good one -- so a short history is kept
+#: for the cache view and nothing older: one generation of the full catalog is
+#: hundreds of thousands of entry rows, and a watched collection used to add
+#: one per run forever.
+SOURCE_GENERATION_KEEP = 3
+#: Fetch observations kept per source: the detail view shows the last 20.
+SOURCE_OBSERVATION_KEEP = 50
+#: Entry rows deleted per statement, so a prune never holds the write lock long.
+SOURCE_PRUNE_BATCH = 20_000
+
+
+def _excess_source_generations(conn, keep, source_ids=None):
+    """Ids of the generations past the newest ``keep`` of each source.
+
+    A generation the source state still names (current or last good) is never
+    excess, whatever its age: it is the answer a 304 or an outage serves.
+    """
+    if not (_table_exists(conn, "source_generation") and _table_exists(conn, "source_generation_entry")):
+        return []
+    if source_ids is None:
+        source_ids = [row[0] for row in conn.execute("SELECT DISTINCT source_id FROM source_generation")]
+    protected = set()
+    if _table_exists(conn, "source_state"):
+        for current, last_good in conn.execute(
+                "SELECT current_generation, last_good_generation FROM source_state"):
+            protected.update(value for value in (current, last_good) if value)
+    excess = []
+    for source_id in dict.fromkeys(source_ids):
+        excess.extend(row[0] for row in conn.execute(
+            "SELECT id FROM source_generation WHERE source_id=? ORDER BY id DESC LIMIT -1 OFFSET ?",
+            (source_id, max(1, int(keep)))) if row[0] not in protected)
+    return excess
+
+
+def _excess_source_observations_sql(keep, source_ids=None, held=True):
+    """WHERE clause (and its parameters) of observations past the newest ``keep`` per source.
+
+    ``held=True`` also leaves out every observation a generation points at.
+    """
+    ids = list(dict.fromkeys(source_ids)) if source_ids is not None else None
+    scope = ""
+    params = []
+    if ids is not None:
+        scope = "o.source_id IN (%s) AND " % ",".join("?" * len(ids))
+        params.extend(ids)
+    where = (scope + "o.id NOT IN (SELECT n.id FROM source_observation n WHERE n.source_id=o.source_id"
+             " ORDER BY n.id DESC LIMIT ?)")
+    params.append(max(1, int(keep)))
+    if held:
+        where += (" AND o.id NOT IN (SELECT observation_id FROM source_generation"
+                  " WHERE observation_id IS NOT NULL)")
+    return where, params
+
+
+def source_history_preview(conn, *, keep_generations=None, keep_observations=None, source_ids=None):
+    """What :func:`prune_source_history` would delete, counted without deleting."""
+    keep_generations = SOURCE_GENERATION_KEEP if keep_generations is None else keep_generations
+    keep_observations = SOURCE_OBSERVATION_KEEP if keep_observations is None else keep_observations
+    result = {"keep_generations": int(keep_generations), "keep_observations": int(keep_observations),
+              "generations": 0, "entries": 0, "observations": 0}
+    if source_ids is not None and not list(source_ids):
+        return result
+    excess = _excess_source_generations(conn, keep_generations, source_ids)
+    result["generations"] = len(excess)
+    for start in range(0, len(excess), 500):
+        chunk = excess[start:start + 500]
+        result["entries"] += conn.execute(
+            "SELECT count(*) FROM source_generation_entry WHERE generation_id IN (%s)"
+            % ",".join("?" * len(chunk)), chunk).fetchone()[0]
+    if _table_exists(conn, "source_observation") and _table_exists(conn, "source_generation"):
+        where, params = _excess_source_observations_sql(keep_observations, source_ids, held=False)
+        candidates = {row[0] for row in conn.execute(
+            "SELECT o.id FROM source_observation o WHERE " + where, params)}
+        if candidates:
+            # Observations that only an excess generation holds go with it.
+            dropping = set(excess)
+            candidates -= {observation for generation, observation in conn.execute(
+                "SELECT id, observation_id FROM source_generation WHERE observation_id IS NOT NULL")
+                if generation not in dropping}
+        result["observations"] = len(candidates)
+    return result
+
+
+def prune_source_history(conn, *, keep_generations=None, keep_observations=None, source_ids=None,
+                         batch=None):
+    """Bound the per-source fetch history: old generations, their entries, old observations.
+
+    Deletes, per source, the generations past the newest ``keep_generations``
+    (never one the source state still names), their entries in batches of
+    ``batch`` rows with a commit after each, and the observations past the
+    newest ``keep_observations`` that no remaining generation points at.
+    ``source_ids`` limits the work to those sources -- the collector passes the
+    one it just wrote.  Returns ``{"generations", "entries", "observations"}``.
+    """
+    keep_generations = SOURCE_GENERATION_KEEP if keep_generations is None else keep_generations
+    keep_observations = SOURCE_OBSERVATION_KEEP if keep_observations is None else keep_observations
+    batch = max(1, int(batch or SOURCE_PRUNE_BATCH))
+    deleted = {"generations": 0, "entries": 0, "observations": 0}
+    if source_ids is not None:
+        source_ids = list(dict.fromkeys(source_ids))
+        if not source_ids:
+            return deleted
+    if conn.in_transaction:
+        raise DbError(E_MIGRATION_FAILED, "prune_source_history needs a connection outside a transaction")
+
+    def write(sql, params=()):
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            changed = conn.execute(sql, params).rowcount
+            conn.execute("COMMIT")
+        except BaseException:
+            conn.execute("ROLLBACK")
+            raise
+        return max(0, changed)
+
+    for generation in _excess_source_generations(conn, keep_generations, source_ids):
+        while True:
+            changed = write(
+                "DELETE FROM source_generation_entry WHERE generation_id=? AND endpoint_id IN"
+                " (SELECT endpoint_id FROM source_generation_entry WHERE generation_id=? LIMIT ?)",
+                (generation, generation, batch))
+            deleted["entries"] += changed
+            if changed < batch:
+                break
+        deleted["generations"] += write("DELETE FROM source_generation WHERE id=?", (generation,))
+    if _table_exists(conn, "source_observation") and _table_exists(conn, "source_generation"):
+        where, params = _excess_source_observations_sql(keep_observations, source_ids)
+        while True:
+            changed = write("DELETE FROM source_observation WHERE id IN (SELECT o.id FROM source_observation o"
+                            " WHERE " + where + " LIMIT ?)", params + [batch])
+            deleted["observations"] += changed
+            if changed < batch:
+                break
+    return deleted
+
+
 def retention_preview(conn, policy=None, *, now=None):
     """Count what retention would delete, plus the data size behind it.
 
@@ -2020,7 +2164,7 @@ def retention_preview(conn, policy=None, *, now=None):
     return RetentionPreview(policy, now, targets, total,
                             database_bytes(_database_file(conn)),
                             sum(table_bytes(conn, target[0]) or 0 for target in targets),
-                            blocked)
+                            blocked, source_history_preview(conn))
 
 
 def apply_retention(conn, policy=None, *, now=None, vacuum=False):
@@ -2059,6 +2203,13 @@ def apply_retention(conn, policy=None, *, now=None, vacuum=False):
             conn.execute("ROLLBACK")
             raise RetentionError(E_MIGRATION_FAILED, str(exc)) from exc
         deleted.append((table, rows))
+    # Source generations are bounded by count, so the same cleanup that ages
+    # measurements out also trims a history an older version let grow.
+    history = prune_source_history(conn)
+    for table, key in (("source_generation_entry", "entries"), ("source_generation", "generations"),
+                       ("source_observation", "observations")):
+        if history[key]:
+            deleted.append((table, history[key]))
     vacuumed = False
     if vacuum and deleted:
         conn.execute("VACUUM")
