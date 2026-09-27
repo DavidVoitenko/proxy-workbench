@@ -102,7 +102,7 @@
     'identity.denylist': 'Liste d\'exclusion locale',
     'identity.local': 'Liste d\'exclusion locale',
     'identity.localHint': 'IP ou blocs CIDR exclus définitivement des tests et des exports.',
-    'identity.denylistPlaceholder': '11.0.0.0/24\nhttp://11.0.0.1:8080\n# commentaire',
+    'identity.denylistPlaceholder': '192.0.2.0/24\nhttp://192.0.2.10:8080\n# commentaire',
     'identity.denylistHint': 'IP, CIDR ou adresse de proxy exacte. Stocké uniquement dans data/denylist.txt et jamais inclus dans le code.',
     'identity.applyDenylist': 'Appliquer la liste d\'exclusion locale pendant la collecte, les vérifications et l\'export',
     'profile.workbench': 'Profil Workbench',

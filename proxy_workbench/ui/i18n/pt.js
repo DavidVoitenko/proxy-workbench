@@ -102,7 +102,7 @@
     'identity.denylist': 'Lista de bloqueio local',
     'identity.local': 'Lista de bloqueio local',
     'identity.localHint': 'IPs ou blocos CIDR permanentemente excluídos dos testes e exportações.',
-    'identity.denylistPlaceholder': '11.0.0.0/24\nhttp://11.0.0.1:8080\n# comentário',
+    'identity.denylistPlaceholder': '192.0.2.0/24\nhttp://192.0.2.10:8080\n# comentário',
     'identity.denylistHint': 'IP, CIDR ou endereço exato de proxy. Armazenado apenas em data/denylist.txt e nunca incluído no código.',
     'identity.applyDenylist': 'Aplicar a lista de bloqueio local durante coleta, verificações e exportação',
     'profile.workbench': 'Perfil Workbench',

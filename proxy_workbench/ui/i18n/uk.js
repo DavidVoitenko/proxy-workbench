@@ -102,7 +102,7 @@
     'identity.denylist': 'Локальний чорний список',
     'identity.local': 'Локальний чорний список',
     'identity.localHint': 'IP або CIDR-блоки, назавжди виключені з тестів та експортів.',
-    'identity.denylistPlaceholder': '11.0.0.0/24\nhttp://11.0.0.1:8080\n# коментар',
+    'identity.denylistPlaceholder': '192.0.2.0/24\nhttp://192.0.2.10:8080\n# коментар',
     'identity.denylistHint': 'IP, CIDR або точна адреса проксі. Зберігається лише в data/denylist.txt і ніколи не включається в код.',
     'identity.applyDenylist': 'Застосовувати локальний чорний список під час збору, перевірок та експорту',
     'profile.workbench': 'Профіль Workbench',

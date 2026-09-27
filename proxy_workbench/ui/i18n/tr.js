@@ -102,7 +102,7 @@
     'identity.denylist': 'Yerel engel listesi',
     'identity.local': 'Yerel engel listesi',
     'identity.localHint': 'Testlerden ve dışa aktarmalardan kalıcı olarak hariç tutulan IP\'ler veya CIDR blokları.',
-    'identity.denylistPlaceholder': '11.0.0.0/24\nhttp://11.0.0.1:8080\n# yorum',
+    'identity.denylistPlaceholder': '192.0.2.0/24\nhttp://192.0.2.10:8080\n# yorum',
     'identity.denylistHint': 'IP, CIDR veya tam proxy adresi. Yalnızca data/denylist.txt içinde saklanır ve asla koda dahil edilmez.',
     'identity.applyDenylist': 'Toplama, kontroller ve dışa aktarma sırasında yerel engel listesini uygula',
     'profile.workbench': 'Workbench profili',
