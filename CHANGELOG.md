@@ -2,6 +2,15 @@
 
 The format follows Keep a Changelog and semantic versioning.
 
+## [3.0.2] — 2026-09-27
+
+### Fixed
+
+- Source retries now publish candidates only from a completed response. Byte and line limits keep valid following addresses, and the scan enforces each target's request cap even when one probe makes several requests.
+- The API rejects invalid numbers and cursors cleanly, executes concurrent retries with the same idempotency key once, pages scoped jobs and events correctly, and releases SSE slots when clients leave.
+- API key forms submit the selected permissions. The import wizard offers every CSV/JSON column, accepts the first or duplicate column, and discards previews after the input changes. Switched tabs remain visible when a browser pauses animations.
+- Docker includes the service preset catalog. Its Compose gateway can start on the configured network bind, and the CLI shows a generated password or usable authenticated examples without printing a supplied secret.
+
 ## [3.0.1] — 2026-09-27
 
 ### Fixed
