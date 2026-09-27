@@ -5080,8 +5080,8 @@ def source_map(db, profile=None):
     on collection order.
 
     With ``profile`` only addresses that have a result in that profile are
-    mapped.  A reader of one page of results does not need the sources of every
-    collected candidate: on 663k candidates the full map cost 1.3 s a request.
+    mapped.  A GUI read for one profile does not need the sources of every
+    collected candidate.
     """
     result = {}
     if profile is None:
