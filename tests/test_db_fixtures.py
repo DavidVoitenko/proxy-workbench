@@ -1,7 +1,7 @@
 """The shared admission fixture must stay usable by every other module.
 
 `tests/fixtures/admission.py` is the one place where the observation rows and the
-`(canonical, admission_reason)` expectations are defined (CONTRACTS §2.3). Seventeen
+`(canonical, admission_reason)` expectations are defined. Seventeen
 modules import it, so it is tested here: a broken fixture would otherwise fail in
 their suites, one at a time, with no obvious cause.
 """

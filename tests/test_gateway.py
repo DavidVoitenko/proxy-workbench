@@ -21,7 +21,7 @@ def row(proxy, latency=100, country=None):
 
     ``checked_at=0`` is an *unknown* measurement time under the admission
     contract, and a row the engine can never produce; the gateway is right to
-    refuse it (CONTRACTS §2.4).
+    refuse it.
     """
     now = time.time()
     return dict(proxy=proxy, reliability=1, min_target_reliability=1, latency_ms=latency, jitter_ms=1, score=90,

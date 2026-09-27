@@ -24,7 +24,7 @@ def _workbench(home):
 
 
 class OneShotSecretTests(unittest.TestCase):
-    """CONTRACTS §5.1: a full secret is shown once, and an idempotent replay is
+    """the shared contract: a full secret is shown once, and an idempotent replay is
     not a second issuance."""
 
     def setUp(self):

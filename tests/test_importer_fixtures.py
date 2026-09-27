@@ -2,7 +2,7 @@
 
 The schema is the one `db.migrate()` creates -- the importer writes no DDL of
 its own, and its tests prove behaviour against the real migrator rather than
-against a private copy of the contract (HANDOFF/README.ru.md §2.2).
+against a private copy of the contract.
 """
 
 import sys
@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from proxy_workbench import db
 from proxy_workbench import importer as imp
 
-#: the four tables this module reads and writes (CONTRACTS.ru.md §3.3, 1, 2, 12)
+#: the four tables this module reads and writes
 TABLES = ('endpoints', 'collections', 'membership', 'import_batch')
 
 

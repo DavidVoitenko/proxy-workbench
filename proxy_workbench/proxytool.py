@@ -7,6 +7,7 @@ import asyncio
 import contextlib
 from contextlib import asynccontextmanager, contextmanager
 import csv
+import errno
 import hashlib
 import ipaddress
 import json
@@ -39,6 +40,7 @@ from . import socks4
 from . import formats
 from .i18n import tr, utf8_output
 from . import paths
+from .pipeline import AdaptiveConcurrency
 
 # ``exportsvc`` imports a handful of constants from this module, so it is
 # imported where it is used instead of here.  One contract, one implementation:
@@ -72,6 +74,8 @@ MAX_SOURCE_LINE_BYTES = 16 * 1024 * 1024
 MAX_SOURCE_CANDIDATES = 10_000_000
 MAX_SOURCE_REDIRECTS = 20
 MAX_SOURCE_PAGES = 5_000
+#: Addresses ``collect`` buffers before one set-based write and commit.
+COLLECT_WRITE_BATCH = 10_000
 SOURCE_REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 SOURCE_METADATA_HOSTS = frozenset({
     'metadata', 'metadata.google.internal', 'metadata.goog', 'metadata.azure.internal',
@@ -241,7 +245,7 @@ async def _source_stream(client, url, allow_private=False, headers=None):
     _, hostname, _, address = await _validate_source_destination(url, allow_private)
     # ``If-None-Match``/``If-Modified-Since`` are how a 304 happens at all, so
     # the conditional headers travel with the very first request of a source
-    # whose validators were stored by the previous fetch (F13).
+    # whose validators were stored by the previous fetch.
     request_headers = dict(headers or {})
     if address is None:
         async with client.stream('GET', url, headers=request_headers) as response:
@@ -278,6 +282,9 @@ def _declared_response_length(response):
 
 
 COLLECT_BUDGET_ERRORS = frozenset(('SOURCE_REQUEST_BUDGET', 'SOURCE_ITEM_BUDGET', 'SOURCE_BYTE_BUDGET'))
+#: One source's own limits: the origin answered, the answer did not fit.
+SOURCE_LIMIT_ERRORS = frozenset(('SOURCE_TOO_LARGE', 'SOURCE_LINE_TOO_LARGE', 'SOURCE_CANDIDATE_LIMIT',
+                                 'SOURCE_RECORD_LIMIT', 'SOURCE_PAGE_LIMIT', 'SOURCE_TRUNCATED'))
 
 
 def _collection_budget_error(budget, code):
@@ -420,8 +427,34 @@ async def _read_bounded_lines(response, budget, max_bytes, max_line_bytes, on_li
         budget['truncated'] = True
 
 
+_OCTET = r'(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])'
+#: The shape almost every public list uses: an optional scheme, a dotted IPv4
+#: address without leading zeros and a port.  ASCII digits only, so it accepts
+#: nothing the general parser below would refuse.
+_FAST_IPV4_PROXY = re.compile(
+    r'(?:(http|https|socks4|socks5|socks5h)://)?(' + _OCTET + r'(?:\.' + _OCTET + r'){3}):([0-9]{1,5})/?')
+
+
 def _normalize_proxy(value, *, public_only):
     """Shared proxy URL parser for public collection and private GUI imports."""
+    if not isinstance(value, str):
+        return None
+    # Fast path for the common ``scheme://a.b.c.d:port`` line; it returns what
+    # the general parser returns for the same input (see the tests).
+    match = _FAST_IPV4_PROXY.fullmatch(value.strip())
+    if match is not None:
+        scheme, host, port = match.groups()
+        port = int(port)
+        if not 1 <= port <= 65535:
+            return None
+        if public_only and not ipaddress.IPv4Address(host).is_global:
+            return None
+        return f'{scheme or "http"}://{host}:{port}'
+    return _normalize_proxy_general(value, public_only=public_only)
+
+
+def _normalize_proxy_general(value, *, public_only):
+    """The complete parser: IPv6, hostnames and every other spelling."""
     if not isinstance(value, str):
         return None
     raw = value.strip()
@@ -546,7 +579,7 @@ SNAPSHOT_SCHEMA_VERSION = 1
 MIN_FRESHNESS_SECONDS = 2 * 60 * 60
 #: An address with no credentials still has an access identity, and a named one:
 #: an empty id is indistinguishable from a row that never recorded who measured
-#: it, and admission refuses that (CONTRACTS §1.2 rule 1, §2.3).  The web
+#: it, and admission refuses that.  The web
 #: surface reads the same identity (``gui.App.snapshot_access``); the two have to
 #: name the same thing or the table and the engine disagree about which rows
 #: exist at all.
@@ -562,7 +595,7 @@ def as_access(value):
     raise `AttributeError: 'Access' object has no attribute 'access_id'` at the
     first row: a caller that had a real credential identity could not measure
     with it.  The credential value is never touched here -- only the identity and
-    its revision travel into a row (F04).
+    its revision travel into a row.
     """
     if value is None:
         return PUBLIC_ACCESS
@@ -578,7 +611,7 @@ def as_access(value):
 PROTOCOL_EXPORTS = {'http': 'http.txt', 'https': 'https.txt', 'socks4': 'socks4.txt', 'socks5': 'socks5.txt'}
 PROTOCOL_ALIASES = {'socks5h': 'socks5'}
 
-# The measurement row is written with every key column named (CONTRACTS §3.2):
+# The measurement row is written with every key column named:
 # a positional insert breaks the moment a migration adds a column, which is
 # exactly how a stale binary is stopped from writing into a newer schema.
 INSERT_RESULT = '''INSERT OR REPLACE INTO results(
@@ -631,10 +664,10 @@ def meta_columns(conn):
 def collection_candidates(conn, collection_id):
     """Canonical addresses that belong to one collection, in address order.
 
-    Membership is the scope (CONTRACTS §1.2 rule 2).  A collection with no
+    Membership is the scope.  A collection with no
     membership rows yields nothing rather than silently falling back to every
     address ever collected -- that fallback is how a private list turned into
-    the public base (defect 11).
+    the public base.
     """
     return conn.execute(
         'SELECT e.canonical FROM membership m JOIN endpoints e ON e.id = m.endpoint_id '
@@ -774,8 +807,8 @@ def open_db(path, **kwargs):
     This function used to own the schema.  It no longer writes DDL: the
     versioned migrator checks ``user_version``/``application_id`` before any
     write, takes a technical backup of a pre-versioning file and refuses a
-    database that belongs to another application or to a newer program
-    (CONTRACTS §3.2, §3.4, §3.5).  The old contract -- a bare connection -- is
+    database that belongs to another application or to a newer program.
+   The old contract -- a bare connection -- is
     kept so every existing caller keeps working; callers that want the migration
     report call :func:`open_db_with_report`.
     """
@@ -800,7 +833,7 @@ def ensure_public_collection(conn):
 
     Creating it here (and not in a migration) keeps a fresh database usable
     without a second code path: ``db.create_collection`` refuses a duplicate id,
-    so this is a no-op on every open after the first (defect 11, F02).
+    so this is a no-op on every open after the first.
     """
     row = conn.execute('SELECT 1 FROM collections WHERE id=?', (schema.PUBLIC_COLLECTION_ID,)).fetchone()
     if not row:
@@ -938,6 +971,10 @@ LINE_KIND = 'line'
 SOURCE_KINDS = ('http', 'https', 'socks4', 'socks5', 'socks5h', 'auto', 'text', 'geonode',
                 'http-fields', LINE_KIND) + CATALOG_ADAPTER_KINDS
 DETECT_PROTOCOLS = ('http', 'socks4', 'socks5')
+#: "ip:port:Country Name"; the country is any word of letters, "Türkiye" included.
+HTTP_FIELDS_LINE = re.compile(r"(\d{1,3}(?:\.\d{1,3}){3}:\d{1,5}):[^\W\d_](?:[^\W\d_]|[ .'-])*")
+#: A comment after an address, separated from it by whitespace.
+INLINE_COMMENT = re.compile(r'\s+#')
 # ip:port inside free text: "1.2.3.4:8080", "1.2.3.4 8080", CSV and HTML table cells.
 LOOSE_ADDRESS = re.compile(r'(?<![\d.])(?:(https?|socks[45]h?)://)?(\d{1,3}(?:\.\d{1,3}){3})'
                            r'(?::|\s*(?:</t[dh]>\s*<t[dh][^>]*>|[\s,;|])\s*)(\d{2,5})(?!\d)', re.I)
@@ -1060,7 +1097,7 @@ def source_selection_view(data_dir=None, catalog=None, *, query='', db=None, now
 
     The CLI, the GUI and ``/v1/sources`` all answer from this, so a source's
     support status, dataset group, access kind and runtime state are the same
-    numbers everywhere (F13, F21).
+    numbers everywhere.
     """
     from . import source_management
     catalog = catalog if catalog is not None else sources_catalog(data_dir)
@@ -1080,7 +1117,7 @@ def source_catalog_for(data_dir):
 
 
 def catalog_source_plans(settings, catalog=None, *, include_disabled=False):
-    """The user's selection, resolved into fetchable plans (F13).
+    """The user's selection, resolved into fetchable plans.
 
     ``source_catalog.migrate_settings`` first, so a tree that still holds the
     old flat URL list keeps every URL and every *pause* -- a source that was in
@@ -1549,8 +1586,8 @@ def record_source_generation(db, plan, observation_id, endpoints, *, state, now,
 
 def record_source_state(db, plan, endpoint_url, *, now, etag=None, last_modified=None,
                         final_url=None, success=False, error=None, retry_after=None,
-                        previous=None, generation=None, not_modified=False):
-    """Cache validators, backoff and quarantine of one source (F13).
+                        previous=None, generation=None, not_modified=False, limited=False):
+    """Cache validators, backoff and quarantine of one source.
 
     A successful fetch clears the backoff and the quarantine; three failures in
     a row quarantine the source, so a provider that has gone away is asked
@@ -1563,8 +1600,20 @@ def record_source_state(db, plan, endpoint_url, *, now, etag=None, last_modified
     # failure budget: counting it as a failure quarantined a perfectly healthy
     # source after three collections, and every collection after that stopped
     # asking it at all.
-    healthy = bool(success or not_modified)
+    answered = bool(success or not_modified)
+    # A body past the user's own limits came from a working transport: it is
+    # neither backed off nor quarantined, so raising the limit takes effect on
+    # the next collection.
+    healthy = answered or bool(limited)
     failures = 0 if healthy else int(previous.get('consecutive_failures') or 0) + 1
+    # Validators describe the body they came with.  Only a body that was read
+    # whole may replace them; otherwise a later 304 would vouch for a body
+    # that was never stored.  A 304 without validators keeps the stored ones.
+    if not_modified:
+        etag = etag or previous.get('etag')
+        last_modified = last_modified or previous.get('last_modified')
+    elif not success:
+        etag, last_modified = previous.get('etag'), previous.get('last_modified')
     backoff_until = None
     quarantine_until = None if healthy else previous.get('quarantine_until')
     if not healthy:
@@ -1578,7 +1627,7 @@ def record_source_state(db, plan, endpoint_url, *, now, etag=None, last_modified
     if success and generation:
         current, last_good = generation, generation
     values = (plan.source_id, '', final_url or endpoint_url, etag, last_modified, now,
-              now if healthy else previous.get('last_success_at'),
+              now if answered else previous.get('last_success_at'),
               now if success else previous.get('last_body_at'),
               now if not_modified else previous.get('last_304_at'),
               current, last_good, failures, backoff_until, quarantine_until,
@@ -1617,7 +1666,7 @@ def record_source_identity(db, plan):
 
 
 def source_contributions(db, source_ids=()):
-    """What each source actually contributed, for the source views (F21).
+    """What each source actually contributed, for the source views.
 
     ``source_management.attach_contributions`` calls this by name and checks
     that it exists, so an exclusive set and a shared set are computed from the
@@ -1686,7 +1735,8 @@ def _write_source_provenance(db, run_id, plan, url, *, started_at, clock, http_s
     if error not in COLLECT_BUDGET_ERRORS:
         record_source_state(db, plan, url, now=ended, etag=etag, last_modified=last_modified,
                             final_url=final_url, success=delivered, error=error, previous=previous,
-                            generation=generation, not_modified=not_modified, retry_after=retry_after)
+                            generation=generation, not_modified=not_modified, retry_after=retry_after,
+                            limited=error in SOURCE_LIMIT_ERRORS)
     return {'observation_id': observation_id, 'generation_id': generation,
             'cache_state': cache_state, 'outcome': outcome}
 
@@ -1711,7 +1761,7 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
 
     What a source offered is recorded, not just consumed: an observation with
     its counters, a generation (an immutable answer), and the cache validators
-    plus backoff and quarantine of the next attempt (F13, F21).
+    plus backoff and quarantine of the next attempt.
 
     ``preview`` runs the identical fetch/adapter/limit path against a private
     temporary database, so a check of a source can answer every question a real
@@ -1819,41 +1869,110 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                 _collection_budget_error(collection_budget, 'SOURCE_ITEM_BUDGET')
         if not (isinstance(country, str) and geoip.COUNTRY_CODE.fullmatch(country.upper())):
             country = None
-        # The migrated connection uses autocommit. Without an explicit BEGIN,
-        # each membership statement fsyncs separately and collecting a large
-        # list costs minutes. A short batch also releases other GUI writers.
+        if source and seen is not None:
+            seen['values'].add(proxy)
+        pending.append((proxy, schema.endpoint_id(proxy), country and country.upper(), source,
+                        seen if source else None))
+        pending_writes += 1
+        # An item budget is decided per address, so it is written at once.
+        if max_items is not None or len(pending) >= COLLECT_WRITE_BATCH:
+            flush()
+        if pending_writes >= COLLECT_WRITE_BATCH:
+            commit()
+        return 'accepted'
+
+    pending = []
+    country_columns = [name for name in ('country', 'country_at', 'country_source')
+                       if name in endpoint_columns(db)]
+    meta_has_source = 'source' in meta_columns(db)
+
+    def flush():
+        """Write the buffered addresses with one statement per table.
+
+        The same rows and the same conflict rules as one address at a time,
+        in a single short transaction: a row-by-row writer spent most of a
+        large collection in SQLite call overhead and page writes.
+        """
+        nonlocal pending
+        if not pending:
+            return
+        rows, pending = pending, []
+        ids = list(dict.fromkeys(row[1] for row in rows))
+        existing = set()
+        for start in range(0, len(ids), 500):
+            chunk = ids[start:start + 500]
+            existing.update(row[0] for row in db.execute(
+                f'SELECT id FROM endpoints WHERE id IN ({",".join("?" * len(chunk))})', chunk))
+        for _proxy, endpoint, _country, source, seen in rows:
+            if endpoint not in existing:
+                existing.add(endpoint)
+                if seen is not None:
+                    seen['new'] = seen.get('new', 0) + 1
+        # Key order keeps the B-tree writes local; the conflict rules do not
+        # depend on the order within one batch.
+        rows.sort(key=lambda row: row[1])
+        # The migrated connection uses autocommit; one explicit transaction
+        # per batch keeps the write lock short for other GUI writers.
         if not db.in_transaction:
             db.execute('BEGIN')
+        stamp = clock()
         # One endpoint entity per canonical address; the collection membership
         # is the scope, and the legacy ``candidates`` row keeps the old readers
-        # working (CONTRACTS §1.2 rule 2, §3.3 migrations 1-2).
-        existed = db.execute('SELECT 1 FROM endpoints WHERE canonical=?', (proxy,)).fetchone() is not None
-        endpoint = upsert_endpoint(db, proxy, country=country,
-                                   country_at=time.time() if country else None,
-                                   country_source='source' if country else None)
-        db.execute('INSERT OR IGNORE INTO candidates(proxy, endpoint_id) VALUES (?, ?)', (proxy, endpoint))
+        # working.
+        db.executemany('INSERT OR IGNORE INTO endpoints(id, canonical) VALUES (?,?)',
+                       [(endpoint, proxy) for proxy, endpoint, *_ in rows])
+        if country_columns:
+            # A publisher's country claim is written when there is one; a list
+            # without countries leaves what an earlier source or import said.
+            values = {'country': None, 'country_at': time.time(), 'country_source': 'source'}
+            assignments = ', '.join(f'"{name}" = ?' for name in country_columns)
+            db.executemany(f'UPDATE endpoints SET {assignments} WHERE id = ?',
+                           [[country if name == 'country' else values[name] for name in country_columns]
+                            + [endpoint] for _proxy, endpoint, country, *_ in rows if country])
+        db.executemany('INSERT OR IGNORE INTO candidates(proxy, endpoint_id) VALUES (?, ?)',
+                       [(proxy, endpoint) for proxy, endpoint, *_ in rows])
         before_membership = db.total_changes
-        schema.add_member(db, collection_id, endpoint, origin=origin)
-        collection_budget['items'] += int(db.total_changes > before_membership)
-        if source:
+        # ``db.add_member``, set-based.
+        db.executemany('INSERT OR IGNORE INTO membership(collection_id, endpoint_id, added_at, origin)'
+                       ' VALUES (?,?,?,?)', [(collection_id, endpoint, stamp, origin)
+                                             for _proxy, endpoint, *_ in rows])
+        collection_budget['items'] += db.total_changes - before_membership
+        sourced = [row for row in rows if row[3]]
+        if sourced:
             # How many lists offer an address: rare ones are less crowded and tend to live longer.
-            db.execute('INSERT OR IGNORE INTO candidate_seen(proxy, source, endpoint_id) VALUES (?, ?, ?)',
-                       (proxy, source, endpoint))
-            db.execute('INSERT OR REPLACE INTO membership_source(collection_id, endpoint_id, source_id,'
-                       ' origin, added_at, last_seen_at) VALUES (?,?,?,?,?,?)'
-                       ' ON CONFLICT(collection_id, endpoint_id, source_id) DO UPDATE SET'
-                       ' last_seen_at=excluded.last_seen_at',
-                       (collection_id, endpoint, source, origin, clock(), clock()))
-            if seen is not None:
-                seen['new'] = seen.get('new', 0) + (0 if existed else 1)
-                seen['values'].add(proxy)
-        if country or source:
-            record_candidate_meta(db, proxy, country and country.upper(), source)
-        pending_writes += 1
-        if pending_writes >= 1000:
-            db.commit()
-            pending_writes = 0
-        return 'accepted'
+            db.executemany('INSERT OR IGNORE INTO candidate_seen(proxy, source, endpoint_id) VALUES (?, ?, ?)',
+                           [(proxy, source, endpoint) for proxy, endpoint, _country, source, _seen in sourced])
+            db.executemany('INSERT OR REPLACE INTO membership_source(collection_id, endpoint_id, source_id,'
+                           ' origin, added_at, last_seen_at) VALUES (?,?,?,?,?,?)'
+                           ' ON CONFLICT(collection_id, endpoint_id, source_id) DO UPDATE SET'
+                           ' last_seen_at=excluded.last_seen_at',
+                           [(collection_id, endpoint, source, origin, stamp, stamp)
+                            for _proxy, endpoint, _country, source, seen in sourced
+                            if not (seen or {}).get('replay')])
+            # A replayed generation (a 304) restores what is missing and leaves
+            # the rest as it was: nothing was seen again, so nothing is dated.
+            db.executemany('INSERT OR IGNORE INTO membership_source(collection_id, endpoint_id, source_id,'
+                           ' origin, added_at, last_seen_at) VALUES (?,?,?,?,?,?)',
+                           [(collection_id, endpoint, source, origin, stamp, stamp)
+                            for _proxy, endpoint, _country, source, seen in sourced
+                            if (seen or {}).get('replay')])
+        # ``record_candidate_meta``, set-based.
+        if meta_has_source:
+            db.executemany('''INSERT INTO candidate_meta(proxy, country, source) VALUES (?, ?, ?)
+                ON CONFLICT(proxy) DO UPDATE SET country=COALESCE(excluded.country, candidate_meta.country),
+                source=COALESCE(candidate_meta.source, excluded.source)''',
+                           [(proxy, country, source) for proxy, _endpoint, country, source, _seen in rows
+                            if country or source])
+        else:
+            db.executemany('''INSERT INTO candidate_meta(proxy, country) VALUES (?, ?)
+                ON CONFLICT(proxy) DO UPDATE SET country=COALESCE(excluded.country, candidate_meta.country)''',
+                           [(proxy, country) for proxy, _endpoint, country, *_ in rows if country])
+
+    def commit():
+        nonlocal pending_writes
+        flush()
+        db.commit()
+        pending_writes = 0
 
 
     def add_detected(value, source=None, public_only=True, seen=None):
@@ -1892,7 +2011,7 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
         reports.append(dict(input=f'local-input-{input_index}', rows=count, invalid=invalid,
                             blocked=blocked, complete=input_error is None, error=input_error))
         total_rows += count
-        db.commit()
+        commit()
         if input_error:
             break
     gate = asyncio.Semaphore(8)
@@ -1951,7 +2070,7 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                                     error='SOURCE_QUARANTINED',
                                     quarantine_until=state.get('quarantine_until'),
                                     next_attempt_at=state.get('quarantine_until')))
-                db.commit()
+                commit()
                 publish()
                 return
             next_attempt = max((state or {}).get('backoff_until') or 0,
@@ -1965,9 +2084,52 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                                     cache_state='stale_last_good' if cached else 'none',
                                     outcome='unavailable', retry_after=(state or {}).get('retry_after'),
                                     next_attempt_at=next_attempt))
-                db.commit()
+                commit()
                 publish()
                 return
+
+            def reapply_generation(generation_id):
+                """Write a stored generation into the target collection again.
+
+                The same writer as a fetched list -- denylist, item budget and
+                per-source membership included -- but on a counter of its own:
+                nothing was read, so the report's read counters stay at zero.
+                """
+                replay = {'values': set(), 'new': 0, 'duplicate': 0, 'metadata': {}, 'replay': True}
+                after = ''
+                while True:
+                    # Keyset pages, each read whole before it is written: the
+                    # writer commits, and a statement still reading across a
+                    # commit is not something to rely on.
+                    rows = db.execute('SELECT g.endpoint_id, e.canonical FROM source_generation_entry g'
+                                      ' JOIN endpoints e ON e.id=g.endpoint_id'
+                                      ' WHERE g.generation_id=? AND g.endpoint_id>?'
+                                      ' ORDER BY g.endpoint_id LIMIT ?',
+                                      (generation_id, after, COLLECT_WRITE_BATCH)).fetchall()
+                    if not rows:
+                        return
+                    after = rows[-1][0]
+                    for _endpoint, canonical in rows:
+                        add(canonical, source=key, seen=replay)
+
+            def attempt_checkpoint():
+                """The per-source counters a page read starts from."""
+                # Only a streamed list adds addresses while it is being read;
+                # a document is parsed after its read succeeded.
+                streamed = kind not in CATALOG_ADAPTER_KINDS and kind != 'geonode'
+                return (dict(budget), count, invalid, blocked, recognized, candidate_count,
+                        endpoint_count, seen['duplicate'], set(seen['values']) if streamed else None)
+
+            def restore_attempt(checkpoint):
+                nonlocal count, invalid, blocked, recognized, candidate_count, endpoint_count, parse_state
+                (saved_budget, count, invalid, blocked, recognized, candidate_count,
+                 endpoint_count, seen['duplicate'], values) = checkpoint
+                budget.clear()
+                budget.update(saved_budget)
+                if values is not None:
+                    seen['values'] = set(values)
+                if parse_state == 'empty':
+                    parse_state = 'pending'
 
             def consume_candidate():
                 nonlocal candidate_count
@@ -1975,9 +2137,14 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                     raise SourceFetchError('SOURCE_CANDIDATE_LIMIT')
                 candidate_count += 1
 
+            line_config = ((plan.profile or {}).get('config') or {}) if kind == 'line' else {}
+            # The catalog's `line` adapter carries the flat format it replaced
+            # in `legacy_kind`; that is how a line of the list is read.
+            line_kind = line_config.get('legacy_kind') if kind == 'line' else kind
+
             def consume_line(raw):
                 nonlocal count, invalid, blocked, recognized
-                if kind == 'text':
+                if line_kind == 'text':
                     # Web pages may use any encoding and are mostly markup: keep only addresses.
                     for address in loose_addresses(raw.decode('utf-8', errors='replace')):
                         consume_candidate()
@@ -1993,11 +2160,14 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                     raise SourceFetchError('SOURCE_INVALID_UTF8') from exc
                 if not line.strip() or line.lstrip().startswith('#'):
                     return
+                if '#' in line:
+                    # "1.2.3.4:8080 # HTTP [ID]": a trailing comment is a note.
+                    line = INLINE_COMMENT.split(line, 1)[0]
                 consume_candidate()
                 count += 1
                 recognized += 1
-                if kind == 'http-fields':
-                    match = re.fullmatch(r"(\d{1,3}(?:\.\d{1,3}){3}:\d{1,5}):[A-Za-z][A-Za-z .'-]*", line.strip())
+                if line_kind == 'http-fields':
+                    match = HTTP_FIELDS_LINE.fullmatch(line.strip())
                     outcome = add(match[1], source=key, seen=seen) if match else 'invalid'
                 elif kind == 'auto':
                     outcome = add_detected(line, source=key, seen=seen)
@@ -2011,7 +2181,7 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                     # whether the list is unlabelled.  Reading the record
                     # instead of assuming HTTP is what makes a SOCKS5 list
                     # arrive as SOCKS5 rather than as 5000 unusable HTTP rows.
-                    config = (plan.profile or {}).get('config') or {}
+                    config = line_config
                     if config.get('line_address') == 'first-token':
                         # "address<tab>free-form note" is the one shape a line
                         # list uses; only the leading token is the address.
@@ -2237,6 +2407,15 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                             fallback_used = True
                             final_url = candidate
                         for retry in range(2):
+                            if retry or candidate is not candidates[0]:
+                                # A new attempt reads the page from its first
+                                # byte: the bytes and candidates the failed one
+                                # counted are not this source's, and keeping
+                                # them made a large list fail its own size
+                                # limit on the retry.
+                                restore_attempt(checkpoint)
+                            else:
+                                checkpoint = attempt_checkpoint()
                             try:
                                 async with asyncio.timeout(timeout):
                                     data = await request_source(candidate, page, headers)
@@ -2258,6 +2437,10 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                                 retry_after is not None and retry_after > clock()):
                             break
                     if not succeeded:
+                        if error == 'SOURCE_CANDIDATE_LIMIT' and seen['values']:
+                            # A streamed page cut off by the candidate limit
+                            # was read, and what it delivered is kept.
+                            pages += 1
                         break
                     pages += 1
                     if not_modified:
@@ -2298,7 +2481,7 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                         try:
                             result = source_adapters.parse_page(
                                 data, plan.profile or {'kind': kind},
-                                page_context={'page': page}, limits=limits)
+                                page_context={'page': page, 'keep_document': True}, limits=limits)
                         except source_adapters.AdapterError as exc:
                             error = exc.args[0] if exc.args else 'SOURCE_ADAPTER_ERROR'
                             # A document that is refused for exceeding its
@@ -2331,10 +2514,17 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                         # was read as its first page and reported as complete:
                         # a source that publishes 162 records over two pages
                         # contributed 100 and looked finished.
+                        # The JSON adapters hand back the document they parsed;
+                        # only a format that is not JSON itself (a table inside
+                        # a JSON envelope) is parsed again, and only when the
+                        # body can be JSON at all.
+                        document = result.pop('document', None)
                         try:
-                            info = source_adapters.page_info(
-                                json.loads(data.decode('utf-8')), plan.profile or {'kind': kind})
-                        except (source_adapters.AdapterError, UnicodeDecodeError, ValueError):
+                            if document is None and data.lstrip()[:1] in (b'{', b'['):
+                                document = json.loads(data.decode('utf-8'))
+                            info = (source_adapters.page_info(document, plan.profile or {'kind': kind})
+                                    if document is not None else {})
+                        except (source_adapters.AdapterError, UnicodeDecodeError, ValueError, RecursionError):
                             info = {}
                         if max_pages is not None and pages >= max_pages:
                             if info.get('total') is not None and count < int(info['total']):
@@ -2356,7 +2546,7 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                             break
                         page_url = following
                         page += 1
-                        db.commit()
+                        commit()
                         await asyncio.sleep(.1)
                         continue
                     if kind != 'geonode':
@@ -2389,7 +2579,7 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                         error = 'INVALID_PAGINATION'
                         break
                     page += 1
-                    db.commit()
+                    commit()
                     await asyncio.sleep(.1)
             total_rows += count
             if bounded_prefix and budget.get('truncated'):
@@ -2399,6 +2589,8 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                 error, parse_state = 'SOURCE_TRUNCATED', 'partial'
             elif not not_modified and error is None and parse_state == 'pending':
                 parse_state = 'complete'
+            elif error in SOURCE_LIMIT_ERRORS and parse_state == 'pending':
+                parse_state = 'partial' if seen['values'] else 'budget_exceeded'
             # The three fetch states the source views know
             # (``source_management.FETCH_STATES``) are named here, not invented
             # per report: a 200 with no addresses and a 200 that failed to parse
@@ -2408,15 +2600,30 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
             elif error is None:
                 http_state = 'empty_body' if parse_state == 'empty' else 'http_2xx_nonempty'
             elif parse_state == 'budget_exceeded' or status_code == 429 or error in (
-                    'SOURCE_TRUNCATED', 'SOURCE_PAGE_LIMIT', 'SOURCE_RECORD_LIMIT'):
+                    'SOURCE_TRUNCATED', 'SOURCE_PAGE_LIMIT', 'SOURCE_RECORD_LIMIT') or (
+                    error in SOURCE_LIMIT_ERRORS and 200 <= (status_code or 0) < 300):
                 # The transport worked; the budget did not fit.  Reporting it as
                 # `http_error` would send the user to look at a provider that
                 # answered perfectly.
                 http_state = 'http_429' if status_code == 429 else 'http_2xx_nonempty'
             else:
                 http_state = 'http_error' if status_code else 'error'
-            delivered = not not_modified and error is None and bool(seen['values'])
             served = stored_generation(db, key, clock) if not_modified else None
+            if served is not None:
+                # "Not modified" means the list is still the last good one, so
+                # the target collection gets that list, exactly as a 200 with
+                # the same body would have given it: a second collection, or
+                # one a member was removed from, is otherwise left without it
+                # until the provider happens to change the file.
+                try:
+                    reapply_generation(served['generation_id'])
+                except SourceFetchError as exc:
+                    if exc.code not in COLLECT_BUDGET_ERRORS:
+                        raise
+                    error = exc.code
+            # Buffered rows first: the report's "new" counter is decided there.
+            flush()
+            delivered = not not_modified and error is None and bool(seen['values'])
             if served is not None:
                 # 304 is an answer, not the absence of one.  The source still
                 # offers everything its last good generation holds, so the run
@@ -2436,7 +2643,9 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                           rejected=invalid, reject_reasons=reject_reasons,
                           bytes=budget.get('used', 0),
                           partial=error in COLLECT_BUDGET_ERRORS or error in (
-                              'SOURCE_TRUNCATED', 'SOURCE_PAGE_LIMIT', 'SOURCE_RECORD_LIMIT'),
+                              'SOURCE_TRUNCATED', 'SOURCE_PAGE_LIMIT', 'SOURCE_RECORD_LIMIT')
+                          # The addresses before the candidate limit were stored.
+                          or (error == 'SOURCE_CANDIDATE_LIMIT' and bool(seen['values'])),
                           truncated=bool(budget.get('truncated')),
                           fallback_used=fallback_used,
                           retry_after=retry_after,
@@ -2445,7 +2654,7 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                 report['served_from_cache'] = True
                 report['cache_age_seconds'] = served['age_seconds']
                 report['cache_generation'] = served['generation_id']
-                report['complete'] = True
+                report['complete'] = error is None
             if record_provenance:
                 # A fetch that failed while a previous answer is still on disk
                 # serves that answer rather than reporting an empty source.
@@ -2476,15 +2685,28 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
             # source views filter on and it must agree with the error.
             report['outcome'] = source_outcome(report)
             reports.append(report)
-            db.commit()
+            commit()
+            if record_provenance:
+                # Right after the new generation is committed, the ones past the
+                # bound go: every run used to add a full copy of every list.
+                # Housekeeping never fails a collection; the next run retries.
+                with contextlib.suppress(sqlite3.Error, schema.DbError):
+                    schema.prune_source_history(db, source_ids=[key])
             publish()
             if not quiet:
                 print(tr(f'Источник {index}: строк {count}, заблокировано {blocked}, страниц {pages}, ошибка {error or "нет"}',
                          f'Source {index}: rows {count}, blocked {blocked}, pages {pages}, error {error or "none"}'), flush=True)
-        async with asyncio.TaskGroup() as group:
-            for index, (kind, url, plan) in enumerate(specs, 1):
-                group.create_task(fetch(index, kind, url, plan))
-    db.commit()
+        try:
+            async with asyncio.TaskGroup() as group:
+                for index, (kind, url, plan) in enumerate(specs, 1):
+                    group.create_task(fetch(index, kind, url, plan))
+        except BaseException:
+            # A stopped run keeps the addresses it already read, as it did
+            # when every batch was committed on its own.
+            with contextlib.suppress(sqlite3.Error):
+                commit()
+            raise
+    commit()
     publish()
     return dict(raw_rows=total_rows, unique=db.execute('SELECT count(*) FROM candidates').fetchone()[0],
                 blocked=sum(r.get('blocked', 0) for r in reports), denylist_error=denylist.error,
@@ -2731,7 +2953,7 @@ def _ws_frames(buffer, max_frame_bytes=None):
 
 
 class Transport:
-    """The network seam ``probes.py`` measures through (F20, F01).
+    """The network seam ``probes.py`` measures through.
 
     ``probes`` never opens a socket: it builds a request, hands it to one of
     these four methods and interprets what comes back.  Everything the probe
@@ -3136,10 +3358,13 @@ async def request_once(proxy, target, config, rate):
     except chain.BudgetExhausted:
         raise
     except Exception as exc:
+        if local_os_error(exc) is not None:
+            # This machine ran out of sockets: no verdict about the proxy.
+            raise
         # Broken proxies raise more than httpx errors (socksio parses raw replies).
         # The stage and the stable code come from the one classifier, so the
         # funnel in a diagnostic packet can tell "the proxy died at the TCP
-        # stage" from "the target answered 503" (F10, F25).
+        # stage" from "the target answered 503".
         result['error'] = str(exc) if isinstance(exc, ValueError) and str(exc) == 'BODY_TOO_LARGE' else type(exc).__name__
         result['error_stage'], result['error_code'] = diagnostics.classification(exc)
     finally:
@@ -3238,7 +3463,7 @@ def allowed_failures(config):
 
 
 def probe_plan(config):
-    """The check mode and its limits, from the modes module (F01, F07).
+    """The check mode and its limits, from the modes module.
 
     One place decides what "recheck" or "monitor" means and how long a single
     probe may take; the engine asks it instead of re-deriving the numbers, so a
@@ -3260,7 +3485,7 @@ def probe_plan(config):
         # The whole-probe budget is what one endpoint may cost in this run:
         # every attempt of every target, worst case each.  It is not
         # ``attempts x targets`` implicit in the per-request timeouts -- it is
-        # one number, and it is the job's own (defect 23, F12).
+        # one number, and it is the job's own.
         'whole_probe_timeout_s': (connect + connect + read) * attempts * targets,
         'max_body_bytes': int(config.get('max_bytes') or 262144),
     })
@@ -3268,7 +3493,7 @@ def probe_plan(config):
 
 
 def capability_manifest():
-    """What is really measured, and what is declared unsupported (F20).
+    """What is really measured, and what is declared unsupported.
 
     A websocket, a long connection, a media segment, UDP or HTTP/3 is not
     measured here, so it is reported as unsupported rather than as a passing
@@ -3361,7 +3586,7 @@ def _stamp_evidence(row, outcome):
 
 
 async def check_capabilities(proxy, config, transport=None):
-    """Run the declared capability kinds and file one state per kind (F20).
+    """Run the declared capability kinds and file one state per kind.
 
     Each kind is measured by :mod:`probes` against the very same
     :class:`Transport` the basic ladder uses, so "websocket supported" means a
@@ -3389,7 +3614,7 @@ async def measure_speed(proxy, config, rate):
     :mod:`probes`' -- this function only supplies the bytes.  A transfer that is
     too small, too short or unfinished therefore comes back
     ``state='insufficient'`` **without a number**, instead of the old hand-made
-    arithmetic that divided a single chunk by an arbitrary window (defect 15).
+    arithmetic that divided a single chunk by an arbitrary window.
     """
     from . import probes
     await rate.wait()
@@ -3459,7 +3684,7 @@ async def judge_proxy(proxy, config, rate, own_ips):
         return anonymity.result('unknown', error=str(exc), started=started)
     except Exception as exc:
         # An anonymity check that failed is unknown, never a pass: the level the
-        # user asked for is not granted on a failed request (defect 13).
+        # user asked for is not granted on a failed request.
         return anonymity.result('unknown', error=diagnostics.classification(exc)[1], started=started)
     # ``judge_verified`` says the direct bootstrap really did show one of our
     # addresses.  Without that baseline an echo that leaks nothing proves
@@ -3492,12 +3717,50 @@ def fit_prefilter(workers, requested):
     return max(1, min(requested, fit_workers(workers + requested) - workers))
 
 
+#: Connect errors that describe this machine running out of something, not the
+#: proxy being dead.  They are raised instead of becoming ``UNREACHABLE``: a
+#: verdict about the proxy would be wrong, and the adaptive limit must see them.
+LOCAL_CONNECT_ERRNOS = frozenset(getattr(errno, name) for name in
+                                 ('EMFILE', 'ENFILE', 'ENOBUFS', 'EADDRNOTAVAIL', 'ENOMEM')
+                                 if hasattr(errno, name))
+
+
+def local_os_error(exc):
+    """The local-resource ``OSError`` behind ``exc`` (httpx wraps it), or None."""
+    seen = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        if isinstance(exc, OSError) and exc.errno in LOCAL_CONNECT_ERRNOS:
+            return exc
+        exc = exc.__cause__ or exc.__context__
+    return None
+
+
+class EndpointConcurrency(AdaptiveConcurrency):
+    """The scan's adaptive limit: only local trouble counts as overload.
+
+    A proxy that refuses, times out or answers garbage is a verdict about that
+    proxy.  Counting it as a failed measurement walked the limit down to one
+    in-flight check on any real corpus -- most public addresses are dead -- and
+    the run crawled through its timeouts one by one.  Outcomes that carry the
+    measurement stage they failed at are verdicts; an outcome without one (a
+    runner that raised, e.g. out of descriptors) still shrinks the limit.
+    """
+
+    def observe_outcome(self, outcome):
+        return self.observe(outcome.ok or bool(outcome.failed_stage), outcome.latency_s)
+
+
 async def reachable(proxy, timeout):
     """Whether anything accepts a TCP connection at the proxy's address."""
     _, host, port = formats.split(proxy)
     try:
         _, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout)
-    except (OSError, asyncio.TimeoutError, ValueError):
+    except (asyncio.TimeoutError, ValueError):
+        return False
+    except OSError as exc:
+        if local_os_error(exc) is not None:
+            raise
         return False
     writer.close()
     with contextlib.suppress(OSError):
@@ -3572,7 +3835,7 @@ def measurement_bytes(row):
 #: One page of the candidate source.  The corpus is read page by page instead of
 #: with a single ``fetchall``: a half-million addresses is a list of a hundred
 #: megabytes the engine would hold for the whole run, and the front half of a
-#: scan is supposed to be bounded (F12).  Each page is a fresh statement, so the
+#: scan is supposed to be bounded.  Each page is a fresh statement, so the
 #: commit the store path makes every batch cannot invalidate a half-read
 #: cursor of the corpus.
 CANDIDATE_PAGE = 4096
@@ -3659,7 +3922,7 @@ def newest_measurements(conn, profile, *, scope=None, access=None, policy=None):
 def candidate_pages(conn, collection_id, *, page=CANDIDATE_PAGE):
     """The addresses of one collection, in address order, one page at a time.
 
-    Membership is the scope (CONTRACTS §1.2 rule 2) and the order is the address
+    Membership is the scope and the order is the address
     order, which is also the order that makes inserting the results cheapest.
     Pagination is by address, not by offset, so a page stays correct however many
     rows the sweep has written since.
@@ -3746,7 +4009,7 @@ def _already_canonical(value):
 
     ``collect`` already ran the project's one normaliser, and the collection
     stores what it returned; normalising a second time would be a second
-    grammar for the same address (CONTRACTS §1.2).  The chain still refuses
+    grammar for the same address.  The chain still refuses
     anything it cannot split into a scheme, a host and a port, so a corrupt
     candidate is rejected and counted rather than measured.
     """
@@ -3773,7 +4036,8 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
                collection_id=None, profile_revision=1, max_age_seconds=None, profile_id=None,
                access=None, job_id=None, job_store=None, deadline_s=None,
                max_requests=None, max_bytes=None, count_what='endpoint',
-               max_per_host=1, min_host_interval_s=0.0, target_inflight=2, expensive_probe=None):
+               max_per_host=1, min_host_interval_s=0.0, target_inflight=2, expensive_probe=None,
+               open_job=None):
     """Check every pending candidate of the profile.
 
     The run *is* the chain of ``pipeline.py`` — the same ``Pipeline``,
@@ -3784,7 +4048,7 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
     RAM budgets rather than taken from ``--workers`` as a constant, the request
     and byte totals are reserved before a measurement and charged with what it
     really spent, per-host and per-target limits hold, and the three units of
-    ``--want`` are three different numbers (F12).
+    ``--want`` are three different numbers.
 
     The stages, from cheap to expensive:
 
@@ -3805,10 +4069,15 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
     ``job_store`` hands the run to the persistent lifecycle of ``jobs.py``: the
     queue, the per-item states and the events come from there, so a cancel, a
     crash or a restart keeps the last completed result and the queue of
-    unfinished items (defect 6).  ``deadline_s``, ``max_requests`` and
+    unfinished items.  ``deadline_s``, ``max_requests`` and
     ``max_bytes`` are the resource budgets of ``pipeline.py`` -- one global
     time and one request/byte ceiling instead of ``attempts x targets`` per
-    address (F12, defect 23).
+    address.
+
+    ``open_job`` registers the job once the scope is known, for a run whose
+    queue only this function can name (a ``--watch`` round re-checks the
+    addresses that pass): it is called with the addresses the run will measure
+    and returns the job id.
     """
     denylist = denylist or Denylist.empty()
     policy = config.get('reputation', {})
@@ -3824,13 +4093,12 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
     country_of = country_of or (lambda proxy: None)
     # The scope is fixed here and pinned into every row: the same collection, the
     # same profile revision and the same access revision must be visible to the
-    # GUI, the API and the gateway, or a consumer could mix two measurements
-    # (CONTRACTS §1.2 rules 1-2).
+    # GUI, the API and the gateway, or a consumer could mix two measurements.
     collection_id = ensure_collection(db, collection_id)
     access = as_access(access)
     network_id = snapshot_network(config)
     # The same criterion the export uses, so a row the check narrows and a row
-    # the export drops are the same row for the same reason (F08).
+    # the export drops are the same row for the same reason.
     criterion = country_criterion(countries, country_exclude, country_basis, country_unknown)
     admission_policy = core.Policy(
         max_age_seconds=float(max_age_seconds if max_age_seconds else MIN_FRESHNESS_SECONDS),
@@ -3884,7 +4152,7 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
 
     # ``--want`` counts endpoints unless the user asks for another unit: N
     # endpoints, N IPs and N confirmed exit IPs are different numbers, and the
-    # caller names the one it means (F12, CONTRACTS §1.1).  The chain owns the
+    # caller names the one it means.  The chain owns the
     # arithmetic of the three units; what this function does is fill the other
     # two so the report can show them beside the one that was asked for.
     find = chain.FindPolicy(n=want, what=count_what)
@@ -3946,7 +4214,7 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
         # trustworthy.  In particular, UNREACHABLE and expired rows are pending on
         # the next scan; treating every row as done made a dead proxy permanent.
         # "Trustworthy" is the one admission contract, not a local freshness test:
-        # a row with no recorded lifetime is never assumed fresh (defects 1, 2, 4).
+        # a row with no recorded lifetime is never assumed fresh.
         if (core.observation_state(row) != core.OBSERVATION_MISSING and not row.get('error')
                 and core.time_state_of(row, now, admission_policy)['state'] == core.TIME_OK):
             done.add(proxy)
@@ -3984,12 +4252,17 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
     # half-million addresses has to have a denominator before the first probe.
     total = 0
     initial = 0
+    queue = [] if open_job is not None and job_id is None else None
     for proxy in candidate_pages(db, collection_id):
         if (only is not None and proxy not in only) or not selected(proxy):
             continue
         total += 1
         if proxy in done:
             initial += 1
+        elif queue is not None:
+            queue.append(proxy)
+    if queue is not None:
+        job_id = open_job(queue)
 
     # Addresses that already worked in another profile go first. In find-N mode
     # the rest is shuffled so early results are not all from one subnet or
@@ -4035,7 +4308,7 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
     # The budgets of the run.  ``--workers`` is the ceiling the user asks for, not
     # the number of workers: the chain derives its own from the descriptors the
     # process really has and from the RAM each in-flight measurement may hold,
-    # and moves that number with the observed success rate (F12).  ``--max-requests``
+    # and moves that number with the observed success rate.  ``--max-requests``
     # and ``--run-max-bytes`` are the totals a stage is charged against, and the
     # probes reserve every request and its body allowance before I/O.
     ram_per_inflight = max(int(config.get('max_bytes') or 0), DEFAULT_RAM_PER_INFLIGHT)
@@ -4091,7 +4364,7 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
         # One measurement folded into the row by the one admission contract:
         # ``valid_until`` is written here, once, from the measurement time and
         # the policy of this profile revision, and is never recomputed at export
-        # time (defects 1 and 2, CONTRACTS §2.1).
+        # time.
         measurement = core.Measurement(
             endpoint_id=endpoint, checked_at=row.get('checked_at'), verdict=row,
             error=row.get('error'), job_id=job_id, network_id=network_id,
@@ -4101,8 +4374,8 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
                                         profile=(profile, int(profile_revision or 1)))
         merged.setdefault('proxy', proxy)
         # The measurement of record is written first and the result row points
-        # at it, so no stop can leave a result without an observation behind it
-        # (CONTRACTS §2.1).  It exists only when the run is a tracked job.
+        # at it, so no stop can leave a result without an observation behind it.
+        # It exists only when the run is a tracked job.
         if job_store is not None and job_id:
             observation_id[0] = record_observation(
                 db, merged, job_id=job_id, endpoint_id=endpoint, access=access,
@@ -4273,9 +4546,12 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
         except chain.BudgetExhausted:
             raise
         except Exception as exc:
+            if local_os_error(exc) is not None:
+                # Not a verdict: the chain records a failed stage, the limit
+                # shrinks and the address stays pending for the next run.
+                raise
             # One malformed proxy must never stop the whole scan, and the reason
-            # it died is recorded with a stage so the funnel can count it
-            # (F10, F25).
+            # it died is recorded with a stage so the funnel can count it.
             row = unreachable_result(proxy)
             row['error'] = type(exc).__name__
             row['error_stage'], row['error_code'] = diagnostics.classification(exc)
@@ -4356,7 +4632,7 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
         expensive_policy=chain.EXPENSIVE_ALL_PASSING,
         carry_fresh_prior=False)
     engine = chain.Pipeline(config_chain, clock=chain.SystemClock(),
-                            concurrency=chain.AdaptiveConcurrency(
+                            concurrency=EndpointConcurrency(
                                 minimum=1, maximum=budgets.worker_ceiling(),
                                 target_success=0.8, window=16, increase=2, decrease_factor=0.5))
 
@@ -4494,7 +4770,7 @@ def anonymous_access(db, endpoint_id, scheme):
     says so: ``observations.access_id`` points at a real ``accesses`` row.  The
     identity is created through the secret store, so a credentialed endpoint and
     a public one differ only by the mode recorded there -- not by two parallel
-    notions of "who measured this" (CONTRACTS §1.2 rule 1).
+    notions of "who measured this".
     """
     from . import secrets as secretstore
     store = secretstore.AccessStore(db, secretstore.vault_for_database(db), commit=False)
@@ -4508,7 +4784,7 @@ def record_observation(db, row, *, job_id, endpoint_id, access, profile, profile
     """Write one finished measurement as an ``observations`` row and return its id.
 
     The observation is the measurement of record: the row the item refers to and
-    the payload the result keeps are the same instant (CONTRACTS §2.1).  It is
+    the payload the result keeps are the same instant.  It is
     written before the job item is finished so a stop between "measured" and
     "judged" still leaves the measurement recoverable.
 
@@ -4542,7 +4818,7 @@ def finish_job_item(store, job_id, endpoint_id, row, observation_id):
     The order is the contract: the item leaves the queue only when a measurement
     with an explicit time exists, so a cancelled re-check keeps the previous
     payload and the queue of unfinished items survives a crash (defect 6,
-    CONTRACTS §6.3).  A lifecycle that refuses the transition must never cost
+    the shared contract).  A lifecycle that refuses the transition must never cost
     the measurement itself -- it is already written -- so the refusal is
     contained here and the job state stays the honest record of what happened.
     """
@@ -4564,12 +4840,20 @@ def finish_job_item(store, job_id, endpoint_id, row, observation_id):
 
 
 def submit_scan_job(workbench, db, kind, *, profile, profile_revision, collection_id,
-                    candidates, filters=None, budgets=None, idempotency_key=None):
+                    candidates, filters=None, budgets=None, idempotency_key=None,
+                    continue_interrupted=False):
     """Register a scan in the persistent lifecycle and return its job id.
 
     ``idempotency_key`` makes a repeated request return the same job instead of
-    starting a second one (CONTRACTS §6.4).  Every queue item is created here, so
+    starting a second one.  Every queue item is created here, so
     a restart knows what was still unfinished.
+
+    ``continue_interrupted`` is for a caller that holds ``workbench.lock``, so
+    no other process can be measuring: a job of this kind still ``running`` was
+    left by a process that died, and it is paused instead of blocking every
+    later run with ``E_CONFLICT_BUSY``.  A paused job asked for exactly the same
+    work is then resumed rather than started again, so its finished items --
+    the dead addresses included -- are not measured a second time.
     """
     from . import jobs
     store = workbench.jobs()
@@ -4580,11 +4864,38 @@ def submit_scan_job(workbench, db, kind, *, profile, profile_revision, collectio
                             access_id=PUBLIC_ACCESS_ID, access_revision=1)
              for value in candidates]
     db.commit()
+    if continue_interrupted:
+        for stale in store.jobs(kind=kind, state='running'):
+            store.pause(stale.id, reason_code=jobs.CODE_INTERRUPTED)
+        digest = jobs._input_digest(kind, scope, items)
+        for paused in reversed(store.jobs(kind=kind, state='paused')):
+            if paused.input_digest == digest:
+                store.resume(paused.id)
+                store.start(paused.id)
+                return paused.id
     job = store.submit(kind, scope, items, idempotency_key=idempotency_key)
     # ``queued`` -> ``running`` before the first claim; refused with
-    # E_CONFLICT_BUSY while another job is already measuring (CONTRACTS §6.4).
-    store.start(job.id)
+    # E_CONFLICT_BUSY while another job is already measuring.
+    try:
+        store.start(job.id)
+    except jobs.JobError as exc:
+        # A queued job nobody runs would be picked up later by the background
+        # runner as work the user never asked it to do.
+        if job.state == 'queued' and not idempotency_key:
+            store.cancel(job.id, reason_code=getattr(exc, 'code', None))
+        raise
     return job.id
+
+
+def pause_scan_job(store, job_id):
+    """Leave an interrupted job resumable; a refusal is not an error here."""
+    from . import jobs
+    if not job_id:
+        return None
+    try:
+        return store.pause(job_id, reason_code=jobs.CODE_INTERRUPTED)
+    except (jobs.JobError, sqlite3.Error):
+        return None
 
 
 def finish_scan_job(store, job_id, state, reason_code):
@@ -4780,7 +5091,7 @@ def proxy_protocol(proxy):
 
 
 def country_criterion(countries=(), exclude=(), basis='endpoint', unknown='exclude'):
-    """The one country criterion every surface filters with (F08).
+    """The one country criterion every surface filters with.
 
     The object is built by :mod:`proxy_workbench.geo` and nowhere else, so a
     country chosen by name, and the explicit "unknown" policy, mean the same
@@ -4895,12 +5206,12 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
     the scope, the policy and the rows the current filters select.  Three kinds
     of artifact exist and only one of them may switch the active pool -- an
     exported selection, a top-N slice and a search result all stay separate
-    files until the user publishes them explicitly (defects 3, 7, R04).
+    files until the user publishes them explicitly.
 
     ``diagnostic=True`` never touches the active pointer; ``allowed_proxies``
     makes the artifact a ``selection``.  A re-export with a different ``--watch``
     cannot change the lifetime of an already measured address, because
-    ``valid_until`` was written at measurement time (defects 1, 2).
+    ``valid_until`` was written at measurement time.
     """
     from . import exportsvc
 
@@ -5058,8 +5369,8 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
         published_row['checks'] = history['checks']
         published_row['passes'] = history['passes']
         published_row['mbps'] = (row.get('speed') or {}).get('mbps') if isinstance(row.get('speed'), dict) else None
-        # An access identity is published only when it points at a credential
-        # (CONTRACTS §4.4).  The credential-free public identity is how the row
+        # An access identity is published only when it points at a credential.
+        # The credential-free public identity is how the row
         # was *measured*; carrying it as an access reference would make every
         # plain proxy look password-protected and the compatibility report would
         # drop it from PAC, Clash and sing-box.  The stored row keeps it either
@@ -5089,7 +5400,7 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
         # The state describes the set, not the sweep: nothing matched is
         # "empty", everything expired is "stale", and a set that lost members
         # is "partial".  Calling all three "complete" is what made one dead
-        # address indistinguishable from a finished run (CONTRACTS §4.3, defect 3).
+        # address indistinguishable from a finished run.
         run_state['state'] = selection.state
         run_state.setdefault('state_detail', selection.state_detail)
         run_state.setdefault('stop_reason', 'complete')
@@ -5123,7 +5434,7 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
     # ``complete`` answers a different question from ``state``: it says the run
     # covered its whole scope.  A sweep that finished and rejected a few rows is
     # still complete -- conflating the two is what made "everything expired" and
-    # "every check finished" look alike (CONTRACTS §4.3, defect 3).
+    # "every check finished" look alike.
     report['complete'] = bool(
         run_state.get('state') in (core.SELECTION_COMPLETE, core.SELECTION_PARTIAL)
         and int(run_state.get('checked') or 0) >= int(run_state.get('scope_candidates') or 0)
@@ -5144,8 +5455,8 @@ def export(db, profile, directory, *, top=0, sort='quality', min_success=2/3, de
         db.rollback()
     # Only a published run may repoint an already connected client.  A selected
     # slice, a top-N cut and a search result are files the user downloads; they
-    # never move the active pool, and they never touch ``last-profile.txt``
-    # (defect 7, R04, CONTRACTS §4.5).  ``exportsvc.publish`` refuses a
+    # never move the active pool, and they never touch ``last-profile.txt``.
+    # ``exportsvc.publish`` refuses a
     # selection outright -- the branch below exists so a published run still
     # gets the legacy compatibility files and the pointer in one rollback-safe
     # step.
@@ -5197,7 +5508,7 @@ def uptime_of(row):
 
 
 class Workbench:
-    """The one service layer behind the CLI, the API and the GUI (F18).
+    """The one service layer behind the CLI, the API and the GUI.
 
     Every module built in this wave -- ``jobs``, ``importer``, ``profiles``,
     ``probes``, ``pools``, ``scheduler``, ``sourcedesk``, ``geo``, ``pipeline``,
@@ -5213,11 +5524,15 @@ class Workbench:
     exception of a module leaks past this boundary.
     """
 
-    def __init__(self, data, *, db_path=None, clock=None):
+    def __init__(self, data, *, db_path=None, clock=None, conn=None):
         self.data = Path(data)
         self.db_path = Path(db_path) if db_path else self.data / 'proxies.sqlite3'
         self.clock = clock or time.time
-        self._conn = None
+        # A caller that already holds the migrated connection (the scan) lends
+        # it: a second writer on the same file would wait on the scan's open
+        # batch for the whole busy timeout, with the event loop blocked.
+        self._conn = conn
+        self._owns_conn = conn is None
         self._report = None
         self._stores = {}
         self._counter = 0
@@ -5247,7 +5562,8 @@ class Workbench:
     def close(self):
         conn, self._conn = self._conn, None
         self._stores.clear()
-        if conn is not None:
+        owned, self._owns_conn = self._owns_conn, True
+        if conn is not None and owned:
             try:
                 conn.commit()
             finally:
@@ -5308,15 +5624,14 @@ class Workbench:
         from . import sourcedesk
         return self._store('sources', lambda: sourcedesk.SourceDesk(self.conn))
 
-    # -- source comparison (F21) -------------------------------------------
+    # -- source comparison -------------------------------------------
 
     def source_dataset_groups(self, source_ids):
         """``{source_id: dataset group}`` the catalog already records.
 
         The research pass compared full snapshots and found that some
         publishers serve byte-identical payloads under different ids
-        (``docs/requirements/sources-research/overlap.md``: ``hookzof`` and
-        ``proxifly``, 21 036 identical SOCKS5 endpoints).  That verdict is in
+        (``hookzof`` and ``proxifly``, 21 036 identical SOCKS5 endpoints).  That verdict is in
         the catalog, so the comparison does not have to rediscover it by
         downloading and comparing two lists again -- and an uncollected pair
         still reads as one dataset rather than as a second opinion.
@@ -5432,7 +5747,7 @@ class Workbench:
                                     max_age_seconds=max_age_seconds)
 
     def filter_by_country(self, rows, criterion, resolver=None, now=None):
-        """The GUI list, the read-only API and the export, one country rule (F08).
+        """The GUI list, the read-only API and the export, one country rule.
 
         This method had no caller: each of the three surfaces had written its
         own include-only ``row['country'] in wanted`` test, so none of them
@@ -5521,7 +5836,7 @@ class Workbench:
     # -- schedules ---------------------------------------------------------
 
     def schedule_plan(self, spec_id, now=None):
-        """Next run of one schedule, with its timezone and window (F15)."""
+        """Next run of one schedule, with its timezone and window."""
         from . import scheduler
         engine = scheduler.Scheduler(self.schedules(), clock=self.clock)
         spec = next((item for item in engine.list() if item.id == spec_id), None)
@@ -5557,7 +5872,7 @@ class Workbench:
         """Known-good rows of one scope as pipeline priors, ages kept intact.
 
         A carried-over prior keeps its own ``checked_at``: re-exporting or
-        changing ``--watch`` must not mint a new measurement time (defect 2).
+        changing ``--watch`` must not mint a new measurement time.
         """
         from . import pipeline
         now = self.clock()
@@ -5580,7 +5895,7 @@ class Workbench:
         """Issue the first administrative key through a local trusted bootstrap.
 
         This is the only way an administrator comes into existence, and it needs
-        a locally trusted caller, not a secret from the network (F29).
+        a locally trusted caller, not a secret from the network.
 
         The default permission set is *this machine's* administrator: key
         administration plus every write the control API offers.  Anything less
@@ -5649,7 +5964,7 @@ def local_admin_permissions():
 
     Key administration on its own is not administration: a key that may only
     read keys cannot create a collection, import a list, submit a check or
-    export, and the user would see 403 for every action they took it for (F29).
+    export, and the user would see 403 for every action they took it for.
     """
     from . import apikeys
     return tuple(sorted(set(apikeys.ADMIN_PERMISSIONS) | set(apikeys.WRITE_PERMISSIONS)
@@ -5661,7 +5976,7 @@ class WorkbenchError(RuntimeError):
 
     Module exceptions stay inside :class:`Workbench`; this is the single
     boundary both surfaces share, so a refusal reads the same in a terminal and
-    in a JSON body (CONTRACTS §5.4).
+    in a JSON body.
     """
 
     def __init__(self, message, code='E_STATE_SNAPSHOT_STATIC'):
@@ -5865,8 +6180,8 @@ def parser():
                    help=tr('serve: токен доступа к API (или переменная PROXY_WORKBENCH_API_TOKEN); '
                         'обязателен, если API слушает не loopback-адрес', 'serve: API access token (or PROXY_WORKBENCH_API_TOKEN); '
                         'required when the API listens on a non-loopback address'))
-    # The gateway password is a different identity from the API token (CONTRACTS
-    # §5.1, defect 18).  `gateway` used to read `--api-token`, so one value was
+    # The gateway password is a different identity from the API token.
+    # `gateway` used to read `--api-token`, so one value was
     # both the rotating-proxy password and the read-only bearer token: whoever
     # knew the password from a phone in the LAN could read the whole published
     # snapshot, and a leaked API token was a working proxy.
@@ -5988,7 +6303,7 @@ def parser():
     p.add_argument('--include-secret', action='store_true',
                    help=tr('source redact: показать искомую строку, если она утёкла; по умолчанию только факт',
                            'source redact: show the searched string if it leaked; by default only the fact'))
-    # source catalog (F13).  `--sources` stays the flat URL list and still wins;
+    # source catalog.  `--sources` stays the flat URL list and still wins;
     # these are for the catalog half, which addresses a source by its stable id.
     p.add_argument('--id', default='', dest='id',
                    help=tr('source: идентификатор источника в каталоге', 'source: catalog source id'))
@@ -6128,7 +6443,7 @@ def run_gateway(args, countries):
     filters = dict(protocol=args.protocol, countries=countries, anonymity=args.min_anonymity,
                    max_latency=args.max_latency)
     # `args.api_token` is deliberately not read for the gateway: the password is a
-    # separate identity (CONTRACTS §5.1, defect 18).  On a LAN bind the gateway makes
+    # separate identity.  On a LAN bind the gateway makes
     # its own and prints it, so a password a phone was given is never a control
     # secret and a leaked API token is never a working proxy.
     gateway_token = getattr(args, 'gateway_token', None)
@@ -6284,7 +6599,7 @@ def management_command(args):
         return 2
     except importer_error() as exc:
         # Every refusal of the importer is a subclass of ``ImportProblem``, and
-        # each one names its own ``E_*`` code (CONTRACTS §5.4).  Enumerating a
+        # each one names its own ``E_*`` code.  Enumerating a
         # few of them here is how a ``ImportPartialBlocked`` or a
         # ``ImportBusy`` escaped as a traceback instead of a message.
         print(tr(f'Ошибка импорта: {exc}', f'Import error: {exc}'), file=sys.stderr)
@@ -6374,8 +6689,8 @@ def _import_policy(args):
     The public base takes globally routable addresses only.  A private
     collection may name a hostname or a private address, but only because the
     user said so with ``--allow-private-endpoints`` -- an explicit, recorded
-    choice rather than a form that accepts what the collector later drops
-    (F04, defect 10).  Credentials are refused either way: the importer refuses
+    choice rather than a form that accepts what the collector later drops.
+   Credentials are refused either way: the importer refuses
     them structurally, and no flag turns that off.
     """
     from . import importer
@@ -6385,7 +6700,7 @@ def _import_policy(args):
 
 
 def _cmd_import(workbench, args, action):
-    """``import preview|commit|list`` -- the transactional importer (F03)."""
+    """``import preview|commit|list`` -- the transactional importer."""
     if action == 'list':
         rows = workbench.conn.execute(
             'SELECT id, collection_id, state, revision, created_at FROM import_batch '
@@ -6448,8 +6763,8 @@ def _busy_collection(workbench, collection_id):
     return f'collection {collection_id} is being checked by job {running[0].id}'
 
 
-#: Everything ``source`` can do.  The catalog half (F13), the redaction half
-#: (F27) and the comparison half (F21) answer different questions about the
+#: Everything ``source`` can do.  The catalog half, the redaction half
+#: and the comparison half answer different questions about the
 #: same objects, so they share one command instead of two that disagree about
 #: what a source is.
 SOURCE_SUBCOMMANDS = ('list', 'show', 'sets', 'set', 'enable', 'disable', 'add', 'remove',
@@ -6486,7 +6801,7 @@ def _cmd_source(workbench, args, action):
 
 
 def _source_command(workbench, args, action):
-    """``source <subcommand>`` -- the source catalog and the subscriptions (F13, F27).
+    """``source <subcommand>`` -- the source catalog and the subscriptions.
 
     The catalog half reads and writes the *selection* (``source_catalog``), the
     runtime half reports what the last collection actually did
@@ -7153,7 +7468,7 @@ POOL_SUBCOMMANDS = ('list', 'create', 'status', 'members', 'refill', 'recheck',
 
 
 def _cmd_pool(workbench, args, action):
-    """``pool list|create|status|members|refill|recheck`` -- a steady pool of proxies (F14).
+    """``pool list|create|status|members|refill|recheck`` -- a steady pool of proxies.
 
     ``refill`` and ``recheck`` are the two halves of keeping a pool up: the
     first re-admits from what is already measured, the second measures the
@@ -7187,7 +7502,7 @@ def _cmd_pool(workbench, args, action):
             raise WorkbenchError(tr('Укажите имя пула: --name ИМЯ', 'name the pool: --name NAME'))
         # A pool is bound to one scope: a collection *and* a profile revision.
         # Both are required, because a pool that could drift to another profile
-        # would serve rows the user never asked for (CONTRACTS §1.2).
+        # would serve rows the user never asked for.
         profile_id = args.profile_id or active_profile_id(workbench)
         if not profile_id:
             raise WorkbenchError(tr('Пул привязан к профилю проверки: укажите --profile-id '
@@ -7345,7 +7660,7 @@ def _cmd_schedule(workbench, args, action):
                 raise WorkbenchError(tr(f'Окно запуска неверно: {exc}',
                                         f'the run window is invalid: {exc}'), 'E_VALIDATION_FIELD') from None
         # The store owns the serialisation: the schedule is given as the plain
-        # mapping its schema defines, never as a runtime object (CONTRACTS §5.5).
+        # mapping its schema defines, never as a runtime object.
         payload = {'id': schedule_id, 'kind': 'interval', 'interval_minutes': args.interval,
                    'timezone': args.timezone,
                    'budgets': {'requests': args.budget_requests, 'bytes': args.budget_bytes}}
@@ -7395,7 +7710,7 @@ def _cmd_schedule(workbench, args, action):
 
 
 def _cmd_profile(workbench, args, action):
-    """``profile list|show`` -- named check profiles (F05)."""
+    """``profile list|show`` -- named check profiles."""
     store = workbench.profiles()
     if action in ('', 'list'):
         rows = [item.as_dict() if hasattr(item, 'as_dict') else str(item) for item in store.list()]
@@ -7408,7 +7723,7 @@ def _cmd_profile(workbench, args, action):
 
 
 def _cmd_preset(workbench, args, action):
-    """``preset [поиск]`` -- versioned service sets and their probes (F06).
+    """``preset [поиск]`` -- versioned service sets and their probes.
 
     The list is deliberately one line per preset with its verification state:
     a preset whose definition was never checked against a live response says so
@@ -7553,7 +7868,7 @@ def _cmd_backup_cleanup(workbench, args, action):
 
 
 def _cmd_backup_rebind(workbench, args):
-    """Re-point the vault after a restore into a new data path (F24, F18)."""
+    """Re-point the vault after a restore into a new data path."""
     from . import db as store
     mapping = json.loads(Path(args.mapping).read_text(encoding='utf-8')) \
         if getattr(args, 'mapping', None) else {}
@@ -7698,7 +8013,7 @@ def _cmd_diagnose(workbench, args, action):
 
 
 def _cmd_geo(workbench, args, action):
-    """``geo status`` -- the country and provider databases, honestly (F08)."""
+    """``geo status`` -- the country and provider databases, honestly."""
     from . import geo
     layout = workbench.layout()
     country = geo.database_status(geoip.default_path(workbench.data), 'country', now=workbench.clock())
@@ -7710,7 +8025,7 @@ def _cmd_geo(workbench, args, action):
 
 
 def _database_phrase(status):
-    """One honest sentence about a country/provider database (F08).
+    """One honest sentence about a country/provider database.
 
     A missing or stale database is never reported as a ready one: the age and
     the error, if any, travel with the state.
@@ -7779,6 +8094,13 @@ def main(argv=None):
             or not math.isfinite(args.min_host_interval) or args.min_host_interval < 0
             or not math.isfinite(args.watch) or args.watch < 0):
         p.error(tr('Неверные числовые параметры', 'Invalid numeric options'))
+    if getattr(args, 'speedtest_url', None) and getattr(args, 'speedtest_bytes', None) is not None:
+        from . import probes
+        # Below the smallest honest sample every speed test ends "insufficient":
+        # the run would pay for a download on every proxy and never get a number.
+        if args.speedtest_bytes < probes.SPEED_LIMITS.min_bytes:
+            p.error(tr(f'--speedtest-bytes должен быть не меньше {probes.SPEED_LIMITS.min_bytes}',
+                       f'--speedtest-bytes must be at least {probes.SPEED_LIMITS.min_bytes}'))
     try:
         countries = geoip.parse_countries(args.country)
         country_exclude = geoip.parse_countries(getattr(args, 'country_exclude', '') or '')
@@ -7900,12 +8222,12 @@ def main(argv=None):
     current_published = False
     scan_interrupted = False
     # The run is one job in the persistent lifecycle: a cancel, a crash or a
-    # restart keeps the last completed result and the queue of unfinished items
-    # (defect 6).  It is optional, so a read-only run still works.
+    # restart keeps the last completed result and the queue of unfinished items.
+    # It is optional, so a read-only run still works.
     scan_workbench = None
     current_job_id = ['']
     try:
-        scan_workbench = Workbench(args.data, db_path=args.data / 'proxies.sqlite3')
+        scan_workbench = Workbench(args.data, db_path=args.data / 'proxies.sqlite3', conn=db)
     except (schema.DbError, sqlite3.Error, OSError):
         scan_workbench = None
 
@@ -7917,7 +8239,7 @@ def main(argv=None):
     update_progress(dict(phase='starting', checked=0, candidates=0))
 
     def export_now(*, run_state=None, diagnostic=False, selected=None):
-        # The published generation is a statement about one scope (F02): a row
+        # The published generation is a statement about one scope: a row
         # measured in another collection is not part of it.  Without
         # ``--collection`` the scope is the public base, exactly as before.
         from . import exportsvc  # imported here: it imports constants from this module
@@ -8049,47 +8371,70 @@ def main(argv=None):
                                                target_inflight=args.judge_concurrency,
                                                expensive_probe=expensive_probe,
                                                job_store=scan_workbench.jobs() if scan_workbench else None,
-                                               job_id=current_job_id[0],
+                                               job_id=current_job_id[0] or None,
                                                run_state=state, **options), args.stop_file))
                 except (KeyboardInterrupt, asyncio.CancelledError):
                     scan_interrupted = True
                     state.update(state='partial', stop_reason='stopped')
                     last_scan_state = state
+                    # Paused, not left ``running``: a job that still looks live
+                    # refused every later run with E_CONFLICT_BUSY, and the same
+                    # command could not continue where this one stopped.
+                    if scan_workbench is not None:
+                        pause_scan_job(scan_workbench.jobs(), current_job_id[0])
                     raise
                 except Exception:
                     scan_interrupted = True
                     state.update(state='error', stop_reason='error')
                     last_scan_state = state
+                    if scan_workbench is not None:
+                        pause_scan_job(scan_workbench.jobs(), current_job_id[0])
                     raise
                 finally:
                     scan_in_progress = False
                 last_scan_state = state
                 return state
 
-            if scan_workbench is not None:
-                # One job per run, with its queue created up front: a stop in the
-                # middle leaves the unfinished items and the finished results
-                # both readable (defect 6, F11).
+            job_filters = dict(protocol=args.protocol, countries=sorted(countries),
+                               min_anonymity=args.min_anonymity, want=args.want,
+                               count_what=args.count_what)
+            job_budgets = dict(deadline_s=args.deadline or None,
+                               max_requests=args.max_requests or None,
+                               max_bytes=args.run_max_bytes or None)
+
+            def open_job(candidates, **extra):
                 current_job_id[0] = submit_scan_job(
                     scan_workbench, db, 'check', profile=profile, profile_revision=1,
                     collection_id=ensure_collection(db, args.collection or None),
-                    candidates=[value for (value,) in collection_candidates(
-                        db, ensure_collection(db, args.collection or None))],
-                    filters=dict(protocol=args.protocol, countries=sorted(countries),
-                                 min_anonymity=args.min_anonymity, want=args.want,
-                                 count_what=args.count_what),
-                    budgets=dict(deadline_s=args.deadline or None,
-                                 max_requests=args.max_requests or None,
-                                 max_bytes=args.run_max_bytes or None))
+                    candidates=candidates, filters=dict(job_filters, **extra),
+                    budgets=job_budgets, continue_interrupted=not extra)
                 print(tr(f'Задание: {current_job_id[0]}', f'job: {current_job_id[0]}'), flush=True)
-            last_scan_state = run_scan(recheck=args.recheck, recheck_passing=args.recheck_passing, want=args.want)
-            if scan_workbench is not None and current_job_id[0]:
+                return current_job_id[0]
+
+            def close_job():
+                if scan_workbench is None or not current_job_id[0]:
+                    return
                 from . import jobs as joblifecycle
-                job_store = scan_workbench.jobs()
                 state_now = last_scan_state or {}
-                terminal = 'succeeded' if state_now.get('state') == 'complete' else 'partial'
-                finish_scan_job(job_store, current_job_id[0], terminal,
-                                state_now.get('stop_reason') or joblifecycle.CODE_OK)
+                reason = state_now.get('stop_reason') or joblifecycle.CODE_OK
+                if state_now.get('state') == 'complete':
+                    terminal = 'succeeded'
+                elif reason == 'recheck_passing':
+                    # A re-check of the passing addresses is complete when its
+                    # own queue is; the items decide.
+                    terminal = None
+                else:
+                    terminal = 'partial'
+                finish_scan_job(scan_workbench.jobs(), current_job_id[0], terminal, reason)
+
+            if scan_workbench is not None:
+                # One job per run, with its queue created up front: a stop in the
+                # middle leaves the unfinished items and the finished results
+                # both readable, and the same command run again continues it.
+                open_job([value for (value,) in collection_candidates(
+                    db, ensure_collection(db, args.collection or None))])
+            last_scan_state = run_scan(recheck=args.recheck, recheck_passing=args.recheck_passing, want=args.want)
+            close_job()
             last_report = export_now(run_state=last_scan_state)
             update_progress(last_report)
             current_published = True
@@ -8102,14 +8447,22 @@ def main(argv=None):
                 print(tr(f'Сохранено {last_report["exported"]}. Следующая перепроверка рабочих прокси через {args.watch:g} мин.', f'Saved {last_report["exported"]}. Next re-check of working proxies in {args.watch:g} min.'),
                       flush=True)
                 asyncio.run(stoppable(asyncio.sleep(args.watch * 60), args.stop_file))
-                last_scan_state = run_scan(recheck_passing=True)
+                # Every round is its own job.  Reusing the first run's job, which
+                # is closed by now, made every address look finished already, so
+                # a round measured nothing and republished the old verdicts.
+                current_job_id[0] = ''
+                last_scan_state = run_scan(
+                    recheck_passing=True,
+                    open_job=(lambda queue: open_job(queue, watch_round=True))
+                    if scan_workbench is not None else None)
+                close_job()
                 last_report = export_now(run_state=last_scan_state)
                 update_progress(last_report)
                 current_published = True
         elif args.command == 'export':
             profile = (args.data / 'last-profile.txt').read_text(encoding='utf-8').strip()
             # A selected slice is its own artifact and leaves the published
-            # pointer alone (defect 7), so the report is the only place the GUI
+            # pointer alone, so the report is the only place the GUI
             # learns where that artifact is.
             last_report = export_now(selected=allowed_proxies)
             update_progress(last_report)

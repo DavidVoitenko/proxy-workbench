@@ -1,4 +1,4 @@
-"""Geographical knowledge and endpoint characteristics, from local files only (F08).
+"""Geographical knowledge and endpoint characteristics, from local files only.
 
 Every case runs against synthetic CSV databases written to a temporary folder -
 no proxy list, no public GeoIP service, no DNS.  What is checked here is the

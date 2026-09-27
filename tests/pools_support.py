@@ -1,6 +1,6 @@
 """Shared fixtures for the pools tests.
 
-The pool tables belong to ``db.py`` (CONTRACTS §3.3 migration 7), and the
+The pool tables belong to ``db.py``, and the
 contract says a module reaches its schema through ``db.migrate()`` instead of
 declaring DDL, so every test here migrates a temporary database with the real
 migrator and works with what it created.

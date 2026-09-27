@@ -1,4 +1,4 @@
-"""Full cross-surface acceptance (MASTER-PROMPT §7).
+"""Full cross-surface acceptance.
 
 Every test here drives the *product*: the engine writes rows through its own
 ``store()``, the export goes through the snapshot service, the API answers over
@@ -334,7 +334,7 @@ class OwnEndpointTests(AcceptanceCase):
         rows = api.Exports(self.home / 'exports').load()[0]
         self.assertNotIn(canary, json.dumps(rows))
         # Changing the access revision is a different row: the previous verdict
-        # is not inherited by the new password (F04, CONTRACTS §1.2 rule 1).
+        # is not inherited by the new password.
         row = measured_row(address, checked_at=self.now)
         store_result(self.db, (PROFILE, address, json.dumps(row)), access_id='acc-1',
                      access_revision=2, max_age_seconds=p.MIN_FRESHNESS_SECONDS)
@@ -363,7 +363,7 @@ class GenerationTests(AcceptanceCase):
         after = json.loads(self.db.execute(
             'SELECT payload FROM results WHERE profile=? AND proxy=?', (PROFILE, first)).fetchone()[0])
         self.assertEqual((after['checked_at'], after['valid_until']), before,
-                         'the lifetime was written at measurement time (defect 1, R01)')
+                         'the lifetime was written at measurement time')
 
     def test_one_expired_row_does_not_empty_the_set(self):
         fresh = self.address('http://11.6.6.1:80')
@@ -421,7 +421,7 @@ class SelectionExportTests(AcceptanceCase):
         self.assertEqual(selection['kind'], 'selection')
         self.assertEqual(_text_list(selection), [keep])
         self.assertEqual(p.current_generation_name(self.home / 'exports'), before,
-                         'the active pool did not move (defect 7, R04)')
+                         'the active pool did not move')
         _server, client = self.serve()
         self.assertEqual(client.get('/proxies').json()['count'], 2,
                          'the rest of the results is not hidden')
@@ -601,7 +601,7 @@ class ControlApiTests(AcceptanceCase):
         """``export.secret`` is a separate right, not a variation of read.
 
         Even a full administrator does not hold it: a secret in an artifact is
-        the one thing that must be asked for by name (CONTRACTS §5.2).
+        the one thing that must be asked for by name.
         """
         body = {'collection_id': 'public-base', 'include_secrets': True, 'kind': 'diagnostic'}
         denied = self.call('POST', '/v1/exports', key=self.reader_secret, body=body,
@@ -780,7 +780,7 @@ class ControlApiTests(AcceptanceCase):
         undeclared ``freshness`` parameter meant both flags were ignored and a
         row that expired after publication could never be asked for.  The set
         itself stays alive because a newer member's lifetime is the set's
-        lifetime (CONTRACTS §2.2, defect 3) -- that is what makes a mixed-age
+        lifetime -- that is what makes a mixed-age
         answer possible at all.
         """
         short = 'http://11.11.11.2:80'

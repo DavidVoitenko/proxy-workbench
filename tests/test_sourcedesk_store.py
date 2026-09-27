@@ -1,4 +1,4 @@
-"""Collection binding and persistence for user sources (F27).
+"""Collection binding and persistence for user sources.
 
 The three acceptance scenarios of F27 live here, on a real SQLite database
 built from the schema this module asks ``db.migrate()`` for:

@@ -1,6 +1,6 @@
 """F14 acceptance and defect 12, run literally.
 
-MASTER-PROMPT F14: «N=5 → два отказа → восстановление до 5; отсутствие резерва →
+Requirement: «N=5 → два отказа → восстановление до 5; отсутствие резерва →
 честное 3/5; budget=0 останавливает refill; после crash сохраняется целевое
 состояние», plus the quotas with honest unknown, the degraded report and the
 find-N unit the pool asks the measuring engine for.
@@ -247,7 +247,7 @@ class DefectTwelveTest(PoolTestCase):
 
 
 class QuotaTest(PoolTestCase):
-    """Country / protocol / ASN / unique exit-IP with honest unknown (F14)."""
+    """Country / protocol / ASN / unique exit-IP with honest unknown."""
 
     def create(self, **kwargs) -> pools.PoolSpec:
         values = dict(POLICY)
@@ -366,7 +366,7 @@ class QuotaTest(PoolTestCase):
 class FindUnitTest(PoolTestCase):
     """Which of the three N the pool asks the measuring engine for.
 
-    HANDOFF/pipeline.md §1.5 asked for ``FindPolicy(n=pool.desired, what='exit')``.
+    ``FindPolicy(n=pool.desired, what='exit')`` looks natural here.
     It is not what this module does, and the reason is in the schema: a member is
     a row of ``pool_member``, which holds no exit address, so a count of exits
     cannot survive the next restart.  The unit is therefore *derived* — exits when

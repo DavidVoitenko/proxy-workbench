@@ -1,56 +1,78 @@
 # Changelog / История изменений
 
-Формат следует Keep a Changelog и semantic versioning.
+The format follows Keep a Changelog and semantic versioning.
 
-## [Unreleased]
+## [3.0.0] — 2026-09-27
+
+The biggest release so far: a new interface, a source catalog of 150 lists, a desktop app that lives in the menu bar, persistent proxy pools with schedules, API keys, diagnostics that explain an empty result, and backups you can preview before restoring. Existing data folders are upgraded in place, with an automatic copy taken first.
+
+### Highlights
+
+- **Redesigned interface.** A new dark-first design layer with a reworked light theme, consistent typography, micro-animations and a live feed of the running check. The layout adapts to phones and tablets (a side rail on tablets, a compact layout on phones), and heavy tables stay smooth on large result sets.
+- **12 interface languages.** English and Russian are joined by German, Spanish, French, Italian, Japanese, Polish, Portuguese, Turkish, Ukrainian and Chinese, every one of them complete.
+- **Source catalog: 150 sources, 117 of them fully free and public; 106 feeds are collected out of the box.** Every entry says who publishes it, what it serves (proxy list, subscription config, API), whether an account is needed, which protocols it carries and how it was verified. Ready-made sets (quick, all supported, extended, by protocol), one-click enable/disable, per-source reports and a comparison that spots lists which republish each other. Only sources marked safe to collect are fetched; commercial, trial and rejected entries are shown for reference.
+- **Desktop app.** Starting `proxy-workbench` without arguments now launches the desktop app: a macOS menu-bar icon, a single running instance, optional start at login, and correct recovery after sleep/wake. `proxy-workbench gui` (or `--no-desktop`) opens only the web interface, as before.
+- **Proper installers.** A macOS `.app`/`.dmg` (Apple Silicon and Intel) and Windows GUI and CLI executables with a per-user installer; Linux installs with `pipx` or Docker. Data lives in per-user folders, with a portable mode and automatic migration of an old `data/` folder.
 
 ### Added
 
-- **Точка входа доходит до фонового слоя.** `proxy-workbench` и `python -m proxy_workbench` без аргументов запускают приложение (`proxy_workbench.desktop`): меню-бар на macOS, один экземпляр, запуск при входе по желанию, сон/пробуждение. `gui` и `--no-desktop` открывают только интерфейс; всё остальное уходит в CLI, как и раньше. Раньше обычный запуск уходил в `gui.main`, и фоновый слой не работал в том виде, в котором его запускает пользователь.
-- **Меню-бар входит в собранный `.app`.** Helper на Swift компилируется сборкой (`packaging/tray_helper.py`) и кладётся в bundle; spec без него прерывает сборку. Раньше приложение запускалось и не имело меню-бара.
-- **Замороженная сборка умеет выполнять проверку.** Worker — это повторный запуск того же исполняемого файла с командой `scan`; frozen launcher маршрутизирует командные слова в CLI тем же правилом, что и консольный скрипт. Раньше такая попытка заканчивалась `unrecognized arguments: scan`, то есть установленное приложение не могло проверить ни одного прокси.
-- **`packaging/verify_delivery.py`** — per-user пути, portable mode и перенос старой папки, проверенные на настоящем собранном артефакте, а не на коде.
-- **Windows-поставка проверяется сама.** Сборщик читает PE-subsystem из готового `.exe` и отказывается выпускать пару, в которой GUI-бинарник не windowed или CLI не console; запускает GUI-бинарник с пустым `%LOCALAPPDATA%` и проверяет второй запуск; передаёт установщику абсолютные пути и ищет `iscc` в стандартных папках.
-- **CI, который проверяет артефакты.** `.github/workflows/windows.yml` собирает и запускает Windows-поставку на настоящем Windows-runner; job `macos-artifact` в `ci.yml` собирает `.app`, прогоняет smoke по собранному бинарнику и сверяет манифест; `release.yml` отдаёт два Windows-бинарника с per-user installer и macOS-артефакт.
-- **Версия пакета приведена к версии продукта:** `pyproject.toml` был `2.2.1`, `branding.PRODUCT_VERSION` — `2.3.0`, и bundle объявлял одно число, а wheel — другое.
-
-- **Версионированный control API `/v1`** — 82 маршрута: коллекции, источники, профили, задания, результаты, пулы, шлюз, расписания, экспорты, бронирования, импорты и ключи. Машиночитаемое описание — `proxy_workbench/openapi.json`, генерируется из той же таблицы маршрутов, по которой отвечает сервер.
-- **Менеджер API-ключей** в GUI и CLI (`api-key`): именованные ключи, права, resource scope (коллекции и пулы), лимит частоты, параллелизм, срок, ротация с окном Grace, отзыв и журнал аудита. Первый административный ключ выдаёт только локальный доверенный bootstrap.
-- **Именованные профили с ревизиями и пресеты**, **пулы** с реальным циклом поддержания, **расписания**, **менеджер источников** с отчётами по каждому источнику.
-- **`diagnose funnel|zero|control|health|bundle`** — счётчики воронки, объяснение нулевого результата, контроль устройства и целей, редактированный диагностический пакет. Слой диагностики существовал и был недостижим.
-- **`backup verify|preview|restore|rollback|retention|cleanup|rebind`** — вторая половина F24. Каждое изменяющее действие сначала печатает, что сделает, и выполняется только с `--apply`.
-- **Подписки** как узкое, ограниченное по сроку и отзываемое identity, и настольная поставка для macOS (`.app`/`.dmg`), Windows и Linux с per-user путями данных и portable-режимом.
-- `include_secrets` публикует **ссылку** на запись хранилища, а не значение секрета.
-
-### Fixed
-
-- **Поколение снова множество адресов.** Повторная проверка добавляла вторую строку того же адреса, каждый потребитель судил строки независимо, и адрес попадал дважды в `proxies.txt`, `ranked.json`, `ranked.csv`, `proxy.pac`, `clash.yaml`, `singbox.json` и в `/proxies`. Теперь у `results` одна строка на (профиль, доступ, адрес), схлопнутая история суммируется, `job_id` остаётся колонкой последнего измерения. Версия схемы 15.
-- **Свежий провал отменяет старый успех.** Строка с ошибкой отвергалась, а устаревшая сохраняла свой не истёкший `valid_until`, и опубликованный набор продолжал отдавать адрес, который последнее измерение только что отвергло.
-- **Обновление промежуточной сборки обратимо.** Техническая копия с manifest берётся перед любой неаддитивной миграцией, а не только для legacy-файла с `user_version = 0`: сборка линии 1.x переписывала `results` без страховки, и `list_backups()` показывал пусто.
-- **Legacy-результаты остаются читаемыми.** Миграция 13 писала восстановленное происхождение в колонки, которые никто не читает, и каждая historic-строка отказывала по коллекции, в которой не измерялась. Теперь оно доходит до payload; то, чего файл 2.x не содержал (сеть, lifetime), отсутствует по-прежнему, и отказ называет эту настоящую причину.
-- **Штатная retention-политика выполняется.** Она удаляла `observations` раньше ссылающихся на них `results`, SQLite отвергал, откат оставлял данные на месте — после того, как preview уже пообещал удаление.
-- **Object-level scope проверяется.** Чтение и скачивание артефакта чужой коллекции отвечали 200; список заданий, профилей, источников или расписаний возвращался ключу, ограниченному одной коллекцией, потому что фильтр спрашивал вид scope, которого у ключа нет. Один объект вне scope — 404; список теряет только чужие строки.
-- **Чувствительный экспорт работает.** `include_secrets` передавал имя режима вне словаря движка, запрос отвергался после уже пройденной проверки права, а отказ выдавался за «операция не подключена к сервисному слою». Доменный отказ теперь отвечает своим кодом.
-- **Пароль шлюза не равен токену API.** `serve` и `gateway` использовали одно значение `--api-token` и как пароль ротирующего прокси, и как read-only bearer. У шлюза свой `--gateway-token` / `PROXY_WORKBENCH_GATEWAY_TOKEN`; поставляемый compose использует обе переменные.
-- **`POST /v1/pools/{id}/refill` наполняет пул.** Он не читал путь, ставил в очередь проверку коллекции из тела и оставлял пул на 0/desired, отвечая «job queued». `/start` теперь запускает пул, `/recheck` измеряет его собственную коллекцию, а `/start`, `/pause` и `/members` больше не отвечают 500.
-- **`/v1/results/{id}` и `/v1/results/{id}/observations` возвращают данные.** Сегмент пути не может нести полный адрес, а строка не публиковала `endpoint_id`, поэтому detail был всегда 404, а observations — пустым списком.
-- **`--max-requests` и `--run-max-bytes` считают.** Ресурсный шлюз не начислял потраченное измерением, и оба лимита были молчаливыми no-op. Исчерпанный бюджет теперь останавливает прогон, а не записывает нетронутый адрес как недостижимый.
-- **N endpoint, N уникальных IP и N подтверждённых exit-IP — три разных числа.** Последние два были одним выражением и всегда давали 0, потому что подтверждённый адрес выхода искали не там. Прогон, закончившийся недобором `--want`, называет недостижимую единицу вместо `complete`.
+- **Pools.** A named pool keeps N working proxies for a profile, with a reserve, quotas and resource budgets; it refills and re-checks itself, and tells you why it is short.
+- **Schedules.** Re-check collections or pools on an interval, in your time zone, with quiet hours, request/byte budgets and notifications when a proxy's state changes.
+- **Named profiles with revisions and presets.** Target rules, success criteria and settings are saved as profiles; every change is a revision, and profiles can be shared without secrets.
+- **Collections and import.** Bring your own lists from TXT, URI, CSV, JSON, Clash or sing-box files with a preview, column mapping and a report of every rejected line; imports are transactional and merge or replace.
+- **Service catalog.** Ready-made checks for popular services, grouped into sets, with an explicit rule for which fields a preset overwrites.
+- **Geography and exit country.** Filter by the proxy's own country, the country traffic actually exits from, or either; exclude countries; choose how unknown locations are treated.
+- **Rotating gateway, upgraded.** Bind the gateway to a pool from the GUI, serve it on your LAN (`--lan`, `--gateway-interface`), and use upstream proxies that need a login (HTTP Basic, SOCKS5 username/password). The gateway has its own password (`--gateway-token`), separate from the API token.
+- **API keys.** Create named keys with permissions, collection/pool scope, rate and concurrency limits, expiry, rotation with a grace window, revocation and an audit log — in the GUI (Keys page) and the CLI (`api-key`). A secret is shown exactly once.
+- **Secret store and access identities.** Proxy credentials are stored separately and referenced, never copied into exports or diagnostics.
+- **Diagnostics.** A funnel shows where candidates were lost; "why 0 results" explains an empty run in plain words; a health check; and a redacted diagnostic bundle you can review before saving (`diagnose funnel|zero|control|health|bundle`).
+- **Backup, restore and retention with preview.** `backup create|list|verify|preview|restore|rollback|retention|cleanup|rebind`; every change is previewed first and runs only with `--apply` (or the confirm button in the GUI).
+- **Run budgets and "find N".** `--want N` with `--count-what endpoint|ip|exit`, `--deadline`, `--max-requests`, `--run-max-bytes`; a run that falls short says which unit it could not reach.
+- **Export targets.** `--client-target` / `--client-binary` validate sing-box output for a specific client version.
+- **Versioned control API `/v1`** for scripts and integrations: collections, sources, profiles, jobs, results, pools, gateway, schedules, exports, imports and keys. A machine-readable description ships as `proxy_workbench/openapi.json`.
 
 ### Changed
 
-- Схема базы на версии 15; за ней следуют константа настольной поставки и `openapi.json`.
-- Лимиты по умолчанию на источник — 32 МиБ и 500 000 кандидатов, чтобы крупнейшие публичные списки не обрезались.
+- **Breaking:** running `proxy-workbench` / `python -m proxy_workbench` with no arguments opens the desktop app instead of only the web interface. Use `proxy-workbench gui` for the old behaviour. All CLI commands are unchanged.
+- **Breaking:** the database schema moves to version 20. Older data folders (1.x and 2.x) are migrated on first start; a backup is taken before any non-additive step and can be restored with `backup rollback`. Do not open an upgraded folder with 2.x.
+- **Breaking:** the rotating gateway no longer accepts the API token as its password; set `--gateway-token` / `PROXY_WORKBENCH_GATEWAY_TOKEN`. The bundled `compose.yml` already does.
+- Each proxy address is now one row per profile and access identity, so an address no longer appears twice in `proxies.txt`, `ranked.*`, `proxy.pac`, `clash.yaml`, `singbox.json` or `/proxies`.
+- Python 3.11 or newer; CI tests 3.11, 3.12 and 3.14 on Linux, macOS and Windows.
 
-### Known gaps
+### Fixed
 
-- Аутентификация на прокси (HTTP Basic и SOCKS5 username/password) не реализована ни в одном движке проб: credentials в URL отвергаются, а идентичность доступа записывается, но сам секрет не отправляется. Поэтому `results.access_id` всегда называет identity, под которым строка измерена, а для встроенного скана это публичная, без пароля.
-- **Windows-поставка не собрана и не запущена.** Машина сборки — macOS, а PyInstaller собирает под свою машину. Проверено без Windows: разбор и фактический запуск всех spec'ов, entry point, `console=False`/`console=True`, наличие ресурсов, чтение PE-subsystem, передача путей установщику, поиск `iscc`. Воспроизводимая проверка добавлена в `.github/workflows/windows.yml`, но ещё ни разу не выполнялась. Матрица сборок и точные команды — в `docs/packaging/RELEASE-NOTES.ru.md`.
-- **Артефакты не подписаны и не нотарифицированы.** Signing credentials у проекта нет, и пайплайн их не создаёт; macOS-сборка получает ad-hoc подпись, Windows остаётся без Authenticode. Пайплайн подхватит уже имеющийся Developer ID и учётные данные нотаризации, когда они появятся.
-- Меню-бар есть только на macOS. Sleep/wake на Windows не определяется: сон входит в монотонные часы, а нативного наблюдателя для Windows в слое нет. На Linux работает сравнение часов, но и оно не проверялось на живой машине.
-- Автоматической загрузки обновлений нет: есть проверка происхождения, backup, проверка схемы, откат и `--update-notice`. Публикующего сервера у проекта нет.
-- Карточка сравнения источников и провайдеров (F21) не реализована.
-- `pipeline.Pipeline`/`run_pipeline` проверяются своими бенчмарками, но продукт сканирует через `proxytool.scan`, который делит с ними бюджеты, шлюз, ledger и политику find-N.
+- **Checks are much faster on real-world lists.** A scan no longer waits on its own database lock for every job item, and dead proxies no longer push the number of parallel checks down to one: 3,000 mostly dead candidates now take seconds instead of hours. Running out of file descriptors is no longer recorded as a dead proxy.
+- **The database no longer grows without limit under `--watch`.** Each source keeps its last three downloaded lists; older ones are pruned right after a collection, and `backup retention` cleans up history left by earlier versions. A list the server reports as unchanged is re-applied to collections that lost it, and a retry after a broken download no longer counts the first attempt against the size limit.
+- **Collecting is faster and reads more lists.** Addresses are written in batches (a full collection of the 106 default feeds went from 133 s to 79 s); four sources that returned nothing (hideip.me, spys.me and others with `ip:port` lines and comments) now return addresses; a list that exceeds the size limit is reported as a partial read instead of a failing provider and is no longer put into backoff; a list without country data no longer erases a country learned elsewhere; cached lists are re-read after a failed or refused download.
+- **Control API checked operation by operation.** The audit log is written; a key limited to one collection or pool can no longer act on others through body or query fields; event streams deliver events; result paging moves past the first page and every declared filter and sort works; unknown jobs, pools and sources answer 404; refreshing a source returns a job; PUT and wrong methods get JSON errors; `localhost` reaches `/v1`.
+- The web interface no longer puts the administrator key in a URL.
+- Collections can be renamed, archived and restored through the API with revision checks; merge and replace work; members are validated; pools and schedules refuse unknown profiles and collections; gateway settings and bindings set through the API are stored and listed; an active key must be revoked before it is deleted; with `serve --host 0.0.0.0` the API accepts the machine's own addresses and hostname.
+- **Stopping and resuming works.** A stopped or crashed check no longer leaves its job running, which made every later check fail with “Busy”; running the same command again continues where it stopped without re-measuring finished addresses.
+- **`--watch` really re-checks.** Every round now measures the passing proxies again; before, rounds after the first measured nothing and republished old results.
+- **A busy host no longer holds up other hosts**, and `--want` stops as soon as the target is reached even when workers waited for a host (30 ports on one IP with `--want 5`: 8 measured instead of 30).
+- `hostport.txt` lists an address once even when it passed as several protocols; a speed test sample below 1 MiB is refused because it can never give a result.
+- The chosen interface language is kept after a restart; before, ten of the twelve languages fell back to English on the next start.
+- Results table cells stay under their own headers when some columns are hidden.
+- Results table text is readable in the light theme.
+- A fresh failure now withdraws an older success, so a published list no longer serves an address the latest check rejected.
+- Retention cleanup runs instead of being rolled back by SQLite.
+- Keys limited to one collection can no longer read other collections' jobs, profiles, sources, schedules or artifacts.
+- `--max-requests` and `--run-max-bytes` actually limit a run.
+- Pool refill, start, pause and member listing through the API work.
+- Collecting treats HTTP 304 as a cached answer, not an empty list; oversized sources are capped without losing already parsed data.
+- Windows: time zones, HTTP handling and coarse-clock timing issues.
+- Windows installer: the “Command line” shortcuts open a console with the CLI instead of doing nothing, and a new PATH entry works in new consoles without signing out.
+- Windows: the app can be quit from the Start menu (“Quit Proxy Workbench”, or `proxy-workbench --quit`), and uninstalling quits a running app first.
+
+### Known limitations
+
+- Checking your own proxies that require a login is not supported yet: the checker refuses credentials in proxy URLs (the gateway can use them).
+- The menu-bar icon exists on macOS only; sleep/wake is not detected natively on Windows.
+- Builds are not code-signed or notarized: macOS will ask you to confirm the first launch, Windows SmartScreen may warn.
+- There is no automatic updater; the app can tell you an update exists.
+- Gateway settings saved through the API are stored and listed but not yet applied when the gateway starts; the command line and interface options are used.
+- The Windows uninstaller leaves the optional PATH entry in place.
+- Figures in this release come from local tests and mock services; the quality of public proxies was not measured.
 
 ## [2.2.1] — 2026-09-25
 

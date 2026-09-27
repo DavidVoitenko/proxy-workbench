@@ -5,7 +5,7 @@ controller never touches the network itself: candidates arrive through a
 ``source`` callable and health verdicts through :func:`report_health` or a
 ``verify`` callable, so a pool can be driven and tested without a scan.
 
-Storage is exactly the pair of tables from CONTRACTS.ru.md §3.3 migration 7
+Storage is exactly the pair of tables from the shared contract
 (``pools``, ``pool_member``). This module never writes DDL: the schema comes
 from ``db.migrate()`` and :meth:`PoolStore.open` refuses to work without the
 columns it needs.
@@ -100,15 +100,15 @@ UNKNOWN_REJECT = 'reject'
 UNKNOWN_IGNORE = 'ignore'
 UNKNOWN_MODES = (UNKNOWN_REJECT, UNKNOWN_IGNORE)
 
-# A measurement stamped in the future is suspicious, not "very fresh"
-# (CONTRACTS §2.4). The contract names no number, so it is named here.
+# A measurement stamped in the future is suspicious, not "very fresh".
+# The contract names no number, so it is named here.
 CLOCK_TOLERANCE_SECONDS = 60.0
 
 # Deficit reasons, in root-cause order: a supply-side failure explains a quota
 # rejection, so it wins the tie when both are reported. The time and scope codes
-# are the ones core.REASON_CODES already publishes (CONTRACTS §2.3), so a reason
+# are the ones core.REASON_CODES already publishes, so a reason
 # means the same thing in admission, in a pool and in the report. Codes with the
-# POOL domain are this module's own and are listed in HANDOFF/pools.md.
+# POOL domain are this module's own.
 REASON_SOURCE_ERROR = 'E_POOL_SOURCE_ERROR'
 REASON_UNKNOWN_COLLECTION = 'E_POOL_UNKNOWN_COLLECTION'
 REASON_UNKNOWN_POOL = 'E_POOL_UNKNOWN'
@@ -157,7 +157,7 @@ _KEEP = object()
 # --- errors -----------------------------------------------------------------
 
 class PoolError(Exception):
-    """A pool operation refused; ``code`` is a machine-readable CONTRACTS §5.4 code."""
+    """A pool operation refused; ``code`` is a machine-readable the shared contract code."""
 
     def __init__(self, code: str, message: str = ''):
         super().__init__(message or code)
@@ -336,7 +336,7 @@ class Candidate:
     """One endpoint offered to a pool.
 
     ``allowed`` and ``admission_reason`` come from the shared admission
-    contract (CONTRACTS §2.3); this module does not re-admit a row. Country,
+    contract; this module does not re-admit a row. Country,
     ASN and exit IP stay ``None`` when they are unknown - an unknown value is
     reported as unknown instead of being guessed.
     """
@@ -386,10 +386,10 @@ class FindRequest:
     This is the pool's half of the answer ``pipeline.FindPolicy`` needs, and it
     exists because the two sides must not each guess the unit.  A pool keeps
     *members*; a member is a row of ``pool_member`` and nothing else — the table
-    of CONTRACTS §3.3 migration 7 holds no exit address and no measured country,
+    of the shared contract holds no exit address and no measured country,
     so a count of anything but members cannot survive the next restart.  That is
     the whole reason the unit is derived and named here instead of the pool
-    simply asking the engine for exits (HANDOFF/pipeline.md §1.5).
+    simply asking the engine for exits.
 
     What the user may still want is *distinctness*, and that is what a quota is
     for: ``quota={'exit_ip': 1}`` with ``desired=5`` is exactly "five proxies that
@@ -415,7 +415,7 @@ class FindRequest:
         return find_policy_cls(n=self.n, what=self.what)
 
 
-#: The three units of "N" (F12, CONTRACTS §1.1).  ``ip`` counts the address of a
+#: The three units of "N".  ``ip`` counts the address of a
 #: proxy; for a pool it is never the right unit, so it is rejected by name rather
 #: than silently treated as an endpoint.
 FIND_UNITS = ('endpoint', 'ip', 'exit')
@@ -595,7 +595,7 @@ class PoolStore:
 
     The store holds no pool logic: it stores a target state, the members and
     the last status. Every statement names its columns explicitly, as
-    CONTRACTS §3.2 requires, so an additive migration cannot break it.
+    the shared contract requires, so an additive migration cannot break it.
 
     ``add_member``, ``set_member_state`` and ``save_status`` do not commit on
     their own: the refill controller and the health helpers wrap them in a
@@ -959,7 +959,7 @@ class _Controller:
         """The reserve restores service without waiting for any new measurement.
 
         The promotion does not refresh ``admitted_at``: the age of a proof is
-        measured from the measurement that produced it (CONTRACTS §2.2), and the
+        measured from the measurement that produced it, and the
         freshness check has already run in this call.
         """
         for member in self._ordered(state=MEMBER_RESERVE):
@@ -976,7 +976,7 @@ class _Controller:
         This is the only part of a refill that does I/O, so it is deliberately
         callable *outside* a write transaction: a measurement is a network round
         trip, and holding SQLite's write lock across one would refuse every other
-        writer of the database for the length of the round trip (CONTRACTS §6.4
+        writer of the database for the length of the round trip (the shared contract
         is about a bounded number of DB-writing executors, not about making the
         rest of the program wait for a proxy answer).  It reads state, changes
         nothing, and returns the verdicts :meth:`apply_measurements` commits.
@@ -1365,7 +1365,7 @@ def watch(store: PoolStore, pool_id: str, source: Callable[..., Sequence[Candida
     """Refill a pool once per ``interval_seconds``, ``ticks`` times or until stopped.
 
     This replaces the watch cycle that only re-checked the rows that already
-    worked (defect 12): every tick re-evaluates the target, re-admits members
+    worked: every tick re-evaluates the target, re-admits members
     that came back, and reports the reason for any shortfall.
 
     A tick that arrives before the pool's own ``next_attempt_at`` is not a

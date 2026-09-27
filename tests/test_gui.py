@@ -99,8 +99,7 @@ class GuiTests(unittest.TestCase):
             store_result(db, ('fixture', proxy, json.dumps(row)))
         db.commit()
         # The published snapshot is what names the collection and the profile for
-        # every reader; without one there is nothing for the surfaces to agree on
-        # (CONTRACTS §1.2 rule 2).
+        # every reader; without one there is nothing for the surfaces to agree on.
         p.export(db, 'fixture', self.home / 'exports', min_success=1)
         db.close()
         (self.home / 'last-profile.txt').write_text('fixture', encoding='utf-8')
@@ -288,7 +287,7 @@ class GuiTests(unittest.TestCase):
 
         # A published generation is immutable and carries a manifest, so the only
         # honest way to have an expired one is to publish one whose row lifetime
-        # has passed (CONTRACTS §4.2).
+        # has passed.
         db = p.open_db(self.home/'proxies.sqlite3')
         active = (self.home/'last-profile.txt').read_text(encoding='utf-8').strip()
         proxy = 'http://11.1.1.1:80'
@@ -303,7 +302,7 @@ class GuiTests(unittest.TestCase):
         state = self.client.get('/api/state').json()
         # A row whose lifetime has passed is not served: the table is empty and
         # the download yields an empty file, not an expired address.  The set
-        # state names the reason instead of calling it "complete" (defect 3).
+        # state names the reason instead of calling it "complete".
         # The published set is empty because its only row had expired, and the
         # status says so instead of claiming a completed export.
         self.assertEqual(state['export']['state'], 'empty')

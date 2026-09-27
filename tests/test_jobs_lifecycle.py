@@ -1,6 +1,6 @@
 """Job lifecycle: fixed input, one writer, honest transitions, honest progress.
 
-CONTRACTS.ru.md §6.2 and F11.
+the shared contract and F11.
 """
 from __future__ import annotations
 

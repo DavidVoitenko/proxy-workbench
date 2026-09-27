@@ -158,7 +158,7 @@ jobs:
           docker run --rm proxy-workbench:ci clear-data --yes
           docker run --rm --entrypoint python proxy-workbench:ci -c "from proxy_workbench import source_catalog; assert source_catalog.load_bundled()['sources']"
 
-  # The .app users install (F23).  This job builds it on a real macOS runner,
+  # The .app users install.  This job builds it on a real macOS runner,
   # starts it, and checks the page it serves, its per-user data folder, a second
   # start and the untouched bundle.  It is unsigned - no identity exists in
   # this project - and the manifest says so.

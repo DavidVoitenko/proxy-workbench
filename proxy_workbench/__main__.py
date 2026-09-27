@@ -26,7 +26,7 @@ import sys
 #: too - that is the double-click.
 DESKTOP_ARGS = frozenset({
     # host commands, answered without ever opening the interface
-    '--print-paths', '--portable', '--status', '--update-notice',
+    '--print-paths', '--portable', '--status', '--quit', '--update-notice',
     '--autostart', '--autostart-status', '--migrate-preview',
     # host flags
     '--background', '--no-tray',

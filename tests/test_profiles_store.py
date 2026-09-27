@@ -1,7 +1,7 @@
 """The named profile library: create, copy, revisions, archive, default, diff.
 
 All of it runs on a temporary SQLite file that `db.migrate()` brought to the
-contract schema (CONTRACTS §3.3, migration 9).  This module writes no DDL, and
+contract schema .  This module writes no DDL, and
 one test proves it by tracing every statement the store issues.
 """
 from pathlib import Path
@@ -294,7 +294,7 @@ class DiffTests(support.StoreFixture):
 
 class NoDdlTests(support.StoreFixture):
     def test_the_store_issues_no_ddl_of_its_own(self):
-        """CONTRACTS §3.3: `db.py` owns every DDL statement in the project."""
+        """the shared contract: `db.py` owns every DDL statement in the project."""
         statements = []
         self.conn.set_trace_callback(statements.append)
         try:
@@ -354,7 +354,7 @@ class LegacyDatabaseTests(unittest.TestCase):
         self.assertEqual([(row['id'], row['name'], row['revision']) for row in legacy_rows],
                          [('profile0001', None, 1)])
         # db.migrate backfills the digest from the content hash, and the name stays
-        # NULL: naming a legacy profile would be inventing an origin (F02).
+        # NULL: naming a legacy profile would be inventing an origin.
         self.assertEqual(legacy_rows[0]['digest'], 'profile0001')
         self.assertEqual(self.store.list(), [])
         spec = support.spec()

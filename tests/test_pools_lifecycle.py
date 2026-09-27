@@ -13,7 +13,7 @@ from tests.pools_support import FakeSource, ManualClock, PoolTestCase
 
 
 class AcceptanceScenarioTest(PoolTestCase):
-    """The four scenarios MASTER-PROMPT F14 asks for, plus their neighbours."""
+    """The four required pool scenarios, plus their neighbours."""
 
     def test_two_failures_are_replaced_from_the_reserve_back_to_five(self):
         self.create_pool(desired=5, minimum=3, reserve=2)

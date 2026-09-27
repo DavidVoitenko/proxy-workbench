@@ -1,6 +1,6 @@
 """API key manager: one-way verifiers, permissions, resource scope, quotas and audit log.
 
-Implements the key part of F29 (MASTER-PROMPT §5) and CONTRACTS.ru.md §5.1-§5.3:
+Implements the key part of F29 and the shared contract:
 one identity per role, a secret that is shown exactly once, a one-way verifier in
 the database, an object-level permission check, rate/concurrency quotas and a local
 audit log that never receives a full key, a password or a response body.
@@ -59,10 +59,12 @@ MAX_NAME_LENGTH = 120
 MAX_PURPOSE_LENGTH = 400
 DEFAULT_TOUCH_INTERVAL_S = 60.0
 AUDIT_RETENTION = 5000
+#: How many audit inserts a manager trusts its own row count before counting again.
+AUDIT_RECOUNT_EVERY = 1000
 STREAM_RECHECK_INTERVAL_S = 30.0
 GRACE_SWEEP_INTERVAL_S = 60.0
 
-# --- one-shot delivery (CONTRACTS §5.1) -------------------------------------
+# --- one-shot delivery -------------------------------------
 
 #: A response body may carry a value that is shown exactly once and is never
 #: stored anywhere else.  :meth:`IssuedKey.as_json` puts the full secret in the
@@ -73,14 +75,13 @@ GRACE_SWEEP_INTERVAL_S = 60.0
 #: is in ``apiv1.py`` and has to ask before it keeps an answer.  There are two
 #: strippers because there are two shapes: :func:`without_one_shot` works on the
 #: body before it is serialized, :func:`without_one_shot_response` on the
-#: finished response the cache actually stores.  See
-#: docs/integration/HANDOFF/fix-keys.md and docs/integration/HANDOFF/area-secrets.md.
+#: finished response the cache actually stores.
 ONE_SHOT_FIELDS = ('secret',)
 #: The flag a body that no longer carries the value answers with, so a caller
 #: reads "already delivered, rotate" instead of "this key has no secret".
 ONE_SHOT_NOTE_FIELD = 'secret_already_shown'
 
-# --- permissions (CONTRACTS §5.2) --------------------------------------------
+# --- permissions --------------------------------------------
 
 READ_PERMISSIONS = frozenset({
     'read.status', 'read.results', 'read.results.detail', 'read.export.artifact',
@@ -97,7 +98,7 @@ ADMIN_PERMISSIONS = frozenset({'admin.settings', 'admin.keys', 'admin.audit'})
 PERMISSIONS = READ_PERMISSIONS | WRITE_PERMISSIONS | SENSITIVE_PERMISSIONS | ADMIN_PERMISSIONS
 BOOTSTRAP_PERMISSIONS = READ_PERMISSIONS | ADMIN_PERMISSIONS
 
-# --- error codes (CONTRACTS §5.4) ---------------------------------------------
+# --- error codes ---------------------------------------------
 
 E_MISSING = 'E_AUTH_MISSING'
 E_INVALID = 'E_AUTH_INVALID'
@@ -128,8 +129,8 @@ _UNSET = object()
 
 # --- schema of migrations 8 and 10 --------------------------------------------
 
-# The first fifteen columns are CONTRACTS §3.3 verbatim.  The last four are an
-# additive request to db.py (see docs/integration/HANDOFF/apikeys.md): a
+# The first fifteen columns are the original key schema.  The last four are an
+# additive migration in db.py: a
 # reversible disable flag and the superseded verifier of a narrow rotation
 # window, which cannot be expressed by the three verifier columns without
 # keeping two secrets valid in one row.
@@ -207,7 +208,7 @@ def ensure_schema(conn):
 
 
 class ApiKeyError(Exception):
-    """A refusal that carries a machine code from CONTRACTS §5.4 and a next action."""
+    """A refusal that carries a machine code from the shared contract and a next action."""
 
     def __init__(self, code, *, detail=None, action=None, retry_after=None, state=None):
         self.code = code
@@ -616,8 +617,7 @@ def without_one_shot_response(response):
     holds something else (a secret reference, a boolean) is not touched, so the
     export artifact and the diagnostics answers keep working.
 
-    The caller is expected to keep the original and store the returned copy; see
-    docs/integration/HANDOFF/area-secrets.md for the one-line call site.
+    The caller is expected to keep the original and store the returned copy.
     """
     body = getattr(response, 'body', None)
     if not isinstance(body, (bytes, bytearray)) or not body:
@@ -772,7 +772,7 @@ def object_visible(principal, kind, object_id, *, collection_id=None, pool_id=No
     """True only for an object inside the key's own scope.
 
     A foreign object and a missing object both answer False, so a client cannot
-    tell the difference between them (CONTRACTS §5.3).  An object that belongs to
+    tell the difference between them.  An object that belongs to
     a collection or a pool — a result row, an export artifact, a job, a batch, a
     stream — is visible only when the key is unscoped or when the object names
     its own collection and that collection is in scope.  An object whose owner
@@ -861,11 +861,13 @@ class ApiKeyManager:
         self._lock = threading.RLock()
         self._touched = {}
         self._grace_swept_at = None
+        self._audit_rows = None
+        self._audit_inserts = 0
         conn.row_factory = sqlite3.Row
         self._columns = {row[1] for row in conn.execute('PRAGMA table_info(api_keys)')}
         if 'id' not in self._columns:
             raise ApiKeyError(E_INVALID, detail='table api_keys is missing',
-                              action='run the migrations of CONTRACTS §3.3 before using keys')
+                              action='run the database migrations before using keys')
 
     # -- clock ----------------------------------------------------------------
 
@@ -1331,10 +1333,32 @@ class ApiKeyManager:
             self.conn.execute('INSERT INTO audit_log(at, key_id, operation, object_kind, object_id,'
                               ' scope_json, result, error_code) VALUES (?,?,?,?,?,?,?,?)', row)
             if self.audit_retention > 0:
-                self.conn.execute('DELETE FROM audit_log WHERE rowid NOT IN'
-                                  ' (SELECT rowid FROM audit_log ORDER BY at DESC, rowid DESC'
-                                  ' LIMIT ?)', (self.audit_retention,))
+                self._prune_audit()
             self.conn.commit()
+
+    def _prune_audit(self):
+        """Keep the newest ``audit_retention`` rows without scanning the table.
+
+        The retention used to run ``DELETE ... WHERE rowid NOT IN (SELECT ...
+        LIMIT n)`` after every insert, which reads the whole log each time.
+        The row count is now counted once and then kept by this manager; it is
+        counted again every :data:`AUDIT_RECOUNT_EVERY` inserts, so rows
+        written by another connection are caught up with.  The excess is
+        removed oldest first through the ``audit_log_at`` index.
+        """
+        self._audit_inserts += 1
+        if self._audit_rows is None or self._audit_inserts >= AUDIT_RECOUNT_EVERY:
+            self._audit_rows = self.conn.execute('SELECT count(*) FROM audit_log').fetchone()[0]
+            self._audit_inserts = 0
+        else:
+            self._audit_rows += 1
+        excess = self._audit_rows - self.audit_retention
+        if excess <= 0:
+            return
+        removed = self.conn.execute(
+            'DELETE FROM audit_log WHERE rowid IN (SELECT rowid FROM audit_log'
+            ' ORDER BY at, rowid LIMIT ?)', (excess,)).rowcount
+        self._audit_rows -= max(0, removed)
 
     def read_audit(self, *, actor, key_id=None, operation=None, since=None, limit=200):
         principal = self._as_principal(actor)
@@ -1609,7 +1633,7 @@ class StreamSession:
 class StreamSessions:
     """Registry of open SSE/stream sessions with a written expiry policy.
 
-    Policy (CONTRACTS §5.2): a new subscription is checked at once against
+    Policy: a new subscription is checked at once against
     ``admin``/key state; an open session re-reads the key at least every
     ``recheck_interval_s`` and again before each emitted event; a revoke or an
     expiry closes the session with ``E_AUTH_REVOKED`` or ``E_AUTH_EXPIRED`` and

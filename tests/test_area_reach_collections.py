@@ -4,7 +4,7 @@ The route declared ``allow_private`` and the handler read ``name`` and
 ``kind``.  A client that sent ``{"name": "priv", "kind": "own",
 "allow_private": true}`` got 201 and a collection id, and believed private
 addresses were allowed there.  Nothing was allowed: ``collections`` has no such
-column (CONTRACTS section 3.3, migration 2) and the real control,
+column  and the real control,
 ``allow_private_endpoints``, lives on the import routes and is enforced by
 ``importer.DEFAULT_POLICY``.
 
@@ -212,7 +212,7 @@ class PatchCarriesTheSameFieldTests(unittest.TestCase):
     def test_the_handler_refuses_it_when_the_request_reaches_it(self):
         from proxy_workbench import api
         # ``PATCH`` is behind ``If-Match`` and ``collections`` has no revision
-        # column (CONTRACTS 3.3), so the transport refuses every PATCH before
+        # column, so the transport refuses every PATCH before
         # the handler runs.  The handler still refuses the field itself, which
         # is what a future revision column would meet.
         response = call(self.client, 'PATCH', f'/v1/collections/{self.collection}',

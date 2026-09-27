@@ -1,7 +1,7 @@
 """F15 acceptance: intervals, windows with timezone and DST, budgets, quiet
 hours, no-catchup after sleep, power policy and deduplicated notifications.
 
-MASTER-PROMPT F15 in full: intervals and time windows with timezone and correct
+In full: intervals and time windows with timezone and correct
 DST handling, pause and resume, request/byte/time budgets, quiet hours, no
 catch-up after sleep, optional metered/battery policy where the OS provides a
 signal, meaningful state-change notifications with dedup and hysteresis,
@@ -182,7 +182,7 @@ class DaylightSavingTest(unittest.TestCase):
 
 
 class WindowAndQuietHoursTest(unittest.TestCase):
-    """Windows, quiet hours, pause and resume (F15)."""
+    """Windows, quiet hours, pause and resume."""
 
     def _engine(self, clock, **extra):
         payload = {'id': 'day', 'kind': 'interval', 'interval_minutes': 30,

@@ -1,4 +1,4 @@
-"""One criterion in GUI, API and export, and a read-only filter that starts nothing (F08).
+"""One criterion in GUI, API and export, and a read-only filter that starts nothing.
 
 The three surfaces are represented here by the three shapes a caller actually
 has: a settings/query mapping, the keyword arguments of the export, and an API

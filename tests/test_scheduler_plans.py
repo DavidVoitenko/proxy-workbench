@@ -1,4 +1,4 @@
-"""What the scheduler decides: intervals, windows, pause, quiet hours, no catch-up (F15)."""
+"""What the scheduler decides: intervals, windows, pause, quiet hours, no catch-up."""
 from datetime import datetime, timezone
 from pathlib import Path
 import sys

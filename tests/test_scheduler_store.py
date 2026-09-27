@@ -1,6 +1,6 @@
-"""Persistence seam: the in-memory store and the adapter over migration 7 (F15).
+"""Persistence seam: the in-memory store and the adapter over migration 7.
 
-The tables below are the DDL of CONTRACTS 3.3, migration 7, copied here so the
+The tables below are the DDL of the shared contract copied here so the
 adapter can be exercised before `db.migrate()` exists. It is a fixture, not a
 second source of truth: the module under test issues no DDL of its own, and when
 `db.py` lands these two statements are replaced by one `db.migrate()` call.
@@ -24,7 +24,7 @@ CREATE TABLE schedule_run(
     counters_json TEXT);
 """
 
-# The same tables plus the columns this module needs and CONTRACTS 3.3 does not define yet.
+# The same tables plus the columns this module needs and the shared contract does not define yet.
 EXTENDED_DDL = CONTRACT_DDL.replace(
     'enabled INTEGER);',
     'enabled INTEGER, last_run_at REAL, paused INTEGER, pause_reason TEXT, resume_at REAL,'

@@ -1,6 +1,6 @@
 """Unified admission contract: which measured endpoint a consumer may use right now.
 
-This module is the single place that decides admission.  CONTRACTS.ru.md §2
+This module is the single place that decides admission.  the shared contract
 specifies it, F09 and R01 require it, and every surface (CLI, GUI, API,
 gateway, export) is supposed to call the same function instead of keeping its
 own selection logic.
@@ -22,9 +22,9 @@ Design rules that are part of the contract, not implementation detail:
 * The check order is fixed and therefore the ``reason_code`` is reproducible:
   identity → observation → clock → time → exclusions → quality → capabilities.
 * A row is judged on its own.  Selection never takes ``min()`` across rows, so
-  one expired member cannot hide the rest of a set (defect 3).
+  one expired member cannot hide the rest of a set.
 * The last completed measurement is never dropped and history is only ever
-  appended; a fresh failure cannot be masked by an older success (F09).
+  appended; a fresh failure cannot be masked by an older success.
 
 The module is a leaf: standard library only, no database, no DDL, no network
 and no import of ``proxytool``.  Proxy normalization, denylist matching and
@@ -97,7 +97,7 @@ STATE_DETAILS = frozenset({DETAIL_OK, DETAIL_REJECTED, DETAIL_ALL_EXPIRED, DETAI
 STATIC_TTL_NOTICE = 'E_STATE_SNAPSHOT_STATIC_TTL'
 
 # Capability names this module can derive.  A requirement outside the closed set
-# is a bug in the caller and is rejected, not ignored (F07).
+# is a bug in the caller and is rejected, not ignored.
 CAPABILITIES = frozenset({'tcp', 'http', 'https', 'socks4', 'socks5', 'udp',
                           'anonymity:transparent', 'anonymity:anonymous',
                           'anonymity:elite', 'speed', 'exit_ip'})
@@ -186,7 +186,7 @@ class Policy:
     """Everything a profile revision fixes about admission.
 
     All thresholds live here and not in a read-time argument, so one snapshot
-    cannot be a pass for one caller and empty for another (CONTRACTS §2.3).
+    cannot be a pass for one caller and empty for another.
     """
     max_age_seconds: float = DEFAULT_MAX_AGE_SECONDS
     min_success: float = 2 / 3
@@ -195,7 +195,7 @@ class Policy:
     protocol: str | None = None
     countries: frozenset[str] = frozenset()
     unknown_country: str = 'exclude'
-    #: The one country rule, as ``geo.CountryCriterion`` builds it (F08).
+    #: The one country rule, as ``geo.CountryCriterion`` builds it.
     #: ``core`` is a leaf with no database and no DDL, so the object is *given*
     #: to it, not constructed here: ``basis`` (endpoint / exit / either), the
     #: deliberate "never here" ``exclude`` set and the three ``unknown``

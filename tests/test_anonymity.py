@@ -16,7 +16,7 @@ from proxy_workbench import proxytool as p
 from proxy_workbench.reputation import result_allowed
 
 #: A result fixture describes a measurement that just happened; the
-#: admission contract has no "fresh forever" state (CONTRACTS §2.4).
+#: admission contract has no "fresh forever" state.
 _NOW = time.time()
 
 # Synthetic public address standing in for "this machine"; no traffic leaves loopback.

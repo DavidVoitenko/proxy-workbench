@@ -337,7 +337,8 @@ def _json_records(body, profile, page_context, limits):
     if not isinstance(container, list):
         raise AdapterError("SOURCE_JSON_SHAPE")
     if not container:
-        return dict(state="empty", records=[], rejects={}, pages=1, metadata={})
+        return _with_document(dict(state="empty", records=[], rejects={}, pages=1, metadata={}),
+                              data, page_context)
     default = cfg.get("default_protocol")
     default_list = _protocol(default, default=default) if isinstance(default, str) else []
     default_protocol = default_list[0] if default_list else None
@@ -414,6 +415,17 @@ def _json_records(body, profile, page_context, limits):
     if truncated:
         result["truncated"] = True
         result["reason"] = "SOURCE_RECORD_LIMIT"
+    return _with_document(result, data, page_context)
+
+
+def _with_document(result, data, page_context):
+    """Hand the parsed document back when the caller asked for it.
+
+    The collector reads pagination from the same document; without it every
+    JSON page was decoded and parsed a second time.
+    """
+    if isinstance(page_context, dict) and page_context.get("keep_document"):
+        result["document"] = data
     return result
 
 
@@ -886,12 +898,15 @@ def _line(body, profile, page_context, limits):
         value = raw.strip()
         if not value or value.startswith("#"):
             continue
+        if "#" in value:
+            # "1.2.3.4:8080 # HTTP [ID]": a trailing comment is a note.
+            value = re.split(r"\s+#", value, maxsplit=1)[0]
         if first_token:
             # "address<tab>free-form note" is the one shape a line list uses;
             # only the leading token is the address.
             value = value.split(None, 1)[0]
         if legacy_kind == "http-fields":
-            match = re.fullmatch(r"(\d{1,3}(?:\.\d{1,3}){3}:\d{1,5}):[A-Za-z][A-Za-z .'-]*", value)
+            match = re.fullmatch(r"(\d{1,3}(?:\.\d{1,3}){3}:\d{1,5}):[^\W\d_](?:[^\W\d_]|[ .'-])*", value)
             if not match:
                 rejects["invalid_address"] = rejects.get("invalid_address", 0) + 1
                 continue
@@ -1054,11 +1069,17 @@ def next_page_url(base_url, page, profile, page_number):
             next_parsed = urlsplit(next_value)
             if (next_parsed.scheme, next_parsed.hostname) != (parsed.scheme, parsed.hostname):
                 raise AdapterError("SOURCE_PAGINATION_NEXT_INVALID")
-        next_path = urlsplit(next_value).path or "/"
+        next_parts = urlsplit(next_value)
+        next_path = next_parts.path or "/"
         prefix = config.get("path_prefix")
         if prefix and not next_path.startswith(str(prefix)):
             raise AdapterError("SOURCE_PAGINATION_NEXT_INVALID")
-        return urlunsplit((parsed.scheme, parsed.netloc, next_value if next_value.startswith("/") else "/" + next_value, urlencode(query), ""))
+        # Path and query of the link; an absolute link used to be pasted into
+        # the path whole ("/https://host/...").
+        if not next_path.startswith("/"):
+            next_path = "/" + next_path
+        return urlunsplit((parsed.scheme, parsed.netloc, next_path,
+                           next_parts.query if next_parts.query else urlencode(query), ""))
     else:
         raise AdapterError("SOURCE_PAGINATION_MODE_INVALID")
     return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, urlencode(query), ""))

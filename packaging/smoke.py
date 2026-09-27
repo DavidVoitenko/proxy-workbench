@@ -99,7 +99,7 @@ def main(command):
         # SQL is not an option any more and must not become one again: after the
         # versioned schema the table carries a second column, so a positional
         # INSERT is exactly the "old binary writes into the new schema" failure
-        # F24 requires (CONTRACTS §3.5.2).  A loopback address is only accepted
+        # F24 requires.  A loopback address is only accepted
         # from a list the user handed over locally, hence the flag.
         listing = data / 'smoke-mock.txt'
         listing.write_text(f'http://127.0.0.1:{mock.server_port}\n', encoding='utf-8')
@@ -152,8 +152,8 @@ def main(command):
         assert state['export']['passed'] == 1, state['log']
         proxy = httpx.get(f'{state["api"]}/random?format=txt', trust_env=False).text.strip()
         assert proxy == f'http://127.0.0.1:{mock.server_port}', proxy
-        # The rotating proxy has its own password now, not the GUI session token
-        # (defect 18 / F29): an unauthenticated request gets 407, so the client
+        # The rotating proxy has its own password now, not the GUI session token:
+        # an unauthenticated request gets 407, so the client
         # uses the address the GUI itself hands to a phone.  The password is
         # minted per run and is never printed.
         #

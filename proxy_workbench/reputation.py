@@ -183,7 +183,7 @@ def reverse_ip(address):
     """DNSBL query prefix for one address.
 
     IPv4 is reversed octet by octet.  IPv6 is reversed nibble by nibble into
-    the 32 dotted labels ``ip6.arpa`` expects (defect 14): the previous code
+    the 32 dotted labels ``ip6.arpa`` expects: the previous code
     reversed ``IPv6Address.exploded`` with the colons still inside it, which
     produces ``0:0`` labels no zone can ever answer, so every IPv6 lookup came
     back as a false "clean".  The single implementation lives in ``probes``.
@@ -207,7 +207,7 @@ async def _lookup_dnsbl(query, timeout):
 
 
 def _dnsbl_error_code(exc):
-    """Tell a quota/access refusal from a plain resolver failure (defect 14).
+    """Tell a quota/access refusal from a plain resolver failure.
 
     A resolver that answers "no such name" is NXDOMAIN and proves the address
     is not listed.  A resolver that answers "too many queries", "refused" or
@@ -283,7 +283,7 @@ def _zone_contracts(zones):
 
 
 async def check_dnsbl(address, zones, timeout, resolver=None, *, max_queries=None):
-    """Query every zone and report a distinct outcome per zone (defect 14).
+    """Query every zone and report a distinct outcome per zone.
 
     Each zone answers one of ``listed`` / ``clear`` / ``unknown``, and every
     ``unknown`` carries the code that explains it: ``DNSBL_ACCESS`` for a zone
@@ -317,8 +317,8 @@ async def screen_proxy(proxy, policy, denylist, resolver=None, *, max_queries=No
 
     ``clean`` is reachable only when *every* configured zone really answered
     ``clear``: one zone that said "access denied" or "quota exhausted" leaves
-    the address ``unknown``, because the address was never actually looked up
-    (defect 14).  The roll-up code names the first reason.
+    the address ``unknown``, because the address was never actually looked up.
+   The roll-up code names the first reason.
     """
     denylist = denylist or Denylist.empty()
     verdict = {

@@ -2,8 +2,7 @@
 
 The headline scenario is the one in the research: two publishers hand out
 *the same* address set, exactly like ``hookzof/socks5_list`` and
-``proxifly/free-proxy-list`` (21 036 identical endpoints, Jaccard 1.0 in
-``docs/requirements/sources-research/overlap.md``).  The comparison has to see
+``proxifly/free-proxy-list`` (21 036 identical endpoints, Jaccard 1.0).  The comparison has to see
 the copy and give the second publisher a unique contribution of zero, before
 any proxy is contacted.
 

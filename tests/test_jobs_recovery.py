@@ -1,6 +1,6 @@
 """Checkpoints, crash recovery and sleep: a stop is resumable, never lossy.
 
-CONTRACTS.ru.md §6.2, F11 «журнал, checkpoint, crash recovery и обработка сна».
+the shared contract, F11 «журнал, checkpoint, crash recovery и обработка сна».
 """
 from __future__ import annotations
 

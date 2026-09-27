@@ -3665,6 +3665,9 @@
                     "description": "required",
                     "maxLength": 8388608
                   },
+                  "allow_private_endpoints": {
+                    "type": "boolean"
+                  },
                   "revision": {
                     "type": "integer",
                     "minimum": 1
@@ -12871,6 +12874,7 @@
                   "E_SECRET_UPSTREAM_AUTH_REQUIRED",
                   "E_SERVICE_UNAVAILABLE",
                   "E_STATE_JOB_RUNNING",
+                  "E_STATE_KEY_NOT_REVOKED",
                   "E_STATE_NOT_FOUND",
                   "E_STATE_NO_SNAPSHOT",
                   "E_STATE_SNAPSHOT_STALE",
@@ -12946,6 +12950,7 @@
     "E_SECRET_UPSTREAM_AUTH_REQUIRED",
     "E_SERVICE_UNAVAILABLE",
     "E_STATE_JOB_RUNNING",
+    "E_STATE_KEY_NOT_REVOKED",
     "E_STATE_NOT_FOUND",
     "E_STATE_NO_SNAPSHOT",
     "E_STATE_SNAPSHOT_STALE",

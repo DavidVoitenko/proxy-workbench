@@ -15,10 +15,11 @@ selection, the freshness decision and the error codes all come from
 The legacy token keeps exactly the rights it has always had (``read.*`` and
 nothing else).  It is not registered as a key and gains no admin or private
 permission when it meets the new API; it travels as an explicit *compatibility
-path* and says so in a ``Warning`` header (CONTRACTS §5.1, F29).
+path* and says so in a ``Warning`` header.
 """
 from __future__ import annotations
 
+import dataclasses
 import hmac
 import ipaddress
 import json
@@ -64,7 +65,7 @@ ENDPOINTS = {
 }
 
 #: Reasons a consumer may ask for, kept in one place so CLI, GUI and API answer
-#: with the same vocabulary (CONTRACTS §5.4).
+#: with the same vocabulary.
 FRESHNESS_MODES = ('fresh', 'expired', 'unknown', 'all')
 
 #: The file of a snapshot artifact that answers a requested ``format``.  The
@@ -96,8 +97,7 @@ def public_row(row, now=None):
     The age, the admission reason and the freshness view come from the one
     admission contract (:mod:`proxy_workbench.core`), not from a second
     calculation here: a consumer that recomputed freshness locally would
-    disagree with the engine as soon as the clock or the policy moved
-    (CONTRACTS §2.3, §4.4).
+    disagree with the engine as soon as the clock or the policy moved.
     """
     proxy = row['proxy']
     address = proxy.partition('://')[2]
@@ -148,7 +148,7 @@ def public_row(row, now=None):
         # A legacy row that carries no recorded lifetime is read with a one-time
         # backfill, and the fact that it was backfilled is visible here.  Without
         # these two the API showed a fresh row with no way to tell it apart from
-        # one whose lifetime was really measured (CONTRACTS §2.4).
+        # one whose lifetime was really measured.
         'max_age_seconds': row.get('max_age_seconds') or READ_POLICY.max_age_seconds,
         'ttl_backfilled': bool(time_state_of(row).get('ttl_backfilled')),
         'freshness': freshness_of(row),
@@ -192,7 +192,7 @@ def _flag(query, name):
     return bool(value)
 
 
-#: The stable code of each time state (CONTRACTS §5.4, domain TIME).  ``core``
+#: The stable code of each time state.  ``core``
 #: classifies the clock; this is the one place its names become codes, so the
 #: API, the CLI and the report never spell the same state two ways.
 TIME_STATE_CODES = {
@@ -204,7 +204,7 @@ TIME_STATE_CODES = {
     core.CLOCK_ROLLBACK: 'E_TIME_CLOCK_ROLLBACK',
 }
 
-#: The four explicit freshness views a mixed-age table needs (defect 3).
+#: The four explicit freshness views a mixed-age table needs.
 FRESHNESS_BY_STATE = {
     core.TIME_OK: 'fresh', core.TIME_EXPIRED: 'expired', core.TIME_TTL_MISSING: 'unknown',
 }
@@ -226,10 +226,10 @@ def freshness_of(row, now=None):
     """Which freshness view a row belongs to, decided by ``core`` alone.
 
     ``stale`` used to be one boolean meaning "no usable proxy anywhere"; a table
-    of mixed-age rows needs the four explicit views instead (defect 3).  The
+    of mixed-age rows needs the four explicit views instead.  The
     decision itself is :func:`core.time_state_of`, including the documented
     backfill of a legacy row that carries no recorded lifetime -- a reader must
-    not grow its own idea of how long a result is good (CONTRACTS §2.4, §4.3).
+    not grow its own idea of how long a result is good.
     """
     return FRESHNESS_BY_STATE.get(time_state_of(row, now)['state'], 'unknown')
 
@@ -238,10 +238,10 @@ class Exports:
     """One coherent current generation, reloaded when its pointer or files change.
 
     The pointer names a generation and nothing else: a consumer that pinned a
-    generation keeps reading that one, and a new publication does not move it
-    (CONTRACTS §1.2 rule 3, defect 8).  The re-read key is the generation plus
+    generation keeps reading that one, and a new publication does not move it.
+   The re-read key is the generation plus
     its manifest digest, not an mtime, and a generation whose manifest does not
-    verify is *refused* rather than served half-checked (CONTRACTS §4.2).
+    verify is *refused* rather than served half-checked.
     """
 
     def __init__(self, directory, generation=None):
@@ -276,8 +276,7 @@ class Exports:
         """Return the admitted rows of the pinned generation and its status.
 
         A single expired row no longer empties the answer: the set lives as long
-        as its newest member, and every row carries its own reason
-        (defect 3, R02).
+        as its newest member, and every row carries its own reason.
         """
         manifest = proxytool_export_manifest(self.directory)
         pointer_generation = manifest.get('generation') if manifest else None
@@ -291,7 +290,7 @@ class Exports:
                 return self._load_legacy_root(pointer_generation)
             # The re-read key is the generation plus the checksums the pointer
             # published, so a file edited behind the reader's back is a new key
-            # and is then refused by the manifest check (CONTRACTS §4.2).
+            # and is then refused by the manifest check.
             key = (generation, _manifest_digest(manifest),
                    _read_stamp(self.directory, generation))
             if key != self.key:
@@ -394,7 +393,7 @@ def _read_stamp(directory, generation):
     looking at the same bytes it verified last time.  Both are needed: a
     checksum alone would happily keep serving a cached answer after somebody
     edited the file behind the reader's back, and the contract's answer to that
-    is a refusal, not a stale cache hit (CONTRACTS §4.2, defect 9).
+    is a refusal, not a stale cache hit.
     """
     root = Path(directory)/'generations'/generation
     parts = []
@@ -487,7 +486,7 @@ def parse_query(query):
 
 
 def policy_of(query, *, min_success=2/3, strict=False, denylist=None, max_age_seconds=None):
-    """The one admission policy the read paths share (CONTRACTS §2.3, F18)."""
+    """The one admission policy the read paths share."""
     return core.Policy(
         max_age_seconds=float(max_age_seconds or core.DEFAULT_MAX_AGE_SECONDS),
         min_success=min_success, min_anonymity=query.get('anonymity', 'any'),
@@ -572,8 +571,43 @@ def country_matches(row, query, *, now=None, workbench=None):
     return bool(country_selected([row], query, now=now, workbench=workbench))
 
 
+def _number(value, missing):
+    try:
+        return float(value) if value is not None else missing
+    except (TypeError, ValueError):
+        return missing
+
+
+#: The order each ``sort`` names, over the published row: the same keys, in the
+#: same priority, as the engine's own ``EXPORT_ORDERS`` puts them in SQL.
+_SORT_KEYS = {
+    'quality': lambda row: (-_number(row.get('score'), float('-inf')),
+                            _number(row.get('latency_ms'), float('inf')), row.get('proxy') or ''),
+    'speed': lambda row: (_number(row.get('latency_ms'), float('inf')),
+                          -_number(row.get('reliability'), float('-inf')), row.get('proxy') or ''),
+    'stability': lambda row: (_number(row.get('jitter_ms'), float('inf')),
+                              _number(row.get('latency_ms'), float('inf')), row.get('proxy') or ''),
+    'uptime': lambda row: (-_number(row.get('uptime'), float('-inf')),
+                           -_number(row.get('checks'), float('-inf')),
+                           -_number(row.get('score'), float('-inf')), row.get('proxy') or ''),
+    'bandwidth': lambda row: (row.get('mbps') is None, -_number(row.get('mbps'), 0.0),
+                              -_number(row.get('score'), float('-inf')), row.get('proxy') or ''),
+}
+
+
+def sort_rows(rows, sort):
+    """Rows in the order ``sort`` asks for.
+
+    ``recommended`` (or no sort) is the order the snapshot was published in:
+    the recommendation score is computed at export time and is not a field of
+    the published row, so it cannot be recomputed here.
+    """
+    key = _SORT_KEYS.get(str(sort or ''))
+    return sorted(rows, key=key) if key else list(rows)
+
+
 # ---------------------------------------------------------------------------
-# The service layer /v1 is built on (F18)
+# The service layer /v1 is built on
 # ---------------------------------------------------------------------------
 
 
@@ -650,8 +684,7 @@ class WorkbenchService(apiv1.Service):
 
         ``wanted`` is the set of freshness views the caller asked for; every row
         keeps its own ``freshness`` value and its own reason, so a mixed-age set
-        stays mixed instead of being sorted into "there is nothing here"
-        (CONTRACTS §4.3, defect 3).
+        stays mixed instead of being sorted into "there is nothing here".
         """
         if wanted is None or wanted == {'fresh'}:
             return self.exports.load()
@@ -660,13 +693,42 @@ class WorkbenchService(apiv1.Service):
         return [row for row in self.exports.rows if row.get('freshness') in views], status
 
     def page(self, items, stream_id, offset=0, limit=None):
-        """One page plus the ``(stream_id, seq)`` cursor the contract defines."""
+        """One page plus the ``(stream_id, seq)`` cursor the contract defines.
+
+        Rows are numbered from 1: ``next_seq`` is the sequence number of the
+        first row of the next page, so the offset it resumes at is one less
+        (:meth:`_offset`).
+        """
         start = max(0, int(offset or 0))
         window = items[start:start + limit] if limit else items[start:]
         return {'items': window, 'stream_id': stream_id,
                 'cursor_seq': start + len(window) if window else None,
                 'next_seq': start + len(window) + 1 if window and start + len(window) < len(items) else None,
                 'total': len(items)}
+
+    @staticmethod
+    def _offset(call):
+        """The offset a :meth:`page` cursor resumes at.
+
+        The cursor carries ``next_seq``, the 1-based number of the next row.
+        Reading it as an offset (``schedules.list`` did) skipped one row per
+        page, and ignoring it (every result listing did) served page one again
+        forever.
+        """
+        query = getattr(call, 'query', None) or {}
+        return max(0, int(query.get('cursor_seq') or 0) - 1)
+
+    def _paged(self, call, items, stream_id, **extra):
+        """A whole list cut to the page the caller asked for.
+
+        Most listings used to return every row with ``next_seq: None`` and
+        read no ``limit`` at all, although the route declares both ``limit``
+        and ``cursor``: a declared parameter that is silently ignored.
+        """
+        limit = (getattr(call, 'query', None) or {}).get('limit')
+        body = self.page(list(items), stream_id, self._offset(call), int(limit) if limit else None)
+        body.update(extra)
+        return body
 
     def queue_state(self):
         running = 0
@@ -718,11 +780,11 @@ class WorkbenchService(apiv1.Service):
                 'protocols': list(PROTOCOLS), 'formats': list(FORMATS),
                 'freshness': list(FRESHNESS_MODES),
                 'snapshot_schema_versions': list(exportsvc.SUPPORTED_SCHEMA_VERSIONS),
-                # What is really measured, and what is declared unsupported
-                # (F20): a websocket, a long connection, media, UDP or HTTP/3 is
+                # What is really measured, and what is declared unsupported:
+                # a websocket, a long connection, media, UDP or HTTP/3 is
                 # reported as unprobed rather than as a passing GET.
                 'probes': engine.capability_manifest(),
-                # The one country criterion every surface filters with (F08).
+                # The one country criterion every surface filters with.
                 'country': {'basis': 'endpoint', 'unknown': 'exclude',
                             'digest': engine.criterion_digest()},
                 'network': {'bind': 'loopback'}}
@@ -737,9 +799,12 @@ class WorkbenchService(apiv1.Service):
 
     # -- results -----------------------------------------------------------
 
-    def _result_page(self, call, rows, status, stream_kind='results'):
-        limit = min(int(call.query.get('limit') or 100), 1000)
-        offset = int(call.query.get('offset') or 0)
+    def _result_page(self, call, rows, status, stream_kind='results', limit=None):
+        limit = min(int(limit or call.query.get('limit') or 100), 1000)
+        # The cursor is the only way a caller can ask for the next page; the
+        # page used to be read from an ``offset`` no route declares, so
+        # following ``next_cursor`` returned the first page again forever.
+        offset = self._offset(call)
         stream_id = f'generation:{status.get("generation") or "none"}'
         page = self.page(list(rows), stream_id, offset, limit)
         page['generation'] = status.get('generation')
@@ -751,8 +816,7 @@ class WorkbenchService(apiv1.Service):
     def _freshness_view(self, query):
         """Which freshness views a request asked for, from the declared parameters.
 
-        The route declares ``include_stale`` and ``include_unknown`` (CONTRACTS
-        §5.7: "the unknown and stale modes are explicit parameters, not a silent
+        The route declares ``include_stale`` and ``include_unknown`` (the shared contract: "the unknown and stale modes are explicit parameters, not a silent
         exclusion of rows").  It never declared a ``freshness`` parameter, so
         reading one here used to read a value that could not arrive: expired and
         unknown rows were unreachable over ``/v1`` no matter what the caller
@@ -766,29 +830,44 @@ class WorkbenchService(apiv1.Service):
             wanted.add('unknown')
         return wanted
 
+    def _selected_rows(self, call):
+        """The published rows one results query selects, filtered, guarded and sorted.
+
+        ``results.list`` declares a dozen filters and a sort; the handler read
+        two of them (protocol and country) and answered 200 for the rest, so
+        ``max_latency_ms=100`` or ``sort=speed`` returned the same rows as no
+        parameter at all (F07: a parameter is never silently ignored).
+        """
+        query = call.query or {}
+        rows, status = self.rows_for(query, self._freshness_view(query))
+        wanted = query.get('generation')
+        if wanted and wanted != status.get('generation'):
+            raise apiv1.ApiError('E_STATE_NOT_FOUND', status=404,
+                                 details={'generation': wanted,
+                                          'published': status.get('generation')},
+                                 action=tr('читайте опубликованное поколение',
+                                           'read the published generation'))
+        rows = self._filter_rows(rows, query)
+        rows = self._guard_objects(rows, call, 'collection_id', 'collections')
+        return sort_rows(rows, query.get('sort')), status
+
     def _op_results_list(self, call):
-        wanted = self._freshness_view(call.query)
-        rows, status = self.rows_for(call.query, wanted)
-        rows = [row for row in rows if self._matches(row, call.query)]
-        return self._result_page(call, self._guard_objects(rows, call, 'collection_id', 'collections'),
-                                 status)
+        rows, status = self._selected_rows(call)
+        return self._result_page(call, rows, status)
 
     def _op_results_random(self, call):
-        rows, status = self.rows_for(call.query, self._freshness_view(call.query))
-        rows = [row for row in rows if self._matches(row, call.query)]
-        rows = self._guard_objects(rows, call, 'collection_id', 'collections')
-        limit = min(int(call.query.get('limit') or 1), 1000)
-        picked = random.sample(rows, min(len(rows), limit)) if rows else []
+        rows, status = self._selected_rows(call)
+        # The route declares ``count`` (default 1); ``limit`` is not even a
+        # parameter of this route, so reading it always gave one row.
+        count = min(int(call.query.get('count') or 1), 100)
+        picked = random.sample(rows, min(len(rows), count)) if rows else []
         return {'items': picked, 'stream_id': f'generation:{status.get("generation") or "none"}',
                 'next_seq': None, 'generation': status.get('generation')}
 
     def _op_results_top(self, call):
-        limit = min(int(call.query.get('limit') or 10), 1000)
-        rows, status = self.rows_for(call.query, self._freshness_view(call.query))
-        rows = [row for row in rows if self._matches(row, call.query)]
-        return self._result_page(call,
-                                 self._guard_objects(rows, call, 'collection_id', 'collections')[:limit],
-                                 status)
+        rows, status = self._selected_rows(call)
+        count = min(int(call.query.get('count') or 10), apiv1.MAX_PAGE_LIMIT)
+        return self._result_page(call, rows[:count], status, limit=count)
 
     def _find_row(self, wanted):
         """The published row a path segment names, or ``None``.
@@ -824,7 +903,7 @@ class WorkbenchService(apiv1.Service):
             raise apiv1.ApiError('E_STATE_NOT_FOUND', status=404, details={'id': wanted})
         if not self._guard_objects([row], call, 'collection_id', 'collections'):
             # Same code as a missing row: a key must not learn that an
-            # out-of-scope object exists (CONTRACTS §5.3).
+            # out-of-scope object exists.
             raise apiv1.ApiError('E_STATE_NOT_FOUND', status=404, details={'id': wanted})
         return row
 
@@ -859,20 +938,69 @@ class WorkbenchService(apiv1.Service):
         return {'items': items, 'stream_id': f'observations:{endpoint}', 'next_seq': None}
 
     def _matches(self, row, query):
+        return bool(self._filter_rows([row], query))
+
+    def _filter_rows(self, rows, query):
+        """The rows a results query keeps, every declared filter applied.
+
+        The country part is the one criterion ``select`` and the export use.
+        It used to be evaluated row by row with a *new* ``Workbench`` each time
+        -- one database connection per published row, none of them closed --
+        so one ``?country=`` request opened as many connections as there were
+        rows.  The whole list now goes through one criterion and one engine.
+        """
+        rows = list(rows)
         if not query:
-            return True
+            return rows
+        now = self.clock()
         protocol = query.get('protocol')
-        if protocol and protocol != 'all' and row.get('protocol') != protocol:
-            return False
-        # A third copy of the country test used to live here, parsing the query
-        # string itself and knowing nothing about an exit country, an exclusion
-        # or an unknown one.  It is the same criterion ``select`` and the export
-        # use, so one row has one country answer in this service.
-        if query.get('country'):
-            return country_matches(
-                row, {'countries': geoip.parse_countries(str(query['country']))},
-                workbench=self.workbench())
-        return True
+        collection = query.get('collection_id')
+        profile = query.get('profile_id')
+        revision = query.get('profile_revision')
+        max_latency = query.get('max_latency_ms')
+        min_mbps = query.get('min_mbps')
+        minimum = query.get('anonymity')
+        max_age = query.get('max_age_seconds')
+        rank = anonymity.LEVEL_RANK
+        kept = []
+        for row in rows:
+            if protocol and protocol != 'all' and row.get('protocol') != protocol:
+                continue
+            if collection and row.get('collection_id') != collection:
+                continue
+            if profile and row.get('profile_id') != profile:
+                continue
+            if revision is not None and row.get('profile_revision') != int(revision):
+                continue
+            if max_latency is not None:
+                latency = row.get('latency_ms')
+                if latency is None or float(latency) > float(max_latency):
+                    continue
+            if min_mbps:
+                mbps = row.get('mbps')
+                if mbps is None or float(mbps) < float(min_mbps):
+                    continue
+            if minimum and minimum != 'any' and \
+                    rank.get(row.get('anonymity') or 'unknown', -1) < rank.get(minimum, 0):
+                continue
+            if _flag(query, 'exclude_hosting') and row.get('hosting'):
+                continue
+            if max_age is not None:
+                checked = row.get('checked_at')
+                try:
+                    if checked is None or now - float(checked) > float(max_age):
+                        continue
+                except (TypeError, ValueError):
+                    continue
+            kept.append(row)
+        if query.get('country') and kept:
+            criterion = {'countries': geoip.parse_countries(str(query['country']))}
+            workbench = self.workbench()
+            try:
+                kept = country_selected(kept, criterion, now=now, workbench=workbench)
+            finally:
+                workbench.close()
+        return kept
 
     # -- status and exports -------------------------------------------------
 
@@ -1034,7 +1162,7 @@ class WorkbenchService(apiv1.Service):
             if call.expected_revision is not None and \
                     int(call.expected_revision) != int(current.revision):
                 # The caller edited an older version: refuse instead of
-                # overwriting what it never saw (F05, CONTRACTS §6.4).
+                # overwriting what it never saw.
                 raise apiv1.ApiError(
                     'E_CONFLICT_REVISION',
                     details={'expected': call.expected_revision, 'current': current.revision,
@@ -1063,7 +1191,7 @@ class WorkbenchService(apiv1.Service):
         Only ``proxytool.export`` builds a generation, and only it decides
         whether the active pointer moves: ``kind='published'`` publishes,
         ``kind='selection'`` and ``kind='diagnostic'`` are separate artifacts
-        that never touch the active pool (CONTRACTS §4.5, defect 7).
+        that never touch the active pool.
         """
         from . import proxytool as engine
 
@@ -1097,7 +1225,7 @@ class WorkbenchService(apiv1.Service):
             # mode name is `reference`, and it was `include` -- a value outside
             # `CREDENTIALS_MODES`, so `ExportOptions` refused the request after the
             # `export.secret` check had already passed and the caller saw a 500
-            # instead of an artifact (F29, F28).
+            # instead of an artifact.
             wants_secrets = bool(body.get('include_secrets'))
             report = engine.export(
                 conn, profile, workbench.data / 'exports',
@@ -1228,52 +1356,84 @@ class WorkbenchService(apiv1.Service):
         return {'id': identifier, 'name': name, 'kind': collection_kind(body.get('kind')),
                 'created_at': time.time()}
 
+    @staticmethod
+    def _collection_row(conn, identifier):
+        """One collection with its revision, or 404; an old file reads as revision 1."""
+        row = conn.execute('SELECT * FROM collections WHERE id=?', (identifier,)).fetchone()
+        if row is None:
+            raise apiv1.ApiError('E_STATE_NOT_FOUND', status=404, details={'id': identifier})
+        found = dict(row)
+        found['revision'] = int(found.get('revision') or 1)
+        found['archived'] = found.get('archived_at') is not None
+        return found
+
+    @staticmethod
+    def _check_collection_revision(call, current):
+        """``If-Match`` (or ``revision``) must name the revision that is stored now."""
+        expected = call.expected_revision
+        if expected is not None and int(expected) != current['revision']:
+            raise apiv1.ApiError(
+                'E_CONFLICT_REVISION', status=409,
+                details={'expected': int(expected), 'stored': current['revision']},
+                action=tr('перечитайте коллекцию и повторите с её ревизией',
+                          'read the collection again and retry with its revision'))
+
     def _op_collections_update(self, call):
+        """Rename, archive or restore a collection under its revision.
+
+        The revision is ``collections.revision`` (migration 20); every change
+        moves it by one.  A request that changes nothing leaves it alone.
+        """
         from . import db as schema
         identifier = call.params.get('id')
         body = call.body or {}
         _refuse_unsupported_allow_private(body)
-        expected = call.expected_revision
         conn = self.writable_connection()
         try:
-            row = conn.execute('SELECT id, name FROM collections WHERE id=?',
-                               (identifier,)).fetchone()
-            if row is None:
-                raise apiv1.ApiError('E_STATE_NOT_FOUND', status=404, details={'id': identifier})
-            if expected is not None:
-                # ``collections`` carries no revision column (CONTRACTS §3.3,
-                # migration 2), so a supplied revision cannot be proven current
-                # and is refused rather than assumed.  See the handoff to db.py.
-                raise apiv1.ApiError(
-                    'E_CONFLICT_REVISION',
-                    details={'expected': expected, 'stored': None,
-                             'reason': 'collections has no revision column'},
-                    action=tr('повторите без ревизии или обновите схему',
-                              'retry without a revision, or migrate the schema'))
-            if body.get('name'):
-                schema.rename_collection(conn, identifier, str(body['name']))
-            conn.commit()
-            fresh = conn.execute('SELECT id, name, kind, created_at, archived_at FROM collections '
-                                 'WHERE id=?', (identifier,)).fetchone()
+            conn.execute('BEGIN IMMEDIATE')
+            current = self._collection_row(conn, identifier)
+            self._check_collection_revision(call, current)
+            if body.get('name') is not None:
+                name = str(body['name']).strip()
+                if not name:
+                    raise apiv1.field_error('name', tr('имя не может быть пустым',
+                                                        'the name must not be blank'))
+                if name != current['name']:
+                    schema.rename_collection(conn, identifier, name)
+            archived = body.get('archived')
+            if archived is True and not current['archived']:
+                schema.archive_collection(conn, identifier)
+            elif archived is False and current['archived']:
+                schema.unarchive_collection(conn, identifier)
+            conn.execute('COMMIT')
+            return self._collection_row(conn, identifier)
         except schema.DbError as exc:
             raise apiv1.ApiError('E_VALIDATION_FIELD', action=str(exc)) from None
         finally:
+            if conn.in_transaction:
+                conn.execute('ROLLBACK')
             _close(conn)
-        return dict(fresh)
 
     def _op_collections_archive(self, call):
         from . import db as schema
         identifier = call.params.get('id')
         conn = self.writable_connection()
         try:
-            schema.archive_collection(conn, identifier)
-            conn.commit()
+            conn.execute('BEGIN IMMEDIATE')
+            current = self._collection_row(conn, identifier)
+            self._check_collection_revision(call, current)
+            if not current['archived']:
+                schema.archive_collection(conn, identifier)
+            conn.execute('COMMIT')
+            fresh = self._collection_row(conn, identifier)
         except schema.DbError as exc:
             raise apiv1.ApiError('E_STATE_NOT_FOUND', status=404,
                                  details={'id': identifier}, action=str(exc)) from None
         finally:
+            if conn.in_transaction:
+                conn.execute('ROLLBACK')
             _close(conn)
-        return {'id': identifier, 'archived': True}
+        return {'id': identifier, 'archived': True, 'revision': fresh['revision']}
 
     def _op_collections_members(self, call):
         wanted = call.params.get('id')
@@ -1288,13 +1448,16 @@ class WorkbenchService(apiv1.Service):
             items = []
         finally:
             _close(conn)
-        return {'items': self._guard_objects(items, call, 'endpoint_id', 'collections'),
-                'stream_id': f'collection:{wanted}', 'next_seq': None}
+        # The route already refused a collection outside the key's scope.  The
+        # rows used to be filtered once more by comparing each *endpoint id*
+        # with the allowed *collection ids*, so a scoped key always saw an
+        # empty member list of its own collection.
+        return self._paged(call, items, f'collection:{wanted}')
 
     def _guard_objects(self, items, call, field, kind, collection_field='collection_id'):
         """Never reveal an object the caller's resource scope does not name.
 
-        A key's scope names collections and pools (CONTRACTS §5.3).  An object of
+        A key's scope names collections and pools.  An object of
         any other kind -- a job, a schedule -- is visible when the collection it
         belongs to is in the scope.  Before this rule the filter asked
         :func:`_scope_values` for a kind the principal does not carry, was told
@@ -1490,17 +1653,26 @@ class WorkbenchService(apiv1.Service):
         return _status_dict(status)
 
     def _op_pools_members(self, call):
+        pool_id = call.params.get('id')
         store, conn = self._pool_store()
         try:
+            spec = store.get(pool_id) if store is not None else None
+            # A pool that does not exist, or whose collection the key cannot
+            # see, is not found -- it used to answer 200 with an empty list.
+            if spec is None or not self._guard_objects([_pool_dict(spec)], call, 'id', 'pools'):
+                raise apiv1.ApiError('E_STATE_NOT_FOUND', status=404, details={'id': pool_id})
+            if _scope_values(call.principal, 'pools') is None and \
+                    not self._guard_objects([_pool_dict(spec)], call, 'id', 'jobs'):
+                raise apiv1.ApiError('E_STATE_NOT_FOUND', status=404, details={'id': pool_id})
             # `pools.Member` is a dataclass, not a mapping: `dict(member)` raised
             # `TypeError` and the route answered 500 for every pool, so the
             # membership a refill had just written was never visible over /v1.
-            items = [_member_dict(member)
-                     for member in store.members(call.params.get('id'))] if store is not None else []
+            items = [_member_dict(member) for member in store.members(pool_id)]
         finally:
             _close(conn)
-        return {'items': self._guard_objects(items, call, 'endpoint_id', 'pools'),
-                'stream_id': f'pool:{call.params.get("id")}', 'next_seq': None}
+        # Members are filtered by the pool, which was checked above; comparing
+        # member endpoint ids with allowed pool ids emptied every scoped list.
+        return self._paged(call, items, f'pool:{pool_id}')
 
 
     # -- the service layer the modules are reached through ------------------
@@ -1520,7 +1692,7 @@ class WorkbenchService(apiv1.Service):
 
         A module exception never reaches the client: it becomes the stable
         ``E_*`` code the CLI prints, so one refusal reads the same in a terminal
-        and in a JSON body (CONTRACTS §5.4).
+        and in a JSON body.
         """
         from . import proxytool as engine
         workbench = self.workbench()
@@ -1537,6 +1709,14 @@ class WorkbenchService(apiv1.Service):
         except (sqlite3.Error, OSError) as exc:
             raise apiv1.ApiError('E_STATE_SNAPSHOT_STATIC', status=503,
                                  message=f'{type(exc).__name__}') from None
+        except ValueError as exc:
+            # The engine refuses a bad value with ``ValueError`` (an export
+            # selection it cannot normalize, a profile it does not know).  That
+            # is the caller's input, not an outage: it used to surface as
+            # ``500 E_SERVICE_UNAVAILABLE``.
+            raise apiv1.ApiError('E_VALIDATION_FIELD', status=400,
+                                 message=str(exc) or 'invalid value',
+                                 details={'reason': str(exc)[:300]}) from None
         finally:
             workbench.close()
 
@@ -1568,7 +1748,7 @@ class WorkbenchService(apiv1.Service):
         return wanted if wanted in importer.FORMATS else None
 
     def _import_policy(self, call):
-        """The endpoint policy of an import, from the request body (defect 10).
+        """The endpoint policy of an import, from the request body.
 
         ``importer.DEFAULT_POLICY`` refuses hostnames, private addresses and the
         RFC 5737 documentation ranges.  The CLI has ``--allow-private-endpoints``
@@ -1629,7 +1809,7 @@ class WorkbenchService(apiv1.Service):
                                      details={'needs_mapping': True})
             report = workbench.import_commit(plan, allow_partial=bool((call.body or {}).get('allow_partial')))
             # The route is an async job: a long operation answers with a job id
-            # and never holds the request open (R18).
+            # and never holds the request open.
             body = report.to_dict()
             body['allow_private_endpoints'] = not policy.public_only
             body['job_id'] = self._record_job(workbench, 'import', collection, len(report.added or ()))
@@ -1641,7 +1821,7 @@ class WorkbenchService(apiv1.Service):
 
         The work itself already happened; the job exists so the caller can ask
         after it with the same cursor schema as every other stream, and so a
-        repeated idempotency key returns the same id (CONTRACTS §5.7, §6.4).
+        repeated idempotency key returns the same id.
         """
         from . import jobs as jobs_module
         scope = jobs_module.Scope(collection_id=collection_id,
@@ -1676,43 +1856,104 @@ class WorkbenchService(apiv1.Service):
         values = list(dict.fromkeys(values))
         if not values:
             raise apiv1.field_error('endpoint', tr('нужен адрес', 'an address is required'))
+        from . import proxytool as engine
         conn = workbench.conn
+        if conn.execute('SELECT 1 FROM collections WHERE id=?', (collection,)).fetchone() is None:
+            raise apiv1.ApiError('E_STATE_NOT_FOUND', status=404, details={'id': collection})
         changed = []
+        if add:
+            # The one normalizer decides what an address is; a value it cannot
+            # read ("not an endpoint") used to be stored verbatim as a member.
+            # Credentials are refused structurally by it.  Every value is
+            # checked before the first one is written.
+            values = [engine.normalize_custom(value) or value for value in values]
+            bad = [value for value in values if engine.normalize_custom(value) != value]
+            if bad:
+                raise apiv1.ApiError(
+                    'E_VALIDATION_FIELD', status=400,
+                    details={'field': 'endpoint', 'reason': 'not a proxy address',
+                             'value': str(bad[0])[:128]},
+                    action=tr('укажите scheme://host:port', 'send scheme://host:port'))
         for value in values:
             if add:
-                # Adding a member may introduce an address the engine has never
-                # seen; the one normalizer still decides what it is.
-                endpoint = schema.upsert_endpoint(conn, value)
-            else:
-                endpoint = schema.endpoint_id(value)
-                row = conn.execute('SELECT canonical FROM endpoints WHERE id=?', (endpoint,)).fetchone()
-                if row is None:
-                    raise apiv1.ApiError('E_STATE_NOT_FOUND', status=404,
-                                         details={'endpoint_id': value})
-            if add:
+                canonical = value
+                endpoint = schema.upsert_endpoint(conn, canonical)
                 schema.add_member(conn, collection, endpoint,
                                   origin=str(body.get('origin') or 'manual'), now=workbench.clock())
-            else:
-                conn.execute('DELETE FROM membership WHERE collection_id=? AND endpoint_id=?',
-                             (collection, endpoint))
-            changed.append(value)
+                changed.append(canonical)
+                continue
+            # The path names an endpoint *id*; hashing it again as if it were
+            # an address never matched a row.  An address is still accepted
+            # and resolved through the normalizer.
+            endpoint = value
+            if conn.execute('SELECT 1 FROM endpoints WHERE id=?', (endpoint,)).fetchone() is None:
+                canonical = engine.normalize_custom(value)
+                endpoint = schema.endpoint_id(canonical) if canonical else None
+            if endpoint is None or not schema.remove_member(conn, collection, endpoint):
+                raise apiv1.ApiError('E_STATE_NOT_FOUND', status=404,
+                                     details={'endpoint_id': value, 'collection_id': collection})
+            changed.append(endpoint)
         conn.commit()
         return {'collection_id': collection, 'changed': changed, 'added': bool(add)}
 
     def _op_collections_merge(self, call):
-        return self._apply_collection_mode(call, 'merge')
+        """Copy the members of ``from_collection_id`` into this collection.
+
+        The route declares ``from_collection_id`` and no content; the handler
+        used to run an import and demand ``content``, so the documented body
+        was always refused.  Nothing is removed from either collection.
+        """
+        def action(workbench):
+            conn = workbench.conn
+            target = str(call.params.get('id') or '')
+            source = str((call.body or {}).get('from_collection_id') or '').strip()
+            if not source:
+                raise apiv1.field_error('from_collection_id', tr('укажите исходную коллекцию',
+                                                                  'name the source collection'))
+            if source == target:
+                raise apiv1.field_error('from_collection_id',
+                                        tr('коллекция не сливается сама с собой',
+                                           'a collection cannot be merged into itself'))
+            self._check_collection_revision(call, self._collection_row(conn, target))
+            self._collection_row(conn, source)
+
+            def count():
+                return conn.execute('SELECT count(*) FROM membership WHERE collection_id=?',
+                                    (target,)).fetchone()[0]
+            before = count()
+            conn.execute('INSERT OR IGNORE INTO membership(collection_id, endpoint_id, added_at, origin) '
+                         "SELECT ?, endpoint_id, ?, 'import' FROM membership WHERE collection_id=?",
+                         (target, workbench.clock(), source))
+            conn.commit()
+            after = count()
+            return {'collection_id': target, 'from_collection_id': source,
+                    'added': after - before, 'members': after,
+                    'job_id': self._record_job(workbench, 'merge', target, after - before)}
+        return self._with_workbench(action)
 
     def _op_collections_replace(self, call):
-        return self._apply_collection_mode(call, 'replace')
+        """Replace the members of one collection with a list, as a job.
 
-    def _apply_collection_mode(self, call, mode):
+        The route is ``async_job``; the report carried no ``job_id``, so a
+        successful replace was answered with 503.
+        """
         def action(workbench):
-            source = self._import_source(call, workbench)
             collection = str(call.params.get('id') or schema_public_collection())
-            plan = workbench.import_preview(source, collection, mode=mode,
+            self._check_collection_revision(call, self._collection_row(workbench.conn, collection))
+            source = self._import_source(call, workbench)
+            policy = self._import_policy(call)
+            self._audit_import_policy(workbench, call, collection, policy)
+            plan = workbench.import_preview(source, collection, mode='replace',
+                                            fmt=self._import_format(call), policy=policy,
                                             idempotency_key=call.idempotency_key)
-            report = workbench.import_commit(plan, allow_partial=bool((call.body or {}).get('allow_partial')))
-            return report.to_dict()
+            if plan.needs_mapping:
+                raise apiv1.ApiError('E_VALIDATION_SCHEMA', status=400,
+                                     details={'needs_mapping': True})
+            report = workbench.import_commit(plan)
+            body = report.to_dict()
+            body['job_id'] = self._record_job(workbench, 'replace', collection,
+                                              len(report.added or ()))
+            return body
         return self._with_workbench(action)
 
     # -- jobs ---------------------------------------------------------------
@@ -1798,20 +2039,52 @@ class WorkbenchService(apiv1.Service):
         return self._with_workbench(action)
 
     def _op_events_system(self, call):
-        """The system stream, read the same way as a job stream (CONTRACTS §5.7)."""
-        from . import jobs as jobs_module
-        def action(workbench):
-            store = self._job_store_of(workbench)
-            events = []
-            for job in store.jobs(limit=50):
-                events.extend(store.events(job.id, after_seq=int(call.query.get('cursor') or 0),
-                                           limit=int(call.query.get('limit') or 200)))
-            events.sort(key=lambda item: item.seq)
-            items = [_event_dict(event) for event in events]
-            return {'items': items, 'stream_id': 'system', 'next_seq': None,
-                    'last_seq': items[-1]['seq'] if items else 0}
-        del jobs_module
-        return self._with_workbench(action)
+        """The system stream, read the same way as a job stream."""
+        """Every job's events in one stream, numbered by the order they were written.
+
+        The old handler read ``int(cursor)`` of an opaque base64 cursor (a 500
+        on every resume) and merged per-job ``seq`` values, which repeat from
+        one job to the next, so the stream broke on the second job.  The system
+        stream's ``seq`` is now the row order of ``job_event``, which is global
+        and increasing, and an event of a collection the key cannot see is not
+        in it.
+        """
+        stream = str(call.query.get('stream') or 'system')
+        if stream.startswith('job:'):
+            return self._op_jobs_events(dataclasses.replace(
+                call, params={**dict(call.params or {}), 'id': stream[4:]}))
+        if stream != 'system':
+            raise apiv1.field_error('stream', tr('system или job:<id>', 'system or job:<id>'))
+        after = int(call.query.get('cursor_seq') or 0)
+        limit = min(int(call.query.get('limit') or 200), 1000)
+        allowed = _scope_values(call.principal, 'collections')
+        conn = self.connection()
+        items = []
+        try:
+            rows = conn.execute(
+                'SELECT e.rowid AS rid, e.job_id, e.seq, e.at, e.type, e.code, e.data_json, '
+                'j.collection_id FROM job_event e LEFT JOIN job j ON j.id = e.job_id '
+                'WHERE e.rowid > ? ORDER BY e.rowid LIMIT ?',
+                (after, limit if allowed is None else limit * 20)).fetchall() \
+                if conn is not None else []
+        except sqlite3.Error:
+            rows = []
+        finally:
+            _close(conn)
+        for row in rows:
+            if allowed is not None and row['collection_id'] not in allowed:
+                continue
+            try:
+                data = json.loads(row['data_json'] or '{}')
+            except (TypeError, ValueError):
+                data = {}
+            items.append({'seq': int(row['rid']), 'at': row['at'], 'type': row['type'],
+                          'job_id': row['job_id'], 'item_id': data.get('item_id'),
+                          'code': row['code'], 'data': dict(data, job_seq=row['seq'])})
+            if len(items) >= limit:
+                break
+        return {'items': items, 'stream_id': 'system', 'next_seq': None,
+                'last_seq': items[-1]['seq'] if items else after}
 
     # -- checks as jobs -----------------------------------------------------
 
@@ -1881,25 +2154,60 @@ class WorkbenchService(apiv1.Service):
 
     # -- pools as jobs ------------------------------------------------------
 
-    def _op_pools_create(self, call):
-        from . import pools as pools_module
+    def _pool_profile(self, workbench, wanted):
+        """The profile a new pool is measured under, and its revision.
 
+        ``profile_id`` is optional on the route; the default is the one the
+        GUI uses -- the profile of the last check (``last-profile.txt``).  A
+        profile that does not exist is refused here: the pool used to be
+        created and then failed on its first recheck.
+        """
+        from . import proxytool as engine
+        profile_id = str(wanted or '').strip()
+        if not profile_id:
+            profile_id = engine.active_profile_id(workbench) or ''
+            if not profile_id:
+                raise apiv1.field_error(
+                    'profile_id', tr('профиль не указан, а проверок ещё не было',
+                                     'no profile was given and no check has run yet'),
+                    action=tr('укажите profile_id или сначала выполните проверку',
+                              'send profile_id, or run a check first'))
+            return profile_id, 1
+        conn = workbench.conn
+        if conn.execute('SELECT 1 FROM profiles WHERE id=?', (profile_id,)).fetchone() is not None:
+            return profile_id, 1
+        head = conn.execute("SELECT revision FROM profiles WHERE id GLOB ? "
+                            'ORDER BY revision DESC LIMIT 1',
+                            (profile_id.replace('[', '[[]').replace('*', '[*]')
+                             .replace('?', '[?]') + '@*',)).fetchone() \
+            if 'revision' in {row[1] for row in conn.execute('PRAGMA table_info(profiles)')} else None
+        if head is not None:
+            return profile_id, int(head[0] or 1)
+        raise apiv1.ApiError('E_STATE_NOT_FOUND', status=404,
+                             details={'field': 'profile_id', 'profile_id': profile_id},
+                             action=tr('выберите профиль из GET /v1/profiles',
+                                       'pick a profile from GET /v1/profiles'))
+
+    def _op_pools_create(self, call):
         def action(workbench):
             body = call.body or {}
             pool_id = str(body.get('name') or body.get('id') or '').strip()
             if not pool_id:
                 raise apiv1.field_error('name', tr('имя пула обязательно', 'a pool needs a name'))
+            if workbench.pools().get(pool_id) is not None:
+                raise apiv1.ApiError('E_CONFLICT_IDEMPOTENCY', status=409,
+                                     details={'id': pool_id},
+                                     action=tr('выберите другое имя', 'choose another name'))
+            profile_id, profile_revision = self._pool_profile(workbench, body.get('profile_id'))
             spec = workbench.pools().create(
                 pool_id, collection_id=str(body.get('collection_id') or schema_public_collection()),
-                profile_id=str(body.get('profile_id') or ''),
+                profile_id=profile_id, profile_revision=profile_revision,
                 desired=int(body.get('desired') or 0), minimum=int(body.get('minimum') or 0),
                 reserve=int(body.get('reserve') or 0), policy=body.get('policy') or None)
             return _pool_dict(spec)
         return self._with_workbench(action)
 
     def _op_pools_update(self, call):
-        from . import pools as pools_module
-
         def action(workbench):
             store = workbench.pools()
             pool_id = str(call.params.get('id') or '')
@@ -1912,9 +2220,16 @@ class WorkbenchService(apiv1.Service):
                                      details={'expected': call.expected_revision,
                                               'stored': getattr(spec, 'revision', 1)})
             body = call.body or {}
-            if body.get('desired') is not None:
-                spec = pools_module.evict(spec, int(body['desired']), pool_id=pool_id) \
-                    if False else spec
+            name = body.get('name')
+            if name is not None and str(name).strip() != pool_id:
+                # A pool's name is its id: members, leases, schedules and
+                # gateway bindings all refer to it.  Renaming it used to be
+                # accepted and silently dropped.
+                raise apiv1.field_error(
+                    'name', tr('имя пула — его идентификатор и не меняется',
+                               'the name of a pool is its id and cannot be changed'),
+                    action=tr('создайте новый пул с нужным именем',
+                              'create a new pool with the name you want'))
             if body.get('policy'):
                 store.set_policy(pool_id, body['policy'])
             if body.get('desired') is not None or body.get('reserve') is not None or \
@@ -2057,8 +2372,7 @@ class WorkbenchService(apiv1.Service):
             engine = self._scheduler(workbench)
             items = [_schedule_dict(spec) for spec in engine.list()
                      if self._schedule_visible(spec, call, workbench)]
-            return self.page(items, 'schedules', offset=call.query.get('cursor_seq', 0),
-                             limit=call.query.get('limit'))
+            return self._paged(call, items, 'schedules')
         return self._with_workbench(action)
 
     def _op_schedules_get(self, call):
@@ -2103,6 +2417,13 @@ class WorkbenchService(apiv1.Service):
                 payload['collection_id'] = pool.collection_id
             else:
                 payload['collection_id'] = payload.get('collection_id') or schema_public_collection()
+                if workbench.conn.execute('SELECT 1 FROM collections WHERE id=?',
+                                          (payload['collection_id'],)).fetchone() is None:
+                    # A schedule on a collection that does not exist was
+                    # stored and then failed on every run.
+                    raise apiv1.ApiError('E_STATE_NOT_FOUND', status=404,
+                                         details={'field': 'collection_id',
+                                                  'collection_id': payload['collection_id']})
             from . import scheduler
             spec = scheduler.ScheduleSpec.from_dict(payload)
             if not self._schedule_visible(spec, call, workbench):
@@ -2113,7 +2434,7 @@ class WorkbenchService(apiv1.Service):
 
     #: The API's schedule vocabulary mapped onto the module's own names.  A
     #: field the module does not know is dropped *here*, on purpose, and never
-    #: passed through as if it had been understood (CONTRACTS §5.4).
+    #: passed through as if it had been understood.
     SCHEDULE_KINDS = {'check': 'interval', 'refill': 'interval', 'recheck': 'interval',
                       'export': 'interval', 'source': 'interval'}
 
@@ -2231,7 +2552,7 @@ class WorkbenchService(apiv1.Service):
 
         It is a separate file from the bundled catalog on purpose: a catalog is
         read-only research, this file is the user's choice, and neither is
-        rewritten by an update (F13, F27).
+        rewritten by an update.
         """
         return read_source_settings(self.data)
 
@@ -2256,6 +2577,10 @@ class WorkbenchService(apiv1.Service):
         view = self._source_view(call)
         rows = view.get('sources') or []
         end = view.get('offset', 0) + len(rows)
+        # One read of the catalog for the three header fields: an accepted
+        # catalog in the data folder is ~650 KB of JSON that ``_catalog`` parses
+        # and validates on every call, and this used to be done three times.
+        catalog = self._catalog()
         return {'items': self._guard_objects(rows, call, 'id', 'sources'),
                 'stream_id': 'sources-catalog',
                 'next_seq': end if end < view.get('total', len(rows)) else None,
@@ -2266,9 +2591,9 @@ class WorkbenchService(apiv1.Service):
                 'facets': view.get('facets'),
                 'access_groups': view.get('access_groups'),
                 'sets': view.get('sets'),
-                'schema_version': self._catalog().get('schema_version'),
-                'published_at': self._catalog().get('published_at'),
-                'revision': self._catalog().get('revision')}
+                'schema_version': catalog.get('schema_version'),
+                'published_at': catalog.get('published_at'),
+                'revision': catalog.get('revision')}
 
     def _source_view(self, call, *, source_ids=None, query=None):
         """``source_management.build_view`` over the local database."""
@@ -2465,7 +2790,7 @@ class WorkbenchService(apiv1.Service):
                 'selected': list(result.get('selected_ids', ()))}
 
     def _op_sources_refresh_preview(self, call):
-        """What a refresh would decide, with its own reasons (F27).
+        """What a refresh would decide, with its own reasons.
 
         The decision comes from ``sourcedesk`` and the *state* comes from the
         ``source_feed`` row the last collection wrote.  The old handler
@@ -2475,7 +2800,33 @@ class WorkbenchService(apiv1.Service):
         return self._source_refresh_state(call, refresh=False)
 
     def _op_sources_refresh(self, call):
-        return self._source_refresh_state(call, refresh=True)
+        """The refresh decision, reported under a job id as the route promises.
+
+        The route is an async job and the transport requires a ``job_id``; the
+        handler returned the plan without one, so every call answered
+        ``503 E_SERVICE_UNAVAILABLE``.  The decision is recorded as a finished
+        job, the same way imports report, so a client can follow it.
+        """
+        body = self._source_refresh_state(call, refresh=True)
+
+        def action(workbench):
+            return self._record_job(workbench, 'source_refresh',
+                                    str((call.body or {}).get('collection_id')
+                                        or schema_public_collection()), 0)
+        body['job_id'] = self._with_workbench(action)
+        return body
+
+    def _known_source(self, source_id):
+        """Whether a source id names a catalog entry or one of the user's own."""
+        catalog = self._catalog()
+        if any(isinstance(item, dict) and item.get('id') == source_id
+               for item in catalog.get('sources') or ()):
+            return True
+        selection = self._catalog_settings().get('source_selection', {})
+        known = set(selection.get('selected_ids', ())) | set(selection.get('download_disabled_ids', ()))
+        known |= {item.get('id') for item in selection.get('custom_sources') or ()
+                  if isinstance(item, dict)}
+        return source_id in known
 
     def _feed_state_of(self, source_id, collection_id):
         """The real ``source_feed`` row of one source, or a state that says so."""
@@ -2524,6 +2875,9 @@ class WorkbenchService(apiv1.Service):
     def _source_refresh_state(self, call, *, refresh):
         from . import sourcedesk
         wanted = str(call.params.get('id') or '')
+        if not self._known_source(wanted):
+            # An unknown id used to get a plan of its own ("never fetched").
+            raise apiv1.ApiError('E_STATE_NOT_FOUND', status=404, details={'id': wanted})
         state = self._feed_state_of(wanted, schema_public_collection())
         fetched = bool(state.active or state.last_good or state.last_attempt_at)
         if not fetched:
@@ -2568,6 +2922,8 @@ class WorkbenchService(apiv1.Service):
     def _op_sources_refresh_status(self, call):
         from . import sourcedesk
         wanted = str(call.params.get('id') or '')
+        if not self._known_source(wanted):
+            raise apiv1.ApiError('E_STATE_NOT_FOUND', status=404, details={'id': wanted})
         state = self._feed_state_of(wanted, schema_public_collection())
         diagnostics = sourcedesk.feed_diagnostics(state, now=self.clock())
         return {'source_id': wanted, 'job_id': str(call.params.get('job_id') or ''),
@@ -2586,15 +2942,18 @@ class WorkbenchService(apiv1.Service):
         except (OSError, UnicodeError, ValueError):
             return None
 
-    # -- source comparison (F21) --------------------------------------------
+    # -- source comparison --------------------------------------------
 
     def _op_sources_compare(self, call):
+        _require_compare_scope(call)
         return self._with_workbench(lambda workbench: self._compare_sources(workbench, call))
 
     def _op_sources_compare_suppliers(self, call):
+        _require_compare_scope(call)
         return self._with_workbench(lambda workbench: self._compare_suppliers(workbench, call))
 
     def _op_sources_compare_cohorts(self, call):
+        _require_compare_scope(call)
         return self._with_workbench(lambda workbench: self._compare_cohorts(workbench, call))
 
     def _comparison_cohort(self, workbench, call, sources, *, default_label=''):
@@ -2681,24 +3040,51 @@ class WorkbenchService(apiv1.Service):
     # -- gateway ------------------------------------------------------------
 
     def _op_gateway_bindings(self, call):
-        return {'items': self._gateway_bindings(), 'stream_id': 'gateway', 'next_seq': None}
+        items = self._gateway_bindings()
+        allowed = _scope_values(call.principal, 'pools')
+        if allowed is not None:
+            items = [item for item in items if item.get('pool_id') in allowed]
+        return {'items': items, 'stream_id': 'gateway', 'next_seq': None,
+                'published': self._gateway_published()}
 
     def _gateway_bindings(self):
+        """The bindings ``gateway.bind`` stored, one per listener.
+
+        They are written as ``export_artifact`` rows of kind ``binding``; this
+        listing used to describe the published snapshot only, so a binding
+        that had just been accepted never appeared in it.
+        """
+        conn = self.connection()
+        try:
+            rows = conn.execute("SELECT manifest_json FROM export_artifact WHERE kind='binding' "
+                                'ORDER BY id').fetchall() if conn is not None else []
+        except sqlite3.Error:
+            rows = []
+        finally:
+            _close(conn)
+        items = []
+        for row in rows:
+            try:
+                item = json.loads(row[0] or '{}')
+            except (TypeError, ValueError):
+                continue
+            if isinstance(item, dict) and item.get('listener'):
+                items.append(item)
+        return items
+
+    def _gateway_published(self):
         rows, status = self.exports.load()
-        return [{'generation': status.get('generation'),
-                 'collection_id': status.get('collection_id'),
-                 'profile': status.get('profile'),
-                 'profile_revision': status.get('profile_revision'),
-                 'listeners': self._gateway_listeners(),
-                 'available': len(rows)}]
+        return {'generation': status.get('generation'),
+                'collection_id': status.get('collection_id'),
+                'profile': status.get('profile'),
+                'profile_revision': status.get('profile_revision'),
+                'available': len(rows)}
 
     def _gateway_listeners(self):
-        try:
-            from . import gateway
-            return [{'host': gateway.DEFAULT_HOST, 'port': gateway.DEFAULT_PORT,
-                     'running': False}]
-        except Exception:
-            return []
+        config = self._gateway_config()
+        return [{'host': config['listen_host'], 'port': config['listen_port'],
+                 'listen_host': config['listen_host'], 'listen_port': config['listen_port'],
+                 'running': False}]
 
     def _op_gateway_listeners(self, call):
         return {'items': self._gateway_listeners(), 'stream_id': 'gateway-listeners', 'next_seq': None}
@@ -2707,55 +3093,135 @@ class WorkbenchService(apiv1.Service):
         return {'items': [], 'stream_id': 'gateway-sessions', 'next_seq': None, 'total': 0,
                 'note': tr('сессии живут в процессе шлюза, а не в файле', 'sessions live in the gateway process, not in a file')}
 
-    def _op_gateway_config_get(self, call):
+    #: Where the control API keeps the gateway configuration it is given.
+    GATEWAY_CONFIG_FILE = 'api-gateway-config.json'
+    GATEWAY_CONFIG_FIELDS = ('listen_host', 'listen_port', 'transports', 'max_per_proxy',
+                             'connect_timeout_s', 'handshake_deadline_s', 'session_ttl_s')
+
+    def _gateway_config(self):
+        """The stored configuration over the gateway's own defaults, with its revision."""
         from . import gateway
-        return {'host': gateway.DEFAULT_HOST, 'port': gateway.DEFAULT_PORT,
-                'transports': ['http', 'socks5'], 'bind': 'loopback'}
+        config = {'listen_host': gateway.DEFAULT_HOST, 'listen_port': gateway.DEFAULT_PORT,
+                  'transports': ['http', 'socks5'], 'max_per_proxy': None,
+                  'connect_timeout_s': 8, 'handshake_deadline_s': 30, 'session_ttl_s': 600,
+                  'revision': 1}
+        try:
+            stored = json.loads((self.data / self.GATEWAY_CONFIG_FILE).read_text(encoding='utf-8'))
+        except (OSError, UnicodeError, ValueError):
+            stored = {}
+        if isinstance(stored, dict):
+            config.update({name: stored[name] for name in (*self.GATEWAY_CONFIG_FIELDS, 'revision')
+                           if name in stored})
+        config['revision'] = int(config.get('revision') or 1)
+        return config
+
+    def _op_gateway_config_get(self, call):
+        config = self._gateway_config()
+        loopback = is_loopback(str(config['listen_host']))
+        return {**config, 'host': config['listen_host'], 'port': config['listen_port'],
+                'bind': 'loopback' if loopback else 'network'}
 
     def _op_gateway_bind(self, call):
-        """Record a binding in the snapshot's own scope; it does not start a process.
+        """Record a binding of one listener; it does not start a process.
 
         A binding is a decision, and a decision that started a listener from an
-        HTTP request would be a surprise the user never asked for.
+        HTTP request would be a surprise the user never asked for.  One
+        listener has one binding; its revision starts at 1 and moves by one on
+        every change, and a stale ``If-Match`` is refused.
         """
-        from . import db as schema
         body = call.body or {}
+        listener = str(body.get('listener') or 'default')
         conn = self.writable_connection()
         try:
+            conn.execute('BEGIN IMMEDIATE')
             pool_id = str(body.get('pool_id') or '')
             row = conn.execute('SELECT id, collection_id, profile_id, profile_revision FROM pools WHERE id=?',
                                (pool_id,)).fetchone()
             if row is None:
                 raise apiv1.ApiError('E_STATE_NOT_FOUND', status=404, details={'pool_id': pool_id})
-            binding = {'listener': str(body.get('listener') or 'default'), 'pool_id': pool_id,
-                       'collection_id': row['collection_id'], 'profile_id': row['profile_id'],
+            key = f'bind:{listener}'
+            stored = conn.execute('SELECT manifest_json FROM export_artifact WHERE id=?',
+                                  (key,)).fetchone()
+            try:
+                current = int(json.loads(stored[0] or '{}').get('revision') or 1) if stored else None
+            except (TypeError, ValueError, AttributeError):
+                current = 1
+            expected = call.expected_revision
+            if expected is not None and int(expected) != (current or 1):
+                raise apiv1.ApiError('E_CONFLICT_REVISION', status=409,
+                                     details={'expected': int(expected), 'stored': current or 1},
+                                     action=tr('перечитайте привязки и повторите',
+                                               'read the bindings again and retry'))
+            binding = {'listener': listener, 'pool_id': pool_id,
+                       'collection_id': row['collection_id'],
+                       'profile_id': body.get('profile_id') or row['profile_id'],
                        'profile_revision': row['profile_revision'],
-                       'generation': body.get('generation'), 'revision': self.clock()}
+                       'generation': body.get('generation'),
+                       'session_ttl_s': body.get('session_ttl_s'),
+                       'revision': 1 if current is None else current + 1,
+                       'updated_at': self.clock()}
             conn.execute(
                 'INSERT OR REPLACE INTO export_artifact(id, kind, collection_id, profile_id, '
                 'profile_revision, generation, published_at, state, manifest_json) '
                 'VALUES (?,?,?,?,?,?,?,?,?)',
-                (f'bind:{pool_id}', 'binding', row['collection_id'], row['profile_id'],
+                (key, 'binding', row['collection_id'], binding['profile_id'],
                  row['profile_revision'], body.get('generation') or '', self.clock(), 'ready',
                  json.dumps(binding, ensure_ascii=False)))
-            conn.commit()
+            conn.execute('COMMIT')
             return binding
         except sqlite3.Error as exc:
             raise apiv1.ApiError('E_STATE_SNAPSHOT_STATIC', status=503,
                                  message=type(exc).__name__) from None
         finally:
+            if conn.in_transaction:
+                conn.execute('ROLLBACK')
             _close(conn)
 
     def _op_gateway_config_set(self, call):
+        """Store a new gateway configuration under its revision.
+
+        The body used to be ignored and ``applied: false`` returned whatever it
+        said, so a stale revision or an unknown transport was accepted.  The
+        stored configuration is what ``GET /v1/gateway/config`` and the
+        listener listing report; a running gateway keeps its settings until it
+        is started again.
+        """
+        from . import gateway
         body = call.body or {}
         if call.expected_revision is None:
             raise apiv1.ApiError('E_VALIDATION_FIELD',
                                  details={'field': 'revision', 'required': 'If-Match'},
                                  message=tr('конфигурация шлюза меняется с ревизией',
                                             'gateway config changes carry a revision'))
-        return {'revision': call.expected_revision, 'applied': False,
-                'reason': tr('шлюз перечитывает конфигурацию при следующем запуске',
-                             'the gateway reads its configuration on the next start')}
+        with _GATEWAY_CONFIG_LOCK:
+            current = self._gateway_config()
+            if int(call.expected_revision) != current['revision']:
+                raise apiv1.ApiError('E_CONFLICT_REVISION', status=409,
+                                     details={'expected': int(call.expected_revision),
+                                              'stored': current['revision']},
+                                     action=tr('перечитайте конфигурацию и повторите',
+                                               'read the configuration again and retry'))
+            if 'transports' in body:
+                transports = body['transports']
+                if not isinstance(transports, list) or not transports or \
+                        not all(isinstance(item, str) for item in transports):
+                    raise apiv1.field_error('transports', tr('нужен непустой список',
+                                                             'a non-empty list is required'))
+                unknown = sorted({item for item in transports if item not in gateway.SUPPORTED})
+                if unknown:
+                    raise apiv1.ApiError(
+                        'E_VALIDATION_FIELD', status=400,
+                        details={'field': 'transports', 'reason': 'unknown transport',
+                                 'unknown': unknown, 'supported': list(gateway.SUPPORTED)})
+                body = dict(body, transports=list(dict.fromkeys(transports)))
+            changed = {name: body[name] for name in self.GATEWAY_CONFIG_FIELDS if name in body}
+            updated = {**current, **changed}
+            if any(current.get(name) != value for name, value in changed.items()):
+                updated['revision'] = current['revision'] + 1
+                stored = {name: updated[name] for name in (*self.GATEWAY_CONFIG_FIELDS, 'revision')}
+                proxytool.atomic(self.data / self.GATEWAY_CONFIG_FILE,
+                            json.dumps(stored, ensure_ascii=False, indent=1))
+        return {**updated, 'applied': True, 'restart_required': True}
 
     # -- profiles -----------------------------------------------------------
 
@@ -2857,8 +3323,7 @@ class WorkbenchService(apiv1.Service):
         puts it back in service, a negative one parks it in cooldown.  The
         per-target detail the route accepts has nowhere to live -- there is no
         feedback table -- so it is echoed back as ``stored: false`` with the
-        reason instead of being dropped in silence (F07).  See the handoff to
-        ``db.py`` for the table this is waiting on.
+        reason instead of being dropped in silence.
         """
         from . import pools as pools_module
         body = call.body or {}
@@ -2894,8 +3359,7 @@ class WorkbenchService(apiv1.Service):
                 'note': tr('отзыв применён к пулу, глобальная репутация не меняется',
                            'the feedback was applied to the pool; global reputation is unchanged'),
                 'not_stored': ({'fields': sorted(unstored),
-                                'reason': 'no feedback table in the schema; see docs/integration/'
-                                          'HANDOFF/fix-api.md'} if unstored else {})}
+                                'reason': 'no feedback table in the schema'} if unstored else {})}
 
     def _pool_candidates(self, call, pool_id):
         """The addresses *this* pool can serve right now, best first.
@@ -2904,7 +3368,7 @@ class WorkbenchService(apiv1.Service):
         the published snapshot and used ``pool_id`` for nothing but the scope
         check, so a lease over a pool of collection B handed out addresses of
         collection A.  The rows are the pool's own members and the admission is
-        the shared contract's, never a second calculation here (CONTRACTS §2.3).
+        the shared contract's, never a second calculation here.
         """
         from . import core
         from . import pools as pools_module
@@ -3002,7 +3466,13 @@ class WorkbenchService(apiv1.Service):
         rows, status = self.exports.load()
         if not wanted:
             return self._result_page(call, [], status, stream_kind='selection')
-        picked = [row for row in rows if row.get('proxy') in wanted or row.get('endpoint_id') in wanted]
+        # The same three spellings ``results.detail`` accepts: an endpoint id,
+        # a full URL, or ``host:port`` (a path- and comma-safe form).
+        names = set(wanted)
+        picked = [row for row in rows
+                  if row.get('proxy') in names or row.get('endpoint_id') in names
+                  or str(row.get('proxy') or '').partition('://')[2] in names]
+        picked = sort_rows(picked, call.query.get('sort'))
         return self._result_page(call, self._guard_objects(picked, call, 'collection_id', 'collections'),
                                  status, stream_kind='selection')
 
@@ -3092,7 +3562,7 @@ def _artifact_is_secret(directory, name):
 
 
 def _error_status(code):
-    """The HTTP status the code canonically carries (CONTRACTS §5.4).
+    """The HTTP status the code canonically carries.
 
     One table, so a refusal never answers 200 with an error body and never
     answers 500 for a plain validation problem.
@@ -3100,6 +3570,10 @@ def _error_status(code):
     name = str(code or '')
     if name.startswith(('E_AUTH_', 'E_CONFLICT_ACCESS')):
         return 401 if 'EXPIRED' in name or 'FAILED' in name else 403
+    if name.startswith('E_STATE_') and name.endswith('NOT_FOUND'):
+        # ``E_STATE_JOB_NOT_FOUND`` is a missing object: 404, like every other
+        # one, not the 409 of a state conflict.
+        return 404
     if name.startswith(('E_CONFLICT_', 'E_STATE_')):
         return 409
     if name.startswith(('E_POOL_', 'E_EXPORT_', 'E_IMPORT_')):
@@ -3109,8 +3583,12 @@ def _error_status(code):
         return 409 if name != 'E_POOL_UNKNOWN' else 404
     if name.startswith(('E_LIMIT_',)):
         return 429
-    if name.startswith(('E_VALIDATION_', 'E_SECRET_')):
-        return 422
+    if name.startswith('E_VALIDATION_'):
+        # The documented status of a validation error (``openapi.json`` lists
+        # 400, never 422), the same one the transport's own checks answer.
+        return 400
+    if name.startswith('E_SECRET_'):
+        return 409
     if name.startswith('E_SERVICE_'):
         return 503
     return 400
@@ -3157,7 +3635,7 @@ def pool_candidate_source(conn, *, min_success=1.0):
     collection rows that already carry a measurement, and `sources` is the rest --
     offered with ``allowed=False``, which is what puts them in ``recheck_due``
     instead of pretending they work.  The admission verdict is the shared
-    contract's, never a second calculation here (CONTRACTS §2.3).
+    contract's, never a second calculation here.
 
     Nothing is dialled: a candidate is a stored row, and the measurement that
     turns `sources` into `known` is the `pool_recheck` job.
@@ -3430,12 +3908,41 @@ def _compare_source_ids(call):
     return wanted
 
 
+_GATEWAY_CONFIG_LOCK = threading.Lock()
+
+
+def _require_compare_scope(call):
+    """Every collection a comparison names must be inside the key's scope.
+
+    The comparison routes take ``collection_id`` at the top level, inside
+    ``cohort`` and inside each of ``cohorts``; none of them was checked, so a
+    key limited to one collection could read the numbers of any other.  A
+    scoped key that names no collection would compare across all of them, so
+    it has to name one of its own.
+    """
+    allowed = _scope_values(call.principal, 'collections')
+    if allowed is None:
+        return
+    body = call.body or {}
+    cohorts = [item for item in body.get('cohorts') or () if isinstance(item, dict)]
+    named = [body.get('collection_id'), (body.get('cohort') or {}).get('collection_id')]
+    named += [item.get('collection_id') for item in cohorts]
+    named = [str(value) for value in named if value]
+    if not named or (not body.get('collection_id')
+                     and any(not item.get('collection_id') for item in cohorts)):
+        raise apiv1.field_error(
+            'collection_id', tr('ключ ограничен коллекциями: укажите одну из них',
+                                'the key is limited to collections: name one of them'))
+    for value in named:
+        apiv1.require_scope(call.principal, 'collection', value)
+
+
 def _refuse_unsupported_allow_private(body):
     """Refuse a collection-level ``allow_private`` instead of dropping it.
 
     ``allow_private`` was declared on ``POST /v1/collections`` and
     ``PATCH /v1/collections/{id}`` while the ``collections`` table has no such
-    column (CONTRACTS section 3.3, migration 2).  The handlers read ``name``
+    column .  The handlers read ``name``
     and ``kind``, ignored the flag and answered 200, so a client that sent
     ``{"name": "priv", "kind": "own", "allow_private": true}`` was told the
     collection was created and then kept sending private addresses to an import
@@ -3471,7 +3978,7 @@ def _refuse_unsupported_allow_private(body):
                   f'`POST /v1/collections/{{id}}/imports/preview` instead'))
 
 
-#: The kinds a key's resource scope is expressed in (CONTRACTS §5.3: a key is
+#: The kinds a key's resource scope is expressed in (the shared contract: a key is
 #: limited to named `collection_id` and `pool_id`).  Every other kind is filtered
 #: by the collection the object belongs to, never by a scope list that cannot exist.
 SCOPE_KINDS = ('collections', 'pools')
@@ -3502,7 +4009,7 @@ def _scope_values(principal, kind):
     -- answers with the *collections*, because that is the only thing such an object
     can be inside.  Returning ``None`` there used to read as "this key is
     unrestricted": the principal carries no ``jobs`` attribute, so a key scoped to
-    one collection received every other collection's object list (F29).  The same
+    one collection received every other collection's object list.  The same
     rule withholds the shared configuration a scoped key has no claim to: a source
     row carries the provider URL verbatim, credential included.
     """
@@ -3563,7 +4070,7 @@ class Reservations:
 
     The registry lives in the service, which is the process that hands the
     addresses out.  A restart forgets it, so two servers on one database would
-    still both lease; see the handoff for the durable table in ``db.py``.
+    still both lease.
     """
 
     def __init__(self, clock=None):
@@ -3701,8 +4208,7 @@ class LegacyKeyStore(apiv1.KeyStore):
 
     It is deliberately *not* registered as an API key: it keeps exactly the
     permissions it had in 2.x (``read.*``), it is never upgraded to admin, and
-    the pipeline marks every use as a deprecated compatibility path
-    (CONTRACTS §5.1, F29).
+    the pipeline marks every use as a deprecated compatibility path.
     """
 
     REQUIRED = apiv1.KeyStore.REQUIRED
@@ -3769,7 +4275,7 @@ def key_manager(data, db_path=None):
 
     A database that does not exist yet is created through the one migrator, so a
     fresh installation can still be given its first administrator key: refusing
-    here would leave the user with no way into ``/v1`` at all (F29).
+    here would leave the user with no way into ``/v1`` at all.
     """
     from . import proxytool as engine
     path = Path(db_path) if db_path else Path(data) / 'proxies.sqlite3'
@@ -3817,6 +4323,37 @@ def make_control_api(data, host='127.0.0.1', port=V1_DEFAULT_PORT, token=None,
     return _with_job_runner(server, data) if execute_jobs else server
 
 
+#: A bind on every interface.  The address itself is never what a client dials.
+WILDCARD_HOSTS = ('0.0.0.0', '::', '')
+
+
+def accepted_host_names(host):
+    """The ``Host`` names ``/v1`` answers for a server bound to ``host``.
+
+    A loopback bind is reached as ``localhost`` as often as by its number, and
+    a network bind (``serve --host 0.0.0.0 --api-token ...``) is reached by the
+    machine's own name and addresses -- before this, the wildcard bind only
+    accepted ``Host: 0.0.0.0``, which no client sends.  Every other name is
+    still refused, which is what keeps DNS rebinding out.  Nothing here
+    resolves a name: the addresses come from the local routing table.
+    """
+    names = [str(host or '').strip('[]'), *apiv1.LOOPBACK_HOSTS]
+    if not is_loopback(str(host or '')):
+        import socket
+        try:
+            hostname = socket.gethostname().strip().rstrip('.')
+        except OSError:
+            hostname = ''
+        if hostname:
+            short = hostname.split('.')[0]
+            names += [hostname, short, short + '.local']
+        if str(host or '').strip('[]') in WILDCARD_HOSTS:
+            from .local_network import route_addresses
+            names += list(route_addresses())
+    return tuple(dict.fromkeys(name.lower() for name in names
+                               if name and name not in WILDCARD_HOSTS))
+
+
 def make_api_server(data, host='127.0.0.1', port=DEFAULT_PORT, token=None, v1=True,
                     execute_jobs=False):
     """The 2.x read-only server, with ``/v1`` served from the same socket.
@@ -3835,8 +4372,11 @@ def make_api_server(data, host='127.0.0.1', port=DEFAULT_PORT, token=None, v1=Tr
     service = WorkbenchService(data, exports=exports, key_store=manager)
     # ``port=0`` means "any free port"; the config wants the real number, and a
     # loopback bind needs no host allow-list beyond itself.
+    # A loopback bind is reached as ``localhost`` as often as by its number;
+    # naming only the bind address made ``http://localhost:8765/v1/...`` answer
+    # ``E_AUTH_ORIGIN`` while the legacy paths on the same socket answered it.
     control = apiv1.ApiV1(service, LegacyKeyStore(token, manager),
-                          apiv1.ApiConfig(host=host, allowed_hosts=(host,),
+                          apiv1.ApiConfig(host=host, allowed_hosts=accepted_host_names(host),
                                           allowed_bind_hosts=(host,),
                                           allow_remote_bind=bool(token)))
 
@@ -3896,6 +4436,9 @@ def make_api_server(data, host='127.0.0.1', port=DEFAULT_PORT, token=None, v1=Tr
         def do_DELETE(self):
             self.do_GET()
 
+        def do_PUT(self):
+            self.do_GET()
+
         def do_OPTIONS(self):
             self.do_GET()
 
@@ -3924,16 +4467,49 @@ def make_api_server(data, host='127.0.0.1', port=DEFAULT_PORT, token=None, v1=Tr
 
         def _control(self):
             url = urlsplit(self.path)
-            length = int(self.headers.get('Content-Length') or 0)
-            body = self.rfile.read(min(length, control.config.max_body_bytes + 1)) if length else b''
+            try:
+                length = max(0, int(self.headers.get('Content-Length') or 0))
+            except ValueError:
+                # A malformed length used to raise out of the handler and drop
+                # the connection with no answer at all.
+                self.close_connection = True
+                return self.send_json(400, {'error': {
+                    'code': 'E_VALIDATION_SCHEMA',
+                    'message': 'the Content-Length header is not a number'}})
+            capped = min(length, control.config.max_body_bytes + 1)
+            body = self.rfile.read(capped) if capped else b''
+            if length > capped:
+                self.close_connection = True
             response = control.handle(apiv1.Request(
                 method=self.command, path=url.path, query=url.query,
                 headers=dict(self.headers.items()), body=body,
                 client_host=self.client_address[0]))
-            self.send(response.status, response.body, response.content_type, tuple(response.headers))
-            if response.stream is not None:
-                for chunk in response.stream:
-                    self.wfile.write(chunk)
+            if response.stream is None:
+                return self.send(response.status, response.body, response.content_type,
+                                 tuple(response.headers))
+            # An event stream has no length known in advance.  It used to be
+            # sent with ``Content-Length: 0`` and its frames written as ``str``,
+            # so the client read an empty body and the thread died on the
+            # first frame.  This handler speaks HTTP/1.0: the body is the
+            # frames, and the end of the stream is the end of the connection.
+            self.close_connection = True
+            self.send_response(response.status)
+            self.send_header('Content-Type', response.content_type)
+            self.send_header('X-Content-Type-Options', 'nosniff')
+            for name, value in response.headers:
+                self.send_header(name, value)
+            if not any(name.lower() == 'cache-control' for name, _ in response.headers):
+                self.send_header('Cache-Control', 'no-store')
+            self.send_header('Connection', 'close')
+            self.end_headers()
+            if self.command == 'HEAD':
+                return
+            try:
+                for frame in response.stream:
+                    self.wfile.write(frame.encode('utf-8') if isinstance(frame, str) else frame)
+                    self.wfile.flush()
+            except OSError:
+                pass  # the subscriber went away; the stream releases its slot itself
 
         def do_GET(self):
             url = urlsplit(self.path)
@@ -3944,11 +4520,14 @@ def make_api_server(data, host='127.0.0.1', port=DEFAULT_PORT, token=None, v1=Tr
             allowed, notice = self.authorized(url.query)
             if not allowed:
                 return self.send_json(401, {'error': 'missing or wrong token'}, headers=notice)
+            if self.command not in ('GET', 'HEAD'):
+                # Every legacy path is a read.  Only the source paths used to
+                # say so; ``POST /proxies`` or ``DELETE /status`` answered 200
+                # with the data, as if the method had meant something.
+                self.discard_legacy_body()
+                return self.send_json(405, {'error': 'read-only endpoint'},
+                                      headers=(('Allow', 'GET, HEAD'), *notice))
             if url.path == '/source-sets' or url.path == '/sources' or url.path.startswith('/sources/'):
-                if self.command not in ('GET', 'HEAD'):
-                    self.discard_legacy_body()
-                    return self.send_json(405, {'error': 'read-only endpoint'},
-                                          headers=(('Allow', 'GET, HEAD'), *notice))
                 from . import source_management
                 source_id = url.path.removeprefix('/sources/') if url.path.startswith('/sources/') else None
                 if source_id is not None and (not source_id or '/' in source_id):

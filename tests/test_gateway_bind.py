@@ -1,4 +1,4 @@
-"""Defect 18 / R12 / CONTRACTS §5.1: the gateway password is its own identity and LAN is opt-in.
+"""Defect 18 / R12 / the shared contract: the gateway password is its own identity and LAN is opt-in.
 
 The old code let the GUI hand its session token to the gateway listener and
 bound ``0.0.0.0`` by default, so the secret printed into a phone QR was also the

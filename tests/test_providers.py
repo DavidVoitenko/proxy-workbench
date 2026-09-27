@@ -15,7 +15,7 @@ from proxy_workbench import api, geoip, gui
 from proxy_workbench import proxytool as p
 
 #: A result fixture describes a measurement that just happened; the
-#: admission contract has no "fresh forever" state (CONTRACTS §2.4).
+#: admission contract has no "fresh forever" state.
 _NOW = time.time()
 
 ASN_CSV = ('11.0.0.0,11.0.0.255,64500,Example Home Broadband\n'
@@ -101,7 +101,7 @@ class ProviderTests(unittest.TestCase):
         db.close()
         # The table, the API and the engine only agree on which rows exist once a
         # snapshot is published: the collection and the profile come from the
-        # published status, not from a guess (CONTRACTS §1.2 rule 2).
+        # published status, not from a guess.
         (self.home / 'last-profile.txt').write_text('fx')
         server = gui.make_server(self.home)
         thread = threading.Thread(target=server.serve_forever, daemon=True)

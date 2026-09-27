@@ -43,7 +43,7 @@ class JobFixture(unittest.TestCase):
 
     The schema comes from `db.migrate()` when the migrator is in the tree, so
     these tests run against the real migration 6 and not against a private
-    copy of it (HANDOFF §2.2).  `jobs.install_schema` is the fallback and the
+    copy of it.  `jobs.install_schema` is the fallback and the
     second source of the same four tables.
     """
 

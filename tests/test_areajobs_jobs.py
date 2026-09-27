@@ -1,6 +1,6 @@
 """F11 / defect 6 acceptance, run against the real migrator.
 
-MASTER-PROMPT F11: «остановка на любой стадии не теряет завершённые
+Requirement: «остановка на любой стадии не теряет завершённые
 observations, повторный запрос не создаёт дубликат job, resume не расширяет
 scope и не использует obsolete membership».
 
@@ -220,7 +220,7 @@ class ResumeScopeTest(JobFixture):
 
 
 class BoundedWritersTest(JobFixture):
-    """F11: «ограничение числа одновременно изменяющих БД исполнителей» (CONTRACTS §6.4)."""
+    """F11: «ограничение числа одновременно изменяющих БД исполнителей»."""
 
     def test_a_second_job_may_not_start_while_one_is_running(self):
         first = self.submit('ep-01')

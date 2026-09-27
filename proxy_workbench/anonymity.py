@@ -112,7 +112,7 @@ def extract_public_ips(text, *, global_only=True):
 
 
 def classify_detail(body, own_ips, *, judge_verified=True, spec=None):
-    """Classify one judge echo through the one classifier (defect 13).
+    """Classify one judge echo through the one classifier.
 
     ``own_ips`` is the bootstrap set from the direct judge request.
     ``judge_verified`` must be ``False`` whenever that direct request did not

@@ -128,6 +128,55 @@ lock.release()
         self.assertEqual(json.loads(output.getvalue()), {'running': False, 'data': str(self.layout.data)})
         self.assertFalse(self.layout.data.exists())
 
+    def test_quit_routes_to_the_host_and_is_a_no_op_when_nothing_runs(self):
+        self.assertEqual(entry.resolve(['--quit'])[0], 'desktop')
+        self.assertEqual(entry.resolve(['--data', 'folder', '--quit'])[0], 'desktop')
+        output = io.StringIO()
+        with mock.patch.dict(os.environ, {'HOME': str(self.root), 'USERPROFILE': str(self.root)}, clear=True), \
+                mock.patch.object(desktop, 'tr', side_effect=lambda ru, en: en), \
+                mock.patch.object(desktop, 'control_request') as request, contextlib.redirect_stdout(output):
+            self.assertEqual(entry.main(['--data', str(self.layout.data), '--quit']), 0)
+        request.assert_not_called()
+        self.assertIn('not running', output.getvalue())
+        self.assertFalse(self.layout.data.exists())
+
+    def test_quit_asks_the_running_instance_and_waits_until_it_lets_go(self):
+        owner = desktop.InstanceLock(self.layout)
+        self.addCleanup(owner.release)
+        self.assertTrue(owner.acquire())
+        owner.publish(desktop.Instance(os.getpid(), 'tcp://127.0.0.1:12345', 'local-test-token'))
+        sent = []
+
+        def answer(address, token, request, **_):
+            sent.append((address, token, request))
+            owner.release()           # what the host does once its listeners are down
+            return {'ok': True, 'bye': True}
+
+        with mock.patch.object(desktop, 'control_request', side_effect=answer), \
+                mock.patch.object(desktop, 'tr', side_effect=lambda ru, en: en), \
+                contextlib.redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(desktop._quit_running(self.layout, timeout=5), 0)
+        self.assertEqual(sent, [('tcp://127.0.0.1:12345', 'local-test-token',
+                                 {'action': 'quit', 'reason': 'command'})])
+        self.assertIn('has quit', output.getvalue())
+
+    def test_quit_reports_an_instance_that_does_not_go_away(self):
+        owner = desktop.InstanceLock(self.layout)
+        self.addCleanup(owner.release)
+        self.assertTrue(owner.acquire())
+        owner.publish(desktop.Instance(os.getpid(), 'tcp://127.0.0.1:12345', 'local-test-token'))
+        english = mock.patch.object(desktop, 'tr', side_effect=lambda ru, en: en)
+        english.start()
+        self.addCleanup(english.stop)
+        with mock.patch.object(desktop, 'control_request', return_value={'ok': True, 'bye': True}), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as errors:
+            self.assertEqual(desktop._quit_running(self.layout, timeout=0.5), 2)
+        self.assertIn('not quit', errors.getvalue())
+        with mock.patch.object(desktop, 'control_request', return_value={'ok': False, 'error': 'gone'}), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as errors:
+            self.assertEqual(desktop._quit_running(self.layout, timeout=0.5), 2)
+        self.assertIn('gone', errors.getvalue())
+
     def test_no_browser_is_preserved_on_second_launch(self):
         host = desktop.DesktopHost(self.layout, ['--no-browser'], tray=False)
         record = desktop.Instance(os.getpid(), 'tcp://127.0.0.1:12345', 'local-test-token')

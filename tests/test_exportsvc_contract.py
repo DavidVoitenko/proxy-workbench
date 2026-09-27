@@ -1,6 +1,6 @@
 """Snapshot contract: scope, profile, policy, status, schema version.
 
-CONTRACTS.ru.md §4.2-§4.3: what a snapshot says, what a reader may accept, and
+the shared contract: what a snapshot says, what a reader may accept, and
 which legacy names must keep working.
 """
 import json

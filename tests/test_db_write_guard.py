@@ -1,6 +1,6 @@
 """F24: an old binary must not be able to write into the new schema.
 
-CONTRACTS §3.5: the new schema breaks the old positional INSERTs immediately and
+the shared contract: the new schema breaks the old positional INSERTs immediately and
 without a write, on the whole collection path -- `results`, `candidates` and
 `candidate_seen` -- while `candidate_meta` is a deliberate exception.
 """

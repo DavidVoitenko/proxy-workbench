@@ -1,6 +1,6 @@
 """Own proxy credentials: a vault-backed secret store, access identities and rotation.
 
-Implements F04. Contract references: CONTRACTS.ru.md §1.2(1) (an access is not an
+Implements F04. Contract references: the shared contract (an access is not an
 endpoint, so two passwords of one address are two access identities), §3.3
 migration 3 (the `accesses` table this module reads and writes, and only those
 columns), §5.1 (`upstream_credential` is a fourth identity, separate from
@@ -34,7 +34,7 @@ from dataclasses import dataclass, field, replace
 from urllib.parse import quote, unquote, urlsplit
 
 # Access modes. NTLM, Kerberos, SOCKS4 password and HTTP Digest are out of scope
-# by contract (MASTER-PROMPT F04) and are refused explicitly, never silently.
+# by contract and are refused explicitly, never silently.
 MODE_NONE = 'none'
 MODE_HTTP_BASIC = 'http_basic'
 MODE_SOCKS5 = 'socks5'
@@ -57,7 +57,7 @@ E_VAULT_LOCKED = 'E_SECRET_VAULT_LOCKED'
 E_NOT_PROVIDED = 'E_SECRET_NOT_PROVIDED'
 E_AUTH_REQUIRED = 'E_SECRET_UPSTREAM_AUTH_REQUIRED'
 E_AUTH_FAILED = 'E_SECRET_UPSTREAM_AUTH_FAILED'
-# Not in the CONTRACTS §5.4 SECRET row yet; requested in the handoff.
+# An addition to the shared SECRET codes.
 E_VAULT_UNAVAILABLE = 'E_SECRET_VAULT_UNAVAILABLE'
 E_VALIDATION = 'E_VALIDATION_FIELD'
 E_CONFLICT = 'E_CONFLICT_REVISION'
@@ -73,7 +73,7 @@ REDACTED = '***'
 
 
 class SecretError(Exception):
-    """Base error. `code` is one of the E_* values from CONTRACTS §5.4."""
+    """Base error. `code` is one of the E_* values from the shared contract."""
 
     code = E_NOT_PROVIDED
 
@@ -82,7 +82,7 @@ class SecretError(Exception):
         self.message = message
         if code is not None:
             self.code = code
-        # Every useful error names the next step, not only its class (F25).
+        # Every useful error names the next step, not only its class.
         self.action = action
         self.detail = detail
 
@@ -567,7 +567,7 @@ class Endpoint:
     def url(self, resolved=None):
         """Canonical URL, with credentials only when a caller explicitly asks.
 
-        F04 and CONTRACTS §4.4: an exported or published row must never carry
+        F04 and the shared contract: an exported or published row must never carry
         userinfo, so the plain form is what every default caller gets. The
         userinfo form exists for a transport that needs it (httpx takes proxy
         credentials in the URL) and for an explicitly authorized secret export.
@@ -744,7 +744,7 @@ def classify_upstream(status=None, *, state=None, credentials_sent=False, detail
     """Turn an upstream outcome into one of the distinguishable F04 failures.
 
     Returns the error to raise, or None when the outcome is not a credential
-    problem. The four cases stay apart on purpose (MASTER-PROMPT F04): a proxy
+    problem. The four cases stay apart on purpose: a proxy
     that wants auth we did not send, a credential it rejected, a store we could
     not read, and a credential we never had.
     """
@@ -763,7 +763,7 @@ def classify_upstream(status=None, *, state=None, credentials_sent=False, detail
 
 
 # --------------------------------------------------------------------------- #
-# Access records (CONTRACTS §3.3, migration 3)
+# Access records 
 # --------------------------------------------------------------------------- #
 
 @dataclass(frozen=True)
@@ -967,7 +967,7 @@ def transport_credentials(access, resolved, *, scheme=None):
 def admission_key(access, access_revision):
     """The pair an observation must carry to stay valid.
 
-    CONTRACTS §1.2(1): a new `access_revision` is a different subject, so the old
+    the shared contract: a new `access_revision` is a different subject, so the old
     successful check cannot be read as evidence for the new credential.
     """
     return (access.id, int(access_revision))
@@ -1416,7 +1416,7 @@ _SECRET_KEYS = ('password', 'passwd', 'pwd', 'secret', 'token', 'userinfo',
 def describe(access, *, state=None):
     """The only shape an access may take in a log line, an event or an API row.
 
-    CONTRACTS §4.4 and §5.6: `access_id` travels without the credential, and the
+    the shared contract: `access_id` travels without the credential, and the
     reference is an opaque random handle, not an encoded secret.
     """
     return {

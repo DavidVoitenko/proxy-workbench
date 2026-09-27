@@ -1,4 +1,4 @@
-"""Windows, slots, DST and the reset boundary (F15)."""
+"""Windows, slots, DST and the reset boundary."""
 from datetime import datetime, timezone
 from pathlib import Path
 import sys

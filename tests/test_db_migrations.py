@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from proxy_workbench import db
 from tests.workbench_support import legacy_database as legacy_file  # noqa: E402
 
-#: Every table CONTRACTS §3.3 declares, including the five pre-versioning ones,
+#: Every table the shared contract declares, including the five pre-versioning ones,
 #: plus the eight the source desk, the source generations and the scope
 #: exclusions need.  Those eight arrived with migration 16 and 18; the list was
 #: not extended, so the assertion "a new database is exactly the contract"
@@ -122,7 +122,7 @@ class MigrationTests(unittest.TestCase):
         # The recovered identity reached the payload, which is the only thing
         # `export()` and the GUI table read.  Without this the row failed admission
         # on a collection it was never measured in, and every historic result was
-        # lost from the export until a full recheck (F02, F24).
+        # lost from the export until a full recheck.
         payload = json.loads(row["payload"])
         self.assertEqual(payload["score"], 80)
         self.assertEqual(payload["proxy"], LEGACY_ROWS[0])
@@ -347,8 +347,8 @@ class MigrationTests(unittest.TestCase):
                          ['{"rev": 1}', '{"rev": 2}'])
         # A repeat measurement in a new job replaces the row of the same
         # (profile, access, endpoint): one address is one row, so a fresh failure
-        # cannot leave a stale success standing beside it in every artifact
-        # (F28, F09).  The per-job item is `job_item(job_id, item_id)`, not this key.
+        # cannot leave a stale success standing beside it in every artifact.
+        # The per-job item is `job_item(job_id, item_id)`, not this key.
         conn.execute(
             "INSERT OR REPLACE INTO results(profile, proxy, payload, endpoint_id, access_id,"
             " access_revision, profile_id, profile_revision, job_id, checked_at)"

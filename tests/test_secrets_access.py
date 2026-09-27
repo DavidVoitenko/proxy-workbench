@@ -1,6 +1,6 @@
 """Access identities, credential rotation and the vault/SQLite staging protocol.
 
-The schema comes from db.py, which owns the migrator (CONTRACTS.ru.md §3.3):
+The schema comes from db.py, which owns the migrator:
 migration 1 creates `endpoints` and migration 3 creates `accesses`. The inline
 mirror below is only a fallback for a tree where db.py has not landed yet, and
 `SchemaContractTests` checks it against the declared column list either way.
@@ -22,7 +22,7 @@ except ImportError:  # db.py has not landed yet
 CANARY = 'canary-secret-3f7a'
 CANARY_NEW = 'canary-secret-9c2d'
 
-#: CONTRACTS.ru.md §3.3, migration 3, verbatim.
+#: the shared contract verbatim.
 ACCESS_COLUMNS = ['id', 'endpoint_id', 'mode', 'secret_ref', 'access_revision', 'created_at', 'rotated_at']
 CONTRACT_SCHEMA = """
 CREATE TABLE endpoints (id TEXT PRIMARY KEY, canonical TEXT UNIQUE NOT NULL, host TEXT, port INTEGER,

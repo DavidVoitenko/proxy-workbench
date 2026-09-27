@@ -2,8 +2,7 @@
 
 This module is the only place in the package that writes DDL. Every other module
 calls :func:`migrate` (or :func:`open_db`) in its own tests and works with the
-tables the migrations created -- nobody declares a schema in prose
-(``docs/integration/CONTRACTS.ru.md`` §3.2, §3.3).
+tables the migrations created -- nobody declares a schema in prose.
 
 Public API
 ----------
@@ -71,12 +70,14 @@ __all__ = [
     "connect", "probe", "read_header", "migrate", "open_db", "current_version",
     "assert_current", "describe", "tables", "columns", "indexes", "primary_key",
     "database_bytes", "table_bytes", "endpoint_id", "upsert_endpoint",
-    "create_collection", "rename_collection", "archive_collection", "get_collection",
+    "create_collection", "rename_collection", "archive_collection", "unarchive_collection",
+    "get_collection",
     "list_collections", "add_member", "remove_member", "collection_members",
     "endpoint_collections", "legacy_summary", "add_scope_exclusion", "scope_exclusions",
     "excluded_addresses", "clear_scope_exclusions", "create_backup", "verify_backup",
     "list_backups", "manifest_path", "restore_preview", "restore", "rollback",
     "migrate_data_path", "retention_preview", "apply_retention", "cleanup_preview",
+    "source_history_preview", "prune_source_history", "SOURCE_GENERATION_KEEP",
     "cleanup", "secret_bindings", "rebind_secrets", "write_json", "read_json",
     "sha256_file",
 ]
@@ -85,7 +86,7 @@ __all__ = [
 # version identity
 # ---------------------------------------------------------------------------
 
-SCHEMA_VERSION = 19
+SCHEMA_VERSION = 20
 #: Magic number of this package. 0 means "no application id yet" (pre-versioning file).
 APPLICATION_ID = 0x50574231
 DB_FILENAME = "proxies.sqlite3"
@@ -104,7 +105,7 @@ LEGACY_COLLECTION_NAME = "Ранее собранные"
 COLLECTION_KINDS = ("public", "private")
 COLLECTION_ORIGINS = ("legacy", "public", "manual", "import", "gateway")
 
-# Error codes from CONTRACTS §5.4 (domains DATA and VALIDATION).
+# Error codes from the shared contract (domains DATA and VALIDATION).
 E_VERSION_AHEAD = "E_DATA_DB_VERSION_AHEAD"
 E_FOREIGN_DB = "E_DATA_DB_FOREIGN"
 E_MIGRATION_FAILED = "E_DATA_MIGRATION_FAILED"
@@ -314,7 +315,7 @@ class RetentionPolicy:
             raise RetentionError(E_PATH_CONFLICT, "keep_newest must not be negative")
 
 
-#: Time column each retention target is aged by (CONTRACTS §3.6).
+#: Time column each retention target is aged by.
 #: `observations` has no `checked_at` column -- migration 4 defines `started_at`/`finished_at`.
 RETENTION_TIME_COLUMN = {"observations": "finished_at", "results": "checked_at"}
 
@@ -330,6 +331,10 @@ class RetentionPreview:
     database_bytes: int = 0
     target_bytes: int = 0
     blocked: tuple = ()                 # ((table, (blocker, ...), rows), ...)
+    #: Source fetch history past its bound (:func:`source_history_preview`).
+    #: Always pruned by :func:`apply_retention`, whatever the policy names:
+    #: it is bounded by count, not by age, and no reader needs it.
+    source_history: "dict | None" = None
 
     def rows_for(self, table):
         """The rows retention can actually remove. Blocked rows are not counted."""
@@ -376,6 +381,7 @@ class RetentionPreview:
                  "oldest": oldest, "newest": newest}
                 for name, column, rows, oldest, newest in self.targets
             ],
+            "source_history": dict(self.source_history or {}),
         }
 
 
@@ -608,8 +614,8 @@ class Migration:
 def _m0(conn, context):
     """application_id, the migration journal, and the pre-versioning tables.
 
-    The five tables at the bottom are what the unversioned ``open_db`` created
-    (CONTRACTS §3.1). ``IF NOT EXISTS`` gives a fresh database the same starting
+    The five tables at the bottom are what the unversioned ``open_db`` created.
+   ``IF NOT EXISTS`` gives a fresh database the same starting
     point as a migrated legacy one, and migration 5 then breaks the positional
     writes into three of them (§3.5.2).
     """
@@ -861,9 +867,9 @@ RESULTS_NEW_COLUMNS = (
 RESULTS_NEW_KEY = ("profile_id", "profile_revision", "access_id", "access_revision",
                    "endpoint_id", "job_id")
 #: The key of one measurement of record.  A row is the address, not the run: two
-#: access revisions of one address are two rows (F04), a repeat check in a new job is
+#: access revisions of one address are two rows, a repeat check in a new job is
 #: the *same* row -- `job_id` stays a column naming the last job that measured the
-#: address, and the per-job item lives in `job_item(job_id, item_id)` (F28, F09).
+#: address, and the per-job item lives in `job_item(job_id, item_id)`.
 RESULTS_KEY = ("profile_id", "profile_revision", "access_id", "access_revision", "endpoint_id")
 RESULTS_NEW_SQL = """CREATE TABLE results_new(
     profile TEXT NOT NULL,
@@ -900,7 +906,7 @@ def _m13(conn, context):
     GUI table read `results.payload` and never the identity columns, so a payload left
     untouched made every historic row fail admission on a scope it was never measured
     in -- the migration claimed the rows stayed "readable" while nothing could read
-    them (F02, F24).  The identity is therefore written into the payload too, and only
+    them.  The identity is therefore written into the payload too, and only
     where it is recoverable from the legacy file itself: `proxy`, `profile` and the
     legacy collection the candidates were imported into.  What a 2.x file simply does
     not record -- the network the check ran on, a lifetime -- is left absent on
@@ -1014,7 +1020,7 @@ def _collapse_payload(newest, group):
 
     Collapsing must not forget what was measured: `checks`/`passes` are the counters
     ranked.csv and the GUI publish, so they are added over the whole group while the
-    verdict itself stays the newest one (F28, F12).
+    verdict itself stays the newest one.
     """
     if len(group) < 2:
         return newest["payload"]
@@ -1061,7 +1067,7 @@ def _m15(conn, context):
     address standing beside the first, every consumer judged the rows independently,
     and the endpoint appeared twice in every artifact (F28, §7.10). It also meant a
     fresh failure could not cancel the older success: the failed row was rejected
-    while the stale one kept its own, unexpired `valid_until` (F09, defect 2).
+    while the stale one kept its own, unexpired `valid_until`.
 
     The newest measurement of an address therefore *replaces* the row -- the
     per-check history it carried is summed in, so nothing measured is lost -- and
@@ -1111,17 +1117,17 @@ def _m15(conn, context):
 #:
 #: `source_feed` and `membership_source` are :data:`sourcedesk.REQUESTED_DDL`
 #: verbatim.  That constant is the contract between the module and the
-#: migrator, and HANDOFF/sources-handoff.ru.md §3.1.2 asks for it to stay a
+#: migrator, and it has to stay a
 #: string nobody outside this file executes -- so the shape is repeated here and
 #: `tests/test_area_ddl_sourcedesk.py` compares the migrated table against a
 #: database built from the constant itself, so the two cannot drift.
 #:
 #: The other five come from the generation DDL of the sources branch, moved
 #: here as migrations instead of an `executescript` in that branch's `open_db`
-#: (§3.1 п. 5).  One translation was applied: the branch keys its rows by the
+#: One translation was applied: the branch keys its rows by the
 #: address *string* (`source_generation_entry(generation_id, proxy)`), while
-#: CONTRACTS §1.1 makes `endpoints(id, canonical)` the one address entity, so
-#: that column is `endpoint_id` (§1.2 п. 6).
+#: the shared contract makes `endpoints(id, canonical)` the one address entity, so
+#: that column is `endpoint_id`.
 #:
 #: Foreign keys are declared only where the parent is unconditionally written
 #: first: a generation exists before its entries, an observation before the
@@ -1129,8 +1135,7 @@ def _m15(conn, context):
 #: declared DDL has none, and `SourceDesk.apply_plan` writes the *canonical
 #: address* it got from `ImportedEndpoint.endpoint` into `endpoint_id`, so a
 #: reference to `endpoints(id)` would reject the module's own writes.  That
-#: two-address-models conflict is `HANDOFF/sources-handoff.ru.md` §2 C7 and it
-#: belongs to `sourcedesk.py`, not to a constraint invented here.
+#: two-address-models conflict belongs to `sourcedesk.py`, not to a constraint invented here.
 SOURCE_TABLES_DDL = (
     """CREATE TABLE IF NOT EXISTS source_observation(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1274,12 +1279,12 @@ def _m16(conn, context):
 
 #: Columns `schedules` needs so that a pause and a period budget survive a
 #: restart, plus the spec columns `SqliteScheduleStore.save_spec` writes only
-#: when they exist (`HANDOFF/scheduler.md` §1.1; the same names are the
-#: scheduler's own `REQUESTED_COLUMNS`).
+#: when they exist (the same names are the scheduler's own
+#: `REQUESTED_COLUMNS`).
 #:
 #: `paused` and `counters_json` are the two the contract is really about: without
 #: them a restart hands the whole daily limit back, so the user reads a
-#: counter, trusts it, and gets more than the limit allows (F15).
+#: counter, trusts it, and gets more than the limit allows.
 SCHEDULE_RUNTIME_COLUMNS = (
     ("last_run_at", "REAL"),
     ("paused", "INTEGER NOT NULL DEFAULT 0"),
@@ -1372,6 +1377,19 @@ def _m19(conn, context):
     _add_column(conn, "schedules", "collection_id", "TEXT")
 
 
+def _m20(conn, context):
+    """Collections learn a revision; the audit log gets its time index.
+
+    ``PATCH /v1/collections/{id}`` needs ``If-Match``, and a collection had
+    nothing to compare it with, so every rename was refused.  Existing rows
+    start at revision 1, the value a reader of an old file sees.  The index
+    lets the audit retention delete the oldest rows without a full scan.
+    Both changes are additive.
+    """
+    _add_column(conn, "collections", "revision", "INTEGER NOT NULL DEFAULT 1")
+    conn.execute("CREATE INDEX IF NOT EXISTS audit_log_at ON audit_log(at)")
+
+
 MIGRATIONS = (
     Migration(0, "application_id_and_journal", _m0),
     Migration(1, "endpoints", _m1),
@@ -1393,6 +1411,7 @@ MIGRATIONS = (
     Migration(17, "schedule_runtime_columns", _m17),
     Migration(18, "candidate_scope_exclusion", _m18),
     Migration(19, "schedule_activation_and_catch_up", _m19),
+    Migration(20, "collection_revision_and_audit_index", _m20),
 )
 
 #: Migrations that rewrite data they did not create: a `DROP TABLE` plus a copy, so
@@ -1878,7 +1897,7 @@ def _retention_where(table, policy, now):
         clauses.append(f"{_ident(column)} IS NOT NULL"
                        f" AND {_ident(column)} <= {_sql_literal(now - policy.max_age_seconds)}")
     if table == "results" and policy.expired_only:
-        # A row without valid_until is inconsistent (defect 1) and is never deleted by
+        # A row without valid_until is inconsistent and is never deleted by
         # age: retention removes old proof, it does not fix a missing TTL for a row.
         clauses.append(f"valid_until IS NOT NULL AND valid_until <= {_sql_literal(now)}")
     return " AND ".join(clauses) if clauses else None
@@ -1924,7 +1943,7 @@ def _retention_order(conn, tables):
     ``foreign_keys=ON`` (:func:`connect`) mean a `DELETE FROM observations` is refused
     while a result still points at the row.  The default policy names both tables and
     listed them in the wrong order, so the stock cleanup deleted nothing and then
-    raised -- while the preview had already reported both tables (F24).  The order
+    raised -- while the preview had already reported both tables.  The order
     comes from the live foreign keys, not from a hand-written list.
     """
     remaining = list(dict.fromkeys(tables))
@@ -1956,7 +1975,7 @@ def _retention_targets(conn, policy, now):
     deletion that :func:`apply_retention` then refuses to perform -- the exact
     disagreement between "what is reported" and "what is removed" this module
     promises never to have.  So the preview reports the block and the apply
-    refuses on the same computed fact (F24).
+    refuses on the same computed fact.
 
     The blockers are read against the tables the plan has already *scheduled*,
     not against the tables that happened to delete a row: a referrer that the
@@ -1993,6 +2012,144 @@ def _retention_targets(conn, policy, now):
                                  for table, (blockers, rows) in blocked.items()), total
 
 
+#: Source generations kept per source, entries included.  Every reader needs
+#: only the newest one -- the contribution/overlap views read the active
+#: generation, a 304 re-applies the last good one -- so a short history is kept
+#: for the cache view and nothing older: one generation of the full catalog is
+#: hundreds of thousands of entry rows, and a watched collection used to add
+#: one per run forever.
+SOURCE_GENERATION_KEEP = 3
+#: Fetch observations kept per source: the detail view shows the last 20.
+SOURCE_OBSERVATION_KEEP = 50
+#: Entry rows deleted per statement, so a prune never holds the write lock long.
+SOURCE_PRUNE_BATCH = 20_000
+
+
+def _excess_source_generations(conn, keep, source_ids=None):
+    """Ids of the generations past the newest ``keep`` of each source.
+
+    A generation the source state still names (current or last good) is never
+    excess, whatever its age: it is the answer a 304 or an outage serves.
+    """
+    if not (_table_exists(conn, "source_generation") and _table_exists(conn, "source_generation_entry")):
+        return []
+    if source_ids is None:
+        source_ids = [row[0] for row in conn.execute("SELECT DISTINCT source_id FROM source_generation")]
+    protected = set()
+    if _table_exists(conn, "source_state"):
+        for current, last_good in conn.execute(
+                "SELECT current_generation, last_good_generation FROM source_state"):
+            protected.update(value for value in (current, last_good) if value)
+    excess = []
+    for source_id in dict.fromkeys(source_ids):
+        excess.extend(row[0] for row in conn.execute(
+            "SELECT id FROM source_generation WHERE source_id=? ORDER BY id DESC LIMIT -1 OFFSET ?",
+            (source_id, max(1, int(keep)))) if row[0] not in protected)
+    return excess
+
+
+def _excess_source_observations_sql(keep, source_ids=None, held=True):
+    """WHERE clause (and its parameters) of observations past the newest ``keep`` per source.
+
+    ``held=True`` also leaves out every observation a generation points at.
+    """
+    ids = list(dict.fromkeys(source_ids)) if source_ids is not None else None
+    scope = ""
+    params = []
+    if ids is not None:
+        scope = "o.source_id IN (%s) AND " % ",".join("?" * len(ids))
+        params.extend(ids)
+    where = (scope + "o.id NOT IN (SELECT n.id FROM source_observation n WHERE n.source_id=o.source_id"
+             " ORDER BY n.id DESC LIMIT ?)")
+    params.append(max(1, int(keep)))
+    if held:
+        where += (" AND o.id NOT IN (SELECT observation_id FROM source_generation"
+                  " WHERE observation_id IS NOT NULL)")
+    return where, params
+
+
+def source_history_preview(conn, *, keep_generations=None, keep_observations=None, source_ids=None):
+    """What :func:`prune_source_history` would delete, counted without deleting."""
+    keep_generations = SOURCE_GENERATION_KEEP if keep_generations is None else keep_generations
+    keep_observations = SOURCE_OBSERVATION_KEEP if keep_observations is None else keep_observations
+    result = {"keep_generations": int(keep_generations), "keep_observations": int(keep_observations),
+              "generations": 0, "entries": 0, "observations": 0}
+    if source_ids is not None and not list(source_ids):
+        return result
+    excess = _excess_source_generations(conn, keep_generations, source_ids)
+    result["generations"] = len(excess)
+    for start in range(0, len(excess), 500):
+        chunk = excess[start:start + 500]
+        result["entries"] += conn.execute(
+            "SELECT count(*) FROM source_generation_entry WHERE generation_id IN (%s)"
+            % ",".join("?" * len(chunk)), chunk).fetchone()[0]
+    if _table_exists(conn, "source_observation") and _table_exists(conn, "source_generation"):
+        where, params = _excess_source_observations_sql(keep_observations, source_ids, held=False)
+        candidates = {row[0] for row in conn.execute(
+            "SELECT o.id FROM source_observation o WHERE " + where, params)}
+        if candidates:
+            # Observations that only an excess generation holds go with it.
+            dropping = set(excess)
+            candidates -= {observation for generation, observation in conn.execute(
+                "SELECT id, observation_id FROM source_generation WHERE observation_id IS NOT NULL")
+                if generation not in dropping}
+        result["observations"] = len(candidates)
+    return result
+
+
+def prune_source_history(conn, *, keep_generations=None, keep_observations=None, source_ids=None,
+                         batch=None):
+    """Bound the per-source fetch history: old generations, their entries, old observations.
+
+    Deletes, per source, the generations past the newest ``keep_generations``
+    (never one the source state still names), their entries in batches of
+    ``batch`` rows with a commit after each, and the observations past the
+    newest ``keep_observations`` that no remaining generation points at.
+    ``source_ids`` limits the work to those sources -- the collector passes the
+    one it just wrote.  Returns ``{"generations", "entries", "observations"}``.
+    """
+    keep_generations = SOURCE_GENERATION_KEEP if keep_generations is None else keep_generations
+    keep_observations = SOURCE_OBSERVATION_KEEP if keep_observations is None else keep_observations
+    batch = max(1, int(batch or SOURCE_PRUNE_BATCH))
+    deleted = {"generations": 0, "entries": 0, "observations": 0}
+    if source_ids is not None:
+        source_ids = list(dict.fromkeys(source_ids))
+        if not source_ids:
+            return deleted
+    if conn.in_transaction:
+        raise DbError(E_MIGRATION_FAILED, "prune_source_history needs a connection outside a transaction")
+
+    def write(sql, params=()):
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            changed = conn.execute(sql, params).rowcount
+            conn.execute("COMMIT")
+        except BaseException:
+            conn.execute("ROLLBACK")
+            raise
+        return max(0, changed)
+
+    for generation in _excess_source_generations(conn, keep_generations, source_ids):
+        while True:
+            changed = write(
+                "DELETE FROM source_generation_entry WHERE generation_id=? AND endpoint_id IN"
+                " (SELECT endpoint_id FROM source_generation_entry WHERE generation_id=? LIMIT ?)",
+                (generation, generation, batch))
+            deleted["entries"] += changed
+            if changed < batch:
+                break
+        deleted["generations"] += write("DELETE FROM source_generation WHERE id=?", (generation,))
+    if _table_exists(conn, "source_observation") and _table_exists(conn, "source_generation"):
+        where, params = _excess_source_observations_sql(keep_observations, source_ids)
+        while True:
+            changed = write("DELETE FROM source_observation WHERE id IN (SELECT o.id FROM source_observation o"
+                            " WHERE " + where + " LIMIT ?)", params + [batch])
+            deleted["observations"] += changed
+            if changed < batch:
+                break
+    return deleted
+
+
 def retention_preview(conn, policy=None, *, now=None):
     """Count what retention would delete, plus the data size behind it.
 
@@ -2007,7 +2164,7 @@ def retention_preview(conn, policy=None, *, now=None):
     return RetentionPreview(policy, now, targets, total,
                             database_bytes(_database_file(conn)),
                             sum(table_bytes(conn, target[0]) or 0 for target in targets),
-                            blocked)
+                            blocked, source_history_preview(conn))
 
 
 def apply_retention(conn, policy=None, *, now=None, vacuum=False):
@@ -2028,7 +2185,7 @@ def apply_retention(conn, policy=None, *, now=None, vacuum=False):
         # A table the plan could not free is refused before anything is deleted, and
         # the refusal comes from the preview's own map -- the same computed fact the
         # caller already saw, so a cleanup never fails on something the preview did
-        # not warn about (F24).
+        # not warn about.
         blockers = blocked.get(table)
         if blockers and preview.blocked_rows(table):
             raise RetentionError(
@@ -2046,6 +2203,13 @@ def apply_retention(conn, policy=None, *, now=None, vacuum=False):
             conn.execute("ROLLBACK")
             raise RetentionError(E_MIGRATION_FAILED, str(exc)) from exc
         deleted.append((table, rows))
+    # Source generations are bounded by count, so the same cleanup that ages
+    # measurements out also trims a history an older version let grow.
+    history = prune_source_history(conn)
+    for table, key in (("source_generation_entry", "entries"), ("source_generation", "generations"),
+                       ("source_observation", "observations")):
+        if history[key]:
+            deleted.append((table, history[key]))
     vacuumed = False
     if vacuum and deleted:
         conn.execute("VACUUM")
@@ -2186,7 +2350,7 @@ def rebind_secrets(source, mapping, *, dry_run=True, now=None):
     A rebind is a rotation in meaning, and it moves the row the same way
     :meth:`secrets.Coordinator.rotate` does: ``access_revision`` goes up by one and
     ``rotated_at`` gets the moment.  Admission is keyed on the exact
-    ``(access_id, access_revision)`` pair (F09), so without the bump every result
+    ``(access_id, access_revision)`` pair, so without the bump every result
     measured with the credential the access used *before* the rebind stayed
     admissible afterwards -- the restored password inherited a successful check it
     had never earned.  A restore that pointed an access back at a different vault
@@ -2201,8 +2365,7 @@ def rebind_secrets(source, mapping, *, dry_run=True, now=None):
     resolved is visibly broken, while an access that resolves against a superseded
     revision silently keeps trusting measurements taken with a password the user
     has replaced.  Note that ``reconcile()`` does not fix it -- it finalises a
-    *staged* entry and leaves a ready one at its own revision alone; see
-    docs/integration/HANDOFF/fix-keys.md.
+    *staged* entry and leaves a ready one at its own revision alone.
     """
     mapping = dict(mapping)
     for old_ref, new_ref in mapping.items():
@@ -2297,19 +2460,31 @@ def create_collection(conn, name, *, kind="private", collection_id=None, now=Non
     return identifier
 
 
+def _revision_bump(conn):
+    """The SET clause that moves a collection revision, when the column exists."""
+    return ", revision = revision + 1" if "revision" in columns(conn, "collections") else ""
+
+
 def rename_collection(conn, collection_id, name):
     name = str(name).strip()
     if not name:
         raise DbError(E_PATH_CONFLICT, "collection name must not be empty")
-    if not conn.execute("UPDATE collections SET name = ? WHERE id = ?",
+    if not conn.execute("UPDATE collections SET name = ?" + _revision_bump(conn) + " WHERE id = ?",
                         (name, collection_id)).rowcount:
         raise DbError(E_PATH_CONFLICT, f"unknown collection: {collection_id!r}")
     return collection_id
 
 
 def archive_collection(conn, collection_id, *, now=None):
-    if not conn.execute("UPDATE collections SET archived_at = ? WHERE id = ?",
-                        (_now(now), collection_id)).rowcount:
+    if not conn.execute("UPDATE collections SET archived_at = ?" + _revision_bump(conn)
+                        + " WHERE id = ?", (_now(now), collection_id)).rowcount:
+        raise DbError(E_PATH_CONFLICT, f"unknown collection: {collection_id!r}")
+    return collection_id
+
+
+def unarchive_collection(conn, collection_id):
+    if not conn.execute("UPDATE collections SET archived_at = NULL" + _revision_bump(conn)
+                        + " WHERE id = ?", (collection_id,)).rowcount:
         raise DbError(E_PATH_CONFLICT, f"unknown collection: {collection_id!r}")
     return collection_id
 
@@ -2339,7 +2514,7 @@ def add_member(conn, collection_id, endpoint_id, *, origin="manual", now=None):
 
 
 def remove_member(conn, collection_id, endpoint_id):
-    """Remove one membership. The address stays in every other list it belongs to (F02)."""
+    """Remove one membership. The address stays in every other list it belongs to."""
     return bool(conn.execute("DELETE FROM membership WHERE collection_id = ? AND endpoint_id = ?",
                              (collection_id, endpoint_id)).rowcount)
 

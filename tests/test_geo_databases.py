@@ -1,4 +1,4 @@
-"""GeoIP database status, version and installation (F08).
+"""GeoIP database status, version and installation.
 
 The databases are fixtures written to a temporary folder.  The point of these
 cases is the bookkeeping the picker never had: which version is installed, how

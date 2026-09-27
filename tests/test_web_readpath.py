@@ -143,7 +143,7 @@ class ReadPathTests(unittest.TestCase):
         self.assertEqual(download.status_code, 409)
 
     def test_the_reason_travels_to_the_page_in_words_and_as_a_code(self):
-        """CONTRACTS §5.4: ``state_detail`` is translated, the code stays."""
+        """the shared contract: ``state_detail`` is translated, the code stays."""
         from proxy_workbench import i18n
         answer = self.get('/api/results', min_success=0, view='all')
         self.assertIn(answer['state_detail'], i18n.STATE_DETAILS)

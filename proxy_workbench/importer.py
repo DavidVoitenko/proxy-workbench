@@ -1,6 +1,6 @@
 """Import of proxy lists: adapters, preview, transactional commit, report.
 
-CONTRACTS.ru.md: F03 (§7.1), error codes (§5.4), schema migrations 1, 2 and 12
+Schema: migrations 1, 2 and 12
 (`endpoints`, `collections`, `membership`, `import_batch`).
 
 The module owns no DDL.  The caller passes a connection already migrated by
@@ -17,9 +17,9 @@ Guarantees this module makes, and where each one is checked:
   `E_IMPORT_REVISION` instead of overwriting somebody else's work;
 * every path (file, drag-and-drop, clipboard) and every adapter runs the same
   endpoint check, so a hostname, a private address or credentials are refused
-  immediately and with the same code everywhere (defect 10, R06);
+  immediately and with the same code everywhere;
 * raw input is never stored: rows are reported by line number and redacted
-  sample, never by their original text (F03, F04).
+  sample, never by their original text.
 """
 
 from __future__ import annotations
@@ -63,8 +63,7 @@ DELETE_CHUNK = 500
 
 # --- codes ------------------------------------------------------------------
 # E_IMPORT_REVISION / E_IMPORT_FORMAT / E_IMPORT_PARTIAL are the IMPORT domain
-# of CONTRACTS §5.4.  The rest are additions this module needs; they are
-# requested in docs/integration/HANDOFF/importer.md §5.
+# of the shared contract.  The rest are additions this module needs.
 CODE_FORMAT = 'E_IMPORT_FORMAT'
 CODE_ENCODING = 'E_IMPORT_ENCODING'
 CODE_SIZE = 'E_IMPORT_SIZE'
@@ -118,7 +117,7 @@ _CUT_CHARS = '/?# \t'
 class ImportProblem(Exception):
     """Base class of every refusal this module raises.
 
-    `code` is the stable machine code (CONTRACTS §5.4); `detail` carries the
+    `code` is the stable machine code; `detail` carries the
     machine context an API layer needs to answer a conflict without parsing
     the message.
     """
@@ -204,7 +203,7 @@ def redact(value: str, *, whole: bool = True) -> str:
     Everything but the scheme and the credential-free authority is dropped: a
     password in `user:pass@host`, in a query string, in a `host:port:password`
     triple or simply trailing on the line must not survive into a report, a log
-    line or provenance (F03, F04).
+    line or provenance.
 
     `whole` says that `value` is a complete record rather than one cell of a
     row.  A record keeps a token that carries a dot (a hostname or an address);
@@ -570,7 +569,7 @@ def _is_json(text: str) -> bool:
 
 
 def _country(value: str) -> str | None:
-    """Country code from a mapped column, or None.  Never invented (F02, F08)."""
+    """Country code from a mapped column, or None.  Never invented."""
     if not value:
         return None
     value = value.strip().upper()

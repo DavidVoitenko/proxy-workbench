@@ -99,7 +99,7 @@ jobs:
           tag_name: ${{ env.TAG }}
           files: dist/*.whl
 
-  # The two Windows binaries F23 asks for: a windowed GUI and a separate
+  # The two Windows binaries: a windowed GUI and a separate
   # console CLI, plus the per-user installer.  Nothing here is signed - a
   # certificate would have to exist in the runner's certificate store and be
   # named by PROXY_WORKBENCH_SIGN_THUMBPRINT, and until one does the manifest

@@ -4,9 +4,11 @@
 
 # Proxy Workbench
 
-**Collect free public proxies from a catalog of 150 entries with 106 collectable feeds, test every one against _your_ services, and keep only the fast, stable, clean and anonymous ones.**
+### Finds free proxies that actually work — on the sites you need
 
-Local browser GUI (English / Russian) + CLI · HTTP / HTTPS (CONNECT) / SOCKS5 · anonymity levels · resumable · no accounts, no telemetry
+Proxy Workbench collects free proxies from **150 public sources**, tests every one against the sites and services **you** care about, and keeps only the ones that work. You get ready-made lists, one **rotating proxy** for your browser, Telegram and any app, or an **API** for your scripts.
+
+Runs on your own computer: macOS and Windows app, command line, Docker · HTTP, HTTPS, SOCKS4, SOCKS5 · 12 languages · no sign-up, no telemetry
 
 ![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)
 ![License: MIT](https://img.shields.io/badge/license-MIT-2ea44f)
@@ -16,27 +18,25 @@ Local browser GUI (English / Russian) + CLI · HTTP / HTTPS (CONNECT) / SOCKS5 �
 
 **English** · [Русский](README.ru.md)
 
-[Quick start](#-quick-start) · [Features](#-features) · [How it works](#-how-it-works) · [CLI](#-command-line) · [FAQ](#-faq) · [Roadmap](#-roadmap) · [Contributing](CONTRIBUTING.md)
+[Quick start](#-quick-start) · [Features](#-features) · [How it works](#-how-it-works) · [CLI](#-command-line) · [FAQ](#-faq) · [Roadmap](#-roadmap)
 
 <br>
 
 <img src="docs/assets/demo.gif" alt="Proxy Workbench demo: scan, rank, filter elite proxies" width="100%">
 
-<sub>15-second tour: start a scan → ranking → “Elite only” filter → per-attempt details → EN/RU switch (synthetic data).</sub>
+<sub>Quick tour: set up a check → ranking → “Elite only” filter → per-attempt details → sources → switching language (synthetic data).</sub>
 
 </div>
 
 ---
 
-## Why
+## What it does
 
-Free proxy lists are everywhere, but most of what they contain is dead, slow, or blocked by the site you actually care about. A proxy that answers `example.com` may still fail your API, return a captcha page with status `200`, or sit on a spam blacklist.
+Free proxy lists are everywhere, but most addresses in them are dead, slow or blocked by exactly the site you care about. Proxy Workbench does the tedious part for you:
 
-**Proxy Workbench answers one practical question: _which of these proxies really work for my service, right now, and how well?_**
-
-- It gathers candidates from dozens of public lists (or your own files) and de-duplicates them.
-- It sends **real HTTP(S) requests through each proxy** to every service you specify — several times — and checks status codes, body text, or even a SHA-256 of the response.
-- It ranks survivors by **median latency, jitter and success rate**, flags **blacklisted IPs** (local denylist + optional DNSBL), rates **anonymity** (transparent / anonymous / elite) and exports TXT / CSV / JSON plus ready-to-use `host:port` lists per protocol.
+1. **Collect.** Downloads addresses from 150 public sources (106 enabled out of the box) or your own files and removes duplicates.
+2. **Check.** Sends real requests through every proxy to your sites — several times — and checks the status code, required text on the page and speed. It also finds the country, the anonymity level (transparent / anonymous / elite) and whether the IP is blacklisted.
+3. **Deliver.** The best proxies land in TXT / CSV / JSON files, browser, Clash and sing-box configs, a rotating proxy at `127.0.0.1:8899`, and an API. Pools and schedules keep the list fresh on their own.
 
 Everything runs on your machine. The GUI binds to `127.0.0.1` only.
 
@@ -53,7 +53,7 @@ Everything runs on your machine. The GUI binds to `127.0.0.1` only.
 </tr>
 </table>
 
-<sub>Screenshots use synthetic data from documentation IP ranges (RFC 5737). The interface is available in English and Russian (EN/RU toggle in the header).</sub>
+<sub>Screenshots use synthetic data from documentation IP ranges (RFC 5737). The interface speaks 12 languages (language menu in the header).</sub>
 
 ## ✨ Features
 
@@ -83,8 +83,15 @@ Everything runs on your machine. The GUI binds to `127.0.0.1` only.
 | **Exit country** | The anonymity judge also reports the address the traffic really leaves from; the table shows `DE → NL` when it differs from the proxy's own country. |
 | **Local API for your code** | The GUI (or `serve` on a server) answers `GET /random?protocol=socks5&country=DE` or `/proxies?max_latency=800&format=txt` with the freshest working proxies, so scripts, scrapers and bots can pick a proxy with one HTTP request. |
 | **Safe by default** | Loopback-only GUI with a per-session token, CSRF/Host checks, SSRF-hardened source fetching (no private/metadata IPs, validated redirects, size limits), credential-like headers rejected. |
-| **English & Russian UI** | Switch with the EN/RU button; defaults to your browser language. Dark and light themes. |
-| **Zero setup** | A Windows `.exe` that needs nothing else, `pipx install`, Docker Compose, or a double-click launcher that creates its own virtual environment. |
+| **Desktop app** | Runs in the macOS menu bar with pause/start, optional start at login and one running instance; recovers correctly after sleep. The browser interface opens from it. |
+| **Pools** | A named pool keeps N working proxies for a profile, with a reserve, quotas and budgets; it refills and re-checks itself and says why it is short. |
+| **Schedules** | Re-check a collection or a pool on an interval in your time zone, with quiet hours, request/byte budgets and notifications when a proxy changes state. |
+| **Profiles and import** | Save targets and rules as named profiles with revisions. Import your own lists from TXT, URI, CSV, JSON, Clash or sing-box with a preview, column mapping and a report of every rejected line. |
+| **API keys** | Named keys with permissions, collection/pool scope, rate and concurrency limits, expiry, rotation and an audit log — on the **Keys** page or with `api-key`. |
+| **Diagnostics** | A funnel shows where candidates were lost, “why 0 results” explains an empty run in plain words, and a redacted diagnostic bundle can be reviewed before saving. |
+| **Backup and restore** | Backups, restore, rollback and retention cleanup, each previewed before it runs; data folders from older versions are upgraded automatically with a backup taken first. |
+| **12 languages** | English, Russian, Ukrainian, German, Spanish, French, Italian, Portuguese, Polish, Turkish, Japanese and Chinese; defaults to your system language. Redesigned dark and light themes that adapt to phones and tablets. |
+| **Zero setup** | A macOS `.dmg`, a Windows installer (or portable `.zip`), `pipx install`, Docker Compose, or a double-click launcher that creates its own virtual environment. |
 
 ## 🚀 Quick start
 
@@ -92,7 +99,7 @@ Pick one way to install:
 
 | Way | How | Needs |
 | --- | --- | --- |
-| **macOS app** | Download `proxy-workbench-…-macos-arm64.dmg` from the [latest release](https://github.com/DavidVoitenko/proxy-workbench/releases/latest) and drag `Proxy Workbench.app` into Applications | macOS 11+, Apple Silicon |
+| **macOS app** | Download `proxy-workbench-…-macos-arm64.dmg` from the [latest release](https://github.com/DavidVoitenko/proxy-workbench/releases/latest) and drag `Proxy Workbench.app` into Applications | macOS 11+, Apple Silicon (`arm64`) or Intel (`x86_64`) |
 | **Windows app** | Download `proxy-workbench-…-windows-x64-setup.exe` from the [latest release](https://github.com/DavidVoitenko/proxy-workbench/releases/latest) and run it; there is a portable `.zip` too, and a separate `proxy-workbench-cli.exe` for the command line | nothing else |
 | **pipx** (Windows, macOS, Linux) | `pipx install git+https://github.com/DavidVoitenko/proxy-workbench` then `proxy-workbench` | Python 3.11+ and [pipx](https://pypa.io/pipx/) |
 | **Source folder** | Download the code (**Code → Download ZIP** or `git clone`), then double-click `Start.bat` (Windows) / `Start.command` (macOS) or run `./run.sh` (Linux) | Python 3.11+ |
@@ -107,7 +114,7 @@ proxy-workbench --no-desktop     # the same, spelled the other way
 proxy-workbench --print-paths    # which data/cache/log folders this launch would use
 ```
 
-Installed builds keep their data in your own per-user folders (`%LOCALAPPDATA%\proxy-workbench`, `~/Library/Application Support/proxy-workbench` or `~/.local/share/proxy-workbench`) and never write into their own program folder; a source checkout keeps `data/` next to the project; `PROXY_WORKBENCH_DATA` overrides all of it. Portable mode is opt-in — see [docs/packaging/README.md](docs/packaging/README.md).
+Installed builds keep their data in your own per-user folders (`%LOCALAPPDATA%\proxy-workbench`, `~/Library/Application Support/proxy-workbench` or `~/.local/share/proxy-workbench`) and never write into their own program folder; a source checkout keeps `data/` next to the project; `PROXY_WORKBENCH_DATA` overrides all of it. Portable mode is opt-in: put an empty `proxy-workbench-portable.json` next to the program and it keeps its data beside itself.
 
 Release artifacts are **not code-signed**: this project has no signing certificate, and the release notes and the manifest say `signed: false` rather than claiming otherwise. macOS Gatekeeper therefore asks you to confirm the first start, and Windows SmartScreen may too (**More info → Run anyway**). Every release lists its SHA-256 checksum, which proves the file is the one that was published — it does not identify a publisher.
 
@@ -283,7 +290,7 @@ curl -x socks5h://127.0.0.1:8899 https://example.org/
 
 On a server, start it with `./run.sh gateway` and narrow the pool with the usual filters, for example `gateway --protocol socks5 --country DE --max-latency 1500`. Binding to a network address (`--host 0.0.0.0`) requires a password: `--gateway-token <secret>`, or the `PROXY_WORKBENCH_GATEWAY_TOKEN` variable; when it is not given the gateway makes one and prints it. Clients then log in with any user name and that password, over HTTP Basic or SOCKS5 user/password.
 
-**The gateway password is not the API token.** They are separate identities on purpose (`CONTRACTS §5.1`): whoever knows the password you handed to a phone must not be able to read the published snapshot, and a leaked API token must not be a working proxy. Pass `--api-token` to `serve` and `--gateway-token` to `gateway`; `compose.yml` shows both variables.
+**The gateway password is not the API token.** They are separate identities on purpose: whoever knows the password you handed to a phone must not be able to read the published snapshot, and a leaked API token must not be a working proxy. Pass `--api-token` to `serve` and `--gateway-token` to `gateway`; `compose.yml` shows both variables.
 
 Browser without extensions: use `http://127.0.0.1:8765/pac` as the automatic proxy configuration URL. It serves the 10 best matching proxies and accepts the same filters as the API, for example `/pac?country=DE`. `/clash` returns a complete Clash / Mihomo config.
 
@@ -393,7 +400,7 @@ Everything is written to one data folder. Which folder that is depends on how yo
 | Installed build (`.app`, `.exe`) | your own per-user folders: `~/Library/Application Support/proxy-workbench` on macOS, `%LOCALAPPDATA%\proxy-workbench` on Windows, `$XDG_DATA_HOME/proxy-workbench` on Linux |
 | Portable build (only if you ask for it) | next to the program, inside the `.app` or beside the `.exe` |
 
-An installed program **never** writes into its own folder: `.app` bundles and `Program Files` are read-only, and a build that tried would not start. Portable mode is opt-in and never happens just because a folder happens to be writable — see `docs/packaging/README.md`.
+An installed program **never** writes into its own folder: `.app` bundles and `Program Files` are read-only, and a build that tried would not start. Portable mode is opt-in (a `proxy-workbench-portable.json` file next to the program) and never happens just because a folder happens to be writable.
 
 | Path | Content |
 | --- | --- |
@@ -417,7 +424,7 @@ Delete it any time with `./run.sh clear-data --yes` or the button on the **How i
 ## ❓ FAQ
 
 **Does this make me anonymous?**
-No. Proxy Workbench measures _reachability and latency_. A public proxy sees your IP, your destination and — for plain HTTP — your traffic. Never send passwords, cookies or tokens through untrusted public proxies. See [PRIVACY.md](PRIVACY.md).
+No. Proxy Workbench measures _reachability and latency_. A public proxy sees your IP, your destination and — for plain HTTP — your traffic. Never send passwords, cookies or tokens through untrusted public proxies. Proxy Workbench itself sends no telemetry and has no accounts.
 
 **How long does a full scan take?**
 It depends on how many candidates respond. With the defaults (3 attempts, 8 s request timeout, 4 s connect timeout, fail-fast, 128 workers) even ~190,000 completely dead addresses take about 3.5 hours, because each dead proxy is dropped after two short connect failures; in practice most fail much faster. Raise `--workers`, lower `--connect-timeout`, or use fewer sources for quicker runs. You can stop and resume at any time.
@@ -457,8 +464,15 @@ Checking public lists is generally fine, but you are responsible for respecting 
 
 ## 🗺 Roadmap
 
-- [x] English interface with an EN/RU switch
-- [ ] `pipx install` / PyPI package and a single `proxy-workbench` command
+- [x] Interface in 12 languages
+- [x] `pipx install` and a single `proxy-workbench` command
+- [x] Desktop app: macOS menu bar, Windows installer, per-user data folders
+- [x] Persistent pools, schedules, profiles with revisions and list import
+- [x] API keys with permissions, scope, rotation and audit
+- [x] Diagnostics funnel, backups and restore with preview
+- [ ] Checking proxies that need a login
+- [ ] Signed and notarized builds, automatic updates
+- [ ] PyPI package
 - [x] Anonymity level detection (transparent / anonymous / elite)
 - [x] Per-protocol `host:port` exports
 - [x] Country column and filters from a local GeoIP database
@@ -471,13 +485,13 @@ Have an idea? Open a [feature request](../../issues/new/choose) or start a [disc
 
 ## 🤝 Contributing
 
-Contributions of every size are welcome — bug reports, new sources, docs, translations and code. Read [CONTRIBUTING.md](CONTRIBUTING.md) to get started. Tests run entirely on local mocks:
+Bug reports, new sources, translations and code are welcome — open an [issue](../../issues) or a pull request. Tests run entirely on local mocks:
 
 ```sh
 python -m unittest discover -s tests -v
 ```
 
-Please also read the [Code of Conduct](CODE_OF_CONDUCT.md). Found a vulnerability? Follow [SECURITY.md](SECURITY.md) and report it privately.
+Found a vulnerability? Please report it privately through [GitHub security advisories](../../security/advisories/new) rather than a public issue.
 
 If Proxy Workbench saved you time, **a ⭐ on GitHub helps other people find it.**
 

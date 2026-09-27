@@ -91,6 +91,35 @@ class BuildDescriptorTests(unittest.TestCase):
     def test_the_installer_refuses_to_build_without_a_version(self):
         self.assertIn('#error ProductVersion is required', self.spec('windows-installer.iss'))
 
+    def test_command_line_shortcuts_open_the_console_cli(self):
+        # The GUI executable is windowed: "--help" on it prints nowhere.  A
+        # command line shortcut has to run the console binary in a console
+        # that stays open.
+        lines = [line for line in self.spec('windows-installer.iss').splitlines()
+                 if line.startswith('Name:') and 'Filename:' in line and 'command line' in line.lower()]
+        self.assertEqual(len(lines), 2, lines)
+        for line in lines:
+            self.assertIn('Filename: "{cmd}"', line)
+            self.assertIn('/k ', line)
+            self.assertIn('{#AppCliExeName}', line)
+            self.assertNotIn('{#AppExeName}', line)
+
+    def test_the_installed_application_can_be_quit_without_the_task_manager(self):
+        # No menu bar on Windows and no console on the GUI build: the Start
+        # menu and the uninstaller use the host's --quit command instead.
+        text = self.spec('windows-installer.iss')
+        self.assertIn('Filename: "{app}\\{#AppExeName}"; Parameters: "--quit"', text)
+        uninstall = text.split('[UninstallRun]', 1)[1].split('\n[', 1)[0]
+        self.assertIn('Parameters: "--quit"', uninstall)
+        self.assertIn('RunOnceId:', uninstall)
+        from proxy_workbench import __main__ as entry
+        self.assertEqual(entry.resolve(['--quit'])[0], 'desktop')
+
+    def test_an_installer_that_edits_path_announces_the_change(self):
+        text = self.spec('windows-installer.iss')
+        self.assertIn('ValueName: "Path"', text)
+        self.assertIn('ChangesEnvironment=yes', text)
+
 
 class ManifestTests(unittest.TestCase):
     def test_an_artifact_entry_records_size_digest_and_signature_state(self):

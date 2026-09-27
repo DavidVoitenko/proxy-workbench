@@ -1,4 +1,4 @@
-"""Supported subscription imports: Clash and sing-box (F27).
+"""Supported subscription imports: Clash and sing-box.
 
 The rule under test is narrow: a configuration document is data.  Only the
 endpoint list is read, nothing that steers traffic is followed, and nothing in
