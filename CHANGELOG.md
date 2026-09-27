@@ -2,6 +2,12 @@
 
 The format follows Keep a Changelog and semantic versioning.
 
+## [3.0.1] — 2026-09-27
+
+### Fixed
+
+- **macOS app: collecting and HTTPS checks work again.** The 3.0.0 macOS builds looked for trusted certificates in a folder of the build machine, so every HTTPS source failed with a connection error and no proxies could be collected. Every HTTPS connection (sources, HTTPS checks, the gateway's HTTPS upstreams) now also trusts the certificate bundle shipped inside the app, while the system store is still used.
+
 ## [3.0.0] — 2026-09-27
 
 The biggest release so far: a new interface, a source catalog of 150 lists, a desktop app that lives in the menu bar, persistent proxy pools with schedules, API keys, diagnostics that explain an empty result, and backups you can preview before restoring. Existing data folders are upgraded in place, with an automatic copy taken first.

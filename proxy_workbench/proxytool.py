@@ -37,6 +37,7 @@ from . import db as schema
 from . import diagnostics
 from . import geoip
 from . import socks4
+from . import tls
 from . import formats
 from .i18n import tr, utf8_output
 from . import paths
@@ -48,7 +49,7 @@ from .pipeline import AdaptiveConcurrency
 # generation directory a second time.
 
 ROOT = paths.PACKAGE
-TLS = ssl.create_default_context()
+TLS = tls.default_context()
 SCHEMES = {'http', 'https', 'socks4', 'socks5', 'socks5h'}
 SAFE_TARGET_HEADERS = {'accept', 'accept-encoding', 'accept-language', 'cache-control', 'pragma', 'user-agent', 'x-client-version', 'x-request-id'}
 

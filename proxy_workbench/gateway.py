@@ -49,7 +49,7 @@ import time
 from collections import OrderedDict
 from pathlib import Path
 
-from . import geoip, reputation, secrets as secretstore, socks4
+from . import geoip, reputation, secrets as secretstore, socks4, tls
 from .api import Exports, is_loopback, select
 from .i18n import tr
 
@@ -1019,7 +1019,7 @@ async def open_tunnel(proxy, host, port, forward=False, ssl_context=None, creden
     proxy_host, _, proxy_port = address.rpartition(':')
     proxy_host = proxy_host.strip('[]')
     if scheme == 'https':
-        context = ssl_context or ssl.create_default_context()
+        context = ssl_context or tls.default_context()
         reader, writer = await asyncio.open_connection(proxy_host, int(proxy_port), limit=MAX_HEAD,
                                                        ssl=context, server_hostname=proxy_host)
     else:
