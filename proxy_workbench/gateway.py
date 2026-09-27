@@ -76,7 +76,7 @@ POOL_OPTION = re.compile(r'[A-Za-z0-9._-]{1,64}')
 # itself; a target that refused must never rest a working upstream.
 HEALTH_GOOD = frozenset({'response', 'tunnel_bytes'})
 HEALTH_TARGET = frozenset({'upstream_unavailable', 'no_response'})
-HEALTH_FAULT = frozenset({'handshake_failed', 'upstream_refused', 'closed_empty'})
+HEALTH_FAULT = frozenset({'handshake_failed', 'slow_connect', 'upstream_refused', 'closed_empty'})
 HEALTH_OUTCOMES = HEALTH_GOOD | HEALTH_TARGET | HEALTH_FAULT
 #: Half-life of a gateway health observation, seconds.
 HEALTH_DECAY = 300.0
@@ -1344,6 +1344,7 @@ class Gateway:
         tried = set()
         pending = {}
         failures = 0
+        won = False
         strict = bool(session and self.pool._sticky(binding, sticky) == 'strict')
 
         def start_next():
@@ -1394,6 +1395,7 @@ class Gateway:
                     self.pool.connected(lease.proxy, (time.monotonic() - started) * 1000)
                     if session:
                         self.pool.bind_session(session, lease.proxy)
+                    won = True
                     return lease, stream
                 if strict and failures:
                     break
@@ -1403,19 +1405,32 @@ class Gateway:
             self.pool.stats['failed'] += 1
             raise UpstreamError('NO_WORKING_PROXY')
         finally:
-            # Losers of the race, and everything on cancellation: no slot leaks
-            # and no half-open tunnel stays behind.
-            for task, (lease, _) in pending.items():
-                task.cancel()
+            # A loser that was still connecting after the stagger has proved
+            # too slow for this gateway.  Count it, or it gets picked again on
+            # every request and delays every other connection forever.
+            for task, (lease, started) in pending.items():
+                unfinished = not task.done()
+                if unfinished:
+                    task.cancel()
                 lease.release()
+                if won and unfinished and time.monotonic() - started >= self.stagger:
+                    self.pool.outcome(lease.proxy, 'slow_connect', detail='slow_connect')
             for task in pending:
                 with contextlib.suppress(BaseException):
                     await task
-            for task in pending:
-                if task.done() and not task.cancelled() and task.exception() is None:
+            for task, (lease, _) in pending.items():
+                if task.cancelled():
+                    continue
+                try:
                     stream = task.result()[0]
+                except (OSError, UpstreamError, ValueError, UnicodeError):
+                    if won:
+                        self.pool.outcome(lease.proxy, 'handshake_failed', detail=UNUSABLE)
+                except BaseException:
+                    pass
+                else:
                     with contextlib.suppress(Exception):
-                        stream[1].close() if isinstance(stream, tuple) else stream.close()
+                        stream[1].close()
 
     # --- authentication ------------------------------------------------------
 

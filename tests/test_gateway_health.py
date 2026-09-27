@@ -240,6 +240,29 @@ class RestingFallbackTests(GatewayCase):
 
 
 class RacingConnectTests(GatewayCase):
+    async def test_a_slow_loser_rests_instead_of_delaying_every_request(self):
+        fast = 'http://11.0.0.1:80'
+        slow = 'http://11.0.0.2:80'
+        self.publish([fast, slow])
+        server, _ = await self.start(max_failures=1)
+        running = server.gateway
+        running.stagger = 0.01
+
+        async def tunnel(proxy, *_args):
+            if proxy == slow:
+                await asyncio.Future()
+            return (None, None), None
+
+        running._tunnel = tunnel
+        lease, _stream = await running.connect('127.0.0.1', self.target)
+        try:
+            self.assertEqual(lease.proxy, fast)
+            self.assertIn(slow, running.pool.resting)
+            self.assertEqual(running.pool.report(slow)['failed'], 1)
+        finally:
+            lease.release()
+        self.assertFalse(running.pool.active)
+
     async def test_simultaneous_failure_is_recorded_before_the_winner_returns(self):
         alive = 'http://11.0.0.1:80'
         dead = 'http://11.0.0.2:80'
