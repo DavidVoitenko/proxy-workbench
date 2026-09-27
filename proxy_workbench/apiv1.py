@@ -154,7 +154,10 @@ STATUS_ERROR_CODE = {
     500: 'E_SERVICE_UNAVAILABLE', 502: 'E_GATEWAY_NO_UPSTREAM', 504: 'E_GATEWAY_DEADLINE',
 }
 
-ID_PATTERN = re.compile(r'^[A-Za-z0-9._:-]{1,128}$')
+#: A path segment.  ``@`` is allowed because a profile revision is addressed as
+#: ``<profile_id>@<revision>`` (``GET /v1/profiles/{id}``); without it the
+#: documented spelling could not even reach the handler that parses it.
+ID_PATTERN = re.compile(r'^[A-Za-z0-9._:@-]{1,128}$')
 FILE_CHARS = re.compile(r'[^A-Za-z0-9._-]')
 
 
@@ -625,13 +628,19 @@ class ApiKeyStore:
         return {'items': rows, 'stream_id': 'audit', 'next_seq': None}
 
     def audit(self, record):
-        """One audit row per answered mutation; never a body, never a secret."""
-        record = getattr(self.manager, 'record_audit', None) or self.manager._audit
-        record(record['key_id'], record['operation'],
-               object_kind=record.get('object_kind'), object_id=record.get('object_id'),
-               scope={k: v for k, v in record.items()
-                      if k in ('collection_id', 'pool_id') and v},
-               result=record.get('result') or 'ok', error_code=record.get('error_code'))
+        """One audit row per answered mutation; never a body, never a secret.
+
+        The writer used to be bound to the name ``record`` as well, so the row
+        was read out of a bound method, the ``TypeError`` was swallowed by the
+        pipeline and no mutation or refusal answered over ``/v1`` ever reached
+        the audit log.
+        """
+        write = getattr(self.manager, 'record_audit', None) or self.manager._audit
+        write(record['key_id'], record['operation'],
+              object_kind=record.get('object_kind'), object_id=record.get('object_id'),
+              scope={k: v for k, v in record.items()
+                     if k in ('collection_id', 'pool_id') and v} or None,
+              result=record.get('result') or 'ok', error_code=record.get('error_code'))
 
 
 # --------------------------------------------------------------------------
@@ -793,14 +802,17 @@ class IdempotencyStore:
             record = self._records.get((bucket, key))
             if record is None:
                 return None
+            # An expired key is forgotten before it is compared: once its TTL
+            # is over it may carry a new request, so a different body is a new
+            # mutation and not a conflict with an answer nobody keeps anymore.
+            if self._clock() - record['at'] > self.ttl_s:
+                self._records.pop((bucket, key), None)
+                return None
             if record['digest'] != digest:
                 raise ApiError('E_CONFLICT_IDEMPOTENCY', status=409,
                                details={'idempotency_key': key},
                                action=tr('используйте новый ключ или тот же запрос',
                                          'use a new key or repeat the same request'))
-            if self._clock() - record['at'] > self.ttl_s:
-                self._records.pop((bucket, key), None)
-                return None
             return record['response']
 
     def put(self, bucket, key, digest, response):
@@ -1846,6 +1858,11 @@ class ApiV1:
             def do_PATCH(self):
                 self._dispatch('PATCH')
 
+            def do_PUT(self):
+                # No route takes PUT; the pipeline answers the documented 405
+                # with an Allow header instead of the stock HTML 501 page.
+                self._dispatch('PUT')
+
             def do_DELETE(self):
                 self._dispatch('DELETE')
 
@@ -1855,7 +1872,9 @@ class ApiV1:
             def _dispatch(self, method):
                 url = urlsplit(self.path)
                 try:
-                    length = int(self.headers.get('Content-Length') or 0)
+                    # A negative length would make ``read`` wait for EOF and
+                    # hold the worker thread until the client gave up.
+                    length = max(0, int(self.headers.get('Content-Length') or 0))
                 except ValueError:
                     length = 0
                 # an oversized body is refused without being buffered in full
@@ -2066,6 +2085,7 @@ class ApiV1:
                 return cached
         body = self._parse_body(request, route)
         query = self._parse_query(route, request)
+        self._check_field_scope(route, principal, params, body, query)
         self._check_sensitive(route, principal, body, query)
         self._apply_guard(route, body)
         expected = self._expected_revision(request, body, route)
@@ -2122,6 +2142,25 @@ class ApiV1:
         method = KEY_METHODS[route.operation]
         key_id = call.params.get('id')
         if route.operation == 'keys.create':
+            pair = ('rate_limit_requests', 'rate_limit_window_seconds')
+            given = [name for name in pair if call.body.get(name) is not None]
+            if len(given) == 1:
+                # A rate limit is a count *per window*: half of it used to be
+                # dropped without a word and the key was issued unlimited.
+                missing = next(name for name in pair if name not in given)
+                raise field_error(missing, tr('лимит задаётся парой: число запросов и окно',
+                                              'a rate limit needs both the request count '
+                                              'and the window'),
+                                  action=tr('передайте оба поля или ни одного',
+                                            'send both fields or neither'))
+            if call.body.get('rotation_grace_seconds'):
+                # The grace window belongs to one rotation and is given to
+                # ``POST /v1/keys/{id}/rotate``; a new key has no old secret.
+                raise field_error('rotation_grace_seconds',
+                                  tr('окно ротации задаётся при ротации',
+                                     'the grace window is set when the key is rotated'),
+                                  action=tr('передайте его в POST /v1/keys/{id}/rotate',
+                                            'send it to POST /v1/keys/{id}/rotate'))
             return self.keys.create_key(principal, dict(call.body, purpose=call.body.get('purpose')))
         if route.operation == 'subscriptions.create':
             spec = dict(call.body, permissions=sorted(SUBSCRIPTION_PERMISSIONS),
@@ -2145,6 +2184,15 @@ class ApiV1:
             return self.keys.read_audit(principal, limit=call.query.get('limit'))
         if route.operation == 'keys.get':
             return self.keys.get_key(principal, key_id)
+        if route.operation == 'subscriptions.revoke':
+            # The subscription route acts on subscription secrets only; any
+            # other key id is not a subscription and is not found here, the
+            # same way ``subscriptions.list`` never shows it.
+            current = self.keys.get_key(principal, key_id)
+            if not isinstance(current, Mapping) or current.get('purpose') != SUBSCRIPTION_PURPOSE:
+                raise ApiError('E_STATE_NOT_FOUND', status=404, details={'id': key_id},
+                               action=tr('это не секрет подписки: используйте /v1/keys/{id}/revoke',
+                                         'not a subscription secret: use /v1/keys/{id}/revoke'))
         return getattr(self.keys, method)(principal, key_id)
 
     def _check_queue(self):
@@ -2197,6 +2245,26 @@ class ApiV1:
                           'filter': {k: v for k, v in query.items()
                                      if k not in ('cursor', 'limit', 'cursor_stream',
                                                   'cursor_seq')}})[:16]
+
+    @staticmethod
+    def _check_field_scope(route, principal, params, body, query):
+        """The resource scope a route names in its body or query, not its path.
+
+        ``route.scope`` was only ever looked up among the *path* parameters, so
+        every entry that names a body field -- ``pool_id`` of the reservation
+        routes, of ``gateway.bind`` and of ``schedules.create`` -- was checked
+        against ``None`` and passed: a key limited to one pool could lease,
+        bind and schedule any other pool.  The path check still runs first,
+        before the body is read; this one runs once the body is validated.
+        """
+        for kind, source in route.scope:
+            if source in params:
+                continue
+            value = body.get(source) if isinstance(body, dict) else None
+            if value is None and isinstance(query, dict):
+                value = query.get(source)
+            if isinstance(value, str) and value:
+                require_scope(principal, kind, value)
 
     def _check_sensitive(self, route, principal, body, query):
         """A sensitive option is a separate permission, never a parameter of convenience."""
@@ -2319,7 +2387,11 @@ class ApiV1:
 
     def _stream(self, request, route, params, principal):
         query = parse_query_fields(route.query, request.query)
-        stream_id = query.get('stream') or f"job:{params.get('id', 'system')}"
+        # The job route names its stream by the job; the system route is the
+        # ``system`` stream unless the caller picks one.  It used to default to
+        # ``job:system``, a name no service answer carries, so a cursor the
+        # server itself had handed out could never be used to resume.
+        stream_id = query.get('stream') or (f"job:{params['id']}" if 'id' in params else 'system')
         seq = 0
         cursor = query.get('cursor')
         if cursor:
@@ -2354,8 +2426,17 @@ class ApiV1:
             raise ApiError('E_SERVICE_UNAVAILABLE',
                            status=503 if isinstance(exc, NotImplementedError) else 500,
                            details={'reason': type(exc).__name__}) from exc
-        # a service may return (stream_id, events) when it chose the stream itself
-        declared, events = source if isinstance(source, tuple) else (stream_id, source)
+        # a service may return (stream_id, events) when it chose the stream itself,
+        # or the same page object every listing returns: ``{"items": [...],
+        # "stream_id": ...}``.  The page used to be iterated as it stood, which
+        # walks the *keys* of a dict, so every event stream answered one
+        # ``error`` frame ("event needs seq and type") and nothing else.
+        if isinstance(source, tuple):
+            declared, events = source
+        elif isinstance(source, Mapping) and isinstance(source.get('items'), list):
+            declared, events = source.get('stream_id') or stream_id, source['items']
+        else:
+            declared, events = stream_id, source
         limit = int(query.get('limit') or self.config.max_limit)
         stream = EventStream(str(declared or stream_id),
                              self._guarded(events, limit, request, key_slot), self.clock,

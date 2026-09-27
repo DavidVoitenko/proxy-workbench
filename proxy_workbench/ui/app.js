@@ -9598,8 +9598,9 @@ function keyAdminSecret() {
 async function loadKeys() {
   const secret = keyAdminSecret();
   try {
-    const query = secret ? '?admin_secret=' + encodeURIComponent(secret) : '';
-    renderKeys(await api('/api/api-keys' + query));
+    // The secret goes in the request body, never in the URL.
+    renderKeys(secret ? await api('/api/api-keys/list', {admin_secret: secret})
+                      : await api('/api/api-keys'));
   } catch (error) {
     toast(error.message, true);
   }

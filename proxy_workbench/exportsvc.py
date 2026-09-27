@@ -1283,7 +1283,13 @@ def status_from_dict(data: Mapping[str, Any]) -> SnapshotStatus:
         source_binding=data.get('source_binding'))
     policy = core.Policy(max_age_seconds=_as_float(data.get('max_age_seconds'),
                                                    core.DEFAULT_MAX_AGE_SECONDS),
-                         min_success=_as_float(data.get('min_success'), 2 / 3),
+                         # ``--min-success 0`` is recorded as 0 ("no threshold");
+                         # the policy is defined on (0, 1], so it is read with
+                         # the same clamp the exporter applied.  Reading 0 as is
+                         # refused the whole generation: every reader (API, GUI,
+                         # gateway) reported a broken snapshot.
+                         min_success=(_as_float(data.get('min_success'), 2 / 3)
+                                      if _as_float(data.get('min_success'), 2 / 3) > 0 else 1e-9),
                          min_anonymity=_as_text(data.get('min_anonymity') or 'any'))
     options = ExportOptions(sort=_as_text(data.get('sort') or 'quality'), top=_as_int(data.get('top'), 0),
                             credentials=_as_text(data.get('credentials') or CREDENTIALS_REDACT),

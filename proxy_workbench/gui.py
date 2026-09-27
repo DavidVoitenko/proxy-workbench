@@ -5036,8 +5036,9 @@ class Handler(BaseHTTPRequestHandler):
             if path.path == '/api/sources/update-status':
                 return self.respond(200, self.app.catalog_update_status())
             if path.path == '/api/api-keys':
-                return self.respond(200, self.app.keys_view(
-                    {'admin_secret': (query.get('admin_secret') or [''])[0]}))
+                # The administrator secret never travels in a URL: the page
+                # posts it to /api/api-keys/list.  A GET lists what needs no key.
+                return self.respond(200, self.app.keys_view({}))
             if path.path == '/api/import/batches':
                 return self.respond(200, self.app.import_batches(query))
             if path.path == '/api/pools':
@@ -5207,6 +5208,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond(200, self.app.gateway_configure(payload))
             if path == '/api/api-keys':
                 return self.respond(200, self.app.key_create(payload))
+            if path == '/api/api-keys/list':
+                return self.respond(200, self.app.keys_view(
+                    {'admin_secret': str((payload or {}).get('admin_secret') or '')}))
             if path == '/api/api-keys/bootstrap':
                 return self.respond(200, self.app.key_bootstrap(payload))
             if path == '/api/api-keys/action':
