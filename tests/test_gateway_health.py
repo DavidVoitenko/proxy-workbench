@@ -225,3 +225,18 @@ class ReplayTests(GatewayCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class RestingFallbackTests(GatewayCase):
+    async def test_a_pool_where_every_proxy_rests_still_serves(self):
+        # With a small pool of flaky public proxies every proxy reached two
+        # failures within a minute, and the gateway then answered 502 instantly
+        # for five minutes although some of them worked most of the time.
+        up = await self.http_upstream('relay')
+        self.publish([up.url])
+        server, address = await self.start(max_failures=1, cooldown=300)
+        pool = server.gateway.pool
+        pool.outcome(up.url, 'handshake_failed')
+        self.assertIn(up.url, pool.resting)
+        self.assertEqual(pool.available(), [])
+        self.assertEqual((await self.get(address, '/x')).status_code, 200)
