@@ -41,6 +41,8 @@ The biggest release so far: a new interface, a source catalog of 150 lists, a de
 
 ### Fixed
 
+- **Control API checked operation by operation.** The audit log is written; a key limited to one collection or pool can no longer act on others through body or query fields; event streams deliver events; result paging moves past the first page and every declared filter and sort works; unknown jobs, pools and sources answer 404; refreshing a source returns a job; PUT and wrong methods get JSON errors; `localhost` reaches `/v1`.
+- The web interface no longer puts the administrator key in a URL.
 - **Checks are much faster on real-world lists.** A scan no longer waits on its own database lock for every job item, and dead proxies no longer push the number of parallel checks down to one: 3,000 mostly dead candidates now take seconds instead of hours. Running out of file descriptors is no longer recorded as a dead proxy.
 - The chosen interface language is kept after a restart; before, ten of the twelve languages fell back to English on the next start.
 - Results table cells stay under their own headers when some columns are hidden.
