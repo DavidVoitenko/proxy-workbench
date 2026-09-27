@@ -41,6 +41,7 @@ The biggest release so far: a new interface, a source catalog of 150 lists, a de
 
 ### Fixed
 
+- **Checks are much faster on real-world lists.** A scan no longer waits on its own database lock for every job item, and dead proxies no longer push the number of parallel checks down to one: 3,000 mostly dead candidates now take seconds instead of hours. Running out of file descriptors is no longer recorded as a dead proxy.
 - The chosen interface language is kept after a restart; before, ten of the twelve languages fell back to English on the next start.
 - Results table cells stay under their own headers when some columns are hidden.
 - Results table text is readable in the light theme.
