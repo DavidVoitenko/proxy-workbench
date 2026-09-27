@@ -169,14 +169,18 @@ def js_slice(start_marker, end_marker, source=None):
     return text[start:end]
 
 
-def run_node(script, *, timeout=30, cwd=None, executable='node'):
-    """Run CommonJS over stdin, without OS command-line size or locale limits."""
+def run_node(script, *, timeout=90, cwd=None, executable='node'):
+    """Run CommonJS over stdin, without OS command-line size or locale limits.
+
+    The script carries the whole interface bundle; a cold node start on a busy
+    Windows runner has taken longer than 30 s, so the ceiling is generous.
+    """
     return subprocess.run([executable, '--input-type=commonjs', '-'], input=script,
                           capture_output=True, text=True, encoding='utf-8',
                           timeout=timeout, cwd=cwd)
 
 
-def node_ok(script, *, timeout=30):
+def node_ok(script, *, timeout=90):
     done = run_node(script, timeout=timeout)
     if done.returncode != 0:
         raise AssertionError('node failed: ' + (done.stderr or done.stdout)[-4000:])

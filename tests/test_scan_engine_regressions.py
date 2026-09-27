@@ -241,16 +241,20 @@ class StopAndContinueTests(unittest.TestCase):
         from proxy_workbench import jobs
         with tempfile.TemporaryDirectory() as tmp:
             conn = proxytool.open_db(Path(tmp) / 'proxies.sqlite3')
-            self.addCleanup(conn.close)
             bench = proxytool.Workbench(tmp, conn=conn)
-            store = bench.jobs()
-            scope = jobs.Scope(collection_id='c', profile_id='p', profile_revision=1, profile_digest='p')
-            store.start(store.submit('pool_recheck', scope).id)
-            with self.assertRaises(jobs.Busy):
-                proxytool.submit_scan_job(bench, conn, 'check', profile='p', profile_revision=1,
-                                          collection_id=proxytool.ensure_collection(conn, None),
-                                          candidates=['http://203.0.113.9:8080'])
-            self.assertEqual(store.jobs(state='queued'), [])
+            try:
+                store = bench.jobs()
+                scope = jobs.Scope(collection_id='c', profile_id='p', profile_revision=1, profile_digest='p')
+                store.start(store.submit('pool_recheck', scope).id)
+                with self.assertRaises(jobs.Busy):
+                    proxytool.submit_scan_job(bench, conn, 'check', profile='p', profile_revision=1,
+                                              collection_id=proxytool.ensure_collection(conn, None),
+                                              candidates=['http://203.0.113.9:8080'])
+                self.assertEqual(store.jobs(state='queued'), [])
+            finally:
+                # Windows cannot delete the temporary folder while the database is open.
+                bench.close()
+                conn.close()
 
 
 class WatchRoundTests(unittest.TestCase):
