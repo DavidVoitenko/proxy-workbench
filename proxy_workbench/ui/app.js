@@ -5143,8 +5143,8 @@ function updateSelectionUI() {
 
   if (bar) {
     const hasRows = document.querySelectorAll('.proxy-select-box').length > 0;
-    // The bar is also the only home of the bulk-scope selector: keep it visible
-    // on a non-empty table even with nothing ticked, hiding selection-only controls.
+    // The bar is also the only home of the bulk-scope selector. With no rows
+    // selected, CSS keeps it in the page flow instead of covering table rows.
     const isVisible = count > 0 || (currentTab === 'results' && hasRows);
     bar.classList.toggle('hidden', !isVisible);
     bar.classList.toggle('active', isVisible);

@@ -24026,3 +24026,48 @@ pre#log,
 }
 .ticker-badge { font-weight: 700 !important; }
 .ticker-code { font-variant-numeric: tabular-nums !important; }
+
+/* The scope controls remain available before a row is selected, but they must
+   occupy normal space instead of covering the lower rows of the results table. */
+#page-results #selection-action-bar.no-selection:not(.hidden) {
+  position: relative !important;
+  inset: auto !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  margin: 0 0 16px !important;
+  transform: none !important;
+  opacity: 1 !important;
+  visibility: visible !important;
+  pointer-events: auto !important;
+  z-index: 1 !important;
+  border-radius: var(--radius-md, 12px) !important;
+  padding: 10px 14px !important;
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  display: flex !important;
+  flex-direction: row !important;
+  flex-wrap: wrap !important;
+  align-items: center !important;
+  gap: 10px !important;
+}
+
+#page-results #selection-action-bar.no-selection .selection-pill {
+  display: none !important;
+}
+
+#page-results #selection-action-bar.no-selection .scope-select,
+#page-results #selection-action-bar.no-selection #select-all-matching {
+  width: auto !important;
+}
+
+#page-results #selection-action-bar.no-selection .selection-actions {
+  display: flex !important;
+  flex-direction: row !important;
+  flex-wrap: wrap !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  overflow: visible !important;
+  padding: 0 !important;
+  mask-image: none !important;
+  -webkit-mask-image: none !important;
+}
