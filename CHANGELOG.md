@@ -41,6 +41,7 @@ The biggest release so far: a new interface, a source catalog of 150 lists, a de
 
 ### Fixed
 
+- **Collecting is faster and reads more lists.** Addresses are written in batches (a full collection of the 106 default feeds went from 133 s to 79 s); four sources that returned nothing (hideip.me, spys.me and others with `ip:port` lines and comments) now return addresses; a list that exceeds the size limit is reported as a partial read instead of a failing provider and is no longer put into backoff; a list without country data no longer erases a country learned elsewhere; cached lists are re-read after a failed or refused download.
 - **Control API checked operation by operation.** The audit log is written; a key limited to one collection or pool can no longer act on others through body or query fields; event streams deliver events; result paging moves past the first page and every declared filter and sort works; unknown jobs, pools and sources answer 404; refreshing a source returns a job; PUT and wrong methods get JSON errors; `localhost` reaches `/v1`.
 - The web interface no longer puts the administrator key in a URL.
 - **Checks are much faster on real-world lists.** A scan no longer waits on its own database lock for every job item, and dead proxies no longer push the number of parallel checks down to one: 3,000 mostly dead candidates now take seconds instead of hours. Running out of file descriptors is no longer recorded as a dead proxy.
