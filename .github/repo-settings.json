@@ -1,5 +1,5 @@
 {
-  "description": "Free proxies that actually work for YOUR sites: collects 55 public lists, checks HTTP/HTTPS/SOCKS4/SOCKS5 against your services, rates anonymity, filters by country and blacklists, then serves them as a rotating proxy, API, PAC and Clash config. Local GUI + CLI + Docker.",
+  "description": "Finds free proxies that actually work on the sites you need: collects from 150 public sources, checks each one against your services, and gives you ready lists, a rotating proxy and an API. Desktop app for macOS and Windows, CLI and Docker, 12 languages.",
   "homepage_from_pages": true,
   "has_discussions": true,
   "has_issues": true,
