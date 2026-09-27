@@ -7,6 +7,7 @@ import asyncio
 import contextlib
 from contextlib import asynccontextmanager, contextmanager
 import csv
+import errno
 import hashlib
 import ipaddress
 import json
@@ -39,6 +40,7 @@ from . import socks4
 from . import formats
 from .i18n import tr, utf8_output
 from . import paths
+from .pipeline import AdaptiveConcurrency
 
 # ``exportsvc`` imports a handful of constants from this module, so it is
 # imported where it is used instead of here.  One contract, one implementation:
@@ -3136,6 +3138,9 @@ async def request_once(proxy, target, config, rate):
     except chain.BudgetExhausted:
         raise
     except Exception as exc:
+        if local_os_error(exc) is not None:
+            # This machine ran out of sockets: no verdict about the proxy.
+            raise
         # Broken proxies raise more than httpx errors (socksio parses raw replies).
         # The stage and the stable code come from the one classifier, so the
         # funnel in a diagnostic packet can tell "the proxy died at the TCP
@@ -3492,12 +3497,50 @@ def fit_prefilter(workers, requested):
     return max(1, min(requested, fit_workers(workers + requested) - workers))
 
 
+#: Connect errors that describe this machine running out of something, not the
+#: proxy being dead.  They are raised instead of becoming ``UNREACHABLE``: a
+#: verdict about the proxy would be wrong, and the adaptive limit must see them.
+LOCAL_CONNECT_ERRNOS = frozenset(getattr(errno, name) for name in
+                                 ('EMFILE', 'ENFILE', 'ENOBUFS', 'EADDRNOTAVAIL', 'ENOMEM')
+                                 if hasattr(errno, name))
+
+
+def local_os_error(exc):
+    """The local-resource ``OSError`` behind ``exc`` (httpx wraps it), or None."""
+    seen = set()
+    while exc is not None and id(exc) not in seen:
+        seen.add(id(exc))
+        if isinstance(exc, OSError) and exc.errno in LOCAL_CONNECT_ERRNOS:
+            return exc
+        exc = exc.__cause__ or exc.__context__
+    return None
+
+
+class EndpointConcurrency(AdaptiveConcurrency):
+    """The scan's adaptive limit: only local trouble counts as overload.
+
+    A proxy that refuses, times out or answers garbage is a verdict about that
+    proxy.  Counting it as a failed measurement walked the limit down to one
+    in-flight check on any real corpus -- most public addresses are dead -- and
+    the run crawled through its timeouts one by one.  Outcomes that carry the
+    measurement stage they failed at are verdicts; an outcome without one (a
+    runner that raised, e.g. out of descriptors) still shrinks the limit.
+    """
+
+    def observe_outcome(self, outcome):
+        return self.observe(outcome.ok or bool(outcome.failed_stage), outcome.latency_s)
+
+
 async def reachable(proxy, timeout):
     """Whether anything accepts a TCP connection at the proxy's address."""
     _, host, port = formats.split(proxy)
     try:
         _, writer = await asyncio.wait_for(asyncio.open_connection(host, port), timeout)
-    except (OSError, asyncio.TimeoutError, ValueError):
+    except (asyncio.TimeoutError, ValueError):
+        return False
+    except OSError as exc:
+        if local_os_error(exc) is not None:
+            raise
         return False
     writer.close()
     with contextlib.suppress(OSError):
@@ -4272,6 +4315,10 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
         except chain.BudgetExhausted:
             raise
         except Exception as exc:
+            if local_os_error(exc) is not None:
+                # Not a verdict: the chain records a failed stage, the limit
+                # shrinks and the address stays pending for the next run.
+                raise
             # One malformed proxy must never stop the whole scan, and the reason
             # it died is recorded with a stage so the funnel can count it.
             row = unreachable_result(proxy)
@@ -4354,7 +4401,7 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
         expensive_policy=chain.EXPENSIVE_ALL_PASSING,
         carry_fresh_prior=False)
     engine = chain.Pipeline(config_chain, clock=chain.SystemClock(),
-                            concurrency=chain.AdaptiveConcurrency(
+                            concurrency=EndpointConcurrency(
                                 minimum=1, maximum=budgets.worker_ceiling(),
                                 target_success=0.8, window=16, increase=2, decrease_factor=0.5))
 
@@ -5211,11 +5258,15 @@ class Workbench:
     exception of a module leaks past this boundary.
     """
 
-    def __init__(self, data, *, db_path=None, clock=None):
+    def __init__(self, data, *, db_path=None, clock=None, conn=None):
         self.data = Path(data)
         self.db_path = Path(db_path) if db_path else self.data / 'proxies.sqlite3'
         self.clock = clock or time.time
-        self._conn = None
+        # A caller that already holds the migrated connection (the scan) lends
+        # it: a second writer on the same file would wait on the scan's open
+        # batch for the whole busy timeout, with the event loop blocked.
+        self._conn = conn
+        self._owns_conn = conn is None
         self._report = None
         self._stores = {}
         self._counter = 0
@@ -5245,7 +5296,8 @@ class Workbench:
     def close(self):
         conn, self._conn = self._conn, None
         self._stores.clear()
-        if conn is not None:
+        owned, self._owns_conn = self._owns_conn, True
+        if conn is not None and owned:
             try:
                 conn.commit()
             finally:
@@ -7902,7 +7954,7 @@ def main(argv=None):
     scan_workbench = None
     current_job_id = ['']
     try:
-        scan_workbench = Workbench(args.data, db_path=args.data / 'proxies.sqlite3')
+        scan_workbench = Workbench(args.data, db_path=args.data / 'proxies.sqlite3', conn=db)
     except (schema.DbError, sqlite3.Error, OSError):
         scan_workbench = None
 

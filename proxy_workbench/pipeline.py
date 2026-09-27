@@ -686,6 +686,10 @@ class AdaptiveConcurrency:
                 self._decreases += 1
         return self._limit != before
 
+    def observe_outcome(self, outcome: 'StageOutcome') -> bool:
+        """Feed one stage outcome; a subclass decides what counts as overload."""
+        return self.observe(outcome.ok, outcome.latency_s)
+
     def snapshot(self) -> ConcurrencySample:
         success = sum(1 for item in self._results if item) / len(self._results) if self._results else None
         latency = sum(self._latencies) / len(self._latencies) if self._latencies else None
@@ -2239,7 +2243,7 @@ class Pipeline:
                 # existing scan does with a transport exception.
                 code = exc.code if isinstance(exc, PipelineError) else type(exc).__name__
                 outcome = StageOutcome(stage, False, code=code, detail=str(exc)[:200])
-            self.concurrency.observe(outcome.ok, outcome.latency_s)
+            self.concurrency.observe_outcome(outcome)
         finally:
             if budget.active:
                 reservation = replace(reservation, requests=0)
