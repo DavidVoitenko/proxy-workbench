@@ -6539,8 +6539,9 @@ def run_gateway(args, countries):
         shown_host = server.bind.published_host if args.lan and gateway.is_loopback(args.host) else args.host
         shown = f'[{shown_host}]' if ':' in shown_host else shown_host
         address = f'{shown}:{server.sockets[0].getsockname()[1]}'
-        print(tr(f'Ротирующий прокси: {address} (HTTP и SOCKS5 TCP), в пуле {len(pool.refresh())} прокси. Ctrl+C — остановить.',
-                 f'Rotating proxy: {address} (HTTP and SOCKS5 TCP), {len(pool.refresh())} proxies in the pool. Ctrl+C to stop.'),
+        available = len(pool.matching(binding=pool.default_binding))
+        print(tr(f'Ротирующий прокси: {address} (HTTP и SOCKS5 TCP), в пуле {available} прокси. Ctrl+C — остановить.',
+                 f'Rotating proxy: {address} (HTTP and SOCKS5 TCP), {available} proxies in the pool. Ctrl+C to stop.'),
               flush=True)
         if server.gateway.token_origin == 'generated':
             print(tr(f'Пароль шлюза (сохраните): {server.gateway.token}',
