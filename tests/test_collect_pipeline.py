@@ -375,6 +375,45 @@ class SourceHistoryTests(CollectFixture):
         self.assertEqual(entry['bytes'], len(body))
         self.assertEqual(entry['pages'], 1)
 
+    async def test_broken_attempt_does_not_leave_candidates_from_its_prefix(self):
+        first = ''.join(f'11.43.0.{index}:80\n' for index in range(1, 21)).encode()
+        replacement = b'11.44.0.1:80\n11.44.0.2:80\n'
+        calls = []
+
+        async def handler(reader, writer):
+            try:
+                await reader.readuntil(b'\r\n\r\n')
+                calls.append(1)
+                body = first if len(calls) == 1 else replacement
+                head = (f'HTTP/1.1 200 OK\r\nContent-Length: {len(body)}\r\n'
+                        'Connection: close\r\n\r\n').encode()
+                writer.write(head + (first[:len(first) // 2] if len(calls) == 1 else body))
+                await writer.drain()
+            finally:
+                writer.close()
+                with contextlib.suppress(ConnectionError):
+                    await writer.wait_closed()
+
+        async def no_sleep(_seconds):
+            return None
+
+        server = await asyncio.start_server(handler, '127.0.0.1', 0)
+        original = p.COLLECT_WRITE_BATCH
+        p.COLLECT_WRITE_BATCH = 5
+        try:
+            url = f'http://127.0.0.1:{server.sockets[0].getsockname()[1]}/l'
+            report = await p.collect(self.db, [f'http {url}'], [], allow_private_sources=True,
+                                     quiet=True, sleep=no_sleep)
+        finally:
+            p.COLLECT_WRITE_BATCH = original
+            server.close()
+            await server.wait_closed()
+        self.assertEqual(len(calls), 2)
+        self.assertIsNone(report['sources'][0]['error'])
+        self.assertEqual(report['sources'][0]['accepted'], 2)
+        self.assertEqual(self.candidates(), ['http://11.44.0.1:80', 'http://11.44.0.2:80'])
+        self.assertEqual(self.db.execute('SELECT count(*) FROM membership_source').fetchone()[0], 2)
+
     async def test_a_source_cut_off_by_the_candidate_limit_reports_its_page(self):
         body = ''.join(f'11.41.0.{index}:80\n' for index in range(1, 21)).encode()
         async with self.serve({'/l': body}) as base:

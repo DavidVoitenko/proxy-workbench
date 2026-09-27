@@ -1851,8 +1851,26 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                              blocked=sum(r.get('blocked', 0) for r in reports),
                              candidates=db.execute("SELECT count(*) FROM candidates").fetchone()[0]))
 
-    def add(value, protocol='http', country=None, source=None, public_only=True, seen=None):
+    def queue_candidate(proxy, country=None, source=None, seen=None):
         nonlocal pending_writes
+        if max_items is not None and collection_budget['items'] >= max_items:
+            member = db.execute('SELECT 1 FROM membership WHERE collection_id=? AND endpoint_id=?',
+                                (collection_id, schema.endpoint_id(proxy))).fetchone()
+            if member is None:
+                _collection_budget_error(collection_budget, 'SOURCE_ITEM_BUDGET')
+        if not (isinstance(country, str) and geoip.COUNTRY_CODE.fullmatch(country.upper())):
+            country = None
+        pending.append((proxy, schema.endpoint_id(proxy), country and country.upper(), source,
+                        seen if source else None))
+        pending_writes += 1
+        # An item budget is decided per address, so it is written at once.
+        if max_items is not None or len(pending) >= COLLECT_WRITE_BATCH:
+            flush()
+        if pending_writes >= COLLECT_WRITE_BATCH:
+            commit()
+        return 'accepted'
+
+    def add(value, protocol='http', country=None, source=None, public_only=True, seen=None):
         value = value.strip()
         raw = value if '://' in value else protocol+'://'+value
         # A remote source never gets to name a hostname or a private address,
@@ -1865,24 +1883,18 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
         if seen is not None and proxy in seen['values']:
             seen['duplicate'] += 1
             return 'accepted'
-        if max_items is not None and collection_budget['items'] >= max_items:
-            member = db.execute('SELECT 1 FROM membership WHERE collection_id=? AND endpoint_id=?',
-                                (collection_id, schema.endpoint_id(proxy))).fetchone()
-            if member is None:
-                _collection_budget_error(collection_budget, 'SOURCE_ITEM_BUDGET')
-        if not (isinstance(country, str) and geoip.COUNTRY_CODE.fullmatch(country.upper())):
-            country = None
+        if seen is not None and seen.get('defer'):
+            # A streamed response can break after thousands of complete lines.
+            # Keep its candidates aside until the HTTP body finishes; a retry
+            # may return a different list and must not leave the broken prefix
+            # in the collection or its source provenance.
+            seen['values'].add(proxy)
+            seen['staged'][proxy] = country
+            return 'accepted'
+        outcome = queue_candidate(proxy, country, source, seen)
         if source and seen is not None:
             seen['values'].add(proxy)
-        pending.append((proxy, schema.endpoint_id(proxy), country and country.upper(), source,
-                        seen if source else None))
-        pending_writes += 1
-        # An item budget is decided per address, so it is written at once.
-        if max_items is not None or len(pending) >= COLLECT_WRITE_BATCH:
-            flush()
-        if pending_writes >= COLLECT_WRITE_BATCH:
-            commit()
-        return 'accepted'
+        return outcome
 
     pending = []
     country_columns = [name for name in ('country', 'country_at', 'country_source')
@@ -2050,7 +2062,8 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
             signatures = set()
             started_at = clock()
             state = _source_state_row(db, key) if record_provenance else None
-            seen = {'values': set(), 'new': 0, 'duplicate': 0, 'metadata': {}}
+            seen = {'values': set(), 'new': 0, 'duplicate': 0, 'metadata': {},
+                    'defer': False, 'staged': {}}
             received = recognized = status_code = 0
             reject_reasons = {}
             body_digest = None
@@ -2129,10 +2142,29 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                  endpoint_count, seen['duplicate'], values) = checkpoint
                 budget.clear()
                 budget.update(saved_budget)
+                seen['staged'].clear()
                 if values is not None:
                     seen['values'] = set(values)
                 if parse_state == 'empty':
                     parse_state = 'pending'
+
+            def publish_staged():
+                """Publish only a fully read streamed attempt's candidates."""
+                staged = seen['staged']
+                if not staged:
+                    return
+                written = set()
+                try:
+                    for proxy, country in staged.items():
+                        queue_candidate(proxy, country, key, seen)
+                        written.add(proxy)
+                except SourceFetchError:
+                    # An item budget may stop publication halfway through.
+                    # The accepted counter must describe the stored prefix.
+                    seen['values'].difference_update(staged.keys() - written)
+                    raise
+                finally:
+                    seen['staged'] = {}
 
             def consume_candidate():
                 nonlocal candidate_count
@@ -2420,8 +2452,13 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                             else:
                                 checkpoint = attempt_checkpoint()
                             try:
-                                async with asyncio.timeout(timeout):
-                                    data = await request_source(candidate, page, headers)
+                                seen['defer'] = kind not in CATALOG_ADAPTER_KINDS and kind != 'geonode'
+                                try:
+                                    async with asyncio.timeout(timeout):
+                                        data = await request_source(candidate, page, headers)
+                                finally:
+                                    seen['defer'] = False
+                                publish_staged()
                                 page_url = candidate
                                 succeeded = True
                                 error = None
@@ -2443,7 +2480,15 @@ async def collect(db, urls, inputs, timeout=60, on_progress=None, denylist=None,
                         if error == 'SOURCE_CANDIDATE_LIMIT' and seen['values']:
                             # A streamed page cut off by the candidate limit
                             # was read, and what it delivered is kept.
+                            try:
+                                publish_staged()
+                            except SourceFetchError as exc:
+                                error = exc.code
                             pages += 1
+                        elif error not in COLLECT_BUDGET_ERRORS:
+                            # A failed retry or mirror is not the source's
+                            # answer. Earlier completed pages remain intact.
+                            restore_attempt(checkpoint)
                         break
                     pages += 1
                     if not_modified:

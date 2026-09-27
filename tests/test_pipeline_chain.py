@@ -51,6 +51,40 @@ class SourceStageTests(unittest.TestCase):
         self.assertEqual(result.counters.stage_failures.get('stop'), pl.E_LIMIT_BODY)
         self.assertFalse(result.feed_complete)
 
+    def test_source_exactly_at_byte_cap_is_complete(self):
+        endpoints = support.addresses(2)
+        body = ('\n'.join(endpoints) + '\n').encode('utf-8')
+
+        async def fetch():
+            yield body
+            yield b''
+
+        result = run(pl.run_pipeline(support.config(
+            [pl.SourceSpec('s', fetch)],
+            pl.Runners(cheap=support.recording_runner(), basic=None, expensive=None),
+            run_basic=False, budgets=pl.Budgets(max_source_bytes=len(body)))))
+        self.assertEqual(result.state, 'complete')
+        self.assertTrue(result.feed_complete)
+        self.assertEqual(result.counters.sources_truncated, 0)
+        self.assertEqual(result.metrics.measured, 2)
+
+    def test_overlong_line_is_discarded_without_hiding_the_next_address(self):
+        endpoint = support.addresses(1)[0]
+        oversized = b'x' * (len(endpoint) + 1)
+
+        async def fetch():
+            yield oversized[:9]
+            yield oversized[9:] + b'\n' + endpoint.encode('utf-8') + b'\n'
+
+        result = run(pl.run_pipeline(support.config(
+            [pl.SourceSpec('s', fetch)],
+            pl.Runners(cheap=support.recording_runner(), basic=None, expensive=None),
+            run_basic=False, budgets=pl.Budgets(max_line_bytes=len(endpoint)))))
+        self.assertEqual(result.state, 'complete')
+        self.assertEqual(result.counters.rejected, 1)
+        self.assertEqual(result.counters.parsed, 2)
+        self.assertEqual(result.metrics.measured, 1)
+
     def test_per_source_byte_cap_wins_over_the_global_one(self):
         endpoints = support.addresses(20)
         source = support.chunk_source('s', endpoints, chunk=16)
