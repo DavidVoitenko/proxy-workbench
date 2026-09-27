@@ -1,6 +1,7 @@
 """Regression tests for API validation, concurrency, streams and scoped reads."""
 from concurrent.futures import ThreadPoolExecutor
 import http.client
+from itertools import count
 import json
 from pathlib import Path
 import sqlite3
@@ -146,6 +147,27 @@ class ResilienceTests(unittest.TestCase):
             answers = (first.result(3), second.result(3))
         self.assertEqual([answer.status_code for answer in answers], [200, 200])
         self.assertEqual(self.service.calls, 1)
+
+    def test_unrelated_keys_do_not_share_a_hash_stripe(self):
+        store = apiv1.IdempotencyStore(60, 100, time.monotonic)
+        bucket = ('reader', 'POST', '/v1/collections')
+        first = 'first'
+        stripe = hash((bucket, first)) % 64
+        second = next(f'other-{index}' for index in count()
+                      if hash((bucket, f'other-{index}')) % 64 == stripe)
+        acquired = threading.Event()
+
+        def enter_second():
+            with store.serialized(bucket, second):
+                acquired.set()
+
+        with store.serialized(bucket, first):
+            thread = threading.Thread(target=enter_second)
+            thread.start()
+            self.assertTrue(acquired.wait(2), 'different keys must run independently')
+        thread.join(2)
+        self.assertFalse(thread.is_alive())
+        self.assertFalse(store._flights)
 
     def test_head_event_stream_releases_key_slot_and_sends_no_body(self):
         control = apiv1.ApiV1(self.service, Keys(concurrency=1),

@@ -43,6 +43,7 @@ import ssl
 import threading
 import time
 from collections import OrderedDict, deque
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -826,12 +827,28 @@ class IdempotencyStore:
         self._clock = clock
         self._records = OrderedDict()
         self._lock = threading.Lock()
-        # Serialize identical mutations from check through execution and cache
-        # insertion.  A fixed set of locks keeps memory bounded for random keys.
-        self._singleflight = tuple(threading.RLock() for _ in range(64))
+        # Only identical mutations share a lock. Hash-striped locks also held
+        # unrelated requests, changing their concurrency-limit result.
+        self._flight_guard = threading.Lock()
+        self._flights = {}
 
+    @contextmanager
     def serialized(self, bucket, key):
-        return self._singleflight[hash((bucket, key)) % len(self._singleflight)]
+        identity = (bucket, key)
+        with self._flight_guard:
+            entry = self._flights.get(identity)
+            if entry is None:
+                entry = {'lock': threading.RLock(), 'users': 0}
+                self._flights[identity] = entry
+            entry['users'] += 1
+        try:
+            with entry['lock']:
+                yield
+        finally:
+            with self._flight_guard:
+                entry['users'] -= 1
+                if not entry['users']:
+                    self._flights.pop(identity, None)
 
     def get(self, bucket, key, digest):
         with self._lock:
