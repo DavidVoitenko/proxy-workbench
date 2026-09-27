@@ -48,7 +48,7 @@ from urllib.parse import urlsplit
 from . import core, formats
 from .i18n import tr
 from .proxytool import (PROTOCOL_ALIASES, PROTOCOL_EXPORTS, PROTOCOLS, PROXYCHAINS_TYPES,
-                        proxy_protocol, reputation_status)
+                        proxy_protocol, reputation_status, retry_file_access)
 
 __all__ = [
     'ARTIFACT_KINDS', 'CLIENT_BINARY_ENV', 'CLIENT_SIDECAR_NAME', 'CLIENT_TARGET_ENV', 'DIAGNOSTIC_POINTER_NAME',
@@ -1488,8 +1488,8 @@ def _atomic_write(path: Path, content: str) -> None:
     """Replace one file in one step; a reader never sees a half-written pointer."""
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.name + '.tmp')
-    temporary.write_bytes(content.encode('utf-8'))
-    os.replace(temporary, path)
+    retry_file_access(lambda: temporary.write_bytes(content.encode('utf-8')))
+    retry_file_access(lambda: os.replace(temporary, path))
 
 
 def write_snapshot(directory: Any, rows: Sequence[Mapping[str, Any]], *, scope: ExportScope,

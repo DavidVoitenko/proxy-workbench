@@ -360,6 +360,42 @@ class WorkbenchTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(PermissionError):
                 p.atomic(target, '{}')
 
+    def test_legacy_publication_retries_locks_and_rolls_back_on_persistent_denial(self):
+        exports = self.home / 'exports'
+        generation = exports / 'generations' / '.generation-test'
+        generation.mkdir(parents=True)
+        (generation / 'proxies.txt').write_text('new\n', encoding='utf-8')
+        (exports / 'proxies.txt').write_text('old\n', encoding='utf-8')
+        (exports / 'status.json').write_text('old status\n', encoding='utf-8')
+        real_replace = Path.replace
+        attempts = []
+
+        def briefly_locked(source, destination):
+            if source == exports / 'proxies.txt' and len(attempts) < 2:
+                attempts.append(destination)
+                raise PermissionError('file is open')
+            return real_replace(source, destination)
+
+        committed = []
+        with mock.patch.object(Path, 'replace', briefly_locked), mock.patch.object(p.time, 'sleep'):
+            p._publish_legacy_files(exports, generation, ('proxies.txt',), {'state': 'complete'},
+                                    before_commit=lambda: committed.append(True))
+        self.assertEqual(len(attempts), 2)
+        self.assertEqual(committed, [True])
+        self.assertEqual((exports / 'proxies.txt').read_text(encoding='utf-8'), 'new\n')
+        self.assertFalse((exports / '.proxies.txt.publish-backup').exists())
+
+        def persistently_locked(source, destination):
+            if source == exports / 'status.json.publish-tmp':
+                raise PermissionError('still locked')
+            return real_replace(source, destination)
+
+        with mock.patch.object(Path, 'replace', persistently_locked), mock.patch.object(p.time, 'sleep'):
+            with self.assertRaises(PermissionError):
+                p._publish_legacy_files(exports, generation, ('proxies.txt',), {'state': 'other'})
+        self.assertEqual((exports / 'proxies.txt').read_text(encoding='utf-8'), 'new\n')
+        self.assertIn('complete', (exports / 'status.json').read_text(encoding='utf-8'))
+
     def test_normalization(self):
         self.assertEqual(p.normalize('https://11.1.1.1:80'), 'https://11.1.1.1:80')
         for raw in ['ftp://11.1.1.1:80', '11.1.1.1:99999', 'http://u:p@11.1.1.1:80', '127.0.0.1:80', '11.1.1.1:80/a', None, 123]:

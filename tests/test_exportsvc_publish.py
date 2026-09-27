@@ -65,6 +65,22 @@ class PublishTests(unittest.TestCase):
                          (artifact.directory / 'proxies.txt').stat().st_size)
         self.assertEqual(stored.expires_at, artifact.status.expires_at)
 
+    def test_pointer_swap_retries_a_brief_windows_file_lock(self):
+        artifact = self.write()
+        real_replace = os.replace
+        attempts = []
+
+        def briefly_locked(source, destination):
+            attempts.append(destination)
+            if len(attempts) < 3:
+                raise PermissionError('file is open')
+            return real_replace(source, destination)
+
+        with mock.patch.object(es.os, 'replace', briefly_locked), mock.patch.object(es.time, 'sleep'):
+            es.publish(artifact, self.home, confirm=True)
+        self.assertEqual(len(attempts), 3)
+        self.assertEqual(es.read_pointer(self.home).generation, artifact.generation)
+
     def test_manifest_matches_disk_bytes_under_windows_newline_translation(self):
         # Reproduce Windows TextIO's default LF -> CRLF translation on every
         # host. A checksum of the original string is not a checksum of that file.

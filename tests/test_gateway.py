@@ -3,6 +3,7 @@ import base64
 import contextlib
 import ipaddress
 import json
+import os
 from pathlib import Path
 import socket
 import struct
@@ -240,8 +241,13 @@ class GatewayTests(unittest.IsolatedAsyncioTestCase):
         (exports / 'current.json').write_text(json.dumps({'generation': generation.name}), encoding='utf-8')
         pool = gateway.Pool(self.home)
         self.assertEqual(pool.refresh(), [proxy])
+        previous_mtime = (generation / 'ranked.json').stat().st_mtime_ns
         current['valid_until'] = time.time() - 1
-        (generation / 'ranked.json').write_text(json.dumps([current]), encoding='utf-8')
+        ranked = generation / 'ranked.json'
+        ranked.write_text(json.dumps([current]), encoding='utf-8')
+        # Force a distinct stamp: Windows can assign the same timestamp and
+        # size to two writes made in one clock tick.
+        os.utime(ranked, ns=(ranked.stat().st_atime_ns, previous_mtime + 2_000_000_000))
         self.assertEqual(pool.refresh(), [])
         (generation / 'ranked.json').unlink()
         self.assertEqual(pool.refresh(), [])

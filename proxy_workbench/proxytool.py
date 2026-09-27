@@ -560,21 +560,25 @@ def public_url(value):
 ATOMIC_REPLACE_ATTEMPTS = 40
 
 
-def atomic(path, content):
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_name(path.name + '.tmp')
-    temp.write_text(content, encoding='utf-8')
-    # Windows refuses to replace a file another process has open for reading
-    # (the GUI polls progress while the CLI writes it); such locks are brief.
+def retry_file_access(operation):
+    """Retry a brief Windows file lock without hiding a persistent I/O error."""
     for attempt in range(ATOMIC_REPLACE_ATTEMPTS):
         try:
-            temp.replace(path)
-            return
+            return operation()
         except PermissionError:
             if attempt == ATOMIC_REPLACE_ATTEMPTS - 1:
                 raise
             time.sleep(0.05)
+
+
+def atomic(path, content):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_name(path.name + '.tmp')
+    retry_file_access(lambda: temp.write_text(content, encoding='utf-8'))
+    # Windows refuses to replace a file another process has open for reading
+    # (the GUI polls progress while the CLI writes it); such locks are brief.
+    retry_file_access(lambda: temp.replace(path))
 
 
 EXPORT_GENERATION_RETENTION = 3
@@ -758,21 +762,21 @@ def _publish_legacy_files(directory, generation, names, report, before_commit=No
         for name in legacy_names:
             source = generation/name
             temporary = directory/(name+'.publish-tmp')
-            temporary.unlink(missing_ok=True)
+            retry_file_access(lambda: temporary.unlink(missing_ok=True))
             if name == 'status.json':
-                temporary.write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8')
+                retry_file_access(lambda: temporary.write_text(json.dumps(report, indent=2) + '\n', encoding='utf-8'))
             else:
-                shutil.copyfile(source, temporary)
+                retry_file_access(lambda: shutil.copyfile(source, temporary))
             staged[name] = temporary
         for name in legacy_names:
             target = directory/name
             if target.exists() or target.is_symlink():
                 backup = directory/('.'+name+'.publish-backup')
-                backup.unlink(missing_ok=True)
-                target.replace(backup)
+                retry_file_access(lambda: backup.unlink(missing_ok=True))
+                retry_file_access(lambda: target.replace(backup))
                 backups[name] = backup
         for name, temporary in staged.items():
-            temporary.replace(directory/name)
+            retry_file_access(lambda: temporary.replace(directory/name))
             installed.append(directory/name)
         if before_commit is not None:
             before_commit()
@@ -782,7 +786,7 @@ def _publish_legacy_files(directory, generation, names, report, before_commit=No
                 path.unlink()
         for name, backup in reversed(list(backups.items())):
             with contextlib.suppress(OSError):
-                backup.replace(directory/name)
+                retry_file_access(lambda: backup.replace(directory/name))
         raise
     finally:
         for temporary in staged.values():
