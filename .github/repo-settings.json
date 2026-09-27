@@ -1,10 +1,10 @@
 {
-  "description": "Finds public proxies that work on the sites you need. Browse a 150-source catalog, collect supported feeds, check against your services, and use ready lists, a rotating gateway and an API. macOS/Windows app, CLI, Docker, 12 languages.",
+  "description": "Desktop proxy workbench for macOS and Windows, plus CLI and Docker. Browse 150 cataloged sources, collect 106 supported feeds, verify proxies against your own services, then use ranked exports, pools, a rotating gateway and a local API.",
   "homepage_from_pages": true,
   "has_discussions": true,
   "has_issues": true,
   "has_wiki": false,
   "has_projects": false,
-  "topics": ["proxy", "proxy-checker", "proxy-list", "free-proxy", "free-proxy-list", "proxy-scraper", "socks5", "socks5-proxy", "http-proxy", "proxy-tester", "elite-proxy", "anonymity", "web-scraping", "dnsbl", "geoip", "python", "asyncio", "rotating-proxy", "self-hosted", "docker"],
+  "topics": ["proxy", "proxy-checker", "proxy-list", "free-proxy", "http-proxy", "socks4", "socks5", "rotating-proxy", "proxy-gateway", "proxy-api", "desktop-app", "macos", "windows", "anonymity", "web-scraping", "dnsbl", "geoip", "python", "self-hosted", "docker"],
   "pages": {"branch": "main", "path": "/docs"}
 }
