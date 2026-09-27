@@ -106,7 +106,7 @@
 | **Программа для Windows** | Скачайте `proxy-workbench-…-windows-x64-setup.exe` из [последнего релиза](https://github.com/DavidVoitenko/proxy-workbench/releases/latest) и запустите установщик; есть portable-архив `.zip` и отдельный `proxy-workbench-cli.exe` для командной строки | больше ничего |
 | **pipx** (Windows, macOS, Linux) | `pipx install git+https://github.com/DavidVoitenko/proxy-workbench`, затем `proxy-workbench` | Python 3.11+ и [pipx](https://pypa.io/pipx/) |
 | **Папка с кодом** | Скачайте код (**Code → Download ZIP** или `git clone`) и запустите, как в таблице ниже | Python 3.11+ |
-| **Docker** | `docker compose up -d` с готовым [`compose.yml`](compose.yml): проверка + API + ротирующий прокси | Docker |
+| **Docker** | Задайте `PROXY_WORKBENCH_API_TOKEN`, затем запустите `docker compose up -d` с готовым [`compose.yml`](compose.yml): проверка + API + ротирующий прокси | Docker |
 
 `proxy-workbench` без аргументов запускает приложение: интерфейс открывается в браузере, а на macOS в меню-баре появляется значок с состоянием и пунктами «пауза», «запуск проверки», «запускать при входе» и «выход». Повторный запуск обращается к уже работающему экземпляру, а не поднимает вторую копию. `proxy-workbench run …` и остальные команды работают так же, как `./run.sh …`.
 
@@ -474,7 +474,7 @@ docker run --rm --user "$(id -u):$(id -g)" -v "$PWD/data:/app/data" \
 docker run -d --name pw-check -v "$PWD/data:/app/data" proxy-workbench run --want 50 --watch 30
 docker run -d --name pw-api -p 127.0.0.1:8765:8765 -e PROXY_WORKBENCH_API_TOKEN=change-me \
   -v "$PWD/data:/app/data" proxy-workbench serve --host 0.0.0.0
-docker run -d --name pw-gateway -p 127.0.0.1:8899:8899 -e PROXY_WORKBENCH_API_TOKEN=change-me \
+docker run -d --name pw-gateway -p 127.0.0.1:8899:8899 -e PROXY_WORKBENCH_GATEWAY_TOKEN=another-secret \
   -v "$PWD/data:/app/data" proxy-workbench gateway --host 0.0.0.0 --lan
 ```
 
