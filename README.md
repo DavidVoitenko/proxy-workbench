@@ -380,10 +380,10 @@ docker run --rm --user "$(id -u):$(id -g)" -v "$PWD/data:/app/data" \
 Serve fresh proxies to other containers: one container re-checks, the other answers API requests from the same data folder.
 
 ```sh
-docker run -d --name pw-check -v "$PWD/data:/app/data" proxy-workbench run --want 50 --watch 30
-docker run -d --name pw-api -p 127.0.0.1:8765:8765 -e PROXY_WORKBENCH_API_TOKEN=change-me \
+docker run -d --name pw-check --user "$(id -u):$(id -g)" -v "$PWD/data:/app/data" proxy-workbench run --want 50 --watch 30
+docker run -d --name pw-api --user "$(id -u):$(id -g)" -p 127.0.0.1:8765:8765 -e PROXY_WORKBENCH_API_TOKEN=change-me \
   -v "$PWD/data:/app/data" proxy-workbench serve --host 0.0.0.0
-docker run -d --name pw-gateway -p 127.0.0.1:8899:8899 -e PROXY_WORKBENCH_GATEWAY_TOKEN=another-secret \
+docker run -d --name pw-gateway --user "$(id -u):$(id -g)" -p 127.0.0.1:8899:8899 -e PROXY_WORKBENCH_GATEWAY_TOKEN=another-secret \
   -v "$PWD/data:/app/data" proxy-workbench gateway --host 0.0.0.0 --lan
 ```
 
