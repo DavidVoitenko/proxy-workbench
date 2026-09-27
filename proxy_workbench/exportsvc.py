@@ -948,7 +948,13 @@ def render_txt(rows: Sequence[Mapping[str, Any]]) -> str:
 
 
 def render_hostport(rows: Sequence[Mapping[str, Any]]) -> str:
-    return ''.join(f"{_address(row.get('proxy'))}\n" for row in rows if row.get('proxy'))
+    """``host:port`` once each, in rank order.
+
+    The list carries no protocol, so one port that works as both HTTP and
+    SOCKS5 (a mixed proxy, or ``--detect-protocols``) is one line, not two.
+    """
+    addresses = dict.fromkeys(_address(row.get('proxy')) for row in rows if row.get('proxy'))
+    return ''.join(f'{address}\n' for address in addresses)
 
 
 def render_snapshot_txt(rows: Sequence[Mapping[str, Any]], *, status: Mapping[str, Any]) -> str:

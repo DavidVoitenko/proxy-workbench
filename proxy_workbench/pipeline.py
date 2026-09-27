@@ -719,6 +719,17 @@ class HostLimiter:
         last = self._last.get(host)
         return last is None or self.clock.monotonic() - last >= self.min_interval_s
 
+    def held(self, host: str) -> bool:
+        """Whether a measurement of ``host`` is in flight right now."""
+        return self._busy.get(host, 0) > 0
+
+    def try_acquire(self, host: str) -> bool:
+        """Take a slot without waiting; False when the host is not free now."""
+        if not self.free_now(host):
+            return False
+        self._busy[host] = self._busy.get(host, 0) + 1
+        return True
+
     async def acquire(self, host: str) -> None:
         waited = False
         async with self._cond:
@@ -1591,6 +1602,9 @@ class Pipeline:
         self._gate: ResourceGate | None = None
         self._hosts = HostLimiter(max_per_host=config.limits.max_per_host,
                                   min_interval_s=config.limits.min_host_interval_s, clock=self.clock)
+        #: Items set aside because their host was busy, per host (``_park``).
+        self._parked: dict[str, deque] = {}
+        self._parked_count = 0
         self._target_policies = {item.target_id: item for item in config.limits.targets}
         self._target_inflight: dict[str, int] = {}
         self._target_used: dict[str, int] = {}
@@ -1783,6 +1797,8 @@ class Pipeline:
         self._measured = 0
         self._queue_high_water = 0
         self._queue = asyncio.Queue(maxsize=config.budgets.max_queue_items)
+        self._parked = {}
+        self._parked_count = 0
         # A resumed run continues the same N: the unit counts are projections of
         # the cumulative sets, so an N that was already satisfied stays satisfied
         # instead of being counted a second time.
@@ -2082,24 +2098,74 @@ class Pipeline:
             item = await self._next_item()
             if item is None:
                 return
+            # The worker that frees a host takes the next item parked on it, so
+            # a parked item always has a worker that comes back for it.
+            while item is not None:
+                host = item.address
+                item = self._unpark(host) if await self._measure_item(item, emit) else None
+
+    async def _measure_item(self, item: Item, emit) -> bool:
+        """Measure one item under its host limit; False when it was parked.
+
+        A worker used to wait for a busy host with the item in hand.  A list
+        with many ports on one address then put every worker in that one wait
+        while the items of every other host sat in the queue behind them.  An
+        item whose host is busy is now set aside for the worker that holds the
+        host, and this worker takes the next item instead.  The parked set is
+        bounded like the queue; past that bound the old wait applies.
+        """
+        parked = False
+        try:
+            if self._stopped.is_set() or not self._check_control():
+                self.ledger.release(item.endpoint)
+                return True
+            if not self._hosts.try_acquire(item.address):
+                if self._park(item):
+                    parked = True
+                    return False
+                await self._hosts.acquire(item.address)
             try:
+                # The wait for the host may have outlived the run: an N that was
+                # reached or a budget that ran out meanwhile must not be followed
+                # by one more measurement.
                 if self._stopped.is_set() or not self._check_control():
                     self.ledger.release(item.endpoint)
-                    continue
-                await self._hosts.acquire(item.address)
-                try:
-                    await self._check(item, emit)
-                finally:
-                    await self._hosts.release(item.address)
-            except asyncio.CancelledError:
-                raise
-            except BudgetExhausted:
-                raise
-            except Exception as exc:  # one item must never take a worker down
-                self._counters.stage_failures.setdefault('worker', type(exc).__name__)
-                self.ledger.finish(item.endpoint, type(exc).__name__)
+                    return True
+                await self._check(item, emit)
             finally:
+                await self._hosts.release(item.address)
+        except asyncio.CancelledError:
+            raise
+        except BudgetExhausted:
+            raise
+        except Exception as exc:  # one item must never take a worker down
+            self._counters.stage_failures.setdefault('worker', type(exc).__name__)
+            self.ledger.finish(item.endpoint, type(exc).__name__)
+        finally:
+            if not parked:
                 self._queue.task_done()
+        return True
+
+    def _park(self, item: Item) -> bool:
+        """Set an item aside until its host is free.  Only while somebody holds
+        the host (so somebody will come back for it) and only up to the queue's
+        own bound."""
+        if not self._hosts.held(item.address) or self._parked_count >= self.config.budgets.max_queue_items:
+            return False
+        self._parked.setdefault(item.address, deque()).append(item)
+        self._parked_count += 1
+        self._hosts.waits += 1
+        return True
+
+    def _unpark(self, host: str) -> Item | None:
+        waiting = self._parked.get(host)
+        if not waiting:
+            return None
+        item = waiting.popleft()
+        self._parked_count -= 1
+        if not waiting:
+            del self._parked[host]
+        return item
 
     async def _check(self, item: Item, emit) -> None:
         if self._carries(item):

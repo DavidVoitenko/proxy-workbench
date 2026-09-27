@@ -136,6 +136,219 @@ class EndpointConcurrencyTests(unittest.TestCase):
         self.assertGreater(result.metrics.peak_inflight, 8)
 
 
+class _Counting(BaseHTTPRequestHandler):
+    """A healthy proxy that records every request and can raise the stop file."""
+
+    def log_message(self, *args):
+        pass
+
+    def do_GET(self):
+        self.server.world.hit(self.server.server_port)
+        time.sleep(self.server.world.delay)
+        body = b'healthy'
+        self.send_response(200)
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        with contextlib.suppress(OSError):
+            self.wfile.write(body)
+
+
+class _World:
+    def __init__(self, test, count, delay=0.0):
+        self.delay = delay
+        self.hits = []
+        self.lock = threading.Lock()
+        self.stop_at = None
+        self.stop_file = None
+        self.servers = []
+        for _ in range(count):
+            server = ThreadingHTTPServer(('127.0.0.1', 0), _Counting)
+            server.daemon_threads = True
+            server.world = self
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+            test.addCleanup(server.server_close)
+            test.addCleanup(server.shutdown)
+            self.servers.append(server)
+
+    def hit(self, port):
+        with self.lock:
+            self.hits.append(port)
+            if self.stop_at is not None and len(self.hits) >= self.stop_at:
+                self.stop_file.write_text('stop')
+
+    def proxies(self):
+        return [f'http://127.0.0.1:{server.server_port}' for server in self.servers]
+
+
+def _cli(argv):
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out), \
+            mock.patch.dict('os.environ', {'HTTP_PROXY': '', 'HTTPS_PROXY': '', 'ALL_PROXY': ''}):
+        return proxytool.main(argv), out.getvalue()
+
+
+def _collect(test, data, proxies):
+    listing = data / 'list.txt'
+    listing.write_text('\n'.join(proxies) + '\n')
+    code, out = _cli(['collect', '--no-sources', '--data', str(data), '--input', str(listing),
+                      '--allow-private-endpoints'])
+    test.assertEqual(code, 0, out)
+
+
+def _scan_args(data, *extra):
+    return ['scan', '--data', str(data), '--url', 'http://service.invalid/health', '--attempts', '1',
+            '--timeout', '3', '--connect-timeout', '1', '--rate', '0', *extra]
+
+
+class StopAndContinueTests(unittest.TestCase):
+    def test_the_same_command_continues_a_stopped_scan(self):
+        # A stopped run left its job ``running``; every later run was refused
+        # with E_CONFLICT_BUSY ("Error: Busy") and nothing could continue it.
+        world = _World(self, 10, delay=0.3)
+        with tempfile.TemporaryDirectory() as tmp:
+            data = Path(tmp)
+            dead = sorted({_closed_port() for _ in range(4)})
+            _collect(self, data, world.proxies() + [f'http://127.0.0.1:{port}' for port in dead])
+            world.stop_file, world.stop_at = data / 'stop', 3
+            argv = _scan_args(data, '--max-per-host', '2', '--stop-file', str(world.stop_file))
+            code, out = _cli(argv)
+            self.assertEqual(code, 130, out)
+            with contextlib.closing(sqlite3.connect(data / 'proxies.sqlite3')) as conn:
+                jobs = conn.execute('SELECT id, state FROM job').fetchall()
+                finished = {row[0] for row in conn.execute(
+                    "SELECT e.canonical FROM job_item j JOIN endpoints e ON e.id=j.endpoint_id "
+                    "WHERE j.state IN ('done', 'unreachable')")}
+            self.assertEqual([state for _, state in jobs], ['paused'])
+            self.assertTrue(finished)
+            self.assertLess(len(finished), 14)
+
+            world.stop_file.unlink()
+            world.stop_at = None
+            first_run = len(world.hits)
+            code, out = _cli(argv)
+            self.assertEqual(code, 0, out)
+            self.assertIn(jobs[0][0], out)
+            with contextlib.closing(sqlite3.connect(data / 'proxies.sqlite3')) as conn:
+                self.assertEqual(conn.execute('SELECT id, state FROM job').fetchall(),
+                                 [(jobs[0][0], 'succeeded')])
+                states = dict(conn.execute('SELECT state, count(*) FROM job_item GROUP BY state'))
+            self.assertEqual(states, {'done': 10, 'unreachable': len(dead)})
+            # Nothing the stopped run finished was measured a second time.
+            again = {f'http://127.0.0.1:{port}' for port in world.hits[first_run:]}
+            self.assertFalse(again & finished)
+
+    def test_a_job_that_cannot_start_is_not_left_queued(self):
+        from proxy_workbench import jobs
+        with tempfile.TemporaryDirectory() as tmp:
+            conn = proxytool.open_db(Path(tmp) / 'proxies.sqlite3')
+            self.addCleanup(conn.close)
+            bench = proxytool.Workbench(tmp, conn=conn)
+            store = bench.jobs()
+            scope = jobs.Scope(collection_id='c', profile_id='p', profile_revision=1, profile_digest='p')
+            store.start(store.submit('pool_recheck', scope).id)
+            with self.assertRaises(jobs.Busy):
+                proxytool.submit_scan_job(bench, conn, 'check', profile='p', profile_revision=1,
+                                          collection_id=proxytool.ensure_collection(conn, None),
+                                          candidates=['http://203.0.113.9:8080'])
+            self.assertEqual(store.jobs(state='queued'), [])
+
+
+class WatchRoundTests(unittest.TestCase):
+    def test_every_watch_round_measures_the_passing_proxies_under_its_own_job(self):
+        # Each round reused the first run's closed job, so every address looked
+        # finished and a round measured nothing at all.
+        world = _World(self, 3)
+        with tempfile.TemporaryDirectory() as tmp:
+            data = Path(tmp)
+            _collect(self, data, world.proxies() + [f'http://127.0.0.1:{_closed_port()}'])
+            # First run and one full round, then stop at the first hit of the next round.
+            world.stop_file, world.stop_at = data / 'stop', 7
+            # A round that measures nothing never reaches the stop; end it anyway.
+            safety = threading.Timer(20, lambda: world.stop_file.write_text('stop'))
+            safety.start()
+            self.addCleanup(safety.cancel)
+            code, out = _cli(_scan_args(data, '--max-per-host', '4', '--watch', '0.01',
+                                        '--stop-file', str(world.stop_file)))
+            self.assertEqual(code, 130, out)
+            with contextlib.closing(sqlite3.connect(data / 'proxies.sqlite3')) as conn:
+                jobs = conn.execute('SELECT id, state FROM job ORDER BY created_at').fetchall()
+                round_items = dict(conn.execute(
+                    'SELECT state, count(*) FROM job_item WHERE job_id=? GROUP BY state', (jobs[1][0],)))
+                observations = conn.execute('SELECT count(*) FROM observations WHERE job_id=?',
+                                            (jobs[1][0],)).fetchone()[0]
+        self.assertGreaterEqual(len(jobs), 3)
+        self.assertEqual(jobs[0][1], 'succeeded')
+        self.assertEqual(jobs[1][1], 'succeeded')
+        self.assertEqual(round_items, {'done': 3})
+        self.assertEqual(observations, 3)
+        self.assertTrue(all(world.hits.count(server.server_port) >= 2 for server in world.servers))
+
+
+class HostParkingTests(unittest.TestCase):
+    def _run(self, endpoints, *, want=0, workers=8, delay=0.05):
+        started = []
+        inflight = set()
+        peak = [0]
+
+        async def basic(item, *, stage, limit):
+            started.append(item.endpoint)
+            inflight.add(item.endpoint)
+            peak[0] = max(peak[0], len(inflight))
+            await asyncio.sleep(delay)
+            inflight.discard(item.endpoint)
+            return pipeline.StageOutcome(stage, True)
+
+        async def run():
+            config = pipeline.PipelineConfig(
+                sources=(pipeline.fixture_source('s', endpoints),),
+                budgets=pipeline.Budgets(max_inflight=workers, max_open_fds=1000, max_requests=None,
+                                         max_bytes=None),
+                limits=pipeline.Limits(max_per_host=1), find=pipeline.FindPolicy(n=want, what='endpoint'),
+                runners=pipeline.Runners(cheap=None, basic=basic, expensive=None),
+                run_cheap=False, run_basic=True, run_expensive=False,
+                normalize=lambda value: value or None)
+            return await pipeline.Pipeline(config).run()
+
+        return asyncio.run(run()), started, peak[0]
+
+    def test_a_busy_host_does_not_hold_the_other_hosts_back(self):
+        # Ten ports on each of four addresses, in address order: the workers all
+        # waited on the first address while the other three sat in the queue.
+        endpoints = [f'http://10.0.{host}.1:{8000 + port}' for host in range(4) for port in range(10)]
+        result, started, peak = self._run(endpoints)
+        self.assertEqual(result.reason, 'items_exhausted')
+        self.assertEqual(sorted(started), sorted(endpoints))
+        self.assertEqual(peak, 4)
+        # Every address had started before the first one's third measurement.
+        first = {endpoint.split(':')[1] for endpoint in started[:4]}
+        self.assertEqual(len(first), 4)
+
+    def test_a_reached_want_is_not_followed_by_the_items_waiting_for_their_host(self):
+        endpoints = [f'http://10.0.0.1:{8000 + port}' for port in range(20)]
+        result, started, _ = self._run(endpoints, want=3)
+        self.assertEqual(result.reason, 'want_reached')
+        self.assertEqual(len(started), 3)
+
+    def test_a_parked_item_still_runs_once_its_host_is_free(self):
+        endpoints = [f'http://10.0.0.1:{8000 + port}' for port in range(6)] + ['http://10.0.0.2:80']
+        result, started, _ = self._run(endpoints, workers=2, delay=0.01)
+        self.assertEqual(result.reason, 'items_exhausted')
+        self.assertEqual(sorted(started), sorted(endpoints))
+
+
+class ExportAndOptionTests(unittest.TestCase):
+    def test_hostport_lists_a_mixed_port_once(self):
+        from proxy_workbench import exportsvc
+        rows = [{'proxy': 'http://203.0.113.7:8080'}, {'proxy': 'socks5://203.0.113.7:8080'},
+                {'proxy': 'socks5://[2001:db8::1]:1080'}, {'proxy': 'http://[2001:db8::1]:1080'}]
+        self.assertEqual(exportsvc.render_hostport(rows), '203.0.113.7:8080\n[2001:db8::1]:1080\n')
+
+    def test_a_speed_test_smaller_than_the_minimum_sample_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp, self.assertRaises(SystemExit):
+            _cli(_scan_args(Path(tmp), '--speedtest-url', 'http://speed.invalid/f',
+                            '--speedtest-bytes', '400000'))
+
+
 class LocalResourceErrorTests(unittest.TestCase):
     def test_running_out_of_descriptors_is_not_an_unreachable_proxy(self):
         async def refuse(*args, **kwargs):
