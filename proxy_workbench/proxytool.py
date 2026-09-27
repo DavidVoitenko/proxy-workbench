@@ -50,6 +50,8 @@ from .pipeline import AdaptiveConcurrency
 
 ROOT = paths.PACKAGE
 TLS = tls.default_context()
+# How long a run waits for the data folder lock held by a short background task.
+DATA_LOCK_WAIT_S = 10.0
 SCHEMES = {'http', 'https', 'socks4', 'socks5', 'socks5h'}
 SAFE_TARGET_HEADERS = {'accept', 'accept-encoding', 'accept-language', 'cache-control', 'pragma', 'user-agent', 'x-client-version', 'x-request-id'}
 
@@ -8139,19 +8141,27 @@ def main(argv=None):
     denylist = Denylist.from_file(denylist_path, normalizer=normalize)
     collect_denylist = Denylist.empty() if args.local_denylist is False else denylist
     # Exclusive OS lock is released even after a crash; read-only exports also lock.
+    # The desktop app's job runner and scheduler hold it for a moment every
+    # second, so a worker started from the interface waits for that instead of
+    # failing on the first try; only a run that keeps the folder busy is refused.
     lock = (args.data / 'workbench.lock').open('a+b')
-    try:
-        if os.name == 'nt':
-            import msvcrt
-            lock.write(b'0'); lock.flush(); lock.seek(0)
-            msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
-        else:
-            import fcntl
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
-        print(tr('Эта папка data уже используется другим запуском.', 'This data folder is already used by another run.'), file=sys.stderr)
-        lock.close()
-        return 2
+    deadline = time.monotonic() + DATA_LOCK_WAIT_S
+    while True:
+        try:
+            if os.name == 'nt':
+                import msvcrt
+                lock.seek(0); lock.write(b'0'); lock.flush(); lock.seek(0)
+                msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            break
+        except OSError:
+            if time.monotonic() >= deadline:
+                print(tr('Эта папка data уже используется другим запуском.', 'This data folder is already used by another run.'), file=sys.stderr)
+                lock.close()
+                return 2
+            time.sleep(0.1)
     if args.command == 'clear-data':
         if not args.yes:
             p.error(tr('clear-data требует явного --yes', 'clear-data needs an explicit --yes'))
