@@ -134,6 +134,8 @@ MESSAGES = {
     'E_STATE_NO_SNAPSHOT': ('Нет опубликованного снимка.', 'no published snapshot exists'),
     'E_STATE_SNAPSHOT_STALE': ('Снимок истёк.', 'the snapshot has expired'),
     'E_STATE_JOB_RUNNING': ('Задание уже выполняется.', 'the job is already running'),
+    'E_STATE_KEY_NOT_REVOKED': ('Удалить можно только отозванный ключ.',
+                                'only a revoked key can be deleted'),
     'E_TIME_UNKNOWN': ('Время измерения неизвестно.', 'the measurement time is unknown'),
     'E_DATA_DB_VERSION_AHEAD': ('База создана более новой версией программы.',
                                 'the database was created by a newer program version'),
@@ -609,6 +611,15 @@ class ApiKeyStore:
         return info.as_dict(self.manager.now()) if info is not None else {'id': key_id}
 
     def delete_key(self, principal, key_id, **kwargs):
+        # The route deletes a *revoked* key.  An active, disabled or expired
+        # key used to be deleted as well, which erased a working credential
+        # without the revoke step (and its audit entry) ever happening.
+        info = self._call('get_key', not_found=True, key_id=key_id, actor=principal.key_id)
+        if info.revoked_at is None:
+            raise ApiError('E_STATE_KEY_NOT_REVOKED', status=409,
+                           details={'id': key_id, 'state': info.state},
+                           action=tr('сначала отзовите ключ: POST /v1/keys/{id}/revoke',
+                                     'revoke the key first: POST /v1/keys/{id}/revoke'))
         self._call('delete', not_found=True, key_id=key_id, actor=principal.key_id)
         return {'id': key_id, 'deleted': True}
 
@@ -675,6 +686,16 @@ class ApiConfig:
     @property
     def loopback_only(self):
         return not self.allow_remote_bind
+
+
+def host_header_name(host):
+    """The name part of a ``Host`` header: no port, no IPv6 brackets, lower case."""
+    name = (host or '').strip()
+    if name.startswith('['):
+        return (name[1:name.index(']')] if ']' in name else name[1:]).lower()
+    if name.count(':') == 1:
+        name = name.rsplit(':', 1)[0]
+    return name.lower()
 
 
 def is_loopback_host(host):
@@ -1264,7 +1285,7 @@ ROUTES = (
           tags=('collections',)),
     Route('POST', '/v1/collections/{id}/merge', 'collections.merge', 'collections.write',
           'merge the members of another collection into this one', mutating=True, async_job=True,
-          scope=(('collection', 'id'),),
+          scope=(('collection', 'id'), ('collection', 'from_collection_id')),
           body=(Field('from_collection_id', 'string', required=True, max_len=128),
                 Field('revision', 'int', minimum=1)), tags=('collections',)),
     Route('POST', '/v1/collections/{id}/replace', 'collections.replace', 'collections.write',
@@ -1272,6 +1293,7 @@ ROUTES = (
           scope=(('collection', 'id'),),
           body=(Field('format', 'string', choices=('txt', 'uri', 'csv', 'json'), default='txt'),
                 Field('content', 'string', required=True, max_len=8 * 1024 * 1024),
+                Field('allow_private_endpoints', 'bool'),
                 Field('revision', 'int', minimum=1)), tags=('collections',)),
 
     # --- sources ------------------------------------------------------------
@@ -1979,7 +2001,7 @@ class ApiV1:
         """Host, Origin and CORS follow the real model, not convenience."""
         host = (request.header('Host') or '').strip()
         if self.config.allowed_hosts:
-            name = host.rsplit(':', 1)[0].strip('[]').lower()
+            name = host_header_name(host)
             if name not in {allowed.lower() for allowed in self.config.allowed_hosts}:
                 raise ApiError('E_AUTH_ORIGIN', status=403, details={'host': name},
                                action=tr('добавьте это имя в allowed_hosts',

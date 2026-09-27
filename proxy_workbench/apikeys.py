@@ -59,6 +59,8 @@ MAX_NAME_LENGTH = 120
 MAX_PURPOSE_LENGTH = 400
 DEFAULT_TOUCH_INTERVAL_S = 60.0
 AUDIT_RETENTION = 5000
+#: How many audit inserts a manager trusts its own row count before counting again.
+AUDIT_RECOUNT_EVERY = 1000
 STREAM_RECHECK_INTERVAL_S = 30.0
 GRACE_SWEEP_INTERVAL_S = 60.0
 
@@ -859,6 +861,8 @@ class ApiKeyManager:
         self._lock = threading.RLock()
         self._touched = {}
         self._grace_swept_at = None
+        self._audit_rows = None
+        self._audit_inserts = 0
         conn.row_factory = sqlite3.Row
         self._columns = {row[1] for row in conn.execute('PRAGMA table_info(api_keys)')}
         if 'id' not in self._columns:
@@ -1329,10 +1333,32 @@ class ApiKeyManager:
             self.conn.execute('INSERT INTO audit_log(at, key_id, operation, object_kind, object_id,'
                               ' scope_json, result, error_code) VALUES (?,?,?,?,?,?,?,?)', row)
             if self.audit_retention > 0:
-                self.conn.execute('DELETE FROM audit_log WHERE rowid NOT IN'
-                                  ' (SELECT rowid FROM audit_log ORDER BY at DESC, rowid DESC'
-                                  ' LIMIT ?)', (self.audit_retention,))
+                self._prune_audit()
             self.conn.commit()
+
+    def _prune_audit(self):
+        """Keep the newest ``audit_retention`` rows without scanning the table.
+
+        The retention used to run ``DELETE ... WHERE rowid NOT IN (SELECT ...
+        LIMIT n)`` after every insert, which reads the whole log each time.
+        The row count is now counted once and then kept by this manager; it is
+        counted again every :data:`AUDIT_RECOUNT_EVERY` inserts, so rows
+        written by another connection are caught up with.  The excess is
+        removed oldest first through the ``audit_log_at`` index.
+        """
+        self._audit_inserts += 1
+        if self._audit_rows is None or self._audit_inserts >= AUDIT_RECOUNT_EVERY:
+            self._audit_rows = self.conn.execute('SELECT count(*) FROM audit_log').fetchone()[0]
+            self._audit_inserts = 0
+        else:
+            self._audit_rows += 1
+        excess = self._audit_rows - self.audit_retention
+        if excess <= 0:
+            return
+        removed = self.conn.execute(
+            'DELETE FROM audit_log WHERE rowid IN (SELECT rowid FROM audit_log'
+            ' ORDER BY at, rowid LIMIT ?)', (excess,)).rowcount
+        self._audit_rows -= max(0, removed)
 
     def read_audit(self, *, actor, key_id=None, operation=None, since=None, limit=200):
         principal = self._as_principal(actor)

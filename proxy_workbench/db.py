@@ -70,7 +70,8 @@ __all__ = [
     "connect", "probe", "read_header", "migrate", "open_db", "current_version",
     "assert_current", "describe", "tables", "columns", "indexes", "primary_key",
     "database_bytes", "table_bytes", "endpoint_id", "upsert_endpoint",
-    "create_collection", "rename_collection", "archive_collection", "get_collection",
+    "create_collection", "rename_collection", "archive_collection", "unarchive_collection",
+    "get_collection",
     "list_collections", "add_member", "remove_member", "collection_members",
     "endpoint_collections", "legacy_summary", "add_scope_exclusion", "scope_exclusions",
     "excluded_addresses", "clear_scope_exclusions", "create_backup", "verify_backup",
@@ -84,7 +85,7 @@ __all__ = [
 # version identity
 # ---------------------------------------------------------------------------
 
-SCHEMA_VERSION = 19
+SCHEMA_VERSION = 20
 #: Magic number of this package. 0 means "no application id yet" (pre-versioning file).
 APPLICATION_ID = 0x50574231
 DB_FILENAME = "proxies.sqlite3"
@@ -1370,6 +1371,19 @@ def _m19(conn, context):
     _add_column(conn, "schedules", "collection_id", "TEXT")
 
 
+def _m20(conn, context):
+    """Collections learn a revision; the audit log gets its time index.
+
+    ``PATCH /v1/collections/{id}`` needs ``If-Match``, and a collection had
+    nothing to compare it with, so every rename was refused.  Existing rows
+    start at revision 1, the value a reader of an old file sees.  The index
+    lets the audit retention delete the oldest rows without a full scan.
+    Both changes are additive.
+    """
+    _add_column(conn, "collections", "revision", "INTEGER NOT NULL DEFAULT 1")
+    conn.execute("CREATE INDEX IF NOT EXISTS audit_log_at ON audit_log(at)")
+
+
 MIGRATIONS = (
     Migration(0, "application_id_and_journal", _m0),
     Migration(1, "endpoints", _m1),
@@ -1391,6 +1405,7 @@ MIGRATIONS = (
     Migration(17, "schedule_runtime_columns", _m17),
     Migration(18, "candidate_scope_exclusion", _m18),
     Migration(19, "schedule_activation_and_catch_up", _m19),
+    Migration(20, "collection_revision_and_audit_index", _m20),
 )
 
 #: Migrations that rewrite data they did not create: a `DROP TABLE` plus a copy, so
@@ -2294,19 +2309,31 @@ def create_collection(conn, name, *, kind="private", collection_id=None, now=Non
     return identifier
 
 
+def _revision_bump(conn):
+    """The SET clause that moves a collection revision, when the column exists."""
+    return ", revision = revision + 1" if "revision" in columns(conn, "collections") else ""
+
+
 def rename_collection(conn, collection_id, name):
     name = str(name).strip()
     if not name:
         raise DbError(E_PATH_CONFLICT, "collection name must not be empty")
-    if not conn.execute("UPDATE collections SET name = ? WHERE id = ?",
+    if not conn.execute("UPDATE collections SET name = ?" + _revision_bump(conn) + " WHERE id = ?",
                         (name, collection_id)).rowcount:
         raise DbError(E_PATH_CONFLICT, f"unknown collection: {collection_id!r}")
     return collection_id
 
 
 def archive_collection(conn, collection_id, *, now=None):
-    if not conn.execute("UPDATE collections SET archived_at = ? WHERE id = ?",
-                        (_now(now), collection_id)).rowcount:
+    if not conn.execute("UPDATE collections SET archived_at = ?" + _revision_bump(conn)
+                        + " WHERE id = ?", (_now(now), collection_id)).rowcount:
+        raise DbError(E_PATH_CONFLICT, f"unknown collection: {collection_id!r}")
+    return collection_id
+
+
+def unarchive_collection(conn, collection_id):
+    if not conn.execute("UPDATE collections SET archived_at = NULL" + _revision_bump(conn)
+                        + " WHERE id = ?", (collection_id,)).rowcount:
         raise DbError(E_PATH_CONFLICT, f"unknown collection: {collection_id!r}")
     return collection_id
 

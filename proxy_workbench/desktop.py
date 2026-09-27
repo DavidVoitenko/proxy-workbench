@@ -59,7 +59,7 @@ UPDATE_MANIFEST_ENV = 'PROXY_WORKBENCH_UPDATE_MANIFEST'
 # Mirrors db.SCHEMA_VERSION.  The real number is read from db at run time; this
 # value is only the fallback for a tree where the storage layer is absent, and
 # tests/test_desktop_signing.py fails when the two disagree.
-FALLBACK_SCHEMA_VERSION = 19
+FALLBACK_SCHEMA_VERSION = 20
 UPDATE_STATE_NAME = 'update-state.json'
 BACKUP_PREFIX = 'pre-update-'
 READ_CHUNK = 1024 * 1024

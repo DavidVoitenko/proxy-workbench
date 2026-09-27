@@ -1356,51 +1356,84 @@ class WorkbenchService(apiv1.Service):
         return {'id': identifier, 'name': name, 'kind': collection_kind(body.get('kind')),
                 'created_at': time.time()}
 
+    @staticmethod
+    def _collection_row(conn, identifier):
+        """One collection with its revision, or 404; an old file reads as revision 1."""
+        row = conn.execute('SELECT * FROM collections WHERE id=?', (identifier,)).fetchone()
+        if row is None:
+            raise apiv1.ApiError('E_STATE_NOT_FOUND', status=404, details={'id': identifier})
+        found = dict(row)
+        found['revision'] = int(found.get('revision') or 1)
+        found['archived'] = found.get('archived_at') is not None
+        return found
+
+    @staticmethod
+    def _check_collection_revision(call, current):
+        """``If-Match`` (or ``revision``) must name the revision that is stored now."""
+        expected = call.expected_revision
+        if expected is not None and int(expected) != current['revision']:
+            raise apiv1.ApiError(
+                'E_CONFLICT_REVISION', status=409,
+                details={'expected': int(expected), 'stored': current['revision']},
+                action=tr('перечитайте коллекцию и повторите с её ревизией',
+                          'read the collection again and retry with its revision'))
+
     def _op_collections_update(self, call):
+        """Rename, archive or restore a collection under its revision.
+
+        The revision is ``collections.revision`` (migration 20); every change
+        moves it by one.  A request that changes nothing leaves it alone.
+        """
         from . import db as schema
         identifier = call.params.get('id')
         body = call.body or {}
         _refuse_unsupported_allow_private(body)
-        expected = call.expected_revision
         conn = self.writable_connection()
         try:
-            row = conn.execute('SELECT id, name FROM collections WHERE id=?',
-                               (identifier,)).fetchone()
-            if row is None:
-                raise apiv1.ApiError('E_STATE_NOT_FOUND', status=404, details={'id': identifier})
-            if expected is not None:
-                # ``collections`` carries no revision column (migration 2), so a supplied revision cannot be proven current
-                # and is refused rather than assumed.
-                raise apiv1.ApiError(
-                    'E_CONFLICT_REVISION',
-                    details={'expected': expected, 'stored': None,
-                             'reason': 'collections has no revision column'},
-                    action=tr('повторите без ревизии или обновите схему',
-                              'retry without a revision, or migrate the schema'))
-            if body.get('name'):
-                schema.rename_collection(conn, identifier, str(body['name']))
-            conn.commit()
-            fresh = conn.execute('SELECT id, name, kind, created_at, archived_at FROM collections '
-                                 'WHERE id=?', (identifier,)).fetchone()
+            conn.execute('BEGIN IMMEDIATE')
+            current = self._collection_row(conn, identifier)
+            self._check_collection_revision(call, current)
+            if body.get('name') is not None:
+                name = str(body['name']).strip()
+                if not name:
+                    raise apiv1.field_error('name', tr('имя не может быть пустым',
+                                                        'the name must not be blank'))
+                if name != current['name']:
+                    schema.rename_collection(conn, identifier, name)
+            archived = body.get('archived')
+            if archived is True and not current['archived']:
+                schema.archive_collection(conn, identifier)
+            elif archived is False and current['archived']:
+                schema.unarchive_collection(conn, identifier)
+            conn.execute('COMMIT')
+            return self._collection_row(conn, identifier)
         except schema.DbError as exc:
             raise apiv1.ApiError('E_VALIDATION_FIELD', action=str(exc)) from None
         finally:
+            if conn.in_transaction:
+                conn.execute('ROLLBACK')
             _close(conn)
-        return dict(fresh)
 
     def _op_collections_archive(self, call):
         from . import db as schema
         identifier = call.params.get('id')
         conn = self.writable_connection()
         try:
-            schema.archive_collection(conn, identifier)
-            conn.commit()
+            conn.execute('BEGIN IMMEDIATE')
+            current = self._collection_row(conn, identifier)
+            self._check_collection_revision(call, current)
+            if not current['archived']:
+                schema.archive_collection(conn, identifier)
+            conn.execute('COMMIT')
+            fresh = self._collection_row(conn, identifier)
         except schema.DbError as exc:
             raise apiv1.ApiError('E_STATE_NOT_FOUND', status=404,
                                  details={'id': identifier}, action=str(exc)) from None
         finally:
+            if conn.in_transaction:
+                conn.execute('ROLLBACK')
             _close(conn)
-        return {'id': identifier, 'archived': True}
+        return {'id': identifier, 'archived': True, 'revision': fresh['revision']}
 
     def _op_collections_members(self, call):
         wanted = call.params.get('id')
@@ -1823,43 +1856,104 @@ class WorkbenchService(apiv1.Service):
         values = list(dict.fromkeys(values))
         if not values:
             raise apiv1.field_error('endpoint', tr('нужен адрес', 'an address is required'))
+        from . import proxytool as engine
         conn = workbench.conn
+        if conn.execute('SELECT 1 FROM collections WHERE id=?', (collection,)).fetchone() is None:
+            raise apiv1.ApiError('E_STATE_NOT_FOUND', status=404, details={'id': collection})
         changed = []
+        if add:
+            # The one normalizer decides what an address is; a value it cannot
+            # read ("not an endpoint") used to be stored verbatim as a member.
+            # Credentials are refused structurally by it.  Every value is
+            # checked before the first one is written.
+            values = [engine.normalize_custom(value) or value for value in values]
+            bad = [value for value in values if engine.normalize_custom(value) != value]
+            if bad:
+                raise apiv1.ApiError(
+                    'E_VALIDATION_FIELD', status=400,
+                    details={'field': 'endpoint', 'reason': 'not a proxy address',
+                             'value': str(bad[0])[:128]},
+                    action=tr('укажите scheme://host:port', 'send scheme://host:port'))
         for value in values:
             if add:
-                # Adding a member may introduce an address the engine has never
-                # seen; the one normalizer still decides what it is.
-                endpoint = schema.upsert_endpoint(conn, value)
-            else:
-                endpoint = schema.endpoint_id(value)
-                row = conn.execute('SELECT canonical FROM endpoints WHERE id=?', (endpoint,)).fetchone()
-                if row is None:
-                    raise apiv1.ApiError('E_STATE_NOT_FOUND', status=404,
-                                         details={'endpoint_id': value})
-            if add:
+                canonical = value
+                endpoint = schema.upsert_endpoint(conn, canonical)
                 schema.add_member(conn, collection, endpoint,
                                   origin=str(body.get('origin') or 'manual'), now=workbench.clock())
-            else:
-                conn.execute('DELETE FROM membership WHERE collection_id=? AND endpoint_id=?',
-                             (collection, endpoint))
-            changed.append(value)
+                changed.append(canonical)
+                continue
+            # The path names an endpoint *id*; hashing it again as if it were
+            # an address never matched a row.  An address is still accepted
+            # and resolved through the normalizer.
+            endpoint = value
+            if conn.execute('SELECT 1 FROM endpoints WHERE id=?', (endpoint,)).fetchone() is None:
+                canonical = engine.normalize_custom(value)
+                endpoint = schema.endpoint_id(canonical) if canonical else None
+            if endpoint is None or not schema.remove_member(conn, collection, endpoint):
+                raise apiv1.ApiError('E_STATE_NOT_FOUND', status=404,
+                                     details={'endpoint_id': value, 'collection_id': collection})
+            changed.append(endpoint)
         conn.commit()
         return {'collection_id': collection, 'changed': changed, 'added': bool(add)}
 
     def _op_collections_merge(self, call):
-        return self._apply_collection_mode(call, 'merge')
+        """Copy the members of ``from_collection_id`` into this collection.
+
+        The route declares ``from_collection_id`` and no content; the handler
+        used to run an import and demand ``content``, so the documented body
+        was always refused.  Nothing is removed from either collection.
+        """
+        def action(workbench):
+            conn = workbench.conn
+            target = str(call.params.get('id') or '')
+            source = str((call.body or {}).get('from_collection_id') or '').strip()
+            if not source:
+                raise apiv1.field_error('from_collection_id', tr('укажите исходную коллекцию',
+                                                                  'name the source collection'))
+            if source == target:
+                raise apiv1.field_error('from_collection_id',
+                                        tr('коллекция не сливается сама с собой',
+                                           'a collection cannot be merged into itself'))
+            self._check_collection_revision(call, self._collection_row(conn, target))
+            self._collection_row(conn, source)
+
+            def count():
+                return conn.execute('SELECT count(*) FROM membership WHERE collection_id=?',
+                                    (target,)).fetchone()[0]
+            before = count()
+            conn.execute('INSERT OR IGNORE INTO membership(collection_id, endpoint_id, added_at, origin) '
+                         "SELECT ?, endpoint_id, ?, 'import' FROM membership WHERE collection_id=?",
+                         (target, workbench.clock(), source))
+            conn.commit()
+            after = count()
+            return {'collection_id': target, 'from_collection_id': source,
+                    'added': after - before, 'members': after,
+                    'job_id': self._record_job(workbench, 'merge', target, after - before)}
+        return self._with_workbench(action)
 
     def _op_collections_replace(self, call):
-        return self._apply_collection_mode(call, 'replace')
+        """Replace the members of one collection with a list, as a job.
 
-    def _apply_collection_mode(self, call, mode):
+        The route is ``async_job``; the report carried no ``job_id``, so a
+        successful replace was answered with 503.
+        """
         def action(workbench):
-            source = self._import_source(call, workbench)
             collection = str(call.params.get('id') or schema_public_collection())
-            plan = workbench.import_preview(source, collection, mode=mode,
+            self._check_collection_revision(call, self._collection_row(workbench.conn, collection))
+            source = self._import_source(call, workbench)
+            policy = self._import_policy(call)
+            self._audit_import_policy(workbench, call, collection, policy)
+            plan = workbench.import_preview(source, collection, mode='replace',
+                                            fmt=self._import_format(call), policy=policy,
                                             idempotency_key=call.idempotency_key)
-            report = workbench.import_commit(plan, allow_partial=bool((call.body or {}).get('allow_partial')))
-            return report.to_dict()
+            if plan.needs_mapping:
+                raise apiv1.ApiError('E_VALIDATION_SCHEMA', status=400,
+                                     details={'needs_mapping': True})
+            report = workbench.import_commit(plan)
+            body = report.to_dict()
+            body['job_id'] = self._record_job(workbench, 'replace', collection,
+                                              len(report.added or ()))
+            return body
         return self._with_workbench(action)
 
     # -- jobs ---------------------------------------------------------------
@@ -2060,25 +2154,60 @@ class WorkbenchService(apiv1.Service):
 
     # -- pools as jobs ------------------------------------------------------
 
-    def _op_pools_create(self, call):
-        from . import pools as pools_module
+    def _pool_profile(self, workbench, wanted):
+        """The profile a new pool is measured under, and its revision.
 
+        ``profile_id`` is optional on the route; the default is the one the
+        GUI uses -- the profile of the last check (``last-profile.txt``).  A
+        profile that does not exist is refused here: the pool used to be
+        created and then failed on its first recheck.
+        """
+        from . import proxytool as engine
+        profile_id = str(wanted or '').strip()
+        if not profile_id:
+            profile_id = engine.active_profile_id(workbench) or ''
+            if not profile_id:
+                raise apiv1.field_error(
+                    'profile_id', tr('профиль не указан, а проверок ещё не было',
+                                     'no profile was given and no check has run yet'),
+                    action=tr('укажите profile_id или сначала выполните проверку',
+                              'send profile_id, or run a check first'))
+            return profile_id, 1
+        conn = workbench.conn
+        if conn.execute('SELECT 1 FROM profiles WHERE id=?', (profile_id,)).fetchone() is not None:
+            return profile_id, 1
+        head = conn.execute("SELECT revision FROM profiles WHERE id GLOB ? "
+                            'ORDER BY revision DESC LIMIT 1',
+                            (profile_id.replace('[', '[[]').replace('*', '[*]')
+                             .replace('?', '[?]') + '@*',)).fetchone() \
+            if 'revision' in {row[1] for row in conn.execute('PRAGMA table_info(profiles)')} else None
+        if head is not None:
+            return profile_id, int(head[0] or 1)
+        raise apiv1.ApiError('E_STATE_NOT_FOUND', status=404,
+                             details={'field': 'profile_id', 'profile_id': profile_id},
+                             action=tr('выберите профиль из GET /v1/profiles',
+                                       'pick a profile from GET /v1/profiles'))
+
+    def _op_pools_create(self, call):
         def action(workbench):
             body = call.body or {}
             pool_id = str(body.get('name') or body.get('id') or '').strip()
             if not pool_id:
                 raise apiv1.field_error('name', tr('имя пула обязательно', 'a pool needs a name'))
+            if workbench.pools().get(pool_id) is not None:
+                raise apiv1.ApiError('E_CONFLICT_IDEMPOTENCY', status=409,
+                                     details={'id': pool_id},
+                                     action=tr('выберите другое имя', 'choose another name'))
+            profile_id, profile_revision = self._pool_profile(workbench, body.get('profile_id'))
             spec = workbench.pools().create(
                 pool_id, collection_id=str(body.get('collection_id') or schema_public_collection()),
-                profile_id=str(body.get('profile_id') or ''),
+                profile_id=profile_id, profile_revision=profile_revision,
                 desired=int(body.get('desired') or 0), minimum=int(body.get('minimum') or 0),
                 reserve=int(body.get('reserve') or 0), policy=body.get('policy') or None)
             return _pool_dict(spec)
         return self._with_workbench(action)
 
     def _op_pools_update(self, call):
-        from . import pools as pools_module
-
         def action(workbench):
             store = workbench.pools()
             pool_id = str(call.params.get('id') or '')
@@ -2091,9 +2220,16 @@ class WorkbenchService(apiv1.Service):
                                      details={'expected': call.expected_revision,
                                               'stored': getattr(spec, 'revision', 1)})
             body = call.body or {}
-            if body.get('desired') is not None:
-                spec = pools_module.evict(spec, int(body['desired']), pool_id=pool_id) \
-                    if False else spec
+            name = body.get('name')
+            if name is not None and str(name).strip() != pool_id:
+                # A pool's name is its id: members, leases, schedules and
+                # gateway bindings all refer to it.  Renaming it used to be
+                # accepted and silently dropped.
+                raise apiv1.field_error(
+                    'name', tr('имя пула — его идентификатор и не меняется',
+                               'the name of a pool is its id and cannot be changed'),
+                    action=tr('создайте новый пул с нужным именем',
+                              'create a new pool with the name you want'))
             if body.get('policy'):
                 store.set_policy(pool_id, body['policy'])
             if body.get('desired') is not None or body.get('reserve') is not None or \
@@ -2281,6 +2417,13 @@ class WorkbenchService(apiv1.Service):
                 payload['collection_id'] = pool.collection_id
             else:
                 payload['collection_id'] = payload.get('collection_id') or schema_public_collection()
+                if workbench.conn.execute('SELECT 1 FROM collections WHERE id=?',
+                                          (payload['collection_id'],)).fetchone() is None:
+                    # A schedule on a collection that does not exist was
+                    # stored and then failed on every run.
+                    raise apiv1.ApiError('E_STATE_NOT_FOUND', status=404,
+                                         details={'field': 'collection_id',
+                                                  'collection_id': payload['collection_id']})
             from . import scheduler
             spec = scheduler.ScheduleSpec.from_dict(payload)
             if not self._schedule_visible(spec, call, workbench):
@@ -2802,12 +2945,15 @@ class WorkbenchService(apiv1.Service):
     # -- source comparison --------------------------------------------
 
     def _op_sources_compare(self, call):
+        _require_compare_scope(call)
         return self._with_workbench(lambda workbench: self._compare_sources(workbench, call))
 
     def _op_sources_compare_suppliers(self, call):
+        _require_compare_scope(call)
         return self._with_workbench(lambda workbench: self._compare_suppliers(workbench, call))
 
     def _op_sources_compare_cohorts(self, call):
+        _require_compare_scope(call)
         return self._with_workbench(lambda workbench: self._compare_cohorts(workbench, call))
 
     def _comparison_cohort(self, workbench, call, sources, *, default_label=''):
@@ -2894,24 +3040,51 @@ class WorkbenchService(apiv1.Service):
     # -- gateway ------------------------------------------------------------
 
     def _op_gateway_bindings(self, call):
-        return {'items': self._gateway_bindings(), 'stream_id': 'gateway', 'next_seq': None}
+        items = self._gateway_bindings()
+        allowed = _scope_values(call.principal, 'pools')
+        if allowed is not None:
+            items = [item for item in items if item.get('pool_id') in allowed]
+        return {'items': items, 'stream_id': 'gateway', 'next_seq': None,
+                'published': self._gateway_published()}
 
     def _gateway_bindings(self):
+        """The bindings ``gateway.bind`` stored, one per listener.
+
+        They are written as ``export_artifact`` rows of kind ``binding``; this
+        listing used to describe the published snapshot only, so a binding
+        that had just been accepted never appeared in it.
+        """
+        conn = self.connection()
+        try:
+            rows = conn.execute("SELECT manifest_json FROM export_artifact WHERE kind='binding' "
+                                'ORDER BY id').fetchall() if conn is not None else []
+        except sqlite3.Error:
+            rows = []
+        finally:
+            _close(conn)
+        items = []
+        for row in rows:
+            try:
+                item = json.loads(row[0] or '{}')
+            except (TypeError, ValueError):
+                continue
+            if isinstance(item, dict) and item.get('listener'):
+                items.append(item)
+        return items
+
+    def _gateway_published(self):
         rows, status = self.exports.load()
-        return [{'generation': status.get('generation'),
-                 'collection_id': status.get('collection_id'),
-                 'profile': status.get('profile'),
-                 'profile_revision': status.get('profile_revision'),
-                 'listeners': self._gateway_listeners(),
-                 'available': len(rows)}]
+        return {'generation': status.get('generation'),
+                'collection_id': status.get('collection_id'),
+                'profile': status.get('profile'),
+                'profile_revision': status.get('profile_revision'),
+                'available': len(rows)}
 
     def _gateway_listeners(self):
-        try:
-            from . import gateway
-            return [{'host': gateway.DEFAULT_HOST, 'port': gateway.DEFAULT_PORT,
-                     'running': False}]
-        except Exception:
-            return []
+        config = self._gateway_config()
+        return [{'host': config['listen_host'], 'port': config['listen_port'],
+                 'listen_host': config['listen_host'], 'listen_port': config['listen_port'],
+                 'running': False}]
 
     def _op_gateway_listeners(self, call):
         return {'items': self._gateway_listeners(), 'stream_id': 'gateway-listeners', 'next_seq': None}
@@ -2920,55 +3093,135 @@ class WorkbenchService(apiv1.Service):
         return {'items': [], 'stream_id': 'gateway-sessions', 'next_seq': None, 'total': 0,
                 'note': tr('сессии живут в процессе шлюза, а не в файле', 'sessions live in the gateway process, not in a file')}
 
-    def _op_gateway_config_get(self, call):
+    #: Where the control API keeps the gateway configuration it is given.
+    GATEWAY_CONFIG_FILE = 'api-gateway-config.json'
+    GATEWAY_CONFIG_FIELDS = ('listen_host', 'listen_port', 'transports', 'max_per_proxy',
+                             'connect_timeout_s', 'handshake_deadline_s', 'session_ttl_s')
+
+    def _gateway_config(self):
+        """The stored configuration over the gateway's own defaults, with its revision."""
         from . import gateway
-        return {'host': gateway.DEFAULT_HOST, 'port': gateway.DEFAULT_PORT,
-                'transports': ['http', 'socks5'], 'bind': 'loopback'}
+        config = {'listen_host': gateway.DEFAULT_HOST, 'listen_port': gateway.DEFAULT_PORT,
+                  'transports': ['http', 'socks5'], 'max_per_proxy': None,
+                  'connect_timeout_s': 8, 'handshake_deadline_s': 30, 'session_ttl_s': 600,
+                  'revision': 1}
+        try:
+            stored = json.loads((self.data / self.GATEWAY_CONFIG_FILE).read_text(encoding='utf-8'))
+        except (OSError, UnicodeError, ValueError):
+            stored = {}
+        if isinstance(stored, dict):
+            config.update({name: stored[name] for name in (*self.GATEWAY_CONFIG_FIELDS, 'revision')
+                           if name in stored})
+        config['revision'] = int(config.get('revision') or 1)
+        return config
+
+    def _op_gateway_config_get(self, call):
+        config = self._gateway_config()
+        loopback = is_loopback(str(config['listen_host']))
+        return {**config, 'host': config['listen_host'], 'port': config['listen_port'],
+                'bind': 'loopback' if loopback else 'network'}
 
     def _op_gateway_bind(self, call):
-        """Record a binding in the snapshot's own scope; it does not start a process.
+        """Record a binding of one listener; it does not start a process.
 
         A binding is a decision, and a decision that started a listener from an
-        HTTP request would be a surprise the user never asked for.
+        HTTP request would be a surprise the user never asked for.  One
+        listener has one binding; its revision starts at 1 and moves by one on
+        every change, and a stale ``If-Match`` is refused.
         """
-        from . import db as schema
         body = call.body or {}
+        listener = str(body.get('listener') or 'default')
         conn = self.writable_connection()
         try:
+            conn.execute('BEGIN IMMEDIATE')
             pool_id = str(body.get('pool_id') or '')
             row = conn.execute('SELECT id, collection_id, profile_id, profile_revision FROM pools WHERE id=?',
                                (pool_id,)).fetchone()
             if row is None:
                 raise apiv1.ApiError('E_STATE_NOT_FOUND', status=404, details={'pool_id': pool_id})
-            binding = {'listener': str(body.get('listener') or 'default'), 'pool_id': pool_id,
-                       'collection_id': row['collection_id'], 'profile_id': row['profile_id'],
+            key = f'bind:{listener}'
+            stored = conn.execute('SELECT manifest_json FROM export_artifact WHERE id=?',
+                                  (key,)).fetchone()
+            try:
+                current = int(json.loads(stored[0] or '{}').get('revision') or 1) if stored else None
+            except (TypeError, ValueError, AttributeError):
+                current = 1
+            expected = call.expected_revision
+            if expected is not None and int(expected) != (current or 1):
+                raise apiv1.ApiError('E_CONFLICT_REVISION', status=409,
+                                     details={'expected': int(expected), 'stored': current or 1},
+                                     action=tr('перечитайте привязки и повторите',
+                                               'read the bindings again and retry'))
+            binding = {'listener': listener, 'pool_id': pool_id,
+                       'collection_id': row['collection_id'],
+                       'profile_id': body.get('profile_id') or row['profile_id'],
                        'profile_revision': row['profile_revision'],
-                       'generation': body.get('generation'), 'revision': self.clock()}
+                       'generation': body.get('generation'),
+                       'session_ttl_s': body.get('session_ttl_s'),
+                       'revision': 1 if current is None else current + 1,
+                       'updated_at': self.clock()}
             conn.execute(
                 'INSERT OR REPLACE INTO export_artifact(id, kind, collection_id, profile_id, '
                 'profile_revision, generation, published_at, state, manifest_json) '
                 'VALUES (?,?,?,?,?,?,?,?,?)',
-                (f'bind:{pool_id}', 'binding', row['collection_id'], row['profile_id'],
+                (key, 'binding', row['collection_id'], binding['profile_id'],
                  row['profile_revision'], body.get('generation') or '', self.clock(), 'ready',
                  json.dumps(binding, ensure_ascii=False)))
-            conn.commit()
+            conn.execute('COMMIT')
             return binding
         except sqlite3.Error as exc:
             raise apiv1.ApiError('E_STATE_SNAPSHOT_STATIC', status=503,
                                  message=type(exc).__name__) from None
         finally:
+            if conn.in_transaction:
+                conn.execute('ROLLBACK')
             _close(conn)
 
     def _op_gateway_config_set(self, call):
+        """Store a new gateway configuration under its revision.
+
+        The body used to be ignored and ``applied: false`` returned whatever it
+        said, so a stale revision or an unknown transport was accepted.  The
+        stored configuration is what ``GET /v1/gateway/config`` and the
+        listener listing report; a running gateway keeps its settings until it
+        is started again.
+        """
+        from . import gateway
         body = call.body or {}
         if call.expected_revision is None:
             raise apiv1.ApiError('E_VALIDATION_FIELD',
                                  details={'field': 'revision', 'required': 'If-Match'},
                                  message=tr('конфигурация шлюза меняется с ревизией',
                                             'gateway config changes carry a revision'))
-        return {'revision': call.expected_revision, 'applied': False,
-                'reason': tr('шлюз перечитывает конфигурацию при следующем запуске',
-                             'the gateway reads its configuration on the next start')}
+        with _GATEWAY_CONFIG_LOCK:
+            current = self._gateway_config()
+            if int(call.expected_revision) != current['revision']:
+                raise apiv1.ApiError('E_CONFLICT_REVISION', status=409,
+                                     details={'expected': int(call.expected_revision),
+                                              'stored': current['revision']},
+                                     action=tr('перечитайте конфигурацию и повторите',
+                                               'read the configuration again and retry'))
+            if 'transports' in body:
+                transports = body['transports']
+                if not isinstance(transports, list) or not transports or \
+                        not all(isinstance(item, str) for item in transports):
+                    raise apiv1.field_error('transports', tr('нужен непустой список',
+                                                             'a non-empty list is required'))
+                unknown = sorted({item for item in transports if item not in gateway.SUPPORTED})
+                if unknown:
+                    raise apiv1.ApiError(
+                        'E_VALIDATION_FIELD', status=400,
+                        details={'field': 'transports', 'reason': 'unknown transport',
+                                 'unknown': unknown, 'supported': list(gateway.SUPPORTED)})
+                body = dict(body, transports=list(dict.fromkeys(transports)))
+            changed = {name: body[name] for name in self.GATEWAY_CONFIG_FIELDS if name in body}
+            updated = {**current, **changed}
+            if any(current.get(name) != value for name, value in changed.items()):
+                updated['revision'] = current['revision'] + 1
+                stored = {name: updated[name] for name in (*self.GATEWAY_CONFIG_FIELDS, 'revision')}
+                proxytool.atomic(self.data / self.GATEWAY_CONFIG_FILE,
+                            json.dumps(stored, ensure_ascii=False, indent=1))
+        return {**updated, 'applied': True, 'restart_required': True}
 
     # -- profiles -----------------------------------------------------------
 
@@ -3655,6 +3908,35 @@ def _compare_source_ids(call):
     return wanted
 
 
+_GATEWAY_CONFIG_LOCK = threading.Lock()
+
+
+def _require_compare_scope(call):
+    """Every collection a comparison names must be inside the key's scope.
+
+    The comparison routes take ``collection_id`` at the top level, inside
+    ``cohort`` and inside each of ``cohorts``; none of them was checked, so a
+    key limited to one collection could read the numbers of any other.  A
+    scoped key that names no collection would compare across all of them, so
+    it has to name one of its own.
+    """
+    allowed = _scope_values(call.principal, 'collections')
+    if allowed is None:
+        return
+    body = call.body or {}
+    cohorts = [item for item in body.get('cohorts') or () if isinstance(item, dict)]
+    named = [body.get('collection_id'), (body.get('cohort') or {}).get('collection_id')]
+    named += [item.get('collection_id') for item in cohorts]
+    named = [str(value) for value in named if value]
+    if not named or (not body.get('collection_id')
+                     and any(not item.get('collection_id') for item in cohorts)):
+        raise apiv1.field_error(
+            'collection_id', tr('ключ ограничен коллекциями: укажите одну из них',
+                                'the key is limited to collections: name one of them'))
+    for value in named:
+        apiv1.require_scope(call.principal, 'collection', value)
+
+
 def _refuse_unsupported_allow_private(body):
     """Refuse a collection-level ``allow_private`` instead of dropping it.
 
@@ -4041,6 +4323,37 @@ def make_control_api(data, host='127.0.0.1', port=V1_DEFAULT_PORT, token=None,
     return _with_job_runner(server, data) if execute_jobs else server
 
 
+#: A bind on every interface.  The address itself is never what a client dials.
+WILDCARD_HOSTS = ('0.0.0.0', '::', '')
+
+
+def accepted_host_names(host):
+    """The ``Host`` names ``/v1`` answers for a server bound to ``host``.
+
+    A loopback bind is reached as ``localhost`` as often as by its number, and
+    a network bind (``serve --host 0.0.0.0 --api-token ...``) is reached by the
+    machine's own name and addresses -- before this, the wildcard bind only
+    accepted ``Host: 0.0.0.0``, which no client sends.  Every other name is
+    still refused, which is what keeps DNS rebinding out.  Nothing here
+    resolves a name: the addresses come from the local routing table.
+    """
+    names = [str(host or '').strip('[]'), *apiv1.LOOPBACK_HOSTS]
+    if not is_loopback(str(host or '')):
+        import socket
+        try:
+            hostname = socket.gethostname().strip().rstrip('.')
+        except OSError:
+            hostname = ''
+        if hostname:
+            short = hostname.split('.')[0]
+            names += [hostname, short, short + '.local']
+        if str(host or '').strip('[]') in WILDCARD_HOSTS:
+            from .local_network import route_addresses
+            names += list(route_addresses())
+    return tuple(dict.fromkeys(name.lower() for name in names
+                               if name and name not in WILDCARD_HOSTS))
+
+
 def make_api_server(data, host='127.0.0.1', port=DEFAULT_PORT, token=None, v1=True,
                     execute_jobs=False):
     """The 2.x read-only server, with ``/v1`` served from the same socket.
@@ -4062,9 +4375,8 @@ def make_api_server(data, host='127.0.0.1', port=DEFAULT_PORT, token=None, v1=Tr
     # A loopback bind is reached as ``localhost`` as often as by its number;
     # naming only the bind address made ``http://localhost:8765/v1/...`` answer
     # ``E_AUTH_ORIGIN`` while the legacy paths on the same socket answered it.
-    names = (host, *apiv1.LOOPBACK_HOSTS) if is_loopback(host) else (host,)
     control = apiv1.ApiV1(service, LegacyKeyStore(token, manager),
-                          apiv1.ApiConfig(host=host, allowed_hosts=tuple(dict.fromkeys(names)),
+                          apiv1.ApiConfig(host=host, allowed_hosts=accepted_host_names(host),
                                           allowed_bind_hosts=(host,),
                                           allow_remote_bind=bool(token)))
 
