@@ -41,6 +41,7 @@ The biggest release so far: a new interface, a source catalog of 150 lists, a de
 
 ### Fixed
 
+- **The database no longer grows without limit under `--watch`.** Each source keeps its last three downloaded lists; older ones are pruned right after a collection, and `backup retention` cleans up history left by earlier versions. A list the server reports as unchanged is re-applied to collections that lost it, and a retry after a broken download no longer counts the first attempt against the size limit.
 - **Collecting is faster and reads more lists.** Addresses are written in batches (a full collection of the 106 default feeds went from 133 s to 79 s); four sources that returned nothing (hideip.me, spys.me and others with `ip:port` lines and comments) now return addresses; a list that exceeds the size limit is reported as a partial read instead of a failing provider and is no longer put into backoff; a list without country data no longer erases a country learned elsewhere; cached lists are re-read after a failed or refused download.
 - **Control API checked operation by operation.** The audit log is written; a key limited to one collection or pool can no longer act on others through body or query fields; event streams deliver events; result paging moves past the first page and every declared filter and sort works; unknown jobs, pools and sources answer 404; refreshing a source returns a job; PUT and wrong methods get JSON errors; `localhost` reaches `/v1`.
 - The web interface no longer puts the administrator key in a URL.
