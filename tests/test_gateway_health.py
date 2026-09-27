@@ -9,6 +9,7 @@ never be written to another one, whatever its method.
 """
 import asyncio
 import unittest
+from unittest import mock
 
 from proxy_workbench import gateway
 from tests.gateway_support import GatewayCase, shutdown
@@ -263,7 +264,17 @@ class RacingConnectTests(GatewayCase):
             return (None, Writer()), None
 
         running._tunnel = tunnel
-        lease, _stream = await running.connect('127.0.0.1', self.target)
+        real_wait = asyncio.wait
+
+        async def wait_for_both(tasks, **options):
+            # Deliver both finished tasks in one batch, the interleaving that
+            # used to leave a failed proxy unrecorded on Windows.
+            if len(tasks) == 2:
+                options.update(timeout=None, return_when=asyncio.ALL_COMPLETED)
+            return await real_wait(tasks, **options)
+
+        with mock.patch.object(gateway.asyncio, 'wait', side_effect=wait_for_both):
+            lease, _stream = await running.connect('127.0.0.1', self.target)
         try:
             self.assertEqual(lease.proxy, alive)
             self.assertIn(dead, running.pool.resting)
