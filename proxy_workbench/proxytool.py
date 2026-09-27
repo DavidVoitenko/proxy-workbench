@@ -5071,23 +5071,37 @@ def listed_counts(db):
         return {}
 
 
-def source_map(db):
+def source_map(db, profile=None):
     """Return every source key associated with a candidate.
 
     ``candidate_meta.source`` is retained as a first-seen compatibility
     field, but it is not authoritative: the many-to-many ``candidate_seen``
     table is what prevents source health and recommendations from depending
     on collection order.
+
+    With ``profile`` only addresses that have a result in that profile are
+    mapped.  A reader of one page of results does not need the sources of every
+    collected candidate: on 663k candidates the full map cost 1.3 s a request.
     """
     result = {}
+    if profile is None:
+        meta_sql = 'SELECT proxy, source FROM candidate_meta WHERE source IS NOT NULL'
+        seen_sql = 'SELECT proxy, source FROM candidate_seen'
+        params = ()
+    else:
+        meta_sql = ('SELECT m.proxy, m.source FROM results r JOIN candidate_meta m ON m.proxy = r.proxy '
+                    'WHERE r.profile = ? AND m.source IS NOT NULL')
+        seen_sql = ('SELECT s.proxy, s.source FROM results r JOIN candidate_seen s ON s.proxy = r.proxy '
+                    'WHERE r.profile = ?')
+        params = (profile,)
     try:
-        for proxy, source in db.execute('SELECT proxy, source FROM candidate_meta WHERE source IS NOT NULL'):
+        for proxy, source in db.execute(meta_sql, params):
             if source:
                 result.setdefault(proxy, []).append(source)
     except sqlite3.Error:
         pass
     try:
-        for proxy, source in db.execute('SELECT proxy, source FROM candidate_seen'):
+        for proxy, source in db.execute(seen_sql, params):
             if not source:
                 continue
             values = result.setdefault(proxy, [])

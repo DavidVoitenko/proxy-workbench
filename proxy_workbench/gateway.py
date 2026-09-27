@@ -750,7 +750,8 @@ class Pool:
         """Choose a proxy without taking a slot.  Prefer :meth:`reserve` in a gateway."""
         return self._pick(exclude, request, session, sticky, binding, reserve=False)
 
-    def reserve(self, request=None, exclude=(), session=None, sticky=None, binding=None):
+    def reserve(self, request=None, exclude=(), session=None, sticky=None, binding=None,
+                commit_session=True):
         """Pick a proxy and take its concurrency slot in one indivisible step.
 
         Doing both together is what keeps parallel connects under
@@ -758,9 +759,10 @@ class Pool:
         reservation, so two clients can never observe the same free slot.
        The caller owns the returned :class:`Lease`.
         """
-        return self._pick(exclude, request, session, sticky, binding, reserve=True)
+        return self._pick(exclude, request, session, sticky, binding, reserve=True,
+                          commit_session=commit_session)
 
-    def _pick(self, exclude, request, session, sticky, binding, reserve):
+    def _pick(self, exclude, request, session, sticky, binding, reserve, commit_session=True):
         now = time.monotonic()
         sticky = self._sticky(binding, sticky)
         with self.lock:
@@ -771,7 +773,8 @@ class Pool:
                 if pinned and pinned in candidates:
                     if reserve:
                         self._take(pinned)
-                        self.sessions[session] = (pinned, now + self.session_ttl)
+                        if commit_session:
+                            self.sessions[session] = (pinned, now + self.session_ttl)
                         return Lease(self, pinned)
                     return pinned
                 if pinned and sticky == 'strict':
@@ -789,12 +792,17 @@ class Pool:
                 choice = candidates[0]
             else:
                 choice = self._choose(candidates, self._strategy(binding), now)
-            if session:
+            if session and commit_session:
                 self.sessions[session] = (choice, now + self.session_ttl)
             if not reserve:
                 return choice
             self._take(choice)
             return Lease(self, choice)
+
+    def bind_session(self, session, proxy):
+        """Pin a session only after its upstream tunnel has won the race."""
+        with self.lock:
+            self.sessions[session] = (proxy, time.monotonic() + self.session_ttl)
 
     def _resting_fallback(self, request, now, binding, exclude):
         """Resting proxies that could serve this request, soonest back first."""
@@ -1336,11 +1344,11 @@ class Gateway:
         tried = set()
         pending = {}
         failures = 0
-        strict = bool(session and sticky == 'strict')
+        strict = bool(session and self.pool._sticky(binding, sticky) == 'strict')
 
         def start_next():
             lease = self.pool.reserve(request=request, exclude=tried, session=session,
-                                      sticky=sticky, binding=binding)
+                                      sticky=sticky, binding=binding, commit_session=strict)
             if lease is None:
                 return False
             tried.add(lease.proxy)
@@ -1358,7 +1366,10 @@ class Gateway:
                 can_add = not strict and len(tried) < self.attempts
                 done, _ = await asyncio.wait(list(pending), timeout=self.stagger if can_add else None,
                                              return_when=asyncio.FIRST_COMPLETED)
-                for task in done:
+                winner = None
+                for task in list(pending):
+                    if task not in done:
+                        continue
                     lease, started = pending.pop(task)
                     try:
                         stream, credentials = task.result()
@@ -1367,11 +1378,22 @@ class Gateway:
                         self.pool.outcome(lease.proxy, 'handshake_failed', detail=UNUSABLE)
                         failures += 1
                         continue
+                    if winner is None:
+                        winner = (lease, stream, credentials, started)
+                    else:
+                        # Two tunnels can finish in one event-loop turn.  Only
+                        # one may keep its reservation and open stream.
+                        stream[1].close()
+                        lease.release()
+                if winner is not None:
+                    lease, stream, credentials, started = winner
                     # The plain-HTTP path still has to write the credential onto the
                     # wire, so it rides on the lease and is dropped the moment the
                     # request is written.
                     lease.credentials = credentials
                     self.pool.connected(lease.proxy, (time.monotonic() - started) * 1000)
+                    if session:
+                        self.pool.bind_session(session, lease.proxy)
                     return lease, stream
                 if strict and failures:
                     break

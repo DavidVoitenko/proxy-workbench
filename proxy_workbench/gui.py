@@ -2772,7 +2772,7 @@ class App:
             if denylist.error:
                 raise ValueError('Не удалось прочитать локальный denylist; обновите список.')
             policy = self.result_policy(plan, cfg, denylist=denylist)
-            source_keys = self.source_keys(conn)
+            source_keys = self.source_keys(conn, plan['profile'])
             provider_of = self.provider_resolver()
             now = time.time()
             entries = self.annotations.read().get('entries') or {}
@@ -2863,9 +2863,9 @@ class App:
                 return False
         return True
 
-    def source_keys(self, conn):
+    def source_keys(self, conn, profile=None):
         try:
-            return core.source_map(conn)
+            return core.source_map(conn, profile)
         except sqlite3.Error:
             return {}
 
