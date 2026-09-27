@@ -1,30 +1,29 @@
 <div align="center">
 
-<img src="docs/assets/social-preview.png" alt="Proxy Workbench: find every free proxy, keep the ones that work" width="100%">
+<img src="docs/assets/social-preview.png" alt="Proxy Workbench — local proxy discovery and checking" width="100%">
 
 # Proxy Workbench
 
-### Finds free proxies that actually work — on the sites you need
+### Find proxies that work for the sites you use
 
-Proxy Workbench collects free proxies from **150 public sources**, tests every one against the sites and services **you** care about, and keeps only the ones that work. You get ready-made lists, one **rotating proxy** for your browser, Telegram and any app, or an **API** for your scripts.
+Collect addresses from public lists or your own files, check them against your services, and use the results in apps, exports, or scripts. Proxy Workbench runs locally with a browser interface, CLI, rotating proxy gateway, and API.
 
-Runs on your own computer: macOS and Windows app, command line, Docker · HTTP, HTTPS, SOCKS4, SOCKS5 · 12 languages · no sign-up, no telemetry
+**Windows · macOS · Linux** &nbsp;|&nbsp; **HTTP(S) · SOCKS4 · SOCKS5** &nbsp;|&nbsp; **12 interface languages**
 
+[![CI](https://github.com/DavidVoitenko/proxy-workbench/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/DavidVoitenko/proxy-workbench/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/DavidVoitenko/proxy-workbench?label=release)](https://github.com/DavidVoitenko/proxy-workbench/releases/latest)
 ![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)
 ![License: MIT](https://img.shields.io/badge/license-MIT-2ea44f)
-![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-5f6b73)
-![Dependencies](https://img.shields.io/badge/dependencies-httpx%20%2B%20keyring-42bbaa)
-![Runs locally](https://img.shields.io/badge/runs-100%25%20local-209c8b)
 
 **English** · [Русский](README.ru.md)
 
-[Quick start](#-quick-start) · [Features](#-features) · [How it works](#-how-it-works) · [CLI](#-command-line) · [FAQ](#-faq) · [Roadmap](#-roadmap)
+[Download](https://github.com/DavidVoitenko/proxy-workbench/releases/latest) · [Website](https://davidvoitenko.github.io/proxy-workbench/) · [Quick start](#-quick-start) · [Interface](#-the-eight-tabs) · [CLI](#-command-line) · [API](#-local-api-use-the-proxies-from-your-own-code)
 
 <br>
 
-<img src="docs/assets/demo.gif" alt="Proxy Workbench demo: scan, rank, filter elite proxies" width="100%">
+<img src="docs/assets/demo.gif" alt="Proxy Workbench interface demo" width="100%">
 
-<sub>Quick tour: set up a check → ranking → “Elite only” filter → per-attempt details → sources → switching language (synthetic data).</sub>
+<sub>Interface tour with synthetic example data. Actual proxy availability depends on the sources and your checks.</sub>
 
 </div>
 
@@ -32,78 +31,64 @@ Runs on your own computer: macOS and Windows app, command line, Docker · HTTP, 
 
 ## What it does
 
-Free proxy lists are everywhere, but most addresses in them are dead, slow or blocked by exactly the site you care about. Proxy Workbench does the tedious part for you:
+Free proxy lists go stale quickly. Proxy Workbench turns candidates into a list measured against your own success criteria:
 
-1. **Collect.** Downloads addresses from 150 public sources (106 enabled out of the box) or your own files and removes duplicates.
-2. **Check.** Sends real requests through every proxy to your sites — several times — and checks the status code, required text on the page and speed. It also finds the country, the anonymity level (transparent / anonymous / elite) and whether the IP is blacklisted.
-3. **Deliver.** The best proxies land in TXT / CSV / JSON files, browser, Clash and sing-box configs, a rotating proxy at `127.0.0.1:8899`, and an API. Pools and schedules keep the list fresh on their own.
+1. **Collect:** choose from a catalog of **150 entries**; **106 supported feeds** are enabled by default for new installations. You can also import your own list. Addresses are normalized and deduplicated.
+2. **Check:** make real requests through each candidate to one or more target URLs. Set accepted HTTP status codes, body text or hash, retry threshold, timeouts, and optional reputation or anonymity checks.
+3. **Use:** filter and export the results, connect to the local rotating gateway at `127.0.0.1:8899`, or read the latest published list from the API. Pools and schedules can refresh it.
 
-Everything runs on your machine. The GUI binds to `127.0.0.1` only.
+The interface and its local API bind to loopback by default. The headless service can be exposed deliberately with a separate API token.
 
 ## 📸 Screenshots
 
 <table>
 <tr>
-<td width="50%"><img src="docs/assets/screenshots/scan-dark.png" alt="Scan setup and live progress"><br><sub><b>Scan</b> — pick services, success rules and watch live progress</sub></td>
-<td width="50%"><img src="docs/assets/screenshots/results-dark.png" alt="Ranked results"><br><sub><b>Results</b> — ranked by quality or speed, with cleanliness verdicts</sub></td>
+<td width="50%"><img src="docs/assets/screenshots/scan-dark.png" alt="Scan page with targets and live progress"><br><sub><b>Scan</b> — configure targets and follow progress</sub></td>
+<td width="50%"><img src="docs/assets/screenshots/results-dark.png" alt="Results page with proxy filters and ranking"><br><sub><b>Results</b> — review, filter, rank, and export</sub></td>
 </tr>
 <tr>
-<td width="50%"><img src="docs/assets/screenshots/details-dark.png" alt="Per-attempt details"><br><sub><b>Details</b> — every attempt for every service</sub></td>
-<td width="50%"><img src="docs/assets/screenshots/results-light.png" alt="Light theme"><br><sub><b>Light theme</b> — one click in the header</sub></td>
+<td width="50%"><img src="docs/assets/screenshots/details-dark.png" alt="Details for individual proxy check attempts"><br><sub><b>Details</b> — inspect individual attempts and errors</sub></td>
+<td width="50%"><img src="docs/assets/screenshots/results-light.png" alt="Results page in light theme"><br><sub><b>Light theme</b> — switch from the header</sub></td>
+</tr>
+<tr>
+<td width="50%"><img src="docs/assets/screenshots/sources-dark.png" alt="Sources page with bundled catalog and custom lists"><br><sub><b>Sources</b> — bundled catalog and your own lists</sub></td>
+<td width="50%"><img src="docs/assets/screenshots/gateway-dark.png" alt="Gateway page showing local route controls while offline"><br><sub><b>Rotating Gateway</b> — connection setup and route controls; offline until started</sub></td>
+</tr>
+<tr>
+<td width="50%"><img src="docs/assets/screenshots/pools-dark.png" alt="Pools and schedules page with target, reserve and schedule controls"><br><sub><b>Pools &amp; Schedules</b> — desired size, reserve, and refresh rules</sub></td>
+<td width="50%"><img src="docs/assets/screenshots/keys-dark.png" alt="API Keys page showing access controls without secrets"><br><sub><b>API Keys</b> — permissions and limits; no secrets shown</sub></td>
 </tr>
 </table>
 
-<sub>Screenshots use synthetic data from documentation IP ranges (RFC 5737). The interface speaks 12 languages (language menu in the header).</sub>
+<sub>Proxy results, metrics, and locations shown here are synthetic; IPs use RFC 5737 documentation ranges. The Sources catalog is the bundled catalog. No working public proxy is implied.</sub>
 
-## ✨ Features
+## 🧭 The eight tabs
 
-| | |
+| Tab | What you do there |
 | --- | --- |
-| **150 catalog entries / 106 collectable feeds** | The catalog includes **117 public-free entries**; the remaining entries describe other access conditions. Supported lists have source-specific text, JSON, CSV or HTML adapters. Unsupported formats, unavailable snapshots and restricted sources remain visible with their reasons. |
-| **Unknown protocol? No problem** | Addresses without a protocol can be tried as HTTP, SOCKS4 and SOCKS5 at once; the checks keep whichever works. |
-| **Protocols** | HTTP, HTTPS/CONNECT, explicit `https://` proxies, SOCKS4, SOCKS5 / SOCKS5h, IPv4 and IPv6. |
-| **Test against your services** | Several targets per profile (up to 20 in the GUI). A proxy passes only if it works for **all** of them. |
-| **Strict success rules** | Allowed status codes, required body substring, expected SHA-256, `GET`/`HEAD`, safe custom headers. Catches captcha and stub pages that still return `200`. |
-| **Repeated measurements** | N attempts per target (default 3), a per-target success threshold (e.g. 2 of 3), median latency and jitter. |
-| **Just a few proxies? Specific country?** | `--want 20` stops as soon as 20 proxies match; previously working addresses are tried first. `--country DE,NL` skips every other country *before* checking, so a country-specific search takes minutes, not hours. |
-| **Always fresh** | **Re-check only matching proxies** refreshes the current list in minutes; **Keep fresh** in the GUI (or `--watch 30`) does it automatically every 30 minutes, and the API and rotating proxy pick up each new list. Every proxy keeps an uptime history, so you can sort by the ones that survive re-checks. |
-| **Source ratings** | The Sources tab shows how many working proxies each public list produced, so you can drop dead lists and scan faster. |
-| **Presets** | Quick, Balanced and Thorough set attempts, timeouts and workers in one click. |
-| **Anonymity levels** | Point it at any echo “judge” page and every working proxy is rated **transparent** (leaks your IP), **anonymous** (reveals itself with `Via` / `X-Forwarded-For`) or **elite**. Filter with one click or `--min-anonymity elite`. |
-| **Cleanliness checks** | Local IP / CIDR / exact-proxy denylist plus optional DNSBL zones. Verdicts: `clean`, `listed`, `local_denied`, `unknown`, with an optional strict mode. |
-| **Built for big lists** | Bounded worker queue, rate limiter, automatic file-descriptor fitting. A **quick pre-check** drops addresses that do not even accept a TCP connection before the full check, **fail-fast** skips the remaining attempts once a proxy can no longer pass, and a short **connect timeout** drops dead hosts early. Tested with 190,000 simulated candidates. |
-| **Stop & resume** | Progress is stored in SQLite. `Ctrl+C` or **Stop** keeps finished work; the same command continues where it left off. |
-| **Ranking & export** | Sort by `quality`, `speed`, `stability` or `uptime`; filter by protocol, country, maximum latency, anonymity and success rate; search by address or port and copy a page with one click. Export top N (or all) to `proxies.txt`, `ranked.csv`, `ranked.json`, plus `http.txt` / `https.txt` / `socks4.txt` / `socks5.txt` / `hostport.txt` in plain `host:port` format, a ready `proxychains.txt`, a browser `proxy.pac` and a Clash / Mihomo `clash.yaml` with automatic fastest-proxy selection. A protocol and country summary sits above the files. Crash-safe export generations. |
-| **Rotating proxy gateway** | Set `127.0.0.1:8899` as the HTTP or SOCKS5 proxy in a browser, Telegram, a scraper or any app. Every new connection goes out through the next working proxy; failing ones are skipped and rested automatically. |
-| **Recommended first** | The default order puts first the proxies that are fast, survive re-checks, come from lists with a good record and are offered by few lists (less crowded, so they live longer). |
-| **Scripts and more clients** | `proxy-workbench get --country DE --top 5` prints working proxies, `proxy-workbench test socks5://…` checks your own; sing-box config and a **Use in Telegram** button for the rotating proxy. |
-| **For scrapers** | Gateway user names choose per client: `country-de`, `protocol-socks5`, `latency-800`, `session-abc` (one IP per session). A per-proxy connection cap and `/status` stats. |
-| **Real speed and provider** | Optional speed test in Mbit/s with a bandwidth sort; every proxy shows its provider (AS number) and hosting / data-centre ranges can be skipped. |
-| **Ready-made checks** | One click adds a check for Google, YouTube, Telegram, Discord, Instagram, the OpenAI API, GitHub, Wikipedia or Cloudflare. |
-| **Exit country** | The anonymity judge also reports the address the traffic really leaves from; the table shows `DE → NL` when it differs from the proxy's own country. |
-| **Local API for your code** | The GUI (or `serve` on a server) answers `GET /random?protocol=socks5&country=DE` or `/proxies?max_latency=800&format=txt` with the freshest working proxies, so scripts, scrapers and bots can pick a proxy with one HTTP request. |
-| **Safe by default** | Loopback-only GUI with a per-session token, CSRF/Host checks, SSRF-hardened source fetching (no private/metadata IPs, validated redirects, size limits), credential-like headers rejected. |
-| **Desktop app** | Runs in the macOS menu bar with pause/start, optional start at login and one running instance; recovers correctly after sleep. The browser interface opens from it. |
-| **Pools** | A named pool keeps N working proxies for a profile, with a reserve, quotas and budgets; it refills and re-checks itself and says why it is short. |
-| **Schedules** | Re-check a collection or a pool on an interval in your time zone, with quiet hours, request/byte budgets and notifications when a proxy changes state. |
-| **Profiles and import** | Save targets and rules as named profiles with revisions. Import your own lists from TXT, URI, CSV, JSON, Clash or sing-box with a preview, column mapping and a report of every rejected line. |
-| **API keys** | Named keys with permissions, collection/pool scope, rate and concurrency limits, expiry, rotation and an audit log — on the **Keys** page or with `api-key`. |
-| **Diagnostics** | A funnel shows where candidates were lost, “why 0 results” explains an empty run in plain words, and a redacted diagnostic bundle can be reviewed before saving. |
-| **Backup and restore** | Backups, restore, rollback and retention cleanup, each previewed before it runs; data folders from older versions are upgraded automatically with a backup taken first. |
-| **12 languages** | English, Russian, Ukrainian, German, Spanish, French, Italian, Portuguese, Polish, Turkish, Japanese and Chinese; defaults to your system language. Redesigned dark and light themes that adapt to phones and tablets. |
-| **Zero setup** | A macOS `.dmg`, a Windows installer (or portable `.zip`), `pipx install`, Docker Compose, or a double-click launcher that creates its own virtual environment. |
+| **Scan** | Choose target sites and success rules, use a preset or tune the check, start and resume a scan, and follow live progress. |
+| **Results** | Inspect fresh, expired, failed, and unknown results; filter and sort proxies; review individual attempts; build TXT, CSV, JSON, PAC, Clash, and sing-box exports. |
+| **Rotating Gateway** | See gateway health and pool size, copy its local HTTP/SOCKS5 endpoint, and get client setup examples. |
+| **Mobile & Clients** | Copy or download sing-box and Clash/Mihomo configs. Set up Telegram through a link, or a QR code after enabling authenticated LAN mode. |
+| **Sources** | Select supported public feeds, import your own lists, inspect source yield and errors, and manage the optional country database. |
+| **Pools & Schedules** | Keep a target number of passing proxies for a list and profile; set refresh intervals, quiet hours, and budgets. |
+| **API Keys** | Issue and manage scoped keys for the authenticated `/v1` control API. Secrets are shown once. |
+| **How it works** | Follow the workflow, read setup guidance, investigate empty results, and access diagnostics and maintenance tools. |
+
+The interface has dark and light themes and 12 languages. HTTP(S), SOCKS4, SOCKS5 and IPv6 are supported. Checks can use several target URLs, repeated attempts, status/body/hash conditions, a local denylist, optional DNSBL zones, and an optional anonymity judge. The full options are documented in the [CLI](#-command-line), [gateway](#-rotating-proxy-gateway), and [API](#-local-api-use-the-proxies-from-your-own-code) sections below.
 
 ## 🚀 Quick start
 
-Pick one way to install:
+Choose the build for your system. The [latest release](https://github.com/DavidVoitenko/proxy-workbench/releases/latest) has installers, portable archives, checksums, and a Python wheel.
 
-| Way | How | Needs |
+| System | Install or run | Requirements |
 | --- | --- | --- |
-| **macOS app** | Download `proxy-workbench-…-macos-arm64.dmg` from the [latest release](https://github.com/DavidVoitenko/proxy-workbench/releases/latest) and drag `Proxy Workbench.app` into Applications | macOS 11+, Apple Silicon (`arm64`) or Intel (`x86_64`) |
-| **Windows app** | Download `proxy-workbench-…-windows-x64-setup.exe` from the [latest release](https://github.com/DavidVoitenko/proxy-workbench/releases/latest) and run it; there is a portable `.zip` too, and a separate `proxy-workbench-cli.exe` for the command line | nothing else |
-| **pipx** (Windows, macOS, Linux) | `pipx install git+https://github.com/DavidVoitenko/proxy-workbench` then `proxy-workbench` | Python 3.11+ and [pipx](https://pypa.io/pipx/) |
-| **Source folder** | Download the code (**Code → Download ZIP** or `git clone`), then double-click `Start.bat` (Windows) / `Start.command` (macOS) or run `./run.sh` (Linux) | Python 3.11+ |
-| **Docker** | Set `PROXY_WORKBENCH_API_TOKEN`, then run `docker compose up -d` with the bundled [`compose.yml`](compose.yml) (checker + API + rotating proxy) | Docker |
+| **macOS, Apple Silicon** | Download `proxy-workbench-3.0.2-macos-arm64.dmg`; drag the app into Applications. | No Python needed |
+| **macOS, Intel** | Download `proxy-workbench-3.0.2-macos-x86_64.dmg`; drag the app into Applications. | No Python needed |
+| **Windows x64** | Run `proxy-workbench-3.0.2-windows-x64-setup.exe`; a portable ZIP and separate CLI `.exe` are also available. | No Python needed |
+| **Linux, or any OS with Python** | `pipx install git+https://github.com/DavidVoitenko/proxy-workbench` then `proxy-workbench` | Python 3.11+ and [pipx](https://pypa.io/pipx/) |
+| **Source checkout** | `Start.bat` on Windows, `Start.command` on macOS, or `./run.sh` on Linux. | Python 3.11+ |
+| **Docker server/NAS** | Set `PROXY_WORKBENCH_API_TOKEN` and run `docker compose up -d` with [`compose.yml`](compose.yml). | Docker; headless CLI/API/gateway, no GUI |
 
 `proxy-workbench` without arguments starts the application: the interface opens in your browser, and on macOS a menu bar item shows what is happening and offers pause, start, “start at login” and quit. Starting it a second time reaches the one that is already running instead of opening a rival. `proxy-workbench run …` and the other commands below work the same way as `./run.sh …`.
 
@@ -116,13 +101,15 @@ proxy-workbench --print-paths    # which data/cache/log folders this launch woul
 
 Installed builds keep their data in your own per-user folders (`%LOCALAPPDATA%\proxy-workbench`, `~/Library/Application Support/proxy-workbench` or `~/.local/share/proxy-workbench`) and never write into their own program folder; a source checkout keeps `data/` next to the project; `PROXY_WORKBENCH_DATA` overrides all of it. Portable mode is opt-in: put an empty `proxy-workbench-portable.json` next to the program and it keeps its data beside itself.
 
-Release artifacts are **not code-signed**: this project has no signing certificate, and the release notes and the manifest say `signed: false` rather than claiming otherwise. macOS Gatekeeper therefore asks you to confirm the first start, and Windows SmartScreen may too (**More info → Run anyway**). Every release lists its SHA-256 checksum, which proves the file is the one that was published — it does not identify a publisher.
+Release installers are **not code-signed**. macOS Gatekeeper or Windows SmartScreen may ask you to confirm the first run. Compare the published SHA-256 checksum if you want to verify the downloaded file; a checksum does not establish the publisher's identity.
 
-1. **Scan** tab: add one or more service URLs, allowed status codes and (recommended) a text that must appear in the response.
-2. Press **Find and check** (“Найти и проверить”). Watch progress, speed, ETA and the number of matching proxies.
-3. **Results** tab: choose order, success threshold and how many to keep, press **Build export**, then download TXT / CSV / JSON.
+1. In **Scan**, add your target URL and success rules (status code and, when useful, expected text). A proxy must pass each selected target.
+2. Press **Find and check**. You can stop and later resume from saved progress.
+3. In **Results**, review attempts, select filters and sort order, press **Build export**, and download the format you need.
 
 Closing the browser tab does not stop the check. Quitting from the menu bar (or `Ctrl+C` in a terminal launch) stops it.
+
+**Scope and limits:** free proxy addresses can disappear or change without notice; a passing check applies to the targets and time measured, not every site or future connection. Country lookup needs the optional offline database, and anonymity classification needs a judge endpoint. The local gateway handles TCP through HTTP or SOCKS5; it does not support SOCKS5 UDP ASSOCIATE. Docker runs without the browser GUI.
 
 ## 🧭 How it works
 
@@ -180,7 +167,7 @@ cp service.example.json data/service.json
 ./run.sh update-geoip          # once: offline country database (DB-IP Lite, ~7 MB)
 ./run.sh run --country DE,NL --protocol socks5 --want 20 --attempts 1
 
-# Refresh only the proxies that currently pass (minutes, not hours)
+# Refresh only the proxies that currently pass
 ./run.sh scan --recheck-passing
 # ...or keep the list fresh automatically every 30 minutes (Ctrl+C to stop)
 ./run.sh run --want 50 --watch 30
@@ -427,7 +414,7 @@ Delete it any time with `./run.sh clear-data --yes` or the button on the **How i
 No. Proxy Workbench measures _reachability and latency_. A public proxy sees your IP, your destination and — for plain HTTP — your traffic. Never send passwords, cookies or tokens through untrusted public proxies. Proxy Workbench itself sends no telemetry and has no accounts.
 
 **How long does a full scan take?**
-It depends on how many candidates respond. With the defaults (3 attempts, 8 s request timeout, 4 s connect timeout, fail-fast, 128 workers) even ~190,000 completely dead addresses take about 3.5 hours, because each dead proxy is dropped after two short connect failures; in practice most fail much faster. Raise `--workers`, lower `--connect-timeout`, or use fewer sources for quicker runs. You can stop and resume at any time.
+There is no fixed duration: it depends on the number of candidates, their timeouts, the target services, and your connection. Use fewer sources or the **Quick** preset for a shorter run. Progress is saved so you can stop and resume later.
 
 **Why did a proxy that works in my browser fail here?**
 Redirects are not followed, TLS certificates are verified, and each target must pass on its own threshold. Check **Details** for the exact error of every attempt.
@@ -448,7 +435,7 @@ Use an **`http://`** judge: through an HTTPS tunnel a proxy cannot add headers, 
 No. Set **Stop after finding** in the GUI or `--want 20` in the CLI. Addresses that worked in earlier scans are tried first, the rest in random order, and the scan stops as soon as 20 match. Run it again later to continue where it stopped. The **Quick** preset (1 attempt, short timeouts) makes it even faster.
 
 **Free proxies die quickly. How do I keep my list working?**
-Press **Re-check only matching proxies** (or `./run.sh scan --recheck-passing`): only the proxies that currently pass are measured again, which takes minutes. `--watch 30` repeats this every 30 minutes and rewrites the export files each time. Sort by **uptime** to put the proxies that survived the most re-checks first.
+Press **Re-check only matching proxies** (or `./run.sh scan --recheck-passing`): only the proxies that currently pass are measured again. `--watch 30` repeats this every 30 minutes and rewrites the export files each time. Sort by **uptime** to put the proxies that survived the most re-checks first.
 
 **How do I get proxies from a specific country?**
 Download the country database once (**Sources → Country database**, or `./run.sh update-geoip`), then enter the countries (`DE, NL`) in the GUI or pass `--country DE,NL`. Addresses from other countries are skipped before any request is sent. Results from a country-limited run are kept, so a later run for all countries does not check them again. Country data: [DB-IP](https://db-ip.com) (CC BY 4.0) plus the country field of Geonode sources.
@@ -459,8 +446,8 @@ The IP is not in your local denylist and (if enabled) not listed by the DNSBL zo
 **Can I use my own proxy list only?**
 Yes: `--no-sources --input my.txt`, or paste/upload a TXT on the **Sources** tab.
 
-**Is running it legal?**
-Checking public lists is generally fine, but you are responsible for respecting the terms of the services you test and the laws where you live. Only test endpoints you are allowed to test.
+**What may I check?**
+Check only endpoints and sources you are allowed to use, and follow the applicable service terms and laws.
 
 ## 🗺 Roadmap
 
@@ -481,17 +468,17 @@ Checking public lists is generally fine, but you are responsible for respecting 
 - [x] Source ratings and proxychains export
 - [x] Docker image for headless servers
 
-Have an idea? Open a [feature request](../../issues/new/choose) or start a [discussion](../../discussions).
+Have an idea? Open a [feature request](https://github.com/DavidVoitenko/proxy-workbench/issues/new/choose) or start a [discussion](https://github.com/DavidVoitenko/proxy-workbench/discussions).
 
 ## 🤝 Contributing
 
-Bug reports, new sources, translations and code are welcome — open an [issue](../../issues) or a pull request. Tests run entirely on local mocks:
+Bug reports, new sources, translations and code are welcome — open an [issue](https://github.com/DavidVoitenko/proxy-workbench/issues) or a pull request. Tests run entirely on local mocks:
 
 ```sh
 python -m unittest discover -s tests -v
 ```
 
-Found a vulnerability? Please report it privately through [GitHub security advisories](../../security/advisories/new) rather than a public issue.
+Found a vulnerability? Please report it privately through [GitHub security advisories](https://github.com/DavidVoitenko/proxy-workbench/security/advisories/new) rather than a public issue.
 
 If Proxy Workbench saved you time, **a ⭐ on GitHub helps other people find it.**
 
