@@ -83,9 +83,9 @@
 
 | Система | Установка или запуск | Что нужно |
 | --- | --- | --- |
-| **macOS, Apple Silicon** | Скачайте `proxy-workbench-3.0.2-macos-arm64.dmg` и перетащите приложение в «Программы». | Python не нужен |
-| **macOS, Intel** | Скачайте `proxy-workbench-3.0.2-macos-x86_64.dmg` и перетащите приложение в «Программы». | Python не нужен |
-| **Windows x64** | Запустите `proxy-workbench-3.0.2-windows-x64-setup.exe`. Есть portable ZIP и отдельный CLI `.exe`. | Python не нужен |
+| **macOS, Apple Silicon** | Скачайте `proxy-workbench-3.0.3-macos-arm64.dmg` и перетащите приложение в «Программы». | Python не нужен |
+| **macOS, Intel** | Скачайте `proxy-workbench-3.0.3-macos-x86_64.dmg` и перетащите приложение в «Программы». | Python не нужен |
+| **Windows x64** | Запустите `proxy-workbench-3.0.3-windows-x64-setup.exe`. Есть portable ZIP и отдельный CLI `.exe`. | Python не нужен |
 | **Linux или любая ОС с Python** | `pipx install git+https://github.com/DavidVoitenko/proxy-workbench`, затем `proxy-workbench`. | Python 3.11+ и [pipx](https://pypa.io/pipx/) |
 | **Папка с исходниками** | `Start.bat` на Windows, `Start.command` на macOS или `./run.sh` на Linux. | Python 3.11+ |
 | **Сервер/NAS с Docker** | Задайте `PROXY_WORKBENCH_API_TOKEN` и выполните `docker compose up -d` с готовым [`compose.yml`](compose.yml). | Docker; CLI/API/шлюз без GUI |
