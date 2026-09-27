@@ -24046,7 +24046,7 @@ pre#log,
   backdrop-filter: none !important;
   display: flex !important;
   flex-direction: row !important;
-  flex-wrap: wrap !important;
+  flex-wrap: nowrap !important;
   align-items: center !important;
   gap: 10px !important;
 }
@@ -24055,21 +24055,50 @@ pre#log,
   display: none !important;
 }
 
+#page-results #selection-action-bar.no-selection .selection-only {
+  display: none !important;
+}
+
 #page-results #selection-action-bar.no-selection .scope-select,
 #page-results #selection-action-bar.no-selection #select-all-matching {
   width: auto !important;
+  flex: 0 0 auto !important;
+}
+
+#page-results #selection-action-bar.no-selection .scope-select {
+  max-width: 170px !important;
 }
 
 #page-results #selection-action-bar.no-selection .selection-actions {
   display: flex !important;
   flex-direction: row !important;
-  flex-wrap: wrap !important;
-  width: 100% !important;
+  flex: 1 1 0 !important;
+  flex-wrap: nowrap !important;
+  width: auto !important;
   min-width: 0 !important;
-  overflow: visible !important;
-  padding: 0 !important;
+  overflow-x: auto !important;
+  overflow-y: hidden !important;
+  padding: 0 0 3px !important;
+  scrollbar-width: thin !important;
   mask-image: none !important;
   -webkit-mask-image: none !important;
+}
+
+#page-results #selection-action-bar.no-selection .selection-actions > * {
+  flex-shrink: 0 !important;
+}
+
+@media (max-width: 680px) {
+  #page-results #selection-action-bar.no-selection:not(.hidden) {
+    flex-wrap: wrap !important;
+  }
+
+  #page-results #selection-action-bar.no-selection .scope-select,
+  #page-results #selection-action-bar.no-selection #select-all-matching,
+  #page-results #selection-action-bar.no-selection .selection-actions {
+    width: 100% !important;
+    max-width: 100% !important;
+  }
 }
 
 /* The general select rule is width:100%. Without an explicit flex basis it

@@ -102,7 +102,7 @@
     'identity.denylist': '本地黑名单',
     'identity.local': '本地黑名单',
     'identity.localHint': '永久排除在检测和导出之外的 IP 或 CIDR 网段。',
-    'identity.denylistPlaceholder': '11.0.0.0/24\nhttp://11.0.0.1:8080\n# comment',
+    'identity.denylistPlaceholder': '192.0.2.0/24\nhttp://192.0.2.10:8080\n# comment',
     'identity.denylistHint': 'IP、CIDR 或精确代理地址。仅存储在 data/denylist.txt 中，绝不写入代码。',
     'identity.applyDenylist': '在采集、检测和导出时应用本地黑名单',
     'profile.workbench': 'Workbench 方案',

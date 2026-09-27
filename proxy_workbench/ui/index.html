@@ -989,36 +989,6 @@
         <div class="country-bar" id="country-distribution-bar"></div>
       </div>
 
-      <!-- Floating Selection Action Bar -->
-      <div class="floating-selection-bar hidden" id="selection-action-bar" role="region" data-i18n-aria-label="results.selectedRegion" aria-label="Actions for selected proxies">
-        <div class="selection-pill" id="selection-count">Selected: 0</div>
-        <label class="scope-select">
-          <span data-i18n="results.scope">Bulk scope</span>
-          <select id="results-scope-select" class="compact-select">
-            <option value="page" data-i18n="scope.page">This page</option>
-            <option value="selected" data-i18n="scope.selected">Selected</option>
-            <option value="all_matching" data-i18n="scope.allMatching">All matching</option>
-          </select>
-        </label>
-        <button type="button" class="button light chip" id="select-all-matching" data-i18n="results.selectAllMatching">Use all matching</button>
-        <div class="selection-actions">
-          <button type="button" class="button light chip selection-only" id="action-copy-selected" data-i18n="results.copySelected">Copy Selected</button>
-          <button type="button" class="button light chip" id="bulk-copy" data-i18n="results.copySelected">Copy scope</button>
-          <button type="button" class="button light chip selection-only" id="action-export-selected" data-i18n="results.exportSelected">Download Selected</button>
-          <button type="button" class="button light chip" id="bulk-export" data-i18n="results.exportSelected">Download scope</button>
-          <button type="button" class="button light chip" id="bulk-recheck" data-i18n="results.bulkRecheck" title="Full re-check">Re-check</button>
-          <input type="text" id="bulk-tag-input" class="compact-input" data-i18n-placeholder="results.tagInput" data-i18n-aria-label="results.tag" aria-label="Tag" placeholder="Tag" maxlength="40">
-          <button type="button" class="button light chip" id="bulk-tag" data-i18n="results.tag">Tag</button>
-          <button type="button" class="button light chip" id="bulk-unfavorite" data-i18n="results.unfavorite">Unfavourite</button>
-          <input type="text" id="bulk-note-input" class="compact-input wide" data-i18n-placeholder="results.noteInput" data-i18n-aria-label="results.note" aria-label="Note" placeholder="Note" maxlength="2000">
-          <button type="button" class="button light chip" id="bulk-note" data-i18n="results.note">Note</button>
-          <button type="button" class="button light chip" id="bulk-exclude" data-i18n="results.exclude">Exclude</button>
-          <button type="button" class="button light chip" id="bulk-include" data-i18n="results.include">Return</button>
-          <button type="button" class="button danger chip selection-only" id="action-ban-selected" data-i18n="results.banSelected">Add to Denylist</button>
-          <button type="button" class="button text chip selection-only" id="action-clear-selection" data-i18n="results.clearSelection">Clear</button>
-        </div>
-      </div>
-
       <!-- Matrix proxy x target -->
       <section class="card matrix-card hidden" id="matrix-panel" role="region" data-i18n-aria-label="results.matrix" aria-label="Targets matrix">
         <div class="matrix-head">
@@ -1085,6 +1055,37 @@
           </div>
         </div>
       </section>
+
+      <!-- Floating Selection Action Bar -->
+      <div class="floating-selection-bar hidden" id="selection-action-bar" role="region" data-i18n-aria-label="results.selectedRegion" aria-label="Actions for selected proxies">
+        <div class="selection-pill" id="selection-count">Selected: 0</div>
+        <label class="scope-select">
+          <span data-i18n="results.scope">Bulk scope</span>
+          <select id="results-scope-select" class="compact-select">
+            <option value="page" data-i18n="scope.page">This page</option>
+            <option value="selected" data-i18n="scope.selected">Selected</option>
+            <option value="all_matching" data-i18n="scope.allMatching">All matching</option>
+          </select>
+        </label>
+        <button type="button" class="button light chip" id="select-all-matching" data-i18n="results.selectAllMatching">Use all matching</button>
+        <div class="selection-actions">
+          <button type="button" class="button light chip selection-only" id="action-copy-selected" data-i18n="results.copySelected">Copy Selected</button>
+          <button type="button" class="button light chip" id="bulk-copy" data-i18n="results.copySelected">Copy scope</button>
+          <button type="button" class="button light chip selection-only" id="action-export-selected" data-i18n="results.exportSelected">Download Selected</button>
+          <button type="button" class="button light chip" id="bulk-export" data-i18n="results.exportSelected">Download scope</button>
+          <button type="button" class="button light chip" id="bulk-recheck" data-i18n="results.bulkRecheck" title="Full re-check">Re-check</button>
+          <input type="text" id="bulk-tag-input" class="compact-input" data-i18n-placeholder="results.tagInput" data-i18n-aria-label="results.tag" aria-label="Tag" placeholder="Tag" maxlength="40">
+          <button type="button" class="button light chip" id="bulk-tag" data-i18n="results.tag">Tag</button>
+          <button type="button" class="button light chip" id="bulk-unfavorite" data-i18n="results.unfavorite">Unfavourite</button>
+          <input type="text" id="bulk-note-input" class="compact-input wide" data-i18n-placeholder="results.noteInput" data-i18n-aria-label="results.note" aria-label="Note" placeholder="Note" maxlength="2000">
+          <button type="button" class="button light chip" id="bulk-note" data-i18n="results.note">Note</button>
+          <button type="button" class="button light chip" id="bulk-exclude" data-i18n="results.exclude">Exclude</button>
+          <button type="button" class="button light chip" id="bulk-include" data-i18n="results.include">Return</button>
+          <button type="button" class="button danger chip selection-only" id="action-ban-selected" data-i18n="results.banSelected">Add to Denylist</button>
+          <button type="button" class="button text chip selection-only" id="action-clear-selection" data-i18n="results.clearSelection">Clear</button>
+        </div>
+      </div>
+
     </section>
 
 
@@ -1474,7 +1475,7 @@ with httpx.Client(proxy="socks5://127.0.0.1:8899") as client:
             </div>
             <div class="code-editor-body">
               <div class="code-editor-gutter" id="proxies-gutter" aria-hidden="true">1</div>
-              <textarea id="proxies" rows="12" spellcheck="false" placeholder="11.0.0.1:8080&#10;socks5://11.0.0.2:1080" class="code-editor-input"></textarea>
+              <textarea id="proxies" rows="12" spellcheck="false" placeholder="192.0.2.10:8080&#10;socks5://198.51.100.20:1080" class="code-editor-input"></textarea>
             </div>
           </div>
           <label class="check-label">

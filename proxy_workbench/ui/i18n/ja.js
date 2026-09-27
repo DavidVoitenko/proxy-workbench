@@ -102,7 +102,7 @@
     'identity.denylist': 'ローカル拒否リスト',
     'identity.local': 'ローカル拒否リスト',
     'identity.localHint': 'テストとエクスポートから恒久的に除外するIPまたはCIDRブロック。',
-    'identity.denylistPlaceholder': '11.0.0.0/24\nhttp://11.0.0.1:8080\n# コメント',
+    'identity.denylistPlaceholder': '192.0.2.0/24\nhttp://192.0.2.10:8080\n# コメント',
     'identity.denylistHint': 'IP、CIDRまたは正確なプロキシアドレス。data/denylist.txt のみに保存され、コードには含まれません。',
     'identity.applyDenylist': '収集・チェック・エクスポート時にローカル拒否リストを適用する',
     'profile.workbench': 'Workbenchプロファイル',
