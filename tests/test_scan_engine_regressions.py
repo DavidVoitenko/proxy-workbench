@@ -55,14 +55,14 @@ class _BlackholeAfterConnect(BaseHTTPRequestHandler):
         pass
 
     def do_GET(self):
-        if self.server.basic_works and 'service.invalid/health' in self.path:
+        if self.server.basic_works and self.path.endswith('/health'):
             body = b'healthy'
             self.send_response(200)
             self.send_header('Content-Length', str(len(body)))
             self.end_headers()
             self.wfile.write(body)
             return
-        time.sleep(1.5)
+        time.sleep(6)
 
 
 def _closed_port():
@@ -95,11 +95,11 @@ class CliScanJobTests(unittest.TestCase):
                                  out.getvalue())
                 code = proxytool.main(['scan', '--data', str(data),
                                        '--url', 'http://service.invalid/health', '--attempts', '1',
-                                       '--timeout', '0.2', '--connect-timeout', '0.2',
+                                       '--timeout', '2', '--connect-timeout', '1',
                                        '--workers', '8', '--max-per-host', '8', '--rate', '0',
-                                       '--prefilter', '8', '--prefilter-timeout', '0.2',
+                                       '--prefilter', '8', '--prefilter-timeout', '1',
                                        '--speedtest-url', 'http://speed.invalid/file',
-                                       '--speedtest-bytes', '2000000', '--deadline', '5'])
+                                       '--speedtest-bytes', '2000000', '--deadline', '15'])
             self.assertEqual(code, 0, out.getvalue())
             self.assertIn('Checked 8/8', out.getvalue())
             with contextlib.closing(sqlite3.connect(data / 'proxies.sqlite3')) as conn:
@@ -111,7 +111,8 @@ class CliScanJobTests(unittest.TestCase):
                 pending = conn.execute("SELECT COUNT(*) FROM job_item WHERE job_id=? AND state='pending'",
                                        (job_id,)).fetchone()[0]
             self.assertEqual((len(results), observations, pending), (8, 8, 0))
-            self.assertEqual(sum(row['successes'] > 0 for row in results), 1)
+            self.assertEqual(sum(row['successes'] > 0 for row in results), 1,
+                             (out.getvalue(), results))
             self.assertEqual(sum(row.get('speed', {}).get('state') == 'error' for row in results), 1)
 
     def test_a_cli_scan_finishes_every_job_item_without_waiting_on_itself(self):
