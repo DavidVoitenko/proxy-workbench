@@ -12,7 +12,7 @@ import unittest
 from dataclasses import replace
 from unittest import mock
 
-from proxy_workbench import core, db, pipeline, probes, proxytool as p
+from proxy_workbench import core, db, jobs, pipeline, probes, proxytool as p
 from tests.workbench_support import add_candidate, store_result
 
 
@@ -214,6 +214,38 @@ class ScanIntegrationRegressions(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((state['checked'], state['requests']), (8, 0))
         self.assertEqual(state['stop_reason'], 'complete')
         self.assertEqual(self.calls, [])
+
+    async def test_failed_basic_checks_are_saved_when_speed_test_is_enabled(self):
+        proxies = self.seed(8)
+        cfg = copy.deepcopy(CONFIG)
+        cfg['speedtest'] = {'url': 'http://speed.invalid/file', 'max_bytes': 2_000_000}
+        store = jobs.JobStore(self.conn)
+        profile = 'speed-failure-regression'
+        endpoints = [self.conn.execute('SELECT endpoint_id FROM candidates WHERE proxy=?',
+                                       (proxy,)).fetchone()[0] for proxy in proxies]
+        job = store.submit('check', jobs.Scope(db.PUBLIC_COLLECTION_ID, profile, 1),
+                           [jobs.QueueItem(endpoint) for endpoint in endpoints])
+        store.start(job.id)
+        speed_calls = []
+
+        async def failed_probe(proxy, config, rate):
+            return p.summarize(proxy, [dict(ok=False, status=None, ms=10, bytes=0,
+                                            error='TimeoutError', target=0, attempt=1)], config)
+
+        async def expensive_probe(proxy, config, rate, row):
+            speed_calls.append(proxy)
+            return row
+
+        state = await self.scan(cfg, probe=failed_probe, expensive_probe=expensive_probe,
+                                workers=4, profile_id=profile, job_id=job.id, job_store=store)
+        self.assertEqual(speed_calls, [], 'a failed target must not trigger a speed download')
+        self.assertEqual((state['checked'], state['pending']), (8, 0))
+        self.assertEqual(len(self.saved()), 8)
+        self.assertTrue(all(row['reliability'] == 0 for row in self.saved()))
+        self.assertEqual(self.conn.execute('SELECT COUNT(*) FROM observations WHERE job_id=?',
+                                           (job.id,)).fetchone()[0], 8)
+        self.assertTrue(all(item.state == 'done' and item.observation_id
+                            for item in store.items(job.id)))
 
     async def test_httpx_mock_transport_also_obeys_request_budget(self):
         import httpx

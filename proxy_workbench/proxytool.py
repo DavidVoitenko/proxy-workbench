@@ -4675,7 +4675,9 @@ async def scan(db, config, *, workers=128, rate=100, recheck=False, probe=check_
             row['reputation'] = verdict
         rows[proxy] = row
         outcome, ok = _verdict(stage, row, final=expensive_probe is None)
-        if expensive_probe is None:
+        # A failed basic check never reaches the expensive stage.  Persist its
+        # verdict here even when judge/speed probes are configured.
+        if not outcome.ok or expensive_probe is None:
             finish(proxy, ok)
         return outcome
 
