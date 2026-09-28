@@ -2,6 +2,12 @@
 
 The format follows Keep a Changelog and semantic versioning.
 
+## [3.0.4] — 2026-09-28
+
+### Fixed
+
+- Scans with optional speed or anonymity checks now save failed target checks immediately. On networks that accept TCP connections but do not answer requests, progress, results, observations, and job items no longer stay at zero or pending.
+
 ## [3.0.3] — 2026-09-27
 
 ### Fixed

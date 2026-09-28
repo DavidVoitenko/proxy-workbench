@@ -14,6 +14,7 @@ import asyncio
 import contextlib
 import errno
 import io
+import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import socket
@@ -41,6 +42,29 @@ class _Healthy(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
+class _BlackholeAfterConnect(BaseHTTPRequestHandler):
+    """Accept TCP, but leave the target or speed response unanswered."""
+
+    def handle(self):
+        try:
+            super().handle()
+        except (ConnectionResetError, BrokenPipeError):
+            pass  # The TCP prefilter closes as soon as connect succeeds.
+
+    def log_message(self, *args):
+        pass
+
+    def do_GET(self):
+        if self.server.basic_works and self.path.endswith('/health'):
+            body = b'healthy'
+            self.send_response(200)
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        time.sleep(6)
+
+
 def _closed_port():
     with socket.socket() as probe:
         probe.bind(('127.0.0.1', 0))
@@ -48,6 +72,49 @@ def _closed_port():
 
 
 class CliScanJobTests(unittest.TestCase):
+    def test_speed_scan_records_blackholed_proxies_and_speed_timeout(self):
+        servers = []
+        for index in range(8):
+            server = ThreadingHTTPServer(('127.0.0.1', 0), _BlackholeAfterConnect)
+            server.basic_works = index == 0
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+            servers.append(server)
+            self.addCleanup(server.server_close)
+            self.addCleanup(server.shutdown)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            data = Path(tmp)
+            listing = data / 'list.txt'
+            listing.write_text('\n'.join(f'http://127.0.0.1:{server.server_port}'
+                                         for server in servers) + '\n')
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out), \
+                    mock.patch.dict('os.environ', {'HTTP_PROXY': '', 'HTTPS_PROXY': '', 'ALL_PROXY': ''}):
+                self.assertEqual(proxytool.main(['collect', '--no-sources', '--data', str(data),
+                                                 '--input', str(listing), '--allow-private-endpoints']), 0,
+                                 out.getvalue())
+                code = proxytool.main(['scan', '--data', str(data),
+                                       '--url', 'http://service.invalid/health', '--attempts', '1',
+                                       '--timeout', '2', '--connect-timeout', '1',
+                                       '--workers', '8', '--max-per-host', '8', '--rate', '0',
+                                       '--prefilter', '8', '--prefilter-timeout', '1',
+                                       '--speedtest-url', 'http://speed.invalid/file',
+                                       '--speedtest-bytes', '2000000', '--deadline', '15'])
+            self.assertEqual(code, 0, out.getvalue())
+            self.assertIn('Checked 8/8', out.getvalue())
+            with contextlib.closing(sqlite3.connect(data / 'proxies.sqlite3')) as conn:
+                job_id = conn.execute('SELECT id FROM job ORDER BY created_at DESC LIMIT 1').fetchone()[0]
+                results = [json.loads(payload) for (payload,) in conn.execute(
+                    'SELECT payload FROM results WHERE job_id=?', (job_id,))]
+                observations = conn.execute('SELECT COUNT(*) FROM observations WHERE job_id=?',
+                                            (job_id,)).fetchone()[0]
+                pending = conn.execute("SELECT COUNT(*) FROM job_item WHERE job_id=? AND state='pending'",
+                                       (job_id,)).fetchone()[0]
+            self.assertEqual((len(results), observations, pending), (8, 8, 0))
+            self.assertEqual(sum(row['successes'] > 0 for row in results), 1,
+                             (out.getvalue(), results))
+            self.assertEqual(sum(row.get('speed', {}).get('state') == 'error' for row in results), 1)
+
     def test_a_cli_scan_finishes_every_job_item_without_waiting_on_itself(self):
         server = ThreadingHTTPServer(('127.0.0.1', 0), _Healthy)
         threading.Thread(target=server.serve_forever, daemon=True).start()

@@ -83,9 +83,9 @@ Choose the build for your system. The [latest release](https://github.com/DavidV
 
 | System | Install or run | Requirements |
 | --- | --- | --- |
-| **macOS, Apple Silicon** | Download `proxy-workbench-3.0.3-macos-arm64.dmg`; drag the app into Applications. | No Python needed |
-| **macOS, Intel** | Download `proxy-workbench-3.0.3-macos-x86_64.dmg`; drag the app into Applications. | No Python needed |
-| **Windows x64** | Run `proxy-workbench-3.0.3-windows-x64-setup.exe`; a portable ZIP and separate CLI `.exe` are also available. | No Python needed |
+| **macOS, Apple Silicon** | Download `proxy-workbench-3.0.4-macos-arm64.dmg`; drag the app into Applications. | No Python needed |
+| **macOS, Intel** | Download `proxy-workbench-3.0.4-macos-x86_64.dmg`; drag the app into Applications. | No Python needed |
+| **Windows x64** | Run `proxy-workbench-3.0.4-windows-x64-setup.exe`; a portable ZIP and separate CLI `.exe` are also available. | No Python needed |
 | **Linux, or any OS with Python** | `pipx install git+https://github.com/DavidVoitenko/proxy-workbench` then `proxy-workbench` | Python 3.11+ and [pipx](https://pypa.io/pipx/) |
 | **Source checkout** | `Start.bat` on Windows, `Start.command` on macOS, or `./run.sh` on Linux. | Python 3.11+ |
 | **Docker server/NAS** | Set `PROXY_WORKBENCH_API_TOKEN` and run `docker compose up -d` with [`compose.yml`](compose.yml). | Docker; headless CLI/API/gateway, no GUI |
