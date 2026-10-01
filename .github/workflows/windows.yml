@@ -102,7 +102,7 @@ jobs:
         run: python packaging/verify_release.py (Get-ChildItem dist/proxy-workbench-*.manifest.json).FullName
 
       - name: Upload the artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: proxy-workbench-windows-x64
           if-no-files-found: error
